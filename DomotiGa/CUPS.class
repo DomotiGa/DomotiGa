@@ -1,0 +1,232 @@
+' Gambas class file
+
+' Description:
+' CCUPS.class
+' Connect to UPS via upsd's tcp socket and monitor status.
+
+' Development Status:
+' Working, maybe later add more variables to monitor.
+' Only tested with my APC SmartUPS 1000, only one UPS at a time supported.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008 Ron Klinkien
+
+' Read file called LICENSE for license details.
+
+PROPERTY Host AS String
+PROPERTY Port AS Integer
+PROPERTY PollTime AS Integer
+PROPERTY UPSDebug AS Boolean
+
+PRIVATE sHost AS String
+PRIVATE iPort AS Integer
+PRIVATE iPollTime AS Integer
+PRIVATE bUPSDebug AS Boolean
+
+PUBLIC hUPS AS NEW Socket
+PUBLIC tUPS AS Timer
+PUBLIC sAddress AS String
+
+PUBLIC SUB CheckUPS()
+
+  DIM rResult AS Result
+  DIM iCount AS Integer
+
+  TRY rResult = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE")
+
+  IF rResult.Count THEN
+    IF (rResult.Count >= 1) THEN
+      FOR EACH rResult
+        IF InStr(Devices.FindTypeForDevice(rResult!id), "UPS")
+          IF iCount THEN
+            Main.WriteLog("UPS: found more than one UPS device, sorry not supported!")
+            BREAK
+          END IF
+          IF bUPSDebug THEN Main.WriteDebugLog("[UPS] checking UPS named '" & rResult!name & "' with address " & rResult!address)
+          sAddress = rResult!address
+          Check(rResult!id, rResult!address)
+          INC iCount
+        END IF
+      NEXT
+    ELSE
+      Main.WriteLog("UPS: no UPS(s) found in device table!")
+    END IF
+  END IF
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the connection
+  TRY hUPS.Close
+
+  ' get a new one
+  hUPS = NEW Socket AS "UPS"
+  hUPS.Connect(sHost, iPort)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("UPS Error: " & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hUPS.Close
+  Main.WriteLog("UPS socket close.")
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("UPS Error: " & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB UPS_Error()
+
+  ' handle error
+  SELECT CASE hUPS.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog("UPS: The system does not allow to create a socket.")
+    CASE Net.HostNotFound
+      Main.WriteLog("UPS: Host not found.")
+    CASE Net.ConnectionRefused
+      Main.WriteLog("UPS: Unable to connect. Connection refused.")
+    CASE Net.CannotRead
+      Main.WriteLog("UPS: Error reading data.")
+    CASE Net.CannotWrite
+      Main.WriteLog("UPS: Error writing data.")
+  END SELECT
+
+END
+
+PUBLIC SUB UPS_Read()
+
+  DIM sBuf, sStatus, sExtra AS String
+  DIM iDeviceId AS Integer
+
+  LINE INPUT #hUPS, sBuf
+
+  ' VAR smartups1000 input.voltage "223.6"
+  ' VAR smartups1000 ups.status "OL"
+
+  IF bUPSDebug THEN Main.WriteDebugLog(sBuf)
+  IF InStr(sBuf, "ups.status") THEN
+    IF InStr(sBuf, "OL") THEN
+      sStatus = "Online"
+    ELSE IF InStr(sBuf, "OB") THEN
+      sStatus = "On Battery"
+    ELSE IF InStr(sBuf, "LB") THEN
+      sStatus = "Low Battery"
+    ELSE IF InStr(sBuf, "ERR") THEN 
+      sStatus = "Error"
+    END IF
+    ' update device
+    iDeviceId = Devices.Find(sAddress, Devices.FindInterface("UPS Socket"))
+    IF iDeviceId THEN 
+      Devices.Update(iDeviceId, sStatus)
+    END IF
+  ELSE IF InStr(sBuf, "input.voltage") THEN
+    IF InStr(sBuf, "ERR") THEN 
+      sStatus = "Error"
+    ELSE
+      sExtra = Mid$(sBuf, Len(sBuf) - 5, -1)
+    END IF
+    ' update device
+    iDeviceId = Devices.Find(sAddress, Devices.FindInterface("UPS Socket"))
+    IF iDeviceId THEN 
+      Devices.UpdateExtra(iDeviceId, sExtra)
+    END IF
+  END IF
+
+END
+
+PUBLIC SUB UPS_Ready()
+
+  Main.WriteLog("UPS socket connected.")
+
+  ' start poll timer for UPS
+  tUPS = NEW Timer AS "tUPS"
+  tUPS.Delay = iPollTime * 1000 ' multiply for seconds
+  tUPS.Start
+
+END
+
+PUBLIC SUB tUPS_Timer()
+
+  CheckUPS()
+
+END
+
+PUBLIC SUB Check(iId AS Integer, sAddress AS String)
+
+  DIM sCmd AS String
+
+  sCmd = "GET VAR " & sAddress & " ups.status"
+  IF bUPSDebug THEN Main.WriteDebugLog("[UPS] " & sCmd)
+  TRY PRINT #hUPS, sCmd
+  sCmd = "GET VAR " & sAddress & " input.voltage"
+  IF bUPSDebug THEN Main.WriteDebugLog("[UPS] " & sCmd)
+  TRY PRINT #hUPS, sCmd
+
+END
+
+' implement properties
+PRIVATE FUNCTION Host_Read() AS String
+
+  RETURN sHost
+
+END
+
+PRIVATE SUB Host_Write(Value AS String)
+
+  sHost = Value
+
+END
+
+PRIVATE FUNCTION Port_Read() AS Integer
+
+  RETURN iPort
+
+END
+
+PRIVATE SUB Port_Write(Value AS Integer)
+
+  iPort = Value
+
+END
+
+PRIVATE FUNCTION UPSDebug_Read() AS Boolean
+
+  RETURN bUPSDebug
+
+END
+
+PRIVATE SUB UPSDebug_Write(Value AS Boolean)
+
+  bUPSDebug = Value
+
+END
+
+PRIVATE FUNCTION PollTime_Read() AS Integer
+
+  RETURN iPollTime
+
+END
+
+PRIVATE SUB PollTime_Write(Value AS Integer)
+
+  iPollTime = Value
+
+END

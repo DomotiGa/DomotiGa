@@ -1,0 +1,186 @@
+' Gambas module file
+
+' Description:
+' TVGuide.module
+' Download and parse XMLTV files.
+
+' Development Status:
+' Just started, lots of things to build!
+' Only fetching channel icons and tvguide.xml is finished.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008 Ron Klinkien
+
+' Read file called LICENSE for license details.
+
+PUBLIC sChannelsOutput AS String
+PUBLIC sGuideOutput AS String
+PUBLIC hChannelsFile AS File
+PUBLIC hGuideFile AS File
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' create tvchannels table
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB InitTable()
+
+  DIM sSql AS String
+
+  sSql = "DROP TABLE IF EXISTS tvchannels"
+  Main.hDB.Exec(sSql)
+
+  sSql = "CREATE TABLE tvchannels ("
+  sSql &= "`id` bigint(20) unsigned NOT NULL auto_increment,"
+  sSql &= "`name` varchar(64) default NULL,"
+  sSql &= "`callsign` varchar(32) default NULL,"
+  sSql &= "`icon` varchar(64) default NULL,"
+  sSql &= "`channum` int(11) default NULL,"
+  sSql &= "`description` varchar(64) default NULL,"
+  sSql &= "`enabled` tinyint(1) default NULL,"
+  sSql &= "PRIMARY KEY( `id`)"
+  sSql &= ");"
+  Main.hDB.Exec(sSql)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' grab tvguide with grabcmd, store in xml file
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION GrabGuide()
+
+  DIM sCmdDir AS String
+
+  IF NOT Main.bTVGuideEnabled THEN RETURN
+
+  sCmdDir = Main.sBaseDir &/ "tvguide"
+  ' create tvguide xml file
+  hGuideFile = OPEN sCmdDir &/ "tvguide.xml" FOR CREATE
+
+  IF Main.bTVGuideDebug THEN Main.WriteDebugLog(Subst("[TVGuide] Started grabbing tvguide for &1 days.", Main.iTVGuideGrabDays))
+  EXEC [sCmdDir &/ Main.sTVGuideGrabCommand, "--config-file", sCmdDir &/ Main.sTVGuideGrabConfig, "--days", Main.iTVGuideGrabDays, "--cache", Main.sBaseDir &/ "tvguide/cache" &/ Main.sTVGuideGrabCommand, "--imdb", Main.sBaseDir &/ "tvguide/imdb/"] FOR READ AS "Guide"
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' grab channels with grabcmd, store in xml file
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION GrabChannels()
+
+  DIM sCmdDir AS String
+
+  IF NOT Main.bTVGuideEnabled THEN RETURN
+
+  sCmdDir = Main.sBaseDir &/ "tvguide"
+  ' create channels xml file
+  hChannelsFile = OPEN sCmdDir &/ "channels.xml" FOR CREATE
+
+  IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] Started grabbing channels and icons.")
+  EXEC [sCmdDir &/ Main.sTVGuideGrabCommand, "--config-file", sCmdDir &/ Main.sTVGuideGrabConfig, "--list-channels"] FOR READ AS "Channels"
+
+END
+
+PUBLIC SUB Guide_Read()
+
+  DIM sLine AS String
+
+  READ #LAST, sLine, -256
+  sGuideOutput &= sLine
+
+END
+
+PUBLIC SUB Guide_Kill()
+
+  PRINT #hGuideFile, sGuideOutput
+  IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] Finished grabbing tvguide.")
+
+END
+
+PUBLIC SUB Channels_Read()
+
+  DIM sLine AS String
+
+  READ #LAST, sLine, -256
+  sChannelsOutput &= sLine
+
+END
+
+PUBLIC SUB Channels_Kill()
+
+  PRINT #hChannelsFile, sChannelsOutput
+  IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] Finished grabbing channels and icons.")
+  ParseChannels(sChannelsOutput)
+
+END
+
+PUBLIC SUB ParseChannels(sData AS String)
+
+  DIM Xml AS NEW Xmldocument
+  DIM Node AS XmlNode
+
+  TRY Xml.FromString(sData)
+  IF ERROR THEN RETURN
+
+  Node = Xml.Root
+  ParseNode(Node)
+
+END
+
+PUBLIC SUB FetchChannelIcon(sIcon AS String)
+
+  DIM hDownloadImage AS HttpClient
+  DIM sDownload, sFileName AS String
+  DIM hFile AS File
+  DIM iSpot AS Integer
+
+  IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] Fetching channelicon " & sIcon)
+
+  hDownloadImage = NEW HttpClient AS "Download"
+  hDownloadImage.URL = sIcon
+  hDownloadImage.Async = FALSE
+  hDownloadImage.TimeOut = 3
+  hDownloadImage.Get()
+
+  IF hDownloadImage.Status < 0 THEN
+    IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] Error fetching channelicon " & sIcon)
+  ELSE
+    ' success - read the data
+    IF Lof(hDownloadImage) THEN READ #hDownloadImage, sDownload, Lof(hDownloadImage)
+  END IF
+
+  iSpot = RInStr(sIcon, "/")
+  sFileName = Mid$(sIcon, iSpot + 1, Len(sIcon) - iSpot)
+  OPEN Main.sBaseDir &/ "tvguide/icons" &/ sFileName FOR CREATE AS #hFile
+  WRITE #hFile, sDownload
+  CLOSE #hFile
+
+END
+
+' doesn't work yet!
+SUB ParseNode(Node AS Xmlnode)
+
+  DIM t, t1 AS Integer
+  DIM node1 AS XmlNode
+  DIM buf AS String
+  DIM title, description, item_link AS String
+
+  FOR t = 0 TO node.Children.Count - 1
+    node1 = node.Children[t]
+    IF node1.name = "channel" THEN
+      FOR t1 = 0 TO node1.Children.Count - 1
+        buf = node1.Children[t1].name
+        IF buf = "display-name" THEN
+          title = node1.Children[t1].value
+          IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] TITLE: " & title)
+        ELSE IF buf = "icon" THEN
+          description = node1.Children[t1].value
+          IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] DESC: " & description)
+        ELSE IF buf = "link" THEN
+          item_link = node1.Children[t1].value
+          IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] ITEM: " & item_link)
+        END IF
+      NEXT
+    ELSE
+      IF node1.Children.Count > 0 THEN parseNode(node1)
+    END IF
+  NEXT
+
+END

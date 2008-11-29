@@ -1,0 +1,339 @@
+' Gambas class file
+
+' Description:
+' CCTX35.class
+' Support for Xanura CTX35 A10/X10 interface
+
+' Development Status:
+' Controlling devices works, with on/off, dim, bright, reading needs to be implemented.
+' Status querying.
+
+' Links:
+' http://www.hometoys.com/htinews/dec02/articles/kingery16/kingery16.htm
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008 Ron Klinkien
+
+' Read file called LICENSE for license details.
+
+PROPERTY Port AS String
+PROPERTY Baud AS String
+PROPERTY PollTime AS Integer
+PROPERTY CTX35Debug AS Boolean
+
+PRIVATE sPort AS String
+PRIVATE sBaud AS String
+PRIVATE iPollTime AS Integer
+PRIVATE bCTX35Debug AS Boolean
+
+PUBLIC hCTX35 AS NEW SerialPort
+PUBLIC tCTX35 AS Timer
+PUBLIC tX10 AS Timer
+
+PUBLIC sCommandToSend AS String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the port
+  TRY hCTX35.Close
+
+  ' get a new one
+  hCTX35 = NEW Serialport AS "CTX35"
+
+  WITH hCTX35
+    .PortName = sPort
+    .Speed = sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .Open()
+  END WITH
+
+  ' start poll timer for X10 status LED
+  tX10 = NEW Timer AS "tX10LED"
+  tX10.Delay = 150
+  tX10.Stop
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("CTX35 Error: " & ERROR.Text & "")
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' close port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hCTX35.Close
+  Main.WriteLog("CTX35 serial port close.")
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("CTX35 Error: " & ERROR.Text & "")
+  RETURN FALSE
+
+END
+
+PUBLIC SUB Run()
+
+  tCTX35 = NEW Timer AS "tCTX35"
+  tCTX35.Delay = iPollTime
+  tCTX35.Start
+
+END
+
+' ctx35 poll routine
+PUBLIC SUB tCTX35_Timer()
+
+  DIM sResponse AS String
+  DIM sCommand AS String
+
+  FMain.pbX10.Picture = Main.pLedOn
+  tX10.Start
+
+  ' sent poll command only if no command is requested
+  IF NOT sCommandToSend THEN
+    sResponse = SendPollCommand()
+  ELSE
+    sCommand = PrepareCommand(sCommandToSend)
+    IF NOT sCommand THEN
+      Main.WriteDebugLog("[CTX35] Unparsable command given!")
+    ELSE 
+      sResponse = SendX10Command(sCommand)
+      IF InStr(sResponse, "?") THEN 
+        Main.WriteDebugLog("[CTX35] Device reported bad checksum!")
+      ELSE IF InStr(sResponse, "!S0") THEN 
+        Main.WriteDebugLog("[CTX35] Device reported buffer full!")
+      END IF
+    END IF
+    sCommandToSend = NULL
+  END IF
+
+  IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] " & sResponse)
+
+END
+
+PUBLIC SUB SendPollCommand() AS String
+
+  DIM sBuf, sCommand AS String
+
+  sCommand = "$>2800008C#"
+
+  IF hCTX35.Status <> Net.Active THEN RETURN
+
+  IF Main.bCTX35Debug THEN Main.WriteDebugLog(sCommand)
+  PRINT #hCTX35, sCommand
+
+  TRY READ #hCTX35, sBuf, Lof(hCTX35)
+  IF NOT sBuf THEN Main.WriteDebugLog("[CTX35] Didn't receive ack for command " & sCommand & "!")
+
+  RETURN sBuf
+
+END
+
+PRIVATE SUB SendX10Command(sString AS String) AS String
+
+  DIM sBuf AS String
+
+  ' create command
+  sString = CreateWithChecksum(sString)
+
+  IF Main.bCTX35Debug THEN Main.WriteDebugLog(sString)
+
+  PRINT #hCTX35, sString 
+  TRY READ #hCTX35, sBuf, Lof(hCTX35)
+  IF NOT TestCheckSum(sBuf) THEN Main.WriteDebugLog("[CTX35] Received wrong checksum for " & sBuf & "")
+
+  RETURN sBuf
+
+END
+
+PUBLIC SUB tX10LED_Timer()
+
+  FMain.pbX10.Picture = Main.pLedOff
+  tX10.Stop
+
+END
+
+PRIVATE SUB PrepareCommand(sString AS String) AS String
+
+  DIM sLetter, sNumber, sAddr, sStr AS String
+
+  sString = UCase$(sString)
+
+  ' check if it contains a valid address
+  IF NOT (sString LIKE "[A-P][0-1][0-9]*") THEN RETURN
+
+  sLetter = Left$(sString, 1)
+  sNumber = Mid$(sString, 2, 2)
+  sStr = X10toCTX(Right$(sString, -4))
+  ' todo check for repeated commands and support extended commands
+  sStr = String$(2, sLetter & sStr)
+  sAddr = String$(2, sLetter & sNumber)
+
+  RETURN sAddr & " " & sStr
+
+END
+
+PRIVATE SUB TestCheckSum(sString AS String) AS Boolean
+
+  DIM sHead, sTail AS String
+  DIM iLoop, iChecksum AS Integer
+
+  ' split string
+  sTail = Right$(sString, 3)
+  sHead = Left$(sString, -3)
+
+  IF NOT sTail AND sHead THEN RETURN FALSE 
+
+  FOR iLoop = 1 TO Len(sHead)
+    iCheckSum = iChecksum + Asc(Mid$(sHead, iLoop, 1)) AND 255
+  NEXT
+
+  ' check result
+  IF sTail = Hex$(iChecksum) & "#" THEN RETURN TRUE
+
+  RETURN FALSE
+
+END
+
+PUBLIC SUB CreateWithChecksum(sCommand AS String) AS String
+
+  DIM iChecksum, iLoop AS Integer
+
+  sCommand = "$>28001" & sCommand
+
+  FOR iLoop = 1 TO Len(sCommand)
+    iCheckSum = iChecksum + Asc(Mid$(sCommand, iLoop, 1))
+  NEXT
+
+  RETURN sCommand & Right$(Hex$(iChecksum), 2) & "#"
+
+END
+
+PRIVATE SUB CTXtoX10(sCommand AS String) AS String
+
+  SELECT sCommand
+    CASE "AUF"
+      RETURN "ALL_UNITS_OFF"
+    CASE "ALN"
+      RETURN "ALL_LIGHTS_ON"
+    CASE "ALF"
+      RETURN "ALL_LIGHTS_OFF"
+    CASE "BGT"
+      RETURN "BRIGHT"
+    CASE "HRQ"
+      RETURN "HAIL_REQ"
+    CASE "HAK"
+      RETURN "HAIL_ACK"
+    CASE "PR0"
+      RETURN "PREDIM1"
+    CASE "PR1"
+      RETURN "PREDIM2"
+    CASE "SRQ"
+      RETURN "STATUS"
+    CASE "SON"
+      RETURN "STATUS_ON"
+    CASE "SOF"
+      RETURN "STATUS_OFF"
+    CASE "ON"
+      RETURN "ON"
+    CASE "OFF"
+      RETURN "OFF"
+    CASE "DIM"
+      RETURN "DIM"
+  END SELECT 
+
+  RETURN ""
+
+END
+
+PRIVATE SUB X10toCTX(sCommand AS String) AS String
+
+  SELECT sCommand
+    CASE "ALL_UNITS_OFF"
+      RETURN "AUF"
+    CASE "ALL_LIGHTS_ON"
+      RETURN "ALN"
+    CASE "ALL_LIGHTS_OFF"
+      RETURN "ALF"
+    CASE "ON"
+      RETURN "ON"
+    CASE "OFF"
+      RETURN "OFF"
+    CASE "DIM"
+      RETURN "DIM"
+    CASE "BRIGHT"
+      RETURN "BGT"
+    CASE "HAIL_REQ"
+      RETURN "HRQ"
+    CASE "PREDIM1"
+      RETURN "PR0"
+    CASE "PREDIM2"
+      RETURN "PR1"
+    CASE "STATUS"
+      RETURN "SRQ"
+  END SELECT
+
+  RETURN ""
+
+END
+
+' implement properties
+FUNCTION Port_Read() AS String
+
+  RETURN sPort
+
+END
+
+SUB Port_Write(Value AS String)
+
+  sPort = Value
+
+END
+
+PRIVATE FUNCTION Baud_Read() AS String
+
+  RETURN sBaud
+
+END
+
+PRIVATE SUB Baud_Write(Value AS String)
+
+  sBaud = Value
+
+END
+
+PRIVATE FUNCTION CTX35Debug_Read() AS Boolean
+
+  RETURN bCTX35Debug
+
+END
+
+PRIVATE SUB CTX35Debug_Write(Value AS Boolean)
+
+  bCTX35Debug = Value
+
+END
+
+PRIVATE FUNCTION PollTime_Read() AS Integer
+
+  RETURN iPollTime
+
+END
+
+PRIVATE SUB PollTime_Write(Value AS Integer)
+
+  iPollTime = Value
+
+END

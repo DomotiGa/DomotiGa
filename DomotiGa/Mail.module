@@ -1,0 +1,144 @@
+' Gambas module file
+
+' Description:
+' Mail.module
+' Support for sending e-mails via SMTP and fething Gmail RSS.
+
+' Development Status:
+' Working.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008 Ron Klinkien
+
+' Read file called LICENSE for license details.
+
+PRIVATE iNewEMails AS Integer
+PRIVATE sOutput AS String
+PUBLIC tGmail AS Timer
+
+PUBLIC FUNCTION GmailRun()
+
+  ' start poll timer for Gmail
+  tGmail = NEW Timer AS "tGmail"
+  tGmail.Delay = Main.iGmailPolltime * 1000 ' multiply for seconds
+  tGmail.Start
+
+  Poll()
+
+END
+
+PUBLIC SUB Poll()
+
+  ' fetch rss xml in background with help of wget
+  ' as far as I can see gb.net.curl doesn't support google's authentication method.
+  SHELL "wget -q -O - --user=" & Main.sGmailUser & " --password=" & Main.sGmailPassword & " https://mail.google.com/mail/feed/atom --no-check-certificate" FOR READ AS "GmailRSS"
+  IF Main.bGmailDebug THEN Main.WriteDebugLog("[Gmail] fetching RSS feed.")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' poll for mail
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tGmail_Timer()
+
+  Poll()
+
+END
+
+PUBLIC SUB GmailRSS_Read()
+
+  DIM sXml AS String
+
+  READ #LAST, sXml, -256 'Lof(LAST)
+  sOutput &= sXml
+
+  IF InStr(sOutput, "</feed>") THEN
+    IF Main.bGmailDebug THEN Main.WriteDebugLog("[Gmail] parsing RSS xml.")
+    ParseFeed(sOutput)
+    ' bit of a hack, at startup this is a string, later it becomes an integer (because of type variant)
+    IF IsString(Main.GlobalVar["Minute"]) THEN Main.GlobalVar["Minute"] = Val(Main.GlobalVar["Minute"])
+    IF Main.bGmailDebug THEN Main.WriteDebugLog("[Gmail] you have " & Main.iNewMails & " new e-mails.")
+    IF Main.iNewMails AND IF Main.GlobalVar["Minute"] MOD 10 = 0 THEN Main.WriteLog("You have " & Main.iNewMails & " new " & If(Main.iNewMails <> 1, " e-mails", " e-mail") & " on Gmail.")
+    sOutput = NULL
+  END IF
+
+END
+
+PUBLIC SUB ParseFeed(data AS String)
+
+  DIM Xml AS NEW XmlReader
+
+  TRY Xml.FromString(data)
+  IF ERROR THEN RETURN
+
+  DO WHILE TRUE
+    TRY Xml.Read()
+    IF ERROR OR Xml.Eof THEN RETURN
+    SELECT Xml.Node.Type
+      CASE XmlReaderNodeType.Element
+        ' The root element
+        PharseNode(Xml)
+    END SELECT
+  LOOP
+END
+
+PUBLIC SUB PharseNode(Xml AS XmlReader)
+
+  DIM sName AS String
+
+  ' if it has no children, stop
+  IF Xml.Node.IsEmptyElement THEN RETURN
+
+  ' check all nodes of the element
+  sName = Xml.Node.Name
+  DO WHILE TRUE
+    TRY Xml.Read()
+    IF ERROR OR Xml.Eof THEN BREAK
+    SELECT Xml.Node.Type
+      CASE XmlReaderNodeType.EndElement
+        IF Xml.Node.Name = sName THEN RETURN
+      CASE XmlReaderNodeType.Element
+        PharseNode(Xml)
+      CASE XmlReaderNodeType.Text
+        IF sName = "fullcount" THEN
+          Main.iNewMails = Val(Xml.Node.Value)
+          Main.UpdateCounters()
+        END IF
+    END SELECT
+  LOOP
+
+END
+
+PUBLIC SUB SendMail(sSubject AS String, sBody AS String, OPTIONAL sTo AS String)
+
+  DIM hMsg AS NEW SmtpClient
+
+  IF NOT Main.bEmailEnabled THEN RETURN
+
+  ' sent msg to alternate address instead of default one
+  IF (Len(sTo)) THEN
+    hMsg.To.Add(sTo)
+  ELSE
+    hMsg.To.Add(Main.sEmailToAddress)
+  END IF
+
+  IF Main.bEMailDebug THEN
+    Main.WriteDebugLog(Main.sEmailFromAddress)
+    Main.WriteDebugLog(Main.sEmailSMTPServer)
+    Main.WriteDebugLog(Main.iEmailSMTPPort)
+  END IF
+
+  hMsg.Subject = sSubject
+  hMsg.Add(sBody & "\n\n" & "--\nPowered by " & Application.Name & " V" & Application.Version & "\n")
+  hMsg.From = Main.sEmailFromAddress
+  hMsg.Host = Main.sEmailSMTPServer
+  hMsg.Port = Main.iEmailSMTPPort
+  hMsg.Send()
+
+  IF Main.bEMailDebug THEN Main.WriteDebugLog("[e-mail] Message is sent.")
+
+CATCH
+  Main.WriteLog("e-mail Error: Sending e-mail message failed!")
+
+END
+

@@ -1,0 +1,165 @@
+' Gambas module file
+
+' Description:
+' VideoServer.module
+' Support getting captures from for Aviosys IP9100 Videoserver
+
+' Development Status:
+' Sort of working, channel switching needs fixing, resolution selection needs to be added, same for better error checking.
+
+' Links:
+' http://www.sunspot.co.uk/Projects/IP_KAM_9000and9100_notes.htm
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008 Ron Klinkien
+
+' Read file called LICENSE for license details.
+
+PRIVATE hVideoRes AS NEW HttpClient
+PRIVATE hChannel AS NEW HttpClient
+PRIVATE hDownloadImage AS NEW HttpClient
+
+PRIVATE sGetImgUrl AS String
+PRIVATE sSetChanUrl AS String
+PRIVATE iCamPub AS Integer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' delete and create capture tables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB InitTables()
+
+  DIM iCam AS Integer
+  DIM tableCaptures AS Table
+
+  FOR iCam = 0 TO 3
+    Main.hDB.Tables.Remove("capture_camera" & iCam)
+    tableCaptures = Main.hDB.Tables.Add("capture_camera" & iCam)
+    tableCaptures.Fields.Add("id", db.Serial)
+    tableCaptures.Fields.Add("stamp", db.Date, 32)
+    tableCaptures.Fields.Add("image", db.Blob)
+    tableCaptures.PrimaryKey = ["id"]
+    tableCaptures.Update()
+  NEXT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' init and create correct urls
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Init() AS Boolean
+
+  DIM sUrlChan, sUrlRes, sSetResUrl, sUrl AS String
+
+  IF Main.iVideoServerPort THEN 
+    sUrl = Main.sVideoServerAddress & ":" & Main.iVideoServerPort & "/Jpeg/CamImg.jpg"
+    sUrlChan = Main.sVideoServerAddress & ":" & Main.iVideoServerPort & "/SetChannel.cgi?Channel="
+    sUrlRes = Main.sVideoServerAddress & ":" & Main.iVideoServerPort & "/ChangeResolution.cgi?ResType="
+  ELSE
+    sUrl = Main.sVideoServerAddress & "/Jpeg/CamImg.jpg"
+    sUrlChan = Main.sVideoServerAddress & "/SetChannel.cgi?Channel="
+    sUrlRes = Main.sVideoServerAddress & "/ChangeResolution.cgi?ResType="
+  END IF
+
+  IF Main.sVideoServerUser THEN
+    sGetImgUrl = Subst("&1:&2@&3", Main.sVideoServerUser, Main.sVideoServerPassword, sUrl)
+    sSetChanUrl = Subst("&1:&2@&3", Main.sVideoServerUser, Main.sVideoServerPassword, sUrlChan)
+    sSetResUrl = Subst("&1:&2@&3", Main.sVideoServerUser, Main.sVideoServerPassword, sUrlRes)
+  ELSE
+    sGetImgUrl = sUrl
+    sSetChanUrl = sUrlChan
+    sSetResUrl = sUrlRes
+  END IF
+  ' set default resolution (320x240)
+  SetVideoRes("http://" & sSetResUrl & "2")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' set video resolution
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SetVideoRes(sUrl AS String) 
+
+  IF Main.bVideoServerDebug THEN Main.WriteDebugLog("[VideoServer] Setting resolution " & sUrl)
+
+  hVideoRes = NEW HttpClient AS "VideoRes"
+  hVideoRes.URL = "http://" & sUrl
+  hVideoRes.Async = FALSE
+  hVideoRes.TimeOut = 3
+  hVideoRes.Get()
+
+  IF hVideoRes.Status < 0 THEN
+    IF Main.bVideoServerDebug THEN Main.WriteDebugLog("[VideoServer] Error setting resolution " & sUrl)
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' grab image from channel #iCam and store it in our database
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SetChannel(sUrl AS String) 
+
+  IF Main.bVideoServerDebug THEN Main.WriteDebugLog("[VideoServer] Setting channel " & sUrl)
+
+  hChannel = NEW HttpClient AS "SetChannel"
+  hChannel.URL = "http://" & sUrl
+  hChannel.Async = FALSE
+  hChannel.TimeOut = 3
+  hChannel.Get()
+
+  IF hChannel.Status < 0 THEN
+    IF Main.bVideoServerDebug THEN Main.WriteDebugLog("[VideoServer] Error setting channel " & sUrl)
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' grab image from channel #iCam and store it in our database
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Grab(iCam AS Integer)
+
+  ' select wanted channel first
+  SetChannel("http://" & sSetChanUrl & iCam)
+  iCamPub = iCam
+
+  DownloadImage("http://" & sGetImgUrl)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' grab image from channel #iCam and store it in our database
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB DownloadImage(sUrl AS String) 
+
+  DIM sDownload AS String
+
+  IF Main.bVideoServerDebug THEN Main.WriteDebugLog("[VideoServer] Download image " & sUrl)
+
+  hDownloadImage = NEW HttpClient AS "Download"
+  hDownloadImage.URL = "http://" & sUrl
+  hDownloadImage.Async = FALSE
+  hDownloadImage.TimeOut = 3
+  hDownloadImage.Get()
+
+  IF hDownloadImage.Status < 0 THEN
+    IF Main.bVideoServerDebug THEN Main.WriteDebugLog("[VideoServer] Error downloading image " & sUrl)
+  ELSE
+    ' success - read the data
+    IF Lof(hDownloadImage) THEN READ #hDownloadImage, sDownload, Lof(hDownloadImage)
+  END IF
+  SaveCapture(sDownload)
+
+END
+
+PUBLIC SUB SaveCapture(sBuffer AS String)
+
+  DIM rResult AS Result
+
+  ' write image to capture table
+  Main.hDB.Begin()
+  rResult = Main.hDB.Create("capture_camera" & iCamPub)
+  rResult!image = sBuffer
+  rResult!stamp = Now()
+  rResult.Update()
+  Main.hDB.Commit()
+
+END
