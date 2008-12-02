@@ -1034,6 +1034,28 @@ INSERT INTO `settings_irman` VALUES (0,0,'/dev/ttyUSB2',0),(1,0,'/dev/ttyUSB2',0
 /*!40000 ALTER TABLE `settings_irman` ENABLE KEYS */;
 UNLOCK TABLES;
 
+DROP TABLE IF EXISTS `settings_plugwise`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `settings_plugwise` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) default NULL,
+  `serialport` varchar(32) default NULL,
+  `debug` tinyint(1) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `settings_plugwise`
+--
+
+LOCK TABLES `settings_plugwise` WRITE;
+/*!40000 ALTER TABLE `settings_plugwise` DISABLE KEYS */;
+INSERT INTO `settings_plugwise` VALUES (0,1,'/dev/ttyUSB8',1),(1,0,'/dev/ttyUSB9',0);
+/*!40000 ALTER TABLE `settings_plugwise` ENABLE KEYS */;
+UNLOCK TABLES;
+
 --
 -- Table structure for table `settings_main`
 --
