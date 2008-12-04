@@ -53,8 +53,9 @@ PRIVATE RecBits AS Byte
 PRIVATE bMessage AS Boolean = FALSE
 PRIVATE iByteCount AS Integer = 0
 PRIVATE sMessage AS String
-PRIVATE DecodeMessage AS Boolean = TRUE
 PUBLIC bSimulate AS Boolean
+PUBLIC bWaitforAck AS Boolean
+PUBLIC bVersion AS Boolean
 
 PUBLIC SUB RFXCom_Ready()
 
@@ -116,6 +117,18 @@ CATCH ' some errors
   RETURN FALSE
 
 END
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send a command to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION SendCommand(aCommand AS Array)
+
+  DIM iCmd AS Byte
+
+  FOR EACH iCmd IN aCommand
+    TRY WRITE #hRFXComSer, iCmd
+  NEXT
+
+END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
@@ -144,7 +157,7 @@ PUBLIC SUB Simulate(sPacket AS String)
   DIM iCnt, iCnt2 AS Integer
 
   bFirstByte = TRUE
-  IF Main.bRFXComDebug THEN Main.WriteRFXDebugLog("RFXCom Simulate String: " & sPacket)
+  IF bRFXComDebug THEN Main.WriteRFXDebugLog("RFXCom Simulate String: " & sPacket)
 
   RecBits = Val("&H" & Mid(sPacket, 1, 2)) AND &H7F
   iCnt = Lsr(RecBits, 3)
@@ -153,13 +166,13 @@ PUBLIC SUB Simulate(sPacket AS String)
     iCnt += 1
   END IF
 
-  IF iCnt = (Len(sPacket) / 2) - 1 THEN
+  IF bVersion OR IF (iCnt = (Len(sPacket) / 2) - 1) THEN
     FOR iCnt2 = 1 TO Len(sPacket) STEP 2
       ProcessReceivedChar(Val("&H" & Mid(sPacket, iCnt2, 2)))
     NEXT
   ELSE
-    bFirstByte = TRUE
-    Message.Info("1st byte doesn't correspond with packet length!")
+   bFirstByte = TRUE
+   IF bRFXComDebug THEN Main.WriteRFXDebugLog("1st byte doesn't correspond with packet length!")
   END IF
   bSimulate = FALSE
 
@@ -201,72 +214,81 @@ PUBLIC SUB RFXComSer_Read()
 
 END
 
-PRIVATE SUB ProcessReceivedChar(sComChar AS Byte)
-
-  DIM bTemp AS Byte
+PRIVATE SUB ProcessReceivedChar(bTemp AS Byte)
 
   IF bFirstByte = TRUE THEN
     bFirstByte = FALSE
     iByteCount = 0
   END IF
 
-  ' write the output to the screen
-  bTemp = sComChar
+  IF bRFXComDebug THEN Main.WriteRFXDebugLog(Hex(bTemp, 2), 1)
+
   IF Protocol <> MODEMRAW AND Protocol <> MODESRAW THEN
     FMain.pbRFXCom.Picture = Main.pLedOn
   END IF
 
-  SELECT CASE Protocol
-    CASE MODEVAR, MODEVISONIC, MODENOXLAT
-      IF iByteCount = 15 THEN
-        RecBuf[iByteCount - 1] = bTemp
-        bMessage = TRUE
-      ELSE IF iByteCount = 0 THEN
-        RecBits = bTemp AND &H7F
-        IF (bTemp AND &H80) = 0 THEN
-          bSlave = FALSE
-        ELSE
-          bSlave = TRUE
-        END IF
-        IF (RecBits AND &H7) = 0 THEN
-          RecBytes = Lsr((RecBits AND &H7F), 3)
-        ELSE
-          RecBytes = Lsr((RecBits AND &H7F), 3) + 1
-        END IF
-      ELSE IF iByteCount = RecBytes THEN
-        RecBuf[iByteCount - 1] = bTemp
-        iByteCount -= 1
-        bMessage = TRUE
-      ELSE
-        RecBuf[iByteCount - 1] = bTemp
-      END IF
-
-    CASE MODEB32
+  IF bWaitforAck = FALSE THEN
+    IF bVersion THEN  ' display version?
       RecBuf[iByteCount] = bTemp
-      IF (iByteCount = 3) THEN
+      IF iByteCount = 1 THEN
         bMessage = TRUE
       END IF
+    ELSE
+      SELECT CASE Protocol
+        CASE MODEVAR, MODEVISONIC, MODENOXLAT
+          IF iByteCount = 15 THEN
+            RecBuf[iByteCount - 1] = bTemp
+            bMessage = TRUE
+          ELSE IF iByteCount = 0 THEN
+            RecBits = bTemp AND &H7F
+            IF (bTemp AND &H80) = 0 THEN
+              bSlave = FALSE
+            ELSE
+              bSlave = TRUE
+            END IF
+            IF (RecBits AND &H7) = 0 THEN
+              RecBytes = Lsr((RecBits AND &H7F), 3)
+            ELSE
+              RecBytes = Lsr((RecBits AND &H7F), 3) + 1
+            END IF
+          ELSE IF iByteCount = RecBytes THEN
+            RecBuf[iByteCount - 1] = bTemp
+            iByteCount -= 1
+            bMessage = TRUE
+          ELSE
+            RecBuf[iByteCount - 1] = bTemp
+          END IF
 
-    CASE MODEMRAW, MODESRAW
-      RecBuf[iByteCount] = bTemp
-      IF iByteCount = 29 THEN
-        bMessage = TRUE
-      END IF
+        CASE MODEB32
+          RecBuf[iByteCount] = bTemp
+          IF (iByteCount = 3) THEN
+            bMessage = TRUE
+          END IF
 
-    CASE MODEKOP
-      RecBuf[iByteCount] = bTemp
-      IF iByteCount = 2 THEN
-        bMessage = TRUE
-      END IF
+        CASE MODEMRAW, MODESRAW
+          RecBuf[iByteCount] = bTemp
+          IF iByteCount = 29 THEN
+            bMessage = TRUE
+          END IF
 
-    CASE MODEKAKU
-      RecBuf[iByteCount] = bTemp
-      IF iByteCount = 2 THEN
-        bMessage = TRUE
-      END IF
-  END SELECT
+        CASE MODEKOP
+          RecBuf[iByteCount] = bTemp
+          IF iByteCount = 2 THEN
+            bMessage = TRUE
+          END IF
 
-  iByteCount += 1
+        CASE MODEKAKU
+          RecBuf[iByteCount] = bTemp
+          IF iByteCount = 2 THEN
+            bMessage = TRUE
+          END IF
+      END SELECT
+    END IF
+    iByteCount += 1
+  ELSE
+    bMessage = TRUE
+  END IF
+
   IF bMessage THEN
     Display_Message()
   END IF
@@ -281,7 +303,7 @@ PRIVATE SUB Display_Message()
   bMessage = FALSE
   bFirstByte = TRUE
 
-  IF DecodeMessage THEN
+  IF NOT bWaitforAck THEN
     IF iByteCount = 4 THEN
       iParity = NOT (Lsr((RecBuf[0] AND &HF0), 4) + (RecBuf[0] AND &HF) + Lsr(RecBuf[1], 4) + (RecBuf[1] AND &HF) + Lsr(RecBuf[2], 4) + (RecBuf[2] AND &HF) + Lsr(RecBuf[3], 4)) AND &HF
       IF (iParity = (RecBuf[3] AND &HF)) AND (RecBuf[0] + (RecBuf[1] XOR &HF) = &HFF) THEN
@@ -298,7 +320,43 @@ PRIVATE SUB Display_Message()
       END IF
     END IF
 
-    IF Protocol = MODEVAR AND (RecBits = 56 OR RecBits > 59) THEN
+    IF bVersion THEN  ' display version?
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Version", 1)
+      bVersion = FALSE
+      RecBits = 0
+      IF RecBuf[0] = Asc("M") THEN
+        IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Master=" & Hex(RecBuf[1]))
+        IF iByteCount > 3 THEN
+          IF RecBuf[2] = Asc("S") THEN
+            IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Slave=" & Hex(RecBuf[3]))
+          ELSE
+            IF bRFXComDebug THEN Main.WriteRFXDebugLog(Hex(RecBuf[2]), 1)
+          END IF
+        END IF
+      ELSE IF RecBuf[0] = Asc("S") THEN
+        IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Slave=" & Hex(recbuf[1]))
+        IF iByteCount > 3 THEN
+          IF RecBuf[2] = Asc("M") THEN
+            IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Master=" & Hex(RecBuf[3]))
+          ELSE
+            IF bRFXComDebug THEN Main.WriteRFXDebugLog(Hex(RecBuf[2]), 1)
+          END IF
+        END IF
+      ELSE
+        IF bRFXComDebug THEN Main.WriteRFXDebugLog(" " & Hex(RecBuf[0]), 1)
+        IF iByteCount > 3 THEN
+          IF RecBuf[1] = Asc("S") THEN
+            IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Slave=" & Hex(RecBuf[2]))
+          ELSE IF RecBuf[1] = Asc("M") THEN
+            IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Master=" & Hex(RecBuf[2]))
+          ELSE
+            IF bRFXComDebug THEN Main.WriteRFXDebugLog(" " & Hex(RecBuf[1]), 1)
+          END IF
+        ELSE IF iByteCount = 3 THEN
+          IF bRFXComDebug THEN Main.WriteRFXDebugLog(" " & Hex(RecBuf[1]), 1)
+        END IF
+      END IF
+    ELSE IF Protocol = MODEVAR AND (RecBits = 56 OR RecBits > 59) THEN
       ProcessOregon(RecBits)
     ELSE IF bRFXPower THEN
       ProcessRFXMeter()
@@ -308,7 +366,7 @@ PRIVATE SUB Display_Message()
 
     IF (Protocol = MODEVAR OR Protocol = MODENOXLAT) AND RecBits <> 0 THEN
       FMain.pbRFXCom.Picture = Main.pLedOff
-      IF Main.bRFXComDebug THEN
+      IF bRFXComDebug THEN
         IF bSlave THEN
           Main.WriteRFXDebugLog(" bits=" & Str(RecBits) & " from SLAVE")
         ELSE
@@ -316,7 +374,10 @@ PRIVATE SUB Display_Message()
         END IF
       END IF
     END IF
+  ELSE
+    IF bRFXComDebug THEN Main.WriteRFXDebugLog(" ACK", 1)
   END IF
+  bWaitforAck = FALSE
 
 END
 
@@ -327,7 +388,7 @@ PRIVATE SUB ProcessRFXMeter()
   DIM sTemp AS String
 
   IF bRFXComDebug THEN
-    Main.WriteRFXDebugLog("RFXMeter", 1)
+    Main.WriteRFXDebugLog(" RFXMeter", 1)
     Main.WriteRFXDebugLog(" addr:" & Format(Hex(RecBuf[0]), "00"), 1)
     Main.WriteRFXDebugLog(Hex(RecBuf[1]), 1)
     Main.WriteRFXDebugLog(" = ACRF-ID:" & Format(Str(RecBuf[1] + (RecBuf[0] * 256)), "00") & " ", 1)
@@ -335,7 +396,7 @@ PRIVATE SUB ProcessRFXMeter()
   SELECT CASE RecBuf[5] AND &HF0
     CASE &H0
       sMeasuredValue = ((RecBuf[4] * 65536) + (RecBuf[2] * 256) + RecBuf[3])
-      IF bRFXComDebug THEN 
+      IF bRFXComDebug THEN
         Main.WriteRFXDebugLog("RFXMeter: " & Str(sMeasuredValue), 1)
         Main.WriteRFXDebugLog(";  RFXPower: " & Str(sMeasuredValue / 100) & " kWh", 1)
         Main.WriteRFXDebugLog(";  RFXPower-Module: " & Str(sMeasuredValue / 1000) & " kWh", 1)
@@ -499,9 +560,10 @@ PRIVATE FUNCTION ProcessOregon(RecBits AS Byte) AS Boolean
   DIM iDeviceId, iCnt AS Integer
   DIM sUvText AS String
 
+  ' Oregon THR128,THx138
   IF RecBuf[0] = &HA AND RecBuf[1] = &H4D AND RecBits >= 72 THEN
     bOregon = TRUE
-    IF bRFXComDebug THEN Main.WriteRFXDebugLog("TEMP1[" & CStr((RecBuf[3]) * 256 + ((Lsr(RecBuf[2], 4)) AND &H7)) & "] THR128,THx138", 1)
+    IF bRFXComDebug THEN Main.WriteRFXDebugLog(" TEMP1[" & CStr((RecBuf[3]) * 256 + ((Lsr(RecBuf[2], 4)) AND &H7)) & "] THR128,THx138", 1)
     Channel = WrChannel()
     IF bRFXComDebug THEN Main.WriteRFXDebugLog(" addr:" & Right("0" & Hex(RecBuf[3]), 2), 1)
     IF ((RecBuf[5] AND &HF0) < &HA0) AND ((RecBuf[5] AND &HF) < &HA) AND ((RecBuf[4] AND &HF0) < &HA0) THEN
@@ -528,9 +590,10 @@ PRIVATE FUNCTION ProcessOregon(RecBits AS Byte) AS Boolean
       Devices.Update(iDeviceId, Format(CStr(sCelsius), "#0.#"))
     END IF
 
+  ' Oregon THGN122N,THGR122NX,THGR228N,THGR268
   ELSE IF RecBuf[0] = &H1A AND RecBuf[1] = &H2D AND RecBits >= 72 THEN
     bOregon = TRUE
-    IF bRFXComDebug THEN Main.WriteRFXDebugLog("TH1[" & CStr(RecBuf[3] * 256 + Channel) & "] THGN122N,THGR122NX,THGR228N,THGR268", 1)
+    IF bRFXComDebug THEN Main.WriteRFXDebugLog(" TH1[" & CStr(RecBuf[3] * 256 + Channel) & "] THGN122N,THGR122NX,THGR228N,THGR268", 1)
     Channel = WrChannel()
     IF bRFXComDebug THEN Main.WriteRFXDebugLog(" addr:" & Right("0" & Hex(RecBuf[3]), 2), 1)
     IF bRFXComDebug THEN Main.WriteRFXDebugLog(" temp:", 1)
@@ -556,10 +619,11 @@ PRIVATE FUNCTION ProcessOregon(RecBits AS Byte) AS Boolean
       Devices.Update(iDeviceId, Format(CStr(sCelsius), "#0.#"), Right(Hex(((Lsl(RecBuf[7], 4)) AND &HF0) + ((Lsr(RecBuf[6], 4)) AND &HF)), 2))
     END IF
 
+  ' Oregon THGR810
   ELSE IF RecBuf[0] = &HFA AND RecBuf[1] = &H28 AND RecBits >= 72 THEN
     bOregon = TRUE
-    IF Main.bRFXComDebug THEN
-      Main.WriteRFXDebugLog("TH2[" & CStr(RecBuf[3] * 256 + (Lsr(RecBuf[2], 4))) & "] THGR810", 1)
+    IF bRFXComDebug THEN
+      Main.WriteRFXDebugLog(" TH2[" & CStr(RecBuf[3] * 256 + (Lsr(RecBuf[2], 4))) & "] THGR810", 1)
       Channel3 = WrChannel3()
       Main.WriteRFXDebugLog(" addr:" & Right("0" & Hex(RecBuf[3]), 2), 1)
       Main.WriteRFXDebugLog(" temp:", 1)
@@ -570,23 +634,25 @@ PRIVATE FUNCTION ProcessOregon(RecBits AS Byte) AS Boolean
     ELSE
         sCelsius = 0 - (CSng(Hex(RecBuf[5])) + CSng(Hex(Lsr(RecBuf[4], 4))) / 10)
     END IF
-    IF Main.bRFXComDebug THEN
+    IF bRFXComDebug THEN
       Main.WriteRFXDebugLog(Format(CStr(sCelsius), "#0.#") & "°C | " & Format(CStr(sCelsius * 1.8 + 32), "##.#") & "°F", 1)
       Main.WriteRFXDebugLog(" hum:" & Right(Hex(((Lsl(RecBuf[7], 4)) AND &HF0) + ((Lsr(RecBuf[6], 4)) AND &HF)), 2), 1)
     END IF
     WrHum(RecBuf[7] AND &HC0)
     iDeviceId = Devices.Find(Right("0" & Hex(RecBuf[3]), 2), Devices.FindInterface("RFXCom Receiver"))
     IF (RecBuf[4] AND &H4) = &H4 THEN
-      IF Main.bRFXComDebug THEN Main.WriteRFXDebugLog(" battery empty", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" battery empty", 1)
       IF iDeviceId THEN Devices.Battery(iDeviceId, "low")
     END IF
     Checksum8()
     IF iDeviceId THEN
       Devices.Update(iDeviceId, Format(CStr(sCelsius), "#0.#"), Right(Hex(((Lsl(RecBuf[7], 4)) AND &HF0) + ((Lsr(RecBuf[6], 4)) AND &HF)), 2))
     END IF
+
+  ' Oregon UVR138
   ELSE IF RecBuf[0] = &HEA AND RecBuf[1] = &H7C AND RecBits >= 60 THEN
     bOregon = TRUE
-    IF bRFXComDebug THEN Main.WriteRFXDebugLog("UV1[" & CStr(RecBuf[3] * 256) & "] UVR138 ", 1)
+    IF bRFXComDebug THEN Main.WriteRFXDebugLog(" UV1[" & CStr(RecBuf[3] * 256) & "] UVR138 ", 1)
     IF bRFXComDebug THEN Main.WriteRFXDebugLog(" addr:" & Right("0" & Hex(RecBuf[3]), 2), 1)
     sUv = CSng(Hex(RecBuf[5] AND &HF)) * 10 + CSng(Hex(Lsr(RecBuf[4], 4)))
     IF bRFXComDebug THEN Main.WriteRFXDebugLog(" UV factor:" & CStr(sUv) & " Level:", 1)
@@ -611,9 +677,11 @@ PRIVATE FUNCTION ProcessOregon(RecBits AS Byte) AS Boolean
     IF iDeviceId THEN
       Devices.Update(iDeviceId, CStr(sUv), sUvText)
     END IF
+
+  ' Oregon BWR101,BWR102
   ELSE IF RecBits = 56 THEN
     bOregon = TRUE
-    IF bRFXComDebug THEN Main.WriteRFXDebugLog("WEIGHT1[" & CStr(Lsr(RecBuf[1], 4)) & "] BWR101,BWR102", 1)
+    IF bRFXComDebug THEN Main.WriteRFXDebugLog(" WEIGHT1[" & CStr(Lsr(RecBuf[1], 4)) & "] BWR101,BWR102", 1)
     IF IsNumber(RecBuf[4]) AND IsNumber(Lsr(RecBuf[3], 4)) THEN
       IF bRFXComDebug THEN Main.WriteRFXDebugLog(" addr:" & Hex(Lsr(RecBuf[1], 4)), 1)
       sWeight = CSng(Hex(RecBuf[5] AND &H1)) * 100 + CSng(Hex(RecBuf[4])) + CSng(Hex(Lsr(RecBuf[3], 4))) / 10
@@ -634,9 +702,11 @@ PRIVATE FUNCTION ProcessOregon(RecBits AS Byte) AS Boolean
     ELSE
       IF bRFXComDebug THEN Main.WriteRFXDebugLog(" ERROR: weight value is not a decimal value.", 1)
     END IF
+
+  ' Oregon GR101
   ELSE IF (RecBuf[0] AND &HF) = &H3 AND RecBits = 64 THEN
     bOregon = TRUE
-    IF bRFXComDebug THEN Main.WriteRFXDebugLog("WEIGHT2[" & CStr(Lsr(RecBuf[1], 4)) & "] GR101 ", 1)
+    IF bRFXComDebug THEN Main.WriteRFXDebugLog(" WEIGHT2[" & CStr(Lsr(RecBuf[1], 4)) & "] GR101 ", 1)
     FOR iCnt = 7 TO 0 STEP -1
       IF bRFXComDebug THEN Main.WriteRFXDebugLog(Format(CStr(RecBuf[iCnt]), "#0.#"), 1)
     NEXT
@@ -673,16 +743,19 @@ END
 
 PRIVATE SUB WrHum(Hum AS Byte)
 
+  DIM sVerbose AS String
+
   SELECT CASE Hum
     CASE &H0
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Normal ", 1)
+      sVerbose = " Normal "
     CASE &H40
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Comfort ", 1)
+      sVerbose = " Comfort "
     CASE &H80
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Dry ", 1)
+      sVerbose = " Dry "
     CASE &HC0
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Wet ", 1)
+      sVerbose = " Wet "
   END SELECT
+  IF bRFXComDebug THEN Main.WriteRFXDebugLog(sVerbose, 1)
 
 END
 
@@ -846,11 +919,11 @@ PRIVATE SUB ProcessX10()
   iDeviceId = Devices.Find(sHouse & Right("0" & sUnit, 2), Devices.FindInterface("RFXCom Receiver"))
 
   IF iDeviceId THEN
-    ' marmitek MS13E motion sensor part
+    ' Marmitek MS13E motion sensor part
     IF Devices.FindModuleForDevice(iDeviceId) = 4 THEN 
       IF sValue = "On" THEN sValue = "Motion"
       IF sValue = "Off" THEN sValue = "No Motion"
-    ' marmitek MS13E dark/light sensor part
+    ' Marmitek MS13E dark/light sensor part
     ELSE IF Devices.FindModuleForDevice(iDeviceId) = 5 THEN 
       IF sValue = "On" THEN sValue = "Dark"
       IF sValue = "Off" THEN sValue = "Light"
@@ -871,109 +944,109 @@ PRIVATE SUB ProcessX10Security()
   SELECT CASE RecBuf[2]
     CASE &H0
       sValue = "Open"
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("DS10/90  Alert (max delay)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" DS10/90  Alert (max delay)", 1)
     CASE &H1
       sValue = "Open"
       bLowBatt = TRUE
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("DS10/90  Alert (max delay, batt low)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" DS10/90  Alert (max delay, batt low)", 1)
     CASE &H40
       sValue = "Open"
       sValue2 = "Tamper"
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("DS90  Alert + Tamper(max delay)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" DS90  Alert + Tamper(max delay)", 1)
     CASE &H44
       sValue = "Open"
       sValue2 = "Tamper"
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or DS90  Alert + Tamper", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or DS90  Alert + Tamper", 1)
     CASE &HC0
       sValue = "Closed"
       sValue2 = "Tamper"
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("DS90  Normal + Tamper (max delay)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" DS90  Normal + Tamper (max delay)", 1)
     CASE &HC4
       sValue = "Closed"
       sValue2 = "Tamper"
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or DS90  Normal + Tamper)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or DS90  Normal + Tamper)", 1)
     CASE &H4
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or DS10/90  Alert ", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or DS10/90  Alert ", 1)
       sValue = "Open"
     CASE &H5
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or DS10/90  Alert (battery low)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or DS10/90  Alert (battery low)", 1)
       sValue = "Open"
       bLowBatt = TRUE
     CASE &H80
       sValue = "Normal"
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("DS10/90  Normal (max delay)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" DS10/90  Normal (max delay)", 1)
     CASE &H81
       sValue = "Closed"
       bLowBatt = TRUE
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("DS10/90  Normal (max delay, batt low)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" DS10/90  Normal (max delay, batt low)", 1)
     CASE &H84
       sValue = "Closed"
-        IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or DS10/90  Normal", 1)
+        IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or DS10/90  Normal", 1)
     CASE &H85
       sValue = "Closed"
       bLowBatt = TRUE
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or DS10/90  Normal (battery low)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog("  Visonic or DS10/90  Normal (battery low)", 1)
     CASE &HC
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or MS10/20/90  Alert ", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or MS10/20/90  Alert ", 1)
     CASE &H8C
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or MS10/20/90  Normal", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or MS10/20/90  Normal", 1)
     CASE &H20
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("MS20  Dark sensor", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" MS20  Dark sensor", 1)
     CASE &H4C
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or MS90  Alert + Tamper", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or MS90  Alert + Tamper", 1)
     CASE &HCC
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or MS90  Normal + Tamper", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or MS90  Normal + Tamper", 1)
     CASE &HD
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or MS90  Alert + batt.low ", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or MS90  Alert + batt.low ", 1)
     CASE &H8D
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or MS90  Normal + batt.low", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or MS90  Normal + batt.low", 1)
     CASE &HE0
       IF RecBuf[0] = &HFF THEN
         IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Master receiver jamming detected", 1)
       ELSE IF RecBuf[0] = &H0 THEN
         IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Slave receiver jamming detected", 1)
       ELSE
-        IF bRFXComDebug THEN Main.WriteRFXDebugLog("DM10  Motion", 1)
+        IF bRFXComDebug THEN Main.WriteRFXDebugLog(" DM10  Motion", 1)
       END IF
     CASE &HF0
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("DM10  Darkness detected", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" DM10  Darkness detected", 1)
     CASE &HF8
       IF RecBuf[0] = &HFF THEN
         IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Master receiver end jamming detected", 1)
       ELSE IF RecBuf[0] = &H0 THEN
         IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Slave receiver end jamming detected", 1)
       ELSE
-        IF bRFXComDebug THEN Main.WriteRFXDebugLog("DM10  Light detected", 1)
+        IF bRFXComDebug THEN Main.WriteRFXDebugLog(" DM10  Light detected", 1)
       END IF
     CASE &H6
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("KR10/SH624 ARM Away (min)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" KR10/SH624 ARM Away (min)", 1)
     CASE &H26
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or KR10/Smoke Panic", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or KR10/Smoke Panic", 1)
       sValue = "Panic"
     CASE &H46
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("KR10  Lights On", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" KR10  Lights On", 1)
     CASE &H86
-     IF bRFXComDebug THEN Main.WriteRFXDebugLog("KR10  Disarm", 1)
+     IF bRFXComDebug THEN Main.WriteRFXDebugLog(" KR10  Disarm", 1)
     CASE &HC6
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("KR10  Lights Off", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" KR10  Lights Off", 1)
     CASE &H2
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or SH624 ARM Away (max)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or SH624 ARM Away (max)", 1)
     CASE &H3
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("SH624 Panic", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" SH624 Panic", 1)
     CASE &HA
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("SH624 ARM Home (max)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" SH624 ARM Home (max)", 1)
     CASE &HE
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or SH624 ARM Home (min)", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or SH624 ARM Home (min)", 1)
     CASE &H22
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("SH624 Panic ", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" SH624 Panic ", 1)
     CASE &H42
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or SH624 Lights On", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or SH624 Lights On", 1)
     CASE &H82
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Visonic or SH624 Disarm", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Visonic or SH624 Disarm", 1)
     CASE &HC2
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("SH624 Lights Off", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" SH624 Lights Off", 1)
     CASE ELSE
-      IF bRFXComDebug THEN Main.WriteRFXDebugLog("Secur ??????", 1)
+      IF bRFXComDebug THEN Main.WriteRFXDebugLog(" Secur ??????", 1)
   END SELECT
   iHsAddr = CreateHsAddr()
   IF Protocol = MODEB32 THEN
