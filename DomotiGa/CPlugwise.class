@@ -32,6 +32,8 @@ PRIVATE aCRCTable AS Integer[256]
 PRIVATE bTableInit AS Boolean
 
 CONST POWERCHANGECODE AS String = "0017"
+CONST DEVICEINFOCODE AS String = "0023"
+CONST DEVICEINFORESPONSECODE AS String = "0024"
 CONST CALIBRATIONCODE AS String = "0026"
 CONST CALIBRATIONRESPONSECODE AS String = "0027"
 CONST POWERINFOCODE AS String = "0012"
@@ -74,11 +76,14 @@ PUBLIC SUB Run()
   tPlugwise.Delay = iPollTime * 1000 ' multiply for seconds
   tPlugwise.Start
 
+  CheckRelay()
+
 END
 
 PUBLIC SUB tPlugwise_Timer()
 
   CheckPower()
+  CheckRelay()
 
 END
 
@@ -95,6 +100,27 @@ PUBLIC SUB CheckPower()
         IF InStr(Devices.FindTypeForDevice(rResult!id), "Plugwise")
           IF Main.bPlugwiseDebug THEN Main.WriteDebugLog("[Plugwise] checking power usage of device '" & rResult!name & "' with address " & rResult!address)
           GetPowerInfo(rResult!address)
+        END IF
+      NEXT
+    ELSE
+      Main.WriteLog("Plugwise: no Plugwise Circle(s) found in device table!")
+    END IF
+  END IF
+END
+
+PUBLIC SUB CheckRelay()
+
+  DIM rResult AS Result
+  DIM iCount AS Integer
+
+  TRY rResult = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE")
+
+  IF rResult.Count THEN
+    IF (rResult.Count >= 1) THEN
+      FOR EACH rResult
+        IF InStr(Devices.FindTypeForDevice(rResult!id), "Plugwise")
+          IF Main.bPlugwiseDebug THEN Main.WriteDebugLog("[Plugwise] checking relay state of device '" & rResult!name & "' with address " & rResult!address)
+          GetDeviceInfo(rResult!address)
         END IF
       NEXT
     ELSE
@@ -130,9 +156,45 @@ PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String)
 
 END
 
+PUBLIC SUB GetDeviceInfo(sAddress AS String) AS String
+
+  DIM sHeader, sString, sCRC, sComplete, sResult, sRelay, sMac, sMacRecv, sState AS String
+  DIM iDeviceId AS Integer
+
+  sMac = Replace(sAddress, ":", "")
+
+  sHeader = Chr(5) & Chr(5) & Chr(3) & Chr(3)
+  sString = DEVICEINFOCODE & sMAC
+  sCRC = Hex(CalculateCRC(sString))
+  sComplete = sHeader & sString & sCRC & Chr(13) & Chr(10)
+
+  IF bPlugwiseDebug THEN
+    Main.WriteDebugLog("[Plugwise] MAC: " & sMAC)
+    Main.WriteDebugLog("[Plugwise] String: " & sString & " CRC: " & sCRC)
+  END IF
+  Send(sComplete)
+  sResult = GetResult(DEVICEINFORESPONSECODE)
+  IF sResult THEN
+    sMacRecv = Mid(sResult, 1, 16)
+    sRelay = Mid(sResult, 33, 2)
+    sState = IIf(sRelay = "01", "On", "Off")
+    IF bPlugwiseDebug THEN
+      Main.WriteDebugLog("[Plugwise] GetDeviceInfo Result: " & sResult)
+      Main.WriteDebugLog("[Plugwise] MAC Received: " & sMacRecv)
+      Main.WriteDebugLog("[Plugwise] RelayState: " & sRelay & " " & sState)
+    END IF
+    ' update device state
+    iDeviceId = Devices.Find(sAddress, Devices.FindInterface("Plugwise Stick"))
+    IF iDeviceId THEN Devices.Update(iDeviceId, sState)
+  ELSE
+    IF bPlugwiseDebug THEN Main.WriteDebugLog("[Plugwise] GetDeviceInfo() didn't get expected answer.")
+  END IF
+
+END
+
 PUBLIC SUB GetPowerInfo(sAddress AS String) AS String
 
-  DIM sHeader, sString, sRead, sCRC, sComplete, sResult, sPulses, sMac AS String
+  DIM sHeader, sString, sCRC, sComplete, sResult, sPulses, sMac AS String
   DIM iPulses, iDeviceId AS Integer
   DIM fGainA, fGainB, fOffTot, fOffRuis, fCorrectPulses, fWatt, fkWh AS Float
 
@@ -190,7 +252,7 @@ PUBLIC SUB GetPowerInfo(sAddress AS String) AS String
       END IF
     END IF
   ELSE
-    IF bPlugwiseDebug THEN Main.WriteDebugLog("[Plugwise] GetPowerInfo, didn't get expected answer from the Stick.")
+    IF bPlugwiseDebug THEN Main.WriteDebugLog("[Plugwise] GetPowerInfo() didn't get expected answer.")
   END IF
 
 END
@@ -239,6 +301,9 @@ PRIVATE SUB GetResult(sType AS String) AS String
     CASE POWERINFORESPONSECODE
       iBegin = InStr(sData, Chr(5) & Chr(5) & Chr(3) & Chr(3) & POWERINFORESPONSECODE)
       IF iBegin THEN sResult = Mid(sData, iBegin + 24, 37)
+    CASE DEVICEINFORESPONSECODE
+      iBegin = InStr(sData, Chr(5) & Chr(5) & Chr(3) & Chr(3) & DEVICEINFORESPONSECODE)
+      IF iBegin THEN sResult = Mid(sData, iBegin + 8, 34)
   END SELECT
 
   RETURN sResult
