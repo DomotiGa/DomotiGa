@@ -30,7 +30,8 @@ PUBLIC hCTX35 AS NEW SerialPort
 PUBLIC tCTX35 AS Timer
 PUBLIC tX10 AS Timer
 
-PUBLIC sCommandToSend AS String
+PUBLIC sCommandToSend AS String ' holds commands to send
+PRIVATE aCTX AS NEW String[3, 7] ' buffer received commands
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open serial port
@@ -92,6 +93,151 @@ PUBLIC SUB Run()
 
 END
 
+PRIVATE SUB Received(sData AS String)
+
+  IF Left$(sData, 1) = "$" AND Right$(sData, 1) = "#" THEN ' received complete packet
+    IF sData = "$<2800!4B#" THEN ' ignore acks
+      sData = ""
+    ELSE
+      sData = Replace(sData, "$<2800!4B#", "") ' remove ack packet
+      IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] " & sData)
+      TranslateCTX(sData)
+    END IF
+    sData = ""
+  END IF
+
+END
+
+PRIVATE SUB TranslateCTX(sStr AS String)
+
+  DIM iPos AS Integer = 1
+  DIM sChar AS String
+
+  IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] " & sStr)
+
+  ' search for start and end
+  IF Left$(sStr, 1) = "$" AND Right$(sStr, 1) = "#" THEN ' complete packet
+    ' checksum
+    IF NOT TestCheckSum(sStr) THEN
+      IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] Checksum error!")
+      RETURN
+    END IF
+    sStr = LTrim$(Mid$(sStr, 8, Len(sStr) - 10))
+
+    DO
+      IF Mid$(sStr, iPos, 1) = " " THEN INC iPos
+      sChar = Mid$(sStr, iPos, 3)
+      IF Right$(sChar, 1) LIKE "[0-9]" AND Left$(sChar, 1) LIKE "[A-Z]" THEN ' code found
+        iPos = iPos + 3
+        ProcessCode("Code", sChar)
+      ELSE IF InStr(sChar, "ON") THEN ' status found
+        iPos = iPos + 3
+        ProcessCode("Status", sChar)
+      ELSE IF InStr(sChar, "OF") THEN ' status found
+        sChar = Mid$(sStr, iPos, 3)
+        iPos = iPos + 4
+        ProcessCode("Status", sChar)
+      ELSE IF InStr(sChar, "SR") THEN ' status request found
+        iPos = iPos + 4
+        ProcessCode("Status Request", sChar)
+      ELSE IF Right$(sChar, 2) = "SO" THEN ' status found
+        IF InStr(sStr, "SON") THEN
+          ProcessCode("Status", Left$(sChar, 1) & "ON")
+        ELSE IF InStr(sStr, "SOF") THEN
+          ProcessCode("Status", Left$(sChar, 1) & "OF")
+        END IF
+        iPos = iPos + 4
+      ELSE
+        INC iPos
+      END IF
+    LOOP UNTIL iPos >= Len(sStr)
+  ELSE
+    IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] Wrong X10 data received! " & sStr)
+  END IF
+
+END SUB
+
+PRIVATE SUB ProcessCode(sType AS String, sValue AS String)
+
+  DIM iCnt AS Integer
+  DIM bCodefound AS Boolean
+
+  FOR iCnt = 0 TO 2
+    IF sType = "Code" THEN
+      bCodefound = FALSE
+      IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] Code: " & sValue)
+      IF aCTX[iCnt, 0] = sValue AND NOT aCTX[iCnt, 5] THEN
+        bCodefound = TRUE
+      END IF
+      IF aCTX[iCnt, 0] = "" AND NOT bCodefound THEN
+        aCTX[iCnt, 0] = sValue
+        aCTX[iCnt, 4] = Time
+        RETURN
+      ELSE IF aCTX[iCnt, 0] = sValue AND aCTX[iCnt, 5] = "" AND bCodefound THEN
+        aCTX[iCnt, 1] = sValue
+        RETURN
+      ELSE IF aCTX[iCnt, 5] = "OK" AND NOT bCodefound THEN 'andere sValue, oude wel al verzonden dus overschrijven
+        aCTX[iCnt, 0] = sValue
+        aCTX[iCnt, 1] = ""
+        aCTX[iCnt, 2] = ""
+        aCTX[iCnt, 3] = ""
+        aCTX[iCnt, 4] = Time
+        aCTX[iCnt, 5] = ""
+        aCTX[iCnt, 6] = ""
+        RETURN
+      ELSE IF DateDiff(Time, aCTX[iCnt, 4], gb.Second) > 10 THEN ' incomplete code, overwrite
+        Main.WriteDebugLog("[CTX35] Received Code without Status : " & aCTX[iCnt, 0] & " " & aCTX[iCnt, 1] & " " & aCTX[iCnt, 2] & " " & aCTX[iCnt, 3] & " " & aCTX[iCnt, 4] & " " & aCTX[iCnt, 5] & " " & aCTX[iCnt, 6])
+        aCTX[iCnt, 0] = sValue
+        aCTX[iCnt, 1] = ""
+        aCTX[iCnt, 2] = ""
+        aCTX[iCnt, 3] = ""
+        aCTX[iCnt, 4] = Time
+        aCTX[iCnt, 5] = ""
+        aCTX[iCnt, 6] = ""
+        RETURN
+      END IF
+    ELSE IF sType = "Status Request" THEN
+      IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] Status Request " & sValue)
+      IF aCTX[iCnt, 0] = "" THEN
+        RETURN
+      ELSE IF Left$(aCTX[iCnt, 0], 1) = Left$(sValue, 1) AND aCTX[iCnt, 5] = "" THEN
+        aCTX[iCnt, 6] = "SRQ" ' status request
+        RETURN
+      END IF
+    ELSE IF sType = "Status" THEN
+      IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] Status: " & sValue)
+      IF aCTX[iCnt, 2] = "" AND Left$(aCTX[iCnt, 0], 1) = Left$(sValue, 1) THEN
+        aCTX[iCnt, 5] = "OK"
+        aCTX[iCnt, 4] = Time
+        aCTX[iCnt, 2] = Right$(sValue, 2)
+        UpdateX10(aCTX[iCnt, 0], Right$(sValue, 2))
+        RETURN
+      ELSE IF aCTX[iCnt, 3] = "" AND Left$(aCTX[iCnt, 0], 1) = Left$(sValue, 1) THEN
+        aCTX[iCnt, 3] = Right$(sValue, 2)
+        RETURN
+      END IF
+    END IF
+  NEXT
+
+END
+
+PRIVATE SUB UpdateX10(sCode AS String, sCommand AS String)
+
+  DIM iDeviceId AS Integer
+
+  IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] Received command " & sCommand & " for device " & sCode)
+
+  iDeviceId = Devices.Find(sCode, Devices.FindInterface("Xanura CTX35"))
+  IF iDeviceId THEN
+    IF sCommand = "ON" THEN
+      Devices.Update(iDeviceId, "On")
+    ELSE IF sCommand = "OF" THEN
+      Devices.Update(iDeviceId, "Off")
+    END IF
+  END IF
+
+END
+
 ' ctx35 poll routine
 PUBLIC SUB tCTX35_Timer()
 
@@ -119,25 +265,18 @@ PUBLIC SUB tCTX35_Timer()
     sCommandToSend = NULL
   END IF
 
-  IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] " & sResponse)
-
 END
 
 PUBLIC SUB SendPollCommand() AS String
 
   DIM sBuf, sCommand AS String
-
   sCommand = "$>2800008C#"
 
   IF hCTX35.Status <> Net.Active THEN RETURN
 
-  IF Main.bCTX35Debug THEN Main.WriteDebugLog(sCommand)
   PRINT #hCTX35, sCommand
-
   TRY READ #hCTX35, sBuf, Lof(hCTX35)
-  IF NOT sBuf THEN Main.WriteDebugLog("[CTX35] Didn't receive ack for command " & sCommand & "!")
-
-  RETURN sBuf
+  Received(sBuf)
 
 END
 
@@ -152,9 +291,7 @@ PRIVATE SUB SendX10Command(sString AS String) AS String
 
   PRINT #hCTX35, sString 
   TRY READ #hCTX35, sBuf, Lof(hCTX35)
-  IF NOT TestCheckSum(sBuf) THEN Main.WriteDebugLog("[CTX35] Received wrong checksum for " & sBuf & "")
-
-  RETURN sBuf
+  Received(sBuf)
 
 END
 
