@@ -11,73 +11,94 @@
 ' Read file called COPYING for license details.
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' create energy table
+' create tables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC SUB InitTable()
+PUBLIC SUB InitTable(sName AS String)
 
   DIM tableEnergy AS Table
 
-  Main.hDB.Tables.Remove("power_usage")
-  tableEnergy = Main.hDB.Tables.Add("power_usage")
+  Main.hDB.Tables.Remove(sName)
+  tableEnergy = Main.hDB.Tables.Add(sName)
   tableEnergy.Fields.Add("id", db.Serial)
   tableEnergy.Fields.Add("counter", db.Long)
   tableEnergy.Fields.Add("stamp", db.Date)
-  tableEnergy.Fields.Add("watt", db.Long)
+  tableEnergy.Fields.Add("usage", db.Long)
   tableEnergy.PrimaryKey = ["id"]
   tableEnergy.Update()
 
 END
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' read value from rfxmeter device and write it to power_usage table
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC SUB LogPower()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read values from rfxmeter and pulse devices and write them to *_usage tables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Log()
 
   DIM rResult AS Result
-  DIM iRFX, iRFXMeter AS Integer
-  DIM iWatt, iNewCounter, iPrevCounter AS Float
-  'DIM sSql AS String
+  DIM iRFX, iRFXMeter, iFactor AS Integer
+  DIM iUsage, iNewCounter, iPrevCounter, iValue AS Float
+  DIM aRFXMeters AS String[] = ["RFXPwr Module", "RFXPulse Gas", "RFXPulse Water"]
+  DIM sMeter, sTable AS String
 
   IF NOT Main.bRFXComEnabled THEN RETURN
 
-  ' first find devicetype id for RFXMeter
-  rResult = Main.hDB.Exec("SELECT id FROM devicetypes WHERE name = &1 ", "RFXPwr Module")
+  FOR EACH sMeter IN aRFXMeters
+    ' first find devicetype id for RFXMeter
+    rResult = Main.hDB.Exec("SELECT id FROM devicetypes WHERE name = &1 ", sMeter)
 
-  IF rResult THEN
-    iRFX = rResult!id
-  ELSE
-    Main.WriteDebugLog("[Energy] No Devicetype called RFXPwr Module found!")
-    RETURN
-  END IF
+    IF rResult THEN
+      iRFX = rResult!id
+    ELSE
+      Main.WriteDebugLog("[Energy] No Devicetype called " & sMeter & " found!")
+      RETURN
+    END IF
 
-  ' then find device with devicetype
-  rResult = Main.hDB.Exec("SELECT value,id FROM devices WHERE module = &1", iRFX)
+    ' then find device with this devicetype
+    rResult = Main.hDB.Exec("SELECT value,id FROM devices WHERE module = &1", iRFX)
 
-  IF rResult.Count = 1 THEN
-    iNewCounter = CFloat(rResult!value)
-    iRFXMeter = rResult!id
-  ELSE
-    Main.WriteDebugLog("[Energy] More then one RFXPwr Module device found!")
-    RETURN
-  END IF
+    IF rResult.Count = 1 THEN
+      iNewCounter = CFloat(rResult!value)
+      iRFXMeter = rResult!id
 
-  ' get previous counter value
-  rResult = Main.hDB.Exec("SELECT counter FROM power_usage ORDER BY stamp DESC LIMIT 1")
-  IF rResult.Count = 1 THEN
-    iPrevCounter = rResult!counter
-    iWatt = iNewCounter - iPrevCounter
-  END IF
+      ' get previous counter value
+      SELECT sMeter
+        CASE "RFXPwr Module"
+          sTable = "power_usage"
+        CASE "RFXPulse Gas"
+          sTable = "gas_usage"
+        CASE "RFXPulse Water"
+          sTable = "water_usage"
+      END SELECT
 
-  ' write value in power_usage table
-  Main.hDB.Begin()
-  rResult = Main.hDB.Create("power_usage")
-  rResult!watt = iWatt
-  rResult!stamp = Now()
-  rResult!counter = iNewCounter
-  rResult.Update()
-  Main.hDB.Commit()
+      ' get previous counter value
+      rResult = Main.hDB.Exec(Subst("SELECT counter FROM &1 ORDER BY stamp DESC LIMIT 1", sTable))
 
-  ' update value2 field of device
-  rResult = Main.hDB.Exec("UPDATE devices SET value2 = &1 WHERE id = &2", CStr(CInt(iWatt) * 10), iRFXMeter)
+      IF rResult.Count = 1 THEN
+        iPrevCounter = rResult!counter
+        iUsage = iNewCounter - iPrevCounter
+        ' calculate right amount used
+        SELECT sMeter
+          CASE "RFXPwr Module"
+            iValue = iUsage * 10 ' every pulse is 0.1 watt
+          CASE "RFXPulse Gas"
+            iValue = iUsage / 100 ' every pulse is 0.01 m3
+          CASE "RFXPulse Water"
+            iValue = iUsage / 2 ' every pulse is 0.5 liter
+        END SELECT
+        ' write value in usage table
+        Main.hDB.Begin()
+        rResult = Main.hDB.Create(sTable)
+        rResult!usage = iUsage
+        rResult!stamp = Now()
+        rResult!counter = iNewCounter
+        rResult.Update()
+        Main.hDB.Commit()
+
+        ' update value2 field of device
+        rResult = Main.hDB.Exec("UPDATE devices SET value2 = &1 WHERE id = &2", CStr(iValue), iRFXMeter)
+      END IF
+    ELSE IF rResult.Count > 1 THEN
+      Main.WriteDebugLog("[Energy] More then one " & sMeter & " device found, not supported!")
+    END IF
+  NEXT
 
 END

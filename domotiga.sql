@@ -322,7 +322,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `devicetypes` WRITE;
 /*!40000 ALTER TABLE `devicetypes` DISABLE KEYS */;
-INSERT INTO `devicetypes` VALUES (1,'Marmitek DS90','Door/Window Sensor','X10Security'),(2,'Marmitek LW10G','Lamp Module','X10'),(3,'Marmitek LD11','Lamp Module','X10'),(4,'Marmitek MS13E M','Motion Sensor','X10'),(5,'Marmitek MS13E L','Light Sensor','X10'),(6,'Xanura SAX35','I/O Actor','A10'),(7,'Oregon THGR238N','Temp/Hygro Sensor','Oregon'),(8,'Oregon UV138','UV Light Sensor','Oregon'),(9,'RFXPwr Module','Power Usage Sensor','RFXCom'),(10,'HWG TM751','Wireless Tranceiver','X10'),(11,'HDDTemp Item','Temp Monitor','HDDTemp'),(12,'Oregon THR128','Temp Sensor','Oregon'),(13,'Sony AIBO ERS-7 ','Robot Dog','AIBO'),(14,'APC SmartUPS1000','Power Supply','UPS'),(15,'Dallas DS18S20','Temp Sensor','1-Wire'),(16,'Dallas Rain Gauge','Rain Gauge','1-Wire'),(17,'Marmitek SD90','Smoke Detector','X10Security'),(18,'HP iPAQ 514','Phone','Bluetooth'),(19,'ITHO Fan on WTSSR','Central Ventilation','Weeder'),(20,'RFXPulse Module','Gas Usage Sensor','RFXCom'),(21,'RFXPulse Module','Water Usage Sensor','RFXCom'),(22,'Oregon BWR102','Digital Bathroom Scale','Oregon'),(23,'Oregon GR101','Digital Bathroom Scale','Oregon'),(24,'Oregon THR128','Temp Sensor','Oregon'),(25,'Oregon THx138','Temp Sensor','Oregon'),(26,'Oregon THGR810','Temp/Hygro Sensor','Oregon'),(27,'Plugwise Circle','Zigbee Appliance Module','Plugwise'),(28,'Plugwise Circle+','Zigbee Appliance Module','Plugwise');
+INSERT INTO `devicetypes` VALUES (1,'Marmitek DS90','Door/Window Sensor','X10Security'),(2,'Marmitek LW10G','Lamp Module','X10'),(3,'Marmitek LD11','Lamp Module','X10'),(4,'Marmitek MS13E M','Motion Sensor','X10'),(5,'Marmitek MS13E L','Light Sensor','X10'),(6,'Xanura SAX35','I/O Actor','A10'),(7,'Oregon THGR238N','Temp/Hygro Sensor','Oregon'),(8,'Oregon UV138','UV Light Sensor','Oregon'),(9,'RFXPwr Module','Power Usage Sensor','RFXCom'),(10,'HWG TM751','Wireless Tranceiver','X10'),(11,'HDDTemp Item','Temp Monitor','HDDTemp'),(12,'Oregon THR128','Temp Sensor','Oregon'),(13,'Sony AIBO ERS-7 ','Robot Dog','AIBO'),(14,'APC SmartUPS1000','Power Supply','UPS'),(15,'Dallas DS18S20','Temp Sensor','1-Wire'),(16,'Dallas Rain Gauge','Rain Gauge','1-Wire'),(17,'Marmitek SD90','Smoke Detector','X10Security'),(18,'HP iPAQ 514','Phone','Bluetooth'),(19,'ITHO Fan on WTSSR','Central Ventilation','Weeder'),(20,'RFXPulse Gas','Gas Usage Sensor','RFXCom'),(21,'RFXPulse Water','Water Usage Sensor','RFXCom'),(22,'Oregon BWR102','Digital Bathroom Scale','Oregon'),(23,'Oregon GR101','Digital Bathroom Scale','Oregon'),(24,'Oregon THR128','Temp Sensor','Oregon'),(25,'Oregon THx138','Temp Sensor','Oregon'),(26,'Oregon THGR810','Temp/Hygro Sensor','Oregon'),(27,'Plugwise Circle','Zigbee Appliance Module','Plugwise'),(28,'Plugwise Circle+','Zigbee Appliance Module','Plugwise');
 /*!40000 ALTER TABLE `devicetypes` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -537,10 +537,40 @@ CREATE TABLE `power_usage` (
   `id` bigint(20) unsigned NOT NULL auto_increment,
   `counter` bigint(20) default NULL,
   `stamp` datetime default NULL,
-  `watt` bigint(20) default NULL,
+  `usage` bigint(20) default NULL,
   PRIMARY KEY  (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=7060 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
+
+--
+-- Table structure for table `gas_usage`
+--
+
+DROP TABLE IF EXISTS `gas_usage`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `gas_usage` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `counter` bigint(20) default NULL,
+  `stamp` datetime default NULL,
+  `usage` bigint(20) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+
+--
+-- Table structure for table `gas_usage`
+--
+
+DROP TABLE IF EXISTS `water_usage`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `water_usage` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `counter` bigint(20) default NULL,
+  `stamp` datetime default NULL,
+  `usage` bigint(20) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
 
 --
 -- Dumping data for table `power_usage`
