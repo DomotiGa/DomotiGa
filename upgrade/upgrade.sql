@@ -185,6 +185,33 @@ LOCK TABLES `settings_fritzbox` WRITE;
 /*!40000 ALTER TABLE `settings_fritzbox` DISABLE KEYS */;
 INSERT INTO `settings_fritzbox` VALUES (0,0,'192.168.100.1',1),(1,0,'192.168.100.1',-1);
 /*!40000 ALTER TABLE `settings_fritzbox` ENABLE KEYS */;
+
+UPDATE devicetypes SET name = "RFXPulse Gas" WHERE id = 20;
+UPDATE devicetypes SET name = "RFXPulse Water" WHERE id = 21;
+
+--
+-- Table structure for table `power_usage`
+--
+ALTER TABLE `power_usage` CHANGE `watt` `usage` bigint(20) default NULL;
+
+/*!40000 ALTER TABLE `power_usage` ENABLE KEYS */;
+
+CREATE TABLE `gas_usage` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `counter` bigint(20) default NULL,
+  `stamp` datetime default NULL,
+  `usage` bigint(20) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+
+CREATE TABLE `water_usage` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `counter` bigint(20) default NULL,
+  `stamp` datetime default NULL,
+  `usage` bigint(20) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
+
 UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
@@ -196,4 +223,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2008-12-14 21:31:44
+-- Dump completed on 2008-12-30 14:05:50
