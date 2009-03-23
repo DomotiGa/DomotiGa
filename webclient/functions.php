@@ -21,7 +21,7 @@ function do_xmlrpc($request) {
    $context = stream_context_create(array('http' => array('method' => "POST",'header' =>"Content-Type: text/xml",'content' => $request)));
    if ($file = @file_get_contents($rpc_connect, false, $context)) {
       $file=str_replace("i8","double",$file);
-      return xmlrpc_decode($file);
+      return xmlrpc_decode($file, "UTF-8");
    } else {
       die ("<h2>Cannot connect to the DomotiGa server!</h2>");
    }
