@@ -18,9 +18,17 @@ var flashcolor = '#00CC00';
 var flashtime = 2000;
 var ie4=document.all;
 var browser = navigator.appName;
+var ie8 = false;
+if (ie4 && /MSIE (\d+\.\d+);/.test(navigator.userAgent)){ //test for MSIE x.x;
+   var ieversion=new Number(RegExp.$1) // capture x.x portion and store as a number
+   if (ieversion>=8) {
+     ie4=false;
+     ie8=true;
+   }
+}
 
 function get_ajax_tags( ) {
-   if (ie4 && browser != "Opera") {
+   if (ie4 && browser != "Opera" && ! ie8) {
       var elem = document.body.getElementsByTagName('div');
       var lookfor = 'className';
    } else {
@@ -78,7 +86,9 @@ function startajax(view) {
                div = eval ("resp.change"+i+"['div']");
                val = eval ("resp.change"+i+"['val']");
                if (!document.getElementById(div)) {
-                  document.location='index.php?reload=1';
+                  if (view == "main") {
+                     document.location='index.php?reload=1';
+                  }
                }
                document.getElementById(div).innerHTML = "&nbsp;" + val;
                document.getElementById(div).style.color = flashcolor;
