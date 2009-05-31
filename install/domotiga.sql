@@ -2,7 +2,7 @@
 --
 -- Host: localhost    Database: domotiga
 -- ------------------------------------------------------
--- Server version	5.0.51a-3ubuntu5.4
+-- Server version	5.0.75-0ubuntu10
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -15,7 +15,92 @@
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 
+CREATE DATABASE domotiga;
+GRANT ALL ON domotiga.* TO domouser@localhost IDENTIFIED BY 'kung-fu';
 USE domotiga;
+
+--
+-- Table structure for table `actions`
+--
+
+DROP TABLE IF EXISTS `actions`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `actions` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `name` varchar(64) default NULL,
+  `type` int(11) default NULL,
+  `description` text,
+  `param1` varchar(32) default NULL,
+  `param2` varchar(32) default NULL,
+  `param3` varchar(32) default NULL,
+  `param4` varchar(32) default NULL,
+  `param5` varchar(32) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=8 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `actions`
+--
+
+LOCK TABLES `actions` WRITE;
+/*!40000 ALTER TABLE `actions` DISABLE KEYS */;
+INSERT INTO `actions` VALUES (1,'Switch Porch Light On',1,NULL,'1','Value1','On','',''),(2,'Switch Porch Light Off',1,NULL,'1','Value1','Off','',''),(3,'Switch Kitchen Light On',1,NULL,'44','Value1','On','',''),(6,'Set Ventilation to High Speed',1,NULL,'29','Value1','3','',''),(5,'Switch Kitchen Light Off',1,NULL,'44','Value1','Off','',''),(7,'Set Ventilation to Normal Speed',1,NULL,'29','Value1','1','','');
+/*!40000 ALTER TABLE `actions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `actiontypes`
+--
+
+DROP TABLE IF EXISTS `actiontypes`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `actiontypes` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `name` varchar(32) default NULL,
+  `tab` int(11) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `actiontypes`
+--
+
+LOCK TABLES `actiontypes` WRITE;
+/*!40000 ALTER TABLE `actiontypes` DISABLE KEYS */;
+/*!40000 ALTER TABLE `actiontypes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `bwired_devices`
+--
+
+DROP TABLE IF EXISTS `bwired_devices`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `bwired_devices` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `description` varchar(64) default NULL,
+  `devicename` varchar(32) default NULL,
+  `deviceid` int(11) default NULL,
+  `devicelabel` varchar(16) default NULL,
+  `value` text,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=9 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `bwired_devices`
+--
+
+LOCK TABLES `bwired_devices` WRITE;
+/*!40000 ALTER TABLE `bwired_devices` DISABLE KEYS */;
+/*!40000 ALTER TABLE `bwired_devices` ENABLE KEYS */;
+UNLOCK TABLES;
+
 --
 -- Table structure for table `capture_camera0`
 --
@@ -181,6 +266,62 @@ INSERT INTO `cdr` VALUES ('2008-09-03 16:31:05','0123401234','0123401234','s','i
 UNLOCK TABLES;
 
 --
+-- Table structure for table `conditions`
+--
+
+DROP TABLE IF EXISTS `conditions`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `conditions` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `name` varchar(64) default NULL,
+  `type` int(11) default NULL,
+  `description` text,
+  `param1` varchar(32) default NULL,
+  `param2` varchar(32) default NULL,
+  `param3` varchar(32) default NULL,
+  `param4` varchar(32) default NULL,
+  `param5` varchar(32) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `conditions`
+--
+
+LOCK TABLES `conditions` WRITE;
+/*!40000 ALTER TABLE `conditions` DISABLE KEYS */;
+INSERT INTO `conditions` VALUES (1,'It\'s Dark Outside',2,NULL,'Dark','=','True','','');
+/*!40000 ALTER TABLE `conditions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `conditiontypes`
+--
+
+DROP TABLE IF EXISTS `conditiontypes`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `conditiontypes` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `name` varchar(64) default NULL,
+  `tab` int(11) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `conditiontypes`
+--
+
+LOCK TABLES `conditiontypes` WRITE;
+/*!40000 ALTER TABLE `conditiontypes` DISABLE KEYS */;
+INSERT INTO `conditiontypes` VALUES (1,'Time Now',0),(2,'Variable',1),(3,'Device Status',2);
+/*!40000 ALTER TABLE `conditiontypes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `contacts`
 --
 
@@ -258,9 +399,11 @@ CREATE TABLE `devices` (
   `value` varchar(32) default NULL,
   `value2` varchar(32) default NULL,
   `value3` varchar(32) default NULL,
+  `value4` varchar(32) default NULL,
   `label` varchar(32) default NULL,
   `label2` varchar(32) default NULL,
   `label3` varchar(32) default NULL,
+  `label4` varchar(32) default NULL,
   `onicon` varchar(32) default NULL,
   `officon` varchar(32) default NULL,
   `interface` int(11) default NULL,
@@ -277,9 +420,11 @@ CREATE TABLE `devices` (
   `valuerrddsname` varchar(32) default NULL,
   `value2rrddsname` varchar(32) default NULL,
   `value3rrddsname` varchar(32) default NULL,
+  `value4rrddsname` varchar(32) default NULL,
   `valuerrdtype` varchar(32) default NULL,
   `value2rrdtype` varchar(32) default NULL,
   `value3rrdtype` varchar(32) default NULL,
+  `value4rrdtype` varchar(32) default NULL,
   `switchable` tinyint(1) default NULL,
   `dimable` tinyint(1) default NULL,
   `x` int(11) default NULL,
@@ -296,7 +441,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `devices` WRITE;
 /*!40000 ALTER TABLE `devices` DISABLE KEYS */;
-INSERT INTO `devices` VALUES (1,'Porch Light','O02',0,10,6,'On','','','','','','light-on.png','light-off.png',2,'2008-09-06 13:56:53','2008-12-14 18:00:00',-1,0,-1,'|All Lights|Outside|',0,'',NULL,'','','','','','','',-1,0,72,121,2,'2008-12-14 18:00:00'),(2,'Power Usage','00F0',0,9,13,'4497256','440',NULL,'','Wh',NULL,'energy.png','energy.png',1,'2008-08-31 22:39:31','2008-12-14 21:53:01',1,0,0,'|Energy|',1,'',NULL,'Measures power usage.','','watt',NULL,'','GAUGE',NULL,0,0,0,0,1,'2008-12-14 21:53:01'),(3,'Laundryroom Light','E04',0,2,11,'Off','',NULL,'','',NULL,'light-on.png','light-off.png',2,'2008-08-26 23:12:16','2008-10-16 20:04:51',1,0,1,'|All Lights|',0,'',NULL,'None','','',NULL,'','',NULL,1,0,0,0,1,NULL),(4,'Hobbyroom Light','E03',0,2,12,'Off','',NULL,'','',NULL,'light-on.png','light-off.png',2,'2008-08-26 22:20:11','2008-10-16 20:04:52',1,0,1,'|All Lights|',0,'',NULL,'None','','',NULL,'','',NULL,0,1,259,182,3,NULL),(5,'UV Sensor','32',0,8,8,'11','Dangerous',NULL,'Level','',NULL,'sun.png','sun.png',1,'2008-08-27 00:19:48','2008-12-14 21:57:32',1,0,1,'|Outside|',0,'low',NULL,' Battery replaced at 2008-11-11 20:45:52 ','','',NULL,'','',NULL,0,0,0,0,1,'2008-11-16 22:14:36'),(6,'Livingroom Sensor','47',0,7,2,'18.6','36','','°C','%',NULL,'temp.gif','temp.gif',1,'2008-07-31 13:35:50','2008-12-14 21:57:56',1,0,0,'|Climate|Humidity|Temperature|',0,'',NULL,'','','',NULL,'','',NULL,0,0,217,194,2,'2008-12-14 21:57:56'),(7,'Serverroom Sensor','CE',0,7,10,'20','33','','°C','%',NULL,'temp.gif','temp.gif',1,'2008-07-31 13:36:13','2008-12-14 21:57:51',1,0,0,'|Climate|Humidity|Temperature|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,'2008-12-14 21:57:51'),(8,'Bedroom Sensor','E6',0,7,9,'19','38','','°C','%',NULL,'temp.gif','temp.gif',1,'2008-07-31 13:35:54','2008-12-14 21:57:38',1,0,0,'|Climate|Humidity|Temperature|',0,'',NULL,'','','',NULL,'','',NULL,0,0,132,140,3,'2008-12-14 21:57:38'),(9,'Bathroom Sensor','68',0,7,3,'16.2','50','','°C','%',NULL,'temp.gif','temp.gif',1,'2008-07-31 13:36:06','2008-12-14 21:57:44',1,0,0,'|Climate|Humidity|Temperature|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,'2008-12-14 21:57:44'),(10,'Fridge Sensor','05',0,7,7,'6.8','70','','°C','%',NULL,'temp.gif','temp.gif',1,'2008-09-10 10:47:29','2008-12-14 21:57:36',1,0,0,'|Climate|Humidity|Temperature|',1,'',NULL,'','temp','humid',NULL,'GAUGE','GAUGE',NULL,0,0,0,0,1,'2008-12-14 21:57:36'),(11,'Outside Sensor','0A',0,7,8,'197.3','434.1',NULL,'°C','%',NULL,'temp.gif','temp.gif',1,'2008-09-09 16:00:58','2008-12-13 14:29:23',1,0,0,'|Climate|Humidity|Outside|Temperature|',1,'',NULL,'','temp','humid',NULL,'GAUGE','GAUGE',NULL,0,0,0,0,1,'2008-12-13 14:29:23'),(12,'Doorbell','D02',0,6,6,'','','','','','','button.gif','button.gif',2,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,0,'|Doors|',0,'',NULL,'http://www.waakzaamwonen.nl/catalog/pdf/sax35.pdf','','','','','','',0,0,0,0,1,NULL),(13,'Harddrive /dev/sda','/dev/sda',0,11,10,'36','',NULL,'°C','',NULL,'hd.png','hd.png',4,'2008-09-06 14:01:08','2008-12-14 22:03:13',1,0,1,'|Server|',1,'',NULL,'','temp','',NULL,'GAUGE','',NULL,0,0,122,125,6,'2008-12-14 21:20:55'),(14,'Neighbour Sensor1','10',0,7,15,'1.1','93','','°C','%',NULL,'question.png','question.png',1,'2008-09-15 20:17:43','2008-12-14 21:57:53',1,0,0,'|',0,'low',NULL,'Neighbours device','','',NULL,'','',NULL,0,0,0,0,1,'2008-12-14 21:57:53'),(15,'Neighbour Sensor2','0D',0,7,15,'0.8','98','','°C','%',NULL,'question.png','question.png',1,'2008-09-15 21:39:17','2008-12-14 21:57:32',1,0,0,'|',0,'low',NULL,'Neighbours device','','',NULL,'','',NULL,0,0,0,0,1,'2008-12-14 21:57:32'),(16,'Rakker','192.168.100.4',0,13,2,'Sleeping','',NULL,'','',NULL,'aibo.gif','aibo.gif',5,'2008-09-06 14:01:07','2008-11-15 16:15:20',1,0,1,'|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,NULL),(17,'SmartUPS','smartups1000',0,14,10,'Online','224.9',NULL,'','Volt',NULL,'ups.gif','ups.gif',6,'2008-09-07 19:55:53','2008-11-13 14:55:17',1,0,1,'|Server|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,'2008-11-13 14:55:17'),(18,'Kitchen Motion Sensor','M01',0,4,7,'No Motion','',NULL,'','',NULL,'motion-on.gif','motion-off.gif',1,'2008-08-23 23:34:19','2008-12-14 20:34:00',1,0,1,'|Motion|Security|',0,'',NULL,'','','',NULL,'','',NULL,0,0,115,62,2,'2008-12-14 20:33:59'),(19,'Serverroom Temp','4D0000004FC78A26',0,15,10,'22.81','',NULL,'°C','',NULL,'temp.gif','temp.gif',3,'2008-08-26 14:37:29','2008-12-14 21:57:45',1,0,0,'|Server|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,'2008-12-14 21:54:45'),(20,'Rainfall Sensor','',NULL,16,8,'','',NULL,'mm','',NULL,'rain.png','rain.png',3,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,0,'|Outside|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,NULL),(21,'Smoke Detector','C0CF54',0,17,5,'Idle','',NULL,'','',NULL,'smoke.png','smoke.png',1,'2008-11-24 15:55:22','2008-11-24 15:55:22',1,0,1,'|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,'2008-11-24 15:55:22'),(22,'Mailbox Sensor','323D34',0,1,6,'Open','Secure',NULL,'','',NULL,'mail-on.png','mail-off.png',1,'2008-09-03 20:27:09','2008-12-14 19:44:48',1,0,1,'|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,NULL),(23,'Front Door Sensor','D2DDD4',0,1,6,'Closed','Secure',NULL,'','',NULL,'door-open.png','door-closed.png',1,'2008-09-03 20:11:50','2008-12-14 20:28:23',1,0,1,'|Doors|Security|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,NULL),(24,'Kitchen Light Sensor','M02',0,5,7,'Dark','',NULL,'','',NULL,'motion-on.gif','motion-off.gif',1,'2008-08-26 19:47:49','2008-12-14 16:32:00',1,0,1,'|Motion|',0,'',NULL,'','','',NULL,'','',NULL,0,0,229,94,2,'2008-12-14 16:32:00'),(25,'Hot Water','150008013A024910',0,15,17,'22.81','',NULL,'°C','',NULL,'temp.gif','temp.gif',3,'2008-09-08 16:02:43','2008-12-14 21:57:46',1,0,0,'|HVAC|',1,'',NULL,'','temp','',NULL,'GAUGE','',NULL,0,0,0,0,1,'2008-12-14 21:57:46'),(26,'Heating Output','7A0008014A6BC310',0,15,17,'62.25','',NULL,'°C','',NULL,'temp.gif','temp.gif',3,'2008-09-08 16:02:44','2008-12-14 21:57:46',1,0,0,'|HVAC|',1,'',NULL,'','temp','',NULL,'GAUGE','',NULL,0,0,0,0,1,'2008-12-14 21:57:46'),(27,'Toilet Motion Sensor','M03',0,4,4,'No Motion','',NULL,'','',NULL,'motion-on.gif','motion-off.gif',1,'2008-08-29 19:37:49','2008-12-13 16:49:03',1,0,1,'|Motion|Security|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,'2008-12-13 16:49:03'),(28,'Toilet Light Sensor','M04',0,5,4,'Dark','',NULL,'','',NULL,'motion-on.gif','motion-off.gif',1,'2008-08-29 19:40:57','2008-12-13 16:48:09',1,0,1,'|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,'2008-12-13 16:48:08'),(29,'My Phone','00:12:D1:A8:B6:10',2,18,16,'','NotReach','','','','','bt.png','bt.png',8,'0000-00-00 00:00:00','2008-11-15 16:20:20',-1,0,-1,'|Proximity|',0,'',NULL,'','','','','','','',0,0,0,0,1,NULL),(30,'House Ventilation','A',0,19,7,'3','',NULL,'Speed','',NULL,'fan-on.gif','fan-off.gif',9,'2008-11-19 20:00:58','2008-12-02 16:27:30',0,0,0,'|HVAC|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,'2008-11-19 20:02:02'),(31,'Test Scale 1','7',0,22,3,'40.5','89.1','','kg','lb','','','',1,'2008-12-03 22:36:26','2008-12-04 14:11:09',0,0,0,'|',0,'',NULL,'','','','','','','',0,0,0,0,1,'2008-12-04 14:10:45'),(33,'Test Scale 2','',0,23,3,'','','','','','','','',1,NULL,NULL,-1,0,0,'|',0,'',NULL,'','','','','','','',0,0,0,0,1,NULL),(34,'Temp Sensor','08',0,12,7,'-22.1','',NULL,'°C','',NULL,'temp.gif','temp.gif',1,'2008-12-03 22:49:37','2008-12-03 22:49:37',0,0,0,'|',0,'',NULL,'','','',NULL,'','',NULL,0,0,0,0,1,'2008-12-03 22:49:37'),(35,'Hygro Sensor','15',0,26,1,'16.4','55','Normal','°C','%','','','',1,'2008-12-03 23:29:33','2008-12-04 15:32:25',-1,0,0,'|Climate|',0,'',NULL,'','','','','','','',0,0,0,0,1,'2008-12-04 15:32:25'),(37,'DomotiGa Server','000D6F000023710F',0,28,10,'','44.139','0.044','','W','kWh','light-on.png','light-off.png',10,'2008-12-12 17:09:58','2008-12-14 21:46:57',-1,0,0,'|Server|',-1,'',NULL,'','','Watt','','','GAUGE','',0,0,0,0,1,'2008-12-14 21:46:57'),(36,'Close-in Boiler','000D6F00001C8F22',0,27,7,'Off','0','0','','','','light-on.png','light-off.png',10,'2008-12-10 16:56:35','2008-12-14 21:46:57',-1,0,-1,'|All Lights|',0,'',NULL,'','','Watt','','','GAUGE','',-1,0,0,0,1,'2008-12-14 21:46:57');
+INSERT INTO `devices` VALUES (1,'Porch Light','O02',0,10,6,'On','','',NULL,'','','',NULL,'light-on.png','light-off.png',2,'2008-09-06 13:56:53','2008-12-14 18:00:00',-1,0,-1,'|All Lights|Outside|',0,'',NULL,'','','','',NULL,'','','',NULL,-1,0,72,121,2,'2008-12-14 18:00:00'),(2,'Power Usage','00F0',0,9,13,'4497256','440','','','','Watt','','','energy.png','energy.png',1,'2008-08-31 22:39:31','2008-12-14 21:53:01',-1,0,0,'|Energy|',-1,'',NULL,'Measures power usage.','','watt','','','','GAUGE','','',0,0,0,0,1,'2008-12-14 21:53:01'),(3,'Laundryroom Light','E04',0,2,11,'Off','',NULL,NULL,'','',NULL,NULL,'light-on.png','light-off.png',2,'2008-08-26 23:12:16','2008-10-16 20:04:51',1,0,1,'|All Lights|',0,'',NULL,'None','','',NULL,NULL,'','',NULL,NULL,1,0,0,0,1,NULL),(4,'Hobbyroom Light','E03',0,2,12,'Off','',NULL,NULL,'','',NULL,NULL,'light-on.png','light-off.png',2,'2008-08-26 22:20:11','2008-10-16 20:04:52',1,0,1,'|All Lights|',0,'',NULL,'None','','',NULL,NULL,'','',NULL,NULL,0,1,259,182,3,NULL),(5,'UV Sensor','32',0,8,8,'2','Low','','','Level','','','','sun.png','sun.png',1,'2008-08-27 00:19:48','2008-12-14 21:57:32',-1,0,-1,'|Outside|',0,'low',NULL,' Battery replaced at 2008-11-11 20:45:52 ','','','','','','','','',0,0,0,0,1,'2008-11-16 22:14:36'),(6,'Livingroom Sensor','47',0,7,2,'18.6','36','',NULL,'°C','%',NULL,NULL,'temp.gif','temp.gif',1,'2008-07-31 13:35:50','2008-12-14 21:57:56',1,0,0,'|Climate|Humidity|Temperature|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,217,194,2,'2008-12-14 21:57:56'),(9,'Bathroom Sensor','68',0,7,3,'16.2','50','',NULL,'°C','%',NULL,NULL,'temp.gif','temp.gif',1,'2008-07-31 13:36:06','2008-12-14 21:57:44',1,0,0,'|Climate|Humidity|Temperature|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,'2008-12-14 21:57:44'),(10,'Fridge Sensor','05',0,7,7,'6.8','70','',NULL,'°C','%',NULL,NULL,'temp.gif','temp.gif',1,'2008-09-10 10:47:29','2008-12-14 21:57:36',1,0,0,'|Climate|Humidity|Temperature|',1,'',NULL,'','temp','humid',NULL,NULL,'GAUGE','GAUGE',NULL,NULL,0,0,0,0,1,'2008-12-14 21:57:36'),(11,'Outside Sensor','0A',0,7,8,'22.3','51','','','°C','%','','','temp.gif','temp.gif',1,'2008-09-09 16:00:58','2008-12-13 14:29:23',-1,0,0,'|Climate|Humidity|Outside|Temperature|',-1,'',NULL,'','temp','humid','','','GAUGE','GAUGE','','',0,0,0,0,1,'2008-12-13 14:29:23'),(12,'Doorbell','D02',0,6,6,'','','',NULL,'','','',NULL,'button.gif','button.gif',2,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,0,'|Doors|',0,'',NULL,'http://www.waakzaamwonen.nl/catalog/pdf/sax35.pdf','','','',NULL,'','','',NULL,0,0,0,0,1,NULL),(13,'Harddrive /dev/sda','/dev/sda',0,11,10,'36','',NULL,NULL,'°C','',NULL,NULL,'hd.png','hd.png',4,'2008-09-06 14:01:08','2008-12-14 22:03:13',1,0,1,'|Server|',1,'',NULL,'','temp','',NULL,NULL,'GAUGE','',NULL,NULL,0,0,122,125,6,'2008-12-14 21:20:55'),(16,'Rakker','192.168.100.4',0,13,2,'Sleeping','',NULL,NULL,'','',NULL,NULL,'aibo.gif','aibo.gif',5,'2008-09-06 14:01:07','2008-11-15 16:15:20',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,NULL),(17,'SmartUPS','smartups1000',0,14,10,'Online','224.9',NULL,NULL,'','Volt',NULL,NULL,'ups.gif','ups.gif',6,'2008-09-07 19:55:53','2008-11-13 14:55:17',1,0,1,'|Server|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,'2008-11-13 14:55:17'),(18,'Kitchen Motion Sensor','M01',0,4,7,'No Motion','',NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',1,'2008-08-23 23:34:19','2008-12-14 20:34:00',1,0,1,'|Motion|Security|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,115,62,2,'2008-12-14 20:33:59'),(19,'Serverroom Temp','4D0000004FC78A26',0,15,10,'22.81','',NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',3,'2008-08-26 14:37:29','2008-12-14 21:57:45',1,0,0,'|Server|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,'2008-12-14 21:54:45'),(20,'Rainfall Sensor','',NULL,16,8,'','',NULL,NULL,'mm','',NULL,NULL,'rain.png','rain.png',3,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,0,'|Outside|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,NULL),(21,'Smoke Detector','C0CF54',0,17,5,'Idle','',NULL,NULL,'','',NULL,NULL,'smoke.png','smoke.png',1,'2008-11-24 15:55:22','2008-11-24 15:55:22',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,'2008-11-24 15:55:22'),(22,'Mailbox Sensor','323D34',0,1,6,'Open','Secure',NULL,NULL,'','',NULL,NULL,'mail-on.png','mail-off.png',1,'2008-09-03 20:27:09','2008-12-14 19:44:48',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,NULL),(23,'Front Door Sensor','D2DDD4',0,1,6,'Closed','Secure',NULL,NULL,'','',NULL,NULL,'door-open.png','door-closed.png',1,'2008-09-03 20:11:50','2008-12-14 20:28:23',1,0,1,'|Doors|Security|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,NULL),(24,'Kitchen Light Sensor','M02',0,5,7,'Dark','',NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',1,'2008-08-26 19:47:49','2008-12-14 16:32:00',1,0,1,'|Motion|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,229,94,2,'2008-12-14 16:32:00'),(25,'Hot Water','150008013A024910',0,15,17,'22.81','',NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',3,'2008-09-08 16:02:43','2008-12-14 21:57:46',1,0,0,'|HVAC|',1,'',NULL,'','temp','',NULL,NULL,'GAUGE','',NULL,NULL,0,0,0,0,1,'2008-12-14 21:57:46'),(27,'Toilet Motion Sensor','M03',0,4,4,'No Motion','',NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',1,'2008-08-29 19:37:49','2008-12-13 16:49:03',1,0,1,'|Motion|Security|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,'2008-12-13 16:49:03'),(28,'Toilet Light Sensor','M04',0,5,4,'Dark','',NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',1,'2008-08-29 19:40:57','2008-12-13 16:48:09',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,'2008-12-13 16:48:08'),(29,'My Phone','00:12:D1:A8:B6:10',2,18,16,'.','Away','','','','','','','bt.png','bt.png',8,'0000-00-00 00:00:00','2008-11-15 16:20:20',-1,0,-1,'|Proximity|',0,'',NULL,'','','','','','','','','',0,0,0,0,1,NULL),(30,'House Ventilation','A',0,19,7,'3','',NULL,NULL,'Speed','',NULL,NULL,'fan-on.gif','fan-off.gif',9,'2008-11-19 20:00:58','2008-12-02 16:27:30',0,0,0,'|HVAC|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,'2008-11-19 20:02:02'),(34,'Temp Sensor','08',0,12,7,'-22.1','',NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',1,'2008-12-03 22:49:37','2008-12-03 22:49:37',0,0,0,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,0,0,1,'2008-12-03 22:49:37'),(35,'Hygro Sensor','15',0,26,1,'16.4','55','Normal',NULL,'°C','%','',NULL,'','',1,'2008-12-03 23:29:33','2008-12-04 15:32:25',-1,0,0,'|Climate|',0,'',NULL,'','','','',NULL,'','','',NULL,0,0,0,0,1,'2008-12-04 15:32:25'),(37,'DomotiGa Server','000D6F000023710F',0,28,10,'On','44.139','0.044','','','W','kWh','','light-on.png','light-off.png',10,'2008-12-12 17:09:58','2008-12-14 21:46:57',-1,0,0,'|Server|',-1,'',NULL,'','','Watt','','','','GAUGE','','',0,0,0,0,1,'2008-12-14 21:46:57'),(36,'Close-in Boiler','000D6F00001C8F22',0,27,7,'Off','0','0',NULL,'','','',NULL,'light-on.png','light-off.png',10,'2008-12-10 16:56:35','2008-12-14 21:46:57',-1,0,-1,'|All Lights|',0,'',NULL,'','','Watt','',NULL,'','GAUGE','',NULL,-1,0,0,0,1,'2008-12-14 21:46:57');
 /*!40000 ALTER TABLE `devices` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -313,7 +458,7 @@ CREATE TABLE `devicetypes` (
   `description` varchar(32) default NULL,
   `type` varchar(32) default NULL,
   PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=29 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=43 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
 
 --
@@ -322,8 +467,47 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `devicetypes` WRITE;
 /*!40000 ALTER TABLE `devicetypes` DISABLE KEYS */;
-INSERT INTO `devicetypes` VALUES (1,'Marmitek DS90','Door/Window Sensor','X10Security'),(2,'Marmitek LW10G','Lamp Module','X10'),(3,'Marmitek LD11','Lamp Module','X10'),(4,'Marmitek MS13E M','Motion Sensor','X10'),(5,'Marmitek MS13E L','Light Sensor','X10'),(6,'Xanura SAX35','I/O Actor','A10'),(7,'Oregon THGR238N','Temp/Hygro Sensor','Oregon'),(8,'Oregon UV138','UV Light Sensor','Oregon'),(9,'RFXPwr Module','Power Usage Sensor','RFXCom'),(10,'HWG TM751','Wireless Tranceiver','X10'),(11,'HDDTemp Item','Temp Monitor','HDDTemp'),(12,'Oregon THR128','Temp Sensor','Oregon'),(13,'Sony AIBO ERS-7 ','Robot Dog','AIBO'),(14,'APC SmartUPS1000','Power Supply','UPS'),(15,'Dallas DS18S20','Temp Sensor','1-Wire'),(16,'Dallas Rain Gauge','Rain Gauge','1-Wire'),(17,'Marmitek SD90','Smoke Detector','X10Security'),(18,'HP iPAQ 514','Phone','Bluetooth'),(19,'ITHO Fan on WTSSR','Central Ventilation','Weeder'),(20,'RFXPulse Gas','Gas Usage Sensor','RFXCom'),(21,'RFXPulse Water','Water Usage Sensor','RFXCom'),(22,'Oregon BWR102','Digital Bathroom Scale','Oregon'),(23,'Oregon GR101','Digital Bathroom Scale','Oregon'),(24,'Oregon THR128','Temp Sensor','Oregon'),(25,'Oregon THx138','Temp Sensor','Oregon'),(26,'Oregon THGR810','Temp/Hygro Sensor','Oregon'),(27,'Plugwise Circle','Zigbee Appliance Module','Plugwise'),(28,'Plugwise Circle+','Zigbee Appliance Module','Plugwise');
+INSERT INTO `devicetypes` VALUES (1,'Marmitek DS90','Door/Window Sensor','X10Security'),(2,'Marmitek LW10G','Lamp Module','X10'),(3,'Marmitek LD11','Dimmer Module','X10'),(4,'Marmitek MS13E M','Motion Sensor','X10'),(5,'Marmitek MS13E L','Light Sensor','X10'),(6,'Xanura SAX35','I/O Actor','A10'),(7,'Oregon THGR238N','Temp/Hygro Sensor','Oregon'),(8,'Oregon UV138','UV Light Sensor','Oregon'),(9,'RFXPwr Module','Power Usage Sensor','RFXCom'),(10,'Marmitek TM13','Wireless Tranceiver','X10'),(11,'HDDTemp Item','Temp Monitor','HDDTemp'),(12,'Oregon THR128','Temp Sensor','Oregon'),(13,'Sony AIBO ERS-7 ','Robot Dog','AIBO'),(14,'APC SmartUPS1000','Power Supply','UPS'),(15,'Dallas DS18S20','Temp Sensor','1-Wire'),(16,'Dallas Rain Gauge','Rain Gauge','1-Wire'),(17,'Marmitek SD90','Smoke Detector','X10Security'),(18,'Bluetooth Device','Phone','Bluetooth'),(19,'ITHO ECO Fan','Central Ventilation','Weeder'),(20,'RFXPulse Gas','Gas Usage Sensor','RFXCom'),(21,'RFXPulse Water','Water Usage Sensor','RFXCom'),(22,'Oregon BWR102','Digital Bathroom Scale','Oregon'),(23,'Oregon GR101','Digital Bathroom Scale','Oregon'),(24,'Oregon THR128','Temp Sensor','Oregon'),(25,'Oregon THx138','Temp Sensor','Oregon'),(26,'Oregon THGR810','Temp/Hygro Sensor','Oregon'),(27,'Plugwise Circle','Zigbee Appliance Module','Plugwise'),(28,'Plugwise Circle+','Zigbee Appliance Module','Plugwise'),(29,'KAKU Doorbell','Wireless Doorbell','X10'),(30,'Oregon THN132N','Temp Sensor','Oregon'),(31,'Oregon THWR288','Temp Sensor','Oregon'),(32,'Oregon BTHR918N','Baro/Temp/Hygro Sensor','Oregon'),(33,'Oregon BTHR968','Baro/Temp/Hygro Sensor','Oregon'),(34,'Marmitek AD10','Switch Module','X10'),(35,'Marmitek LM12','Lamp Module','X10'),(36,'Marmitek AM12','Appliance Module','X10'),(38,'Oregon PCR800','Rain Gauge','Oregon'),(39,'Oregon RTGR328N','Temp/Hygro/Time Sensor','Oregon'),(40,'DSC PIR','Motion Sensor','DSC'),(41,'DSC Contact','Door/Window Sensor','DSC'),(42,'DSC Smoke','Smoke Detector','DSC');
 /*!40000 ALTER TABLE `devicetypes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `events`
+--
+
+DROP TABLE IF EXISTS `events`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `events` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `enabled` tinyint(1) default NULL,
+  `name` varchar(64) default NULL,
+  `log` tinyint(1) default NULL,
+  `firstrun` datetime default NULL,
+  `lastrun` datetime default NULL,
+  `comments` text,
+  `trigger1` int(11) default NULL,
+  `condition1` int(11) default NULL,
+  `operand` varchar(16) default NULL,
+  `condition2` int(11) default NULL,
+  `action1` int(11) default NULL,
+  `action2` int(11) default NULL,
+  `action3` int(11) default NULL,
+  `rerunenabled` tinyint(1) default NULL,
+  `rerunvalue` int(11) default NULL,
+  `reruntype` varchar(16) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=9 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `events`
+--
+
+LOCK TABLES `events` WRITE;
+/*!40000 ALTER TABLE `events` DISABLE KEYS */;
+INSERT INTO `events` VALUES (1,0,'Frontdoor Light On',-1,'2009-01-06 17:30:00','2009-03-05 17:15:00','Switch frontdoor light on at dawn',1,0,'',0,1,0,0,0,0,'gb.Second'),(2,0,'Frontdoor Light Off',-1,'2009-01-05 22:17:00','2009-03-06 08:00:00','Switch frontdoor light off at sunset',2,0,'',0,2,0,0,0,0,'gb.Second'),(3,0,'Kitchen Light On when Movement Detected',-1,'2009-01-18 22:15:54','2009-03-05 20:24:16','Switch kitchen light on when someone enters it',4,0,'',0,3,0,0,0,15,'gb.Hour'),(4,0,'Kitchen Light Off if No Movement',-1,'2009-01-18 22:37:47','2009-03-05 20:25:16','Switch kitchen light off when no movement is detected',5,0,'',0,5,0,0,0,0,'gb.Second'),(5,0,'Ventilate Bathroom if Showering',-1,'2009-01-29 18:38:54','2009-02-05 19:33:23','Switch fan to speed 3 if bathroom is moist',3,0,'',0,6,0,0,-1,1,'gb.Hour'),(6,0,'Switch Ventilation to Normal',-1,'2009-01-30 16:53:24','2009-03-06 09:02:04','Switch fan back to normal speed',6,0,'',0,7,0,0,0,0,'gb.Second');
+/*!40000 ALTER TABLE `events` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -352,6 +536,31 @@ INSERT INTO `floors` VALUES (1,'',''),(2,'1st Floor','1stfloor.jpg'),(3,'2nd Flo
 UNLOCK TABLES;
 
 --
+-- Table structure for table `gas_usage`
+--
+
+DROP TABLE IF EXISTS `gas_usage`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `gas_usage` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `counter` bigint(20) default NULL,
+  `stamp` datetime default NULL,
+  `consumption` bigint(20) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `gas_usage`
+--
+
+LOCK TABLES `gas_usage` WRITE;
+/*!40000 ALTER TABLE `gas_usage` DISABLE KEYS */;
+/*!40000 ALTER TABLE `gas_usage` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `globalvars`
 --
 
@@ -363,7 +572,7 @@ CREATE TABLE `globalvars` (
   `var` varchar(64) default NULL,
   `value` text,
   PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=20 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=23 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
 
 --
@@ -372,7 +581,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `globalvars` WRITE;
 /*!40000 ALTER TABLE `globalvars` DISABLE KEYS */;
-INSERT INTO `globalvars` VALUES (1,'Second','47'),(2,'Minute','3'),(3,'Hour','22'),(4,'Day','14'),(5,'Month','12'),(6,'Weekday','0'),(7,'Time_Of_Day','evening'),(8,'Year','2008'),(9,'Sunrise','9:27'),(10,'Sunset','17:07'),(11,'Sunrise_Twilight','8:46'),(12,'Sunset_Twilight','17:49'),(13,'Season','fall'),(14,'House_Mode','normal'),(15,'Mode_Set','auto'),(16,'Last_User','admin'),(17,'Mute','T'),(18,'Dark','T'),(19,'Weekend','T');
+INSERT INTO `globalvars` VALUES (1,'Second','28'),(2,'Minute','2'),(3,'Hour','17'),(4,'Day','31'),(5,'Month','5'),(6,'Weekday','0'),(7,'Time_Of_Day','evening'),(8,'Year','2009'),(9,'Sunrise','5:06'),(10,'Sunset','21:34'),(11,'Sunrise_Twilight','4:19'),(12,'Sunset_Twilight','22:22'),(13,'Season','spring'),(14,'House_Mode','normal'),(15,'Mode_Set','auto'),(16,'Last_User','admin'),(17,'Mute','T'),(18,'Dark',''),(19,'Weekend','T'),(20,'Program_Start','05/31/2009 17:01:30.788'),(21,'Program_Uptime','0 days, 0 hrs, 0 mins, and 57 secs.'),(22,'Tagline','A pitcher that goes to a well too often is broken first.');
 /*!40000 ALTER TABLE `globalvars` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -413,7 +622,7 @@ CREATE TABLE `interfaces` (
   `type` varchar(32) default NULL,
   `mode` varchar(32) default NULL,
   PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=11 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=12 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
 
 --
@@ -422,7 +631,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `interfaces` WRITE;
 /*!40000 ALTER TABLE `interfaces` DISABLE KEYS */;
-INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','A10 X10 Oregon KAKU','Read'),(2,'Xanura CTX35','A10 X10','Read Write'),(3,'Midon TEMP08','One-Wire','Read Write'),(4,'HDDTemp Socket','Build-in Module','Read'),(5,'AIBO Socket','Build-in Module','Read'),(6,'UPS Socket','Build-in Module','Read'),(7,'Heyu X10','A10 X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read Write'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write');
+INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','A10 X10 Oregon KAKU','Read'),(2,'Xanura CTX35','A10 X10','Read Write'),(3,'Midon TEMP08','One-Wire','Read Write'),(4,'HDDTemp Socket','Build-in Module','Read'),(5,'AIBO Socket','Build-in Module','Read'),(6,'UPS Socket','Build-in Module','Read'),(7,'Heyu X10','A10 X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read Write'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC5401 Interface','DSC','Read Write');
 /*!40000 ALTER TABLE `interfaces` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -537,40 +746,10 @@ CREATE TABLE `power_usage` (
   `id` bigint(20) unsigned NOT NULL auto_increment,
   `counter` bigint(20) default NULL,
   `stamp` datetime default NULL,
-  `usage` bigint(20) default NULL,
+  `consumption` bigint(20) default NULL,
   PRIMARY KEY  (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=7060 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
-
---
--- Table structure for table `gas_usage`
---
-
-DROP TABLE IF EXISTS `gas_usage`;
-SET @saved_cs_client     = @@character_set_client;
-SET character_set_client = utf8;
-CREATE TABLE `gas_usage` (
-  `id` bigint(20) unsigned NOT NULL auto_increment,
-  `counter` bigint(20) default NULL,
-  `stamp` datetime default NULL,
-  `usage` bigint(20) default NULL,
-  PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
-
---
--- Table structure for table `gas_usage`
---
-
-DROP TABLE IF EXISTS `water_usage`;
-SET @saved_cs_client     = @@character_set_client;
-SET character_set_client = utf8;
-CREATE TABLE `water_usage` (
-  `id` bigint(20) unsigned NOT NULL auto_increment,
-  `counter` bigint(20) default NULL,
-  `stamp` datetime default NULL,
-  `usage` bigint(20) default NULL,
-  PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=1 DEFAULT CHARSET=latin1;
 
 --
 -- Dumping data for table `power_usage`
@@ -868,6 +1047,40 @@ INSERT INTO `settings_bluetooth` VALUES (0,0,'hci0',30,120,0),(1,0,'hci0',-20,30
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_bwiredmap`
+--
+
+DROP TABLE IF EXISTS `settings_bwiredmap`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `settings_bwiredmap` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) default NULL,
+  `website` varchar(64) default NULL,
+  `websitepicurl` varchar(64) default NULL,
+  `title` varchar(64) default NULL,
+  `city` varchar(64) default NULL,
+  `user` varchar(64) default NULL,
+  `password` varchar(64) default NULL,
+  `screenname` varchar(64) default NULL,
+  `gpslat` varchar(64) default NULL,
+  `gpslong` varchar(64) default NULL,
+  `debug` tinyint(1) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `settings_bwiredmap`
+--
+
+LOCK TABLES `settings_bwiredmap` WRITE;
+/*!40000 ALTER TABLE `settings_bwiredmap` DISABLE KEYS */;
+INSERT INTO `settings_bwiredmap` VALUES (0,0,'http://www.domotiga.nl',NULL,'DomotiGa User','Sliedrecht','LoginUser','LoginPassword',NULL,NULL,NULL,0),(1,0,'www.domotiga.nl',NULL,'DomotiGa User','Earth','LoginUser','LoginPassword','ScreenName','51.8','4.75',0);
+/*!40000 ALTER TABLE `settings_bwiredmap` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `settings_ctx35`
 --
 
@@ -893,6 +1106,33 @@ LOCK TABLES `settings_ctx35` WRITE;
 /*!40000 ALTER TABLE `settings_ctx35` DISABLE KEYS */;
 INSERT INTO `settings_ctx35` VALUES (0,0,'/dev/ttyUSB0','19200',500,0),(1,0,'/dev/ttyUSB0','19200',500,0);
 /*!40000 ALTER TABLE `settings_ctx35` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `settings_dsc`
+--
+
+DROP TABLE IF EXISTS `settings_dsc`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `settings_dsc` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) default NULL,
+  `serialport` varchar(32) default NULL,
+  `baudrate` int(11) default NULL,
+  `debug` tinyint(1) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `settings_dsc`
+--
+
+LOCK TABLES `settings_dsc` WRITE;
+/*!40000 ALTER TABLE `settings_dsc` DISABLE KEYS */;
+INSERT INTO `settings_dsc` VALUES (0,0,'/dev/ttyS0',9600,0),(1,0,'/dev/ttyS0',9600,0);
+/*!40000 ALTER TABLE `settings_dsc` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -1031,7 +1271,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `settings_hddtemp` WRITE;
 /*!40000 ALTER TABLE `settings_hddtemp` DISABLE KEYS */;
-INSERT INTO `settings_hddtemp` VALUES (0,0,'localhost',7634,600,60,0),(1,127,'localhost',7634,300,40,0);
+INSERT INTO `settings_hddtemp` VALUES (0,0,'localhost',7634,600,60,0),(1,0,'localhost',7634,300,40,0);
 /*!40000 ALTER TABLE `settings_hddtemp` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1102,6 +1342,9 @@ CREATE TABLE `settings_main` (
   `logbuffer` int(11) default NULL,
   `authentication` tinyint(1) default NULL,
   `startpage` varchar(32) default NULL,
+  `debugevents` tinyint(1) default NULL,
+  `debugdevices` tinyint(1) default NULL,
+  `debugenergy` tinyint(1) default NULL,
   PRIMARY KEY  (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
@@ -1112,7 +1355,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `settings_main` WRITE;
 /*!40000 ALTER TABLE `settings_main` DISABLE KEYS */;
-INSERT INTO `settings_main` VALUES (0,250,5000,0,15000,1,'Home'),(1,250,10000,0,15000,0,'FLogfiles');
+INSERT INTO `settings_main` VALUES (0,250,5000,0,15000,1,'Home',NULL,NULL,NULL),(1,250,10000,0,15000,0,'FHome',0,0,0);
 /*!40000 ALTER TABLE `settings_main` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1367,6 +1610,33 @@ INSERT INTO `settings_tvguide` VALUES (0,0,'tv_grab_nl_C','tv_grab_nl_C.conf',7,
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_twitter`
+--
+
+DROP TABLE IF EXISTS `settings_twitter`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `settings_twitter` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) default NULL,
+  `username` varchar(64) default NULL,
+  `password` varchar(64) default NULL,
+  `debug` tinyint(1) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `settings_twitter`
+--
+
+LOCK TABLES `settings_twitter` WRITE;
+/*!40000 ALTER TABLE `settings_twitter` DISABLE KEYS */;
+INSERT INTO `settings_twitter` VALUES (0,0,'twitteraccount','password',0),(1,0,'twitteraccount','password',0);
+/*!40000 ALTER TABLE `settings_twitter` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `settings_ups`
 --
 
@@ -1539,6 +1809,33 @@ INSERT INTO `settings_weeder` VALUES (0,0,'/dev/ttyUSB1',1),(1,0,'/dev/ttyUSB1',
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_xmlrpc`
+--
+
+DROP TABLE IF EXISTS `settings_xmlrpc`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `settings_xmlrpc` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) default NULL,
+  `httpport` int(11) default NULL,
+  `maxconn` int(11) default NULL,
+  `debug` tinyint(1) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `settings_xmlrpc`
+--
+
+LOCK TABLES `settings_xmlrpc` WRITE;
+/*!40000 ALTER TABLE `settings_xmlrpc` DISABLE KEYS */;
+INSERT INTO `settings_xmlrpc` VALUES (0,0,9000,3,1),(1,0,9000,10,-1);
+/*!40000 ALTER TABLE `settings_xmlrpc` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `stock`
 --
 
@@ -1567,6 +1864,62 @@ LOCK TABLES `stock` WRITE;
 /*!40000 ALTER TABLE `stock` DISABLE KEYS */;
 INSERT INTO `stock` VALUES (8710400190868,'Biologische Pindakaas AH',7,0,1,0,0),(8710400136880,'Bloemenhoning AH',1,0,2,0,0),(8710496503986,'De Ruijter Chocoladehagel Puur',1,0,3,0,0),(8722700208945,'Knorr Chicken Tonight Sate',2,0,4,3,6.9),(8713300042435,'Dubbel Frisss Appel en Perzik',4,0,5,0,0),(8717644239766,'OMO Waspoeder Wit',1,0,6,1,0),(8715700016504,'Heinz Tomaten Ketchup',1,0,7,0,0),(8710406212885,'Belegen Geraspte Kaas Super de Boer',1,0,8,12,1.2),(8710243922381,'Maaslander Plakjes Komijn Kaas',1,0,9,0,0),(8711000194645,'Senseo Mocca Gourmet Pads 36 stuks',2,0,10,6,3.05),(5410041360608,'Liga Milk Break Melk - Aardbei',1,0,11,2,3.95),(8710408108056,'Penne Pasta 500gr C1000',1,0,13,1,0);
 /*!40000 ALTER TABLE `stock` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `triggers`
+--
+
+DROP TABLE IF EXISTS `triggers`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `triggers` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `name` varchar(64) default NULL,
+  `type` int(11) default NULL,
+  `description` text,
+  `param1` varchar(32) default NULL,
+  `param2` varchar(32) default NULL,
+  `param3` varchar(32) default NULL,
+  `param4` varchar(32) default NULL,
+  `param5` varchar(32) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `triggers`
+--
+
+LOCK TABLES `triggers` WRITE;
+/*!40000 ALTER TABLE `triggers` DISABLE KEYS */;
+INSERT INTO `triggers` VALUES (1,'Time is SunSet',1,'Test description.','17','15','','',''),(2,'Time is SunRise',1,NULL,'08','00','','',''),(3,'Bathroom is Humid',3,NULL,'9','Value2','>','60',''),(4,'Movement in Kitchen is Detected',3,NULL,'17','Value','=','Motion',''),(5,'No Movement in Kitchen is Detected',3,NULL,'17','Value','=','No Motion',''),(6,'Bathroom Humidity is Normal',3,NULL,'9','Value3','=','Normal',''),(7,'Movement Outside Detected',3,NULL,'38','Value','=','Motion',''),(8,'Outside No Movement Detected',3,NULL,'38','Value','=','No Motion',''),(9,'Test Time trigger',1,NULL,'03','01','','','');
+/*!40000 ALTER TABLE `triggers` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `triggertypes`
+--
+
+DROP TABLE IF EXISTS `triggertypes`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `triggertypes` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `name` varchar(64) default NULL,
+  `tab` int(11) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `triggertypes`
+--
+
+LOCK TABLES `triggertypes` WRITE;
+/*!40000 ALTER TABLE `triggertypes` DISABLE KEYS */;
+INSERT INTO `triggertypes` VALUES (1,'Time Now',0),(2,'Variable',1),(3,'Device Status',2);
+/*!40000 ALTER TABLE `triggertypes` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -1626,6 +1979,31 @@ LOCK TABLES `users` WRITE;
 INSERT INTO `users` VALUES (1,'admin','admin','Admin',1,'','2008-11-06 14:12:13','admin@mydomain.com'),(2,'user','user','User',0,'','2008-11-06 14:10:21','user@mydomain.com'),(3,'rakker','','AIBO Rakker',0,'','','aibo@mydomain.com');
 /*!40000 ALTER TABLE `users` ENABLE KEYS */;
 UNLOCK TABLES;
+
+--
+-- Table structure for table `water_usage`
+--
+
+DROP TABLE IF EXISTS `water_usage`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `water_usage` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `counter` bigint(20) default NULL,
+  `stamp` datetime default NULL,
+  `consumption` bigint(20) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `water_usage`
+--
+
+LOCK TABLES `water_usage` WRITE;
+/*!40000 ALTER TABLE `water_usage` DISABLE KEYS */;
+/*!40000 ALTER TABLE `water_usage` ENABLE KEYS */;
+UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
@@ -1636,4 +2014,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2008-12-14 21:16:52
+-- Dump completed on 2009-05-31 15:06:42
