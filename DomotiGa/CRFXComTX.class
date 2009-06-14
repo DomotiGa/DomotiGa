@@ -1,0 +1,441 @@
+' Gambas class file
+
+' Description:
+' CRFXComTX.class
+' Connect to RFXCom transmitter interface via tcp socket or serial port.
+
+' Development Status:
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2009 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PROPERTY TCPHost AS String
+PROPERTY TCPPort AS Integer
+PROPERTY Interface AS String
+PROPERTY SerPort AS String
+PROPERTY Baud AS String
+PROPERTY RFXComDebug AS Boolean
+PROPERTY Handshake AS Boolean
+PROPERTY RelayPort AS Integer
+
+PRIVATE sTCPHost AS String
+PRIVATE iTCPPort AS Integer
+PRIVATE sInterface AS String
+PRIVATE sSerPort AS String
+PRIVATE sBaud AS String
+PRIVATE bHandshake AS Boolean
+PRIVATE bRFXComTXDebug AS Boolean
+PRIVATE iRelayPort AS Integer
+
+PUBLIC hRFXComTX AS NEW Socket
+PUBLIC hRFXComTXSer AS NEW SerialPort
+PUBLIC hRFXComTXRelay AS NEW ServerSocket
+PUBLIC hRelayTXClient AS Object[]
+PUBLIC hRelayTXSocket AS NEW Socket
+
+CONST SWVERS AS Byte = &H20
+CONST MODEHS AS Byte = &H21
+CONST MODEKOP AS Byte = &H23
+CONST MODEARC AS Byte = &H24
+CONST MODEBD AS Byte = &H25
+CONST MODEB32 AS Byte = &H29
+CONST ENALL AS Byte = &H2A
+CONST MODEVAR AS Byte = &H2C
+CONST DISARC AS Byte = &H2D
+CONST DISKOP AS Byte = &H2E
+CONST DISX10 AS Byte = &H2F
+CONST MODEVISONIC AS Byte = &H40
+CONST MODENOXLAT AS Byte = &H41
+CONST MODEVISAUX AS Byte = &H42
+CONST DISOREGON AS Byte = &H43
+CONST DISATI AS Byte = &H44
+CONST DISVIS AS Byte = &H45
+CONST DISSOMFY AS Byte = &H46
+CONST DISEU AS Byte = &H47
+
+PRIVATE bSlave AS Boolean
+PRIVATE bFirstByte AS Boolean = TRUE
+PRIVATE Protocol AS Byte = MODEVAR
+PRIVATE RecBuf AS Byte[30]
+PRIVATE RecBytes AS Byte
+PRIVATE RecBits AS Byte
+PRIVATE bMessage AS Boolean = FALSE
+PRIVATE iByteCount AS Integer = 0
+PRIVATE sMessage AS String
+PUBLIC bSimulate AS Boolean
+PUBLIC bWaitforAck AS Boolean
+PUBLIC bVersion AS Boolean
+
+PUBLIC SUB RFXComTX_Ready()
+
+  Main.WriteLog("RFXCom transmitter TCP socket connected.")
+
+END
+
+PUBLIC FUNCTION StartRelay() AS Boolean
+
+  hRFXComTXRelay = NEW ServerSocket AS "RFXComTXRelay"
+  hRFXComTXRelay.Type = Net.Internet
+  hRFXComTXRelay.Port = iRelayPort
+  ' we start listening for max 1 connection
+  hRFXComTXRelay.Listen(1)
+
+  IF hRFXComTXRelay.Status = Net.Active THEN
+    hRelayTXClient = NEW Object[]
+    ' all ok
+    RETURN TRUE
+  ELSE
+    RETURN FALSE
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectTCP() AS Boolean
+
+  ' try to close the connection
+  TRY hRFXComTX.Close
+
+  ' get a new one
+  hRFXComTX = NEW Socket AS "RFXComTX"
+  hRFXComTX.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("RFXCom transmitter Error: " & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectSerial() AS Boolean
+
+  ' try to close the connection
+  TRY hRFXComTXSer.Close
+
+  ' get a new one
+  hRFXComTXSer = NEW Serialport AS "RFXComTXSer"
+  WITH hRFXComTXSer
+    .PortName = sSerPort
+    .Speed = sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 2
+    .FlowControl = 0
+    .Open()
+  END WITH
+
+  SetInitMode()
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("RFXCom transmitter Error: " & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB RFXComTXRelay_Connection(sHost AS String)
+
+  DIM sHostName AS String
+
+  hRelayTXSocket = NEW Socket AS "RelayTXSocket"
+  ' accept client
+  IF hRFXComTXRelay.Status <= Net.Inactive THEN RETURN
+  IF Main.bRFXComTXDebug THEN Main.WriteDebugLog("[RFXComTXSRelay] Connection request from: " & sHost)
+
+  hRelayTXSocket = hRFXComTXRelay.Accept()
+  hRelayTXClient.Add(hRelayTXSocket)
+  IF hRelayTXSocket.Status = Net.Connected THEN
+    sHostName = DNS.ResolveHost(hRelayTXSocket.RemoteHost)
+    IF NOT sHostName THEN sHostName = hRelayTXSocket.RemoteHost
+    Main.WriteLog("RFXCom transmitter Relay connection from " & sHostName & " accepted.")
+  END IF
+
+END
+
+PUBLIC SUB RFXComTXRelay_Error()
+
+  ' handle error
+  SELECT CASE hRFXComTXRelay.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteDebugLog("[RFXComTXRelay] The system does not allow to create a socket.")
+    CASE Net.CannotBindSocket
+      Main.WriteDebugLog("[RFXComTXRelay] Cannot bind socket.")
+    CASE Net.CannotListen
+      Main.WriteDebugLog("[RFXComTXRelay] Cannot listen on port.")
+  END SELECT
+
+END
+
+PUBLIC SUB Socket_Closed()
+
+  Main.WriteLog("RFXCom transmitter Relay client connection closed.")
+  hRelayTXClient.Remove(hRelayTXClient.Find(LAST))
+
+END
+
+' ask for firmware version
+PUBLIC FUNCTION GetVersion()
+
+  DIM b AS Byte[2]
+
+  b[0] = &HF0
+  b[1] = SWVERS
+
+  Main.hRFXComTX.bVersion = TRUE
+  Main.hRFXComTX.SendCommand(b)
+  Main.hRFXComTX.bVersion = TRUE
+  Main.hRFXComTX.bWaitforAck = FALSE
+  IF bRFXComTXDebug THEN Main.WriteRFXDebugLog("Version request to transmitter => F020\n", 0)
+
+END
+
+PUBLIC FUNCTION SetInitMode()
+
+  DIM b AS Byte[4]
+  DIM sText AS String
+  ' F033F033 handshake
+  ' F037F037 no handshake
+  IF bHandshake THEN
+    b[0] = &HF0
+    b[1] = &H33
+    b[2] = &HF0
+    b[3] = &H33
+    sText = "Handshake"
+  ELSE
+    b[0] = &HF0
+    b[1] = &H37
+    b[2] = &HF0
+    b[3] = &H37
+    sText = "No Handshake"
+  END IF
+  IF bRFXComTXDebug THEN Main.WriteRFXDebugLog("Initialized Transmitter for " & sText & " with => " & Hex(b[0]) & Hex(b[1]) & Hex(b[2]) & Hex(b[3]) & "\n")
+  Main.hRFXComTX.SendCommand(b)
+
+END
+
+' ' disable protocol
+' PUBLIC FUNCTION DisableProtocol(sType AS String)
+'
+'   DIM b AS Byte[2]
+'   DIM sText AS String
+'
+'   b[0] = &HF0
+'
+'   SELECT sType
+'     CASE "ALL"
+'       b[1] = ENALL
+'       sText = "Enable ALL RF"
+'     CASE "OREGON"
+'       b[1] = DISOREGON
+'       sText = "Disable Oregon"
+'     CASE "X10"
+'       b[1] = DISX10
+'       sText = "Disable X10"
+'     CASE "KOPPLA"
+'       b[1] = DISKOP
+'       sText = "Disable Koppla"
+'     CASE "ARC"
+'       b[1] = DISARC
+'       sText = "Disable ARC"
+'     CASE "OREGON"
+'       b[1] = DISOREGON
+'       sText = "Disable Oregon"
+'     CASE "ATI"
+'       b[1] = DISATI
+'       sText = "Disable ATI"
+'     CASE "VISONIC"
+'       b[1] = DISVIS
+'       sText = "Disable Visonic" ""
+'     CASE "SOMFY"
+'       b[1] = DISSOMFY
+'       sText = "Disable Somfy"
+'   END SELECT
+' 
+'   Main.hRFXCom.SendCommand(b)
+'   IF bRFXComTXDebug THEN Main.WriteRFXDebugLog(sText & " => F0" & Hex(b[1]) & "\n")
+' 
+' END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send a command to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION SendCommand(aCommand AS Array)
+
+  DIM iCmd AS Byte
+
+  FOR EACH iCmd IN aCommand
+    IF sInterface = "tcp" THEN
+      TRY WRITE #hRFXComTX, iCmd
+    ELSE
+      TRY WRITE #hRFXComTXSer, iCmd
+    END IF
+  NEXT
+  bWaitforAck = TRUE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hRFXComTX.Close
+  TRY hRFXComTXSer.Close
+  TRY hRFXComTXRelay.Close
+  Main.WriteLog("RFXCom transmitter TCP socket/serial port close.")
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("RFXCom Error: " & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB RFXComTX_Error()
+
+  ' handle error
+  SELECT CASE hRFXComTX.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog("RFXCom transmitter: The system does not allow to create a socket.")
+    CASE Net.HostNotFound
+      Main.WriteLog("RFXCom transmitter: Host not found.")
+    CASE Net.ConnectionRefused
+      Main.WriteLog("RFXCom transmitter: Unable to connect. Connection refused.")
+    CASE Net.CannotRead
+      Main.WriteLog("RFXCom transmitter: Error reading data.")
+    CASE Net.CannotWrite
+      Main.WriteLog("RFXCom transmitter: Error writing data.")
+  END SELECT
+
+END
+
+PUBLIC SUB RFXComTX_Read()
+
+  DIM sData AS Byte
+
+  READ #hRFXComTX, sData
+  Main.WriteDebugLog("RFXComTX " & Hex(sData))
+  'IF NOT bSimulate THEN ProcessReceivedChar(sData)
+
+END
+
+PUBLIC SUB RFXComTXSer_Read()
+
+  DIM sData AS Byte
+
+  READ #hRFXComTXSer, sData
+  Main.WriteDebugLog("RFXComTX " & Hex(sData))
+  'IF NOT bSimulate THEN ProcessReceivedChar(sData)
+
+END
+
+' implement properties
+PRIVATE FUNCTION TCPHost_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB TCPHost_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION TCPPort_Read() AS Integer
+
+  RETURN iTCPPort
+
+END
+
+PRIVATE SUB TCPPort_Write(Value AS Integer)
+
+  iTCPPort = Value
+
+END
+
+PRIVATE FUNCTION Interface_Read() AS String
+
+  RETURN sInterface
+
+END
+
+PRIVATE SUB Interface_Write(Value AS String)
+
+  sInterface = Value
+
+END
+
+PRIVATE FUNCTION Baud_Read() AS String
+
+  RETURN sBaud
+
+END
+
+PRIVATE SUB Baud_Write(Value AS String)
+
+  sBaud = Value
+
+END
+
+PRIVATE FUNCTION SerPort_Read() AS String
+
+  RETURN sSerPort
+
+END
+
+PRIVATE SUB SerPort_Write(Value AS String)
+
+  sSerPort = Value
+
+END
+
+PRIVATE FUNCTION RFXComDebug_Read() AS Boolean
+
+  RETURN bRFXComTXDebug
+
+END
+
+PRIVATE SUB RFXComDebug_Write(Value AS Boolean)
+
+  bRFXComTXDebug = Value
+
+END
+
+PRIVATE SUB Handshake_Write(Value AS Boolean)
+
+  bHandshake = Value
+
+END
+
+PRIVATE FUNCTION Handshake_Read() AS Boolean
+
+  RETURN bHandshake
+
+END
+
+PRIVATE FUNCTION RelayPort_Read() AS Integer
+
+  RETURN iRelayPort
+
+END
+
+PRIVATE SUB RelayPort_Write(Value AS Integer)
+
+  iRelayPort = Value
+
+END
