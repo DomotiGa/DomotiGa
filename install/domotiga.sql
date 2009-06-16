@@ -1587,7 +1587,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `settings_sms` WRITE;
 /*!40000 ALTER TABLE `settings_sms` DISABLE KEYS */;
-INSERT INTO `settings_sms` VALUES (0,120,0,'/dev/ttyUSB6','38400','3363','+31653131313','+31612341234',0),(1,120,-1,'/dev/ttyUSB0','38400','3363','+31613131314','+31651564382',-1);
+INSERT INTO `settings_sms` VALUES (0,120,0,'/dev/ttyUSB6','38400','3363','+31653131313','+31612341234',0),(1,120,0,'/dev/ttyUSB0','38400','3363','+31613131314','+31612341234',-1);
 /*!40000 ALTER TABLE `settings_sms` ENABLE KEYS */;
 UNLOCK TABLES;
 
