@@ -2,7 +2,7 @@
 --
 -- Host: localhost    Database: domotiga
 -- ------------------------------------------------------
--- Server version	5.0.75-0ubuntu10.2
+-- Server version	5.0.51a-3ubuntu5.4
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -365,11 +365,12 @@ DROP TABLE IF EXISTS `deviceblacklist`;
 SET @saved_cs_client     = @@character_set_client;
 SET character_set_client = utf8;
 CREATE TABLE `deviceblacklist` (
-  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `blid` bigint(20) unsigned NOT NULL auto_increment,
   `address` varchar(64) default NULL,
   `comments` text,
-  PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=8 DEFAULT CHARSET=latin1;
+  `id` int(11) default NULL,
+  PRIMARY KEY  (`blid`)
+) ENGINE=MyISAM AUTO_INCREMENT=6 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
 
 --
@@ -378,7 +379,6 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `deviceblacklist` WRITE;
 /*!40000 ALTER TABLE `deviceblacklist` DISABLE KEYS */;
-INSERT INTO `deviceblacklist` VALUES (1,'/dev/sg0','Unknown hddtool device');
 /*!40000 ALTER TABLE `deviceblacklist` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -400,6 +400,14 @@ CREATE TABLE `devices` (
   `value2` varchar(32) default NULL,
   `value3` varchar(32) default NULL,
   `value4` varchar(32) default NULL,
+  `calibration` int(11) default NULL,
+  `calibration2` int(11) default NULL,
+  `calibration3` int(11) default NULL,
+  `calibration4` int(11) default NULL,
+  `divider` int(11) default NULL,
+  `divider2` int(11) default NULL,
+  `divider3` int(11) default NULL,
+  `divider4` int(11) default NULL,
   `label` varchar(32) default NULL,
   `label2` varchar(32) default NULL,
   `label3` varchar(32) default NULL,
@@ -443,7 +451,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `devices` WRITE;
 /*!40000 ALTER TABLE `devices` DISABLE KEYS */;
-INSERT INTO `devices` VALUES (1,'Porch Light','O02',0,10,6,'On','','',NULL,'','','',NULL,'light-on.png','light-off.png',NULL,2,'2008-09-06 13:56:53','2008-12-14 18:00:00',-1,0,-1,'|All Lights|Outside|',0,'',NULL,'','','','',NULL,'','','',NULL,-1,0,NULL,72,121,2,'2008-12-14 18:00:00'),(2,'Power Usage','00F0',0,9,13,'4497256','440','','','','Watt','','','energy.png','energy.png',NULL,1,'2008-08-31 22:39:31','2008-12-14 21:53:01',-1,0,0,'|Energy|',-1,'',NULL,'Measures power usage.','','watt','','','','GAUGE','','',0,0,NULL,0,0,1,'2008-12-14 21:53:01'),(3,'Laundryroom Light','E04',0,2,11,'Off','',NULL,NULL,'','',NULL,NULL,'light-on.png','light-off.png',NULL,2,'2008-08-26 23:12:16','2008-10-16 20:04:51',1,0,1,'|All Lights|',0,'',NULL,'None','','',NULL,NULL,'','',NULL,NULL,1,0,NULL,0,0,1,NULL),(4,'Hobbyroom Light','E03',0,2,12,'Off','',NULL,NULL,'','',NULL,NULL,'light-on.png','light-off.png',NULL,2,'2008-08-26 22:20:11','2008-10-16 20:04:52',1,0,1,'|All Lights|',0,'',NULL,'None','','',NULL,NULL,'','',NULL,NULL,0,1,NULL,259,182,3,NULL),(5,'UV Sensor','32',0,8,8,'2','Low','','','Level','','','','sun.png','sun.png',NULL,1,'2008-08-27 00:19:48','2008-12-14 21:57:32',-1,0,-1,'|Outside|',0,'low',NULL,' Battery replaced at 2008-11-11 20:45:52 ','','','','','','','','',0,0,NULL,0,0,1,'2008-11-16 22:14:36'),(6,'Livingroom Sensor','47',0,7,2,'18.6','36','',NULL,'°C','%',NULL,NULL,'temp.gif','temp.gif',NULL,1,'2008-07-31 13:35:50','2008-12-14 21:57:56',1,0,0,'|Climate|Humidity|Temperature|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,217,194,2,'2008-12-14 21:57:56'),(9,'Bathroom Sensor','68',0,7,3,'16.2','50','',NULL,'°C','%',NULL,NULL,'temp.gif','temp.gif',NULL,1,'2008-07-31 13:36:06','2008-12-14 21:57:44',1,0,0,'|Climate|Humidity|Temperature|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-14 21:57:44'),(10,'Fridge Sensor','05',0,7,7,'6.8','70','',NULL,'°C','%',NULL,NULL,'temp.gif','temp.gif',NULL,1,'2008-09-10 10:47:29','2008-12-14 21:57:36',1,0,0,'|Climate|Humidity|Temperature|',1,'',NULL,'','temp','humid',NULL,NULL,'GAUGE','GAUGE',NULL,NULL,0,0,NULL,0,0,1,'2008-12-14 21:57:36'),(11,'Outside Sensor','0A',0,7,8,'22.3','51','','','°C','%','','','temp.gif','temp.gif',NULL,1,'2008-09-09 16:00:58','2008-12-13 14:29:23',-1,0,0,'|Climate|Humidity|Outside|Temperature|',-1,'',NULL,'','temp','humid','','','GAUGE','GAUGE','','',0,0,NULL,0,0,1,'2008-12-13 14:29:23'),(12,'Doorbell','D02',0,6,6,'','','',NULL,'','','',NULL,'button.gif','button.gif',NULL,2,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,0,'|Doors|',0,'',NULL,'http://www.waakzaamwonen.nl/catalog/pdf/sax35.pdf','','','',NULL,'','','',NULL,0,0,NULL,0,0,1,NULL),(13,'Harddrive /dev/sda','/dev/sda',0,11,10,'36','',NULL,NULL,'°C','',NULL,NULL,'hd.png','hd.png',NULL,4,'2008-09-06 14:01:08','2008-12-14 22:03:13',1,0,1,'|Server|',1,'',NULL,'','temp','',NULL,NULL,'GAUGE','',NULL,NULL,0,0,NULL,122,125,6,'2008-12-14 21:20:55'),(16,'Rakker','192.168.100.4',0,13,2,'Sleeping','',NULL,NULL,'','',NULL,NULL,'aibo.gif','aibo.gif',NULL,5,'2008-09-06 14:01:07','2008-11-15 16:15:20',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,NULL),(17,'SmartUPS','smartups1000',0,14,10,'Online','224.9',NULL,NULL,'','Volt',NULL,NULL,'ups.gif','ups.gif',NULL,6,'2008-09-07 19:55:53','2008-11-13 14:55:17',1,0,1,'|Server|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-11-13 14:55:17'),(18,'Kitchen Motion Sensor','M01',0,4,7,'No Motion','',NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-23 23:34:19','2008-12-14 20:34:00',1,0,1,'|Motion|Security|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,115,62,2,'2008-12-14 20:33:59'),(19,'Serverroom Temp','4D0000004FC78A26',0,15,10,'22.81','',NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',NULL,3,'2008-08-26 14:37:29','2008-12-14 21:57:45',1,0,0,'|Server|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-14 21:54:45'),(20,'Rainfall Sensor','',NULL,16,8,'','',NULL,NULL,'mm','',NULL,NULL,'rain.png','rain.png',NULL,3,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,0,'|Outside|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,NULL),(21,'Smoke Detector','C0CF54',0,17,5,'Idle','',NULL,NULL,'','',NULL,NULL,'smoke.png','smoke.png',NULL,1,'2008-11-24 15:55:22','2008-11-24 15:55:22',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-11-24 15:55:22'),(22,'Mailbox Sensor','323D34',0,1,6,'Open','Secure',NULL,NULL,'','',NULL,NULL,'mail-on.png','mail-off.png',NULL,1,'2008-09-03 20:27:09','2008-12-14 19:44:48',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,NULL),(23,'Front Door Sensor','D2DDD4',0,1,6,'Closed','Secure',NULL,NULL,'','',NULL,NULL,'door-open.png','door-closed.png',NULL,1,'2008-09-03 20:11:50','2008-12-14 20:28:23',1,0,1,'|Doors|Security|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,NULL),(24,'Kitchen Light Sensor','M02',0,5,7,'Dark','',NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-26 19:47:49','2008-12-14 16:32:00',1,0,1,'|Motion|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,229,94,2,'2008-12-14 16:32:00'),(25,'Hot Water','150008013A024910',0,15,17,'22.81','',NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',NULL,3,'2008-09-08 16:02:43','2008-12-14 21:57:46',1,0,0,'|HVAC|',1,'',NULL,'','temp','',NULL,NULL,'GAUGE','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-14 21:57:46'),(27,'Toilet Motion Sensor','M03',0,4,4,'No Motion','',NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:37:49','2008-12-13 16:49:03',1,0,1,'|Motion|Security|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-13 16:49:03'),(28,'Toilet Light Sensor','M04',0,5,4,'Dark','',NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:40:57','2008-12-13 16:48:09',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-13 16:48:08'),(29,'My Phone','00:12:D1:A8:B6:10',2,18,16,'.','Away','','','','','','','bt.png','bt.png',NULL,8,'0000-00-00 00:00:00','2008-11-15 16:20:20',-1,0,-1,'|Proximity|',0,'',NULL,'','','','','','','','','',0,0,NULL,0,0,1,NULL),(30,'House Ventilation','A',0,19,7,'3','',NULL,NULL,'Speed','',NULL,NULL,'fan-on.gif','fan-off.gif',NULL,9,'2008-11-19 20:00:58','2008-12-02 16:27:30',0,0,0,'|HVAC|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-11-19 20:02:02'),(34,'Temp Sensor','08',0,12,7,'-22.1','',NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',NULL,1,'2008-12-03 22:49:37','2008-12-03 22:49:37',0,0,0,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-03 22:49:37'),(35,'Hygro Sensor','15',0,26,1,'16.4','55','Normal',NULL,'°C','%','',NULL,'','',NULL,1,'2008-12-03 23:29:33','2008-12-04 15:32:25',-1,0,0,'|Climate|',0,'',NULL,'','','','',NULL,'','','',NULL,0,0,NULL,0,0,1,'2008-12-04 15:32:25'),(37,'DomotiGa Server','000D6F000023710F',0,28,10,'On','44.139','0.044','','','W','kWh','','light-on.png','light-off.png',NULL,10,'2008-12-12 17:09:58','2008-12-14 21:46:57',-1,0,0,'|Server|',-1,'',NULL,'','','Watt','','','','GAUGE','','',0,0,NULL,0,0,1,'2008-12-14 21:46:57'),(36,'Close-in Boiler','000D6F00001C8F22',0,27,7,'Off','0','0',NULL,'','','',NULL,'light-on.png','light-off.png',NULL,10,'2008-12-10 16:56:35','2008-12-14 21:46:57',-1,0,-1,'|All Lights|',0,'',NULL,'','','Watt','',NULL,'','GAUGE','',NULL,-1,0,NULL,0,0,1,'2008-12-14 21:46:57');
+INSERT INTO `devices` VALUES (1,'Porch Light','O02',0,10,6,'On','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','','',NULL,'light-on.png','light-off.png',NULL,2,'2008-09-06 13:56:53','2008-12-14 18:00:00',-1,0,-1,'|All Lights|Outside|',0,'',NULL,'','','','',NULL,'','','',NULL,-1,0,NULL,72,121,2,'2008-12-14 18:00:00'),(2,'Power Usage','00F0',0,9,13,'4497256','440','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','Watt','','','energy.png','energy.png',NULL,1,'2008-08-31 22:39:31','2008-12-14 21:53:01',-1,0,0,'|Energy|',-1,'',NULL,'Measures power usage.','','watt','','','','GAUGE','','',0,0,NULL,0,0,1,'2008-12-14 21:53:01'),(3,'Laundryroom Light','E04',0,2,11,'Off','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'light-on.png','light-off.png',NULL,2,'2008-08-26 23:12:16','2008-10-16 20:04:51',1,0,1,'|All Lights|',0,'',NULL,'None','','',NULL,NULL,'','',NULL,NULL,1,0,NULL,0,0,1,NULL),(4,'Hobbyroom Light','E03',0,2,12,'Off','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'light-on.png','light-off.png',NULL,2,'2008-08-26 22:20:11','2008-10-16 20:04:52',1,0,1,'|All Lights|',0,'',NULL,'None','','',NULL,NULL,'','',NULL,NULL,0,1,NULL,259,182,3,NULL),(5,'UV Sensor','32',0,8,8,'2','Low','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'Level','','','','sun.png','sun.png',NULL,1,'2008-08-27 00:19:48','2008-12-14 21:57:32',-1,0,-1,'|Outside|',0,'low',NULL,' Battery replaced at 2008-11-11 20:45:52 ','','','','','','','','',0,0,NULL,0,0,1,'2008-11-16 22:14:36'),(6,'Livingroom Sensor','47',0,7,2,'18.6','36','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'°C','%',NULL,NULL,'temp.gif','temp.gif',NULL,1,'2008-07-31 13:35:50','2008-12-14 21:57:56',1,0,0,'|Climate|Humidity|Temperature|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,217,194,2,'2008-12-14 21:57:56'),(9,'Bathroom Sensor','68',0,7,3,'16.2','50','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'°C','%',NULL,NULL,'temp.gif','temp.gif',NULL,1,'2008-07-31 13:36:06','2008-12-14 21:57:44',1,0,0,'|Climate|Humidity|Temperature|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-14 21:57:44'),(10,'Fridge Sensor','05',0,7,7,'6.8','70','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'°C','%',NULL,NULL,'temp.gif','temp.gif',NULL,1,'2008-09-10 10:47:29','2008-12-14 21:57:36',1,0,0,'|Climate|Humidity|Temperature|',1,'',NULL,'','temp','humid',NULL,NULL,'GAUGE','GAUGE',NULL,NULL,0,0,NULL,0,0,1,'2008-12-14 21:57:36'),(11,'Outside Sensor','0A',0,7,8,'22.3','51','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'°C','%','','','temp.gif','temp.gif',NULL,1,'2008-09-09 16:00:58','2008-12-13 14:29:23',-1,0,0,'|Climate|Humidity|Outside|Temperature|',-1,'',NULL,'','temp','humid','','','GAUGE','GAUGE','','',0,0,NULL,0,0,1,'2008-12-13 14:29:23'),(12,'Doorbell','D02',0,6,6,'','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','','',NULL,'button.gif','button.gif',NULL,2,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,0,'|Doors|',0,'',NULL,'http://www.waakzaamwonen.nl/catalog/pdf/sax35.pdf','','','',NULL,'','','',NULL,0,0,NULL,0,0,1,NULL),(13,'Harddrive /dev/sda','/dev/sda',0,11,10,'36','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'°C','',NULL,NULL,'hd.png','hd.png',NULL,4,'2008-09-06 14:01:08','2008-12-14 22:03:13',1,0,1,'|Server|',1,'',NULL,'','temp','',NULL,NULL,'GAUGE','',NULL,NULL,0,0,NULL,122,125,6,'2008-12-14 21:20:55'),(16,'Rakker','192.168.100.4',0,13,2,'Sleeping','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'aibo.gif','aibo.gif',NULL,5,'2008-09-06 14:01:07','2008-11-15 16:15:20',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,NULL),(17,'SmartUPS','smartups1000',0,14,10,'Online','224.9',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','Volt',NULL,NULL,'ups.gif','ups.gif',NULL,6,'2008-09-07 19:55:53','2008-11-13 14:55:17',1,0,1,'|Server|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-11-13 14:55:17'),(18,'Kitchen Motion Sensor','M01',0,4,7,'No Motion','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-23 23:34:19','2008-12-14 20:34:00',1,0,1,'|Motion|Security|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,115,62,2,'2008-12-14 20:33:59'),(19,'Serverroom Temp','4D0000004FC78A26',0,15,10,'22.81','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',NULL,3,'2008-08-26 14:37:29','2008-12-14 21:57:45',1,0,0,'|Server|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-14 21:54:45'),(20,'Rainfall Sensor','',NULL,16,8,'','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'mm','',NULL,NULL,'rain.png','rain.png',NULL,3,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,0,'|Outside|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,NULL),(21,'Smoke Detector','C0CF54',0,17,5,'Idle','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'smoke.png','smoke.png',NULL,1,'2008-11-24 15:55:22','2008-11-24 15:55:22',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-11-24 15:55:22'),(22,'Mailbox Sensor','323D34',0,1,6,'Open','Secure',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'mail-on.png','mail-off.png',NULL,1,'2008-09-03 20:27:09','2008-12-14 19:44:48',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,NULL),(23,'Front Door Sensor','D2DDD4',0,1,6,'Closed','Secure',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'door-open.png','door-closed.png',NULL,1,'2008-09-03 20:11:50','2008-12-14 20:28:23',1,0,1,'|Doors|Security|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,NULL),(24,'Kitchen Light Sensor','M02',0,5,7,'Dark','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-26 19:47:49','2008-12-14 16:32:00',1,0,1,'|Motion|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,229,94,2,'2008-12-14 16:32:00'),(25,'Hot Water','150008013A024910',0,15,17,'22.81','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',NULL,3,'2008-09-08 16:02:43','2008-12-14 21:57:46',1,0,0,'|HVAC|',1,'',NULL,'','temp','',NULL,NULL,'GAUGE','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-14 21:57:46'),(27,'Toilet Motion Sensor','M03',0,4,4,'No Motion','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:37:49','2008-12-13 16:49:03',1,0,1,'|Motion|Security|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-13 16:49:03'),(28,'Toilet Light Sensor','M04',0,5,4,'Dark','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:40:57','2008-12-13 16:48:09',1,0,1,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-13 16:48:08'),(29,'My Phone','00:12:D1:A8:B6:10',2,18,16,'.','Away','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','','','','bt.png','bt.png',NULL,8,'0000-00-00 00:00:00','2008-11-15 16:20:20',-1,0,-1,'|Proximity|',0,'',NULL,'','','','','','','','','',0,0,NULL,0,0,1,NULL),(30,'House Ventilation','A',0,19,7,'3','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'Speed','',NULL,NULL,'fan-on.gif','fan-off.gif',NULL,9,'2008-11-19 20:00:58','2008-12-02 16:27:30',0,0,0,'|HVAC|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-11-19 20:02:02'),(34,'Temp Sensor','08',0,12,7,'-22.1','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',NULL,1,'2008-12-03 22:49:37','2008-12-03 22:49:37',0,0,0,'|',0,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-03 22:49:37'),(35,'Hygro Sensor','15',0,26,1,'16.4','55','Normal',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'°C','%','',NULL,'','',NULL,1,'2008-12-03 23:29:33','2008-12-04 15:32:25',-1,0,0,'|Climate|',0,'',NULL,'','','','',NULL,'','','',NULL,0,0,NULL,0,0,1,'2008-12-04 15:32:25'),(37,'DomotiGa Server','000D6F000023710F',0,28,10,'On','44.139','0.044','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','W','kWh','','light-on.png','light-off.png',NULL,10,'2008-12-12 17:09:58','2008-12-14 21:46:57',-1,0,0,'|Server|',-1,'',NULL,'','','Watt','','','','GAUGE','','',0,0,NULL,0,0,1,'2008-12-14 21:46:57'),(36,'Close-in Boiler','000D6F00001C8F22',0,27,7,'Off','0','0',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'','','',NULL,'light-on.png','light-off.png',NULL,10,'2008-12-10 16:56:35','2008-12-14 21:46:57',-1,0,-1,'|All Lights|',0,'',NULL,'','','Watt','',NULL,'','GAUGE','',NULL,-1,0,NULL,0,0,1,'2008-12-14 21:46:57');
 /*!40000 ALTER TABLE `devices` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -460,7 +468,7 @@ CREATE TABLE `devicetypes` (
   `description` varchar(32) default NULL,
   `type` varchar(32) default NULL,
   PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=58 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=59 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
 
 --
@@ -469,7 +477,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `devicetypes` WRITE;
 /*!40000 ALTER TABLE `devicetypes` DISABLE KEYS */;
-INSERT INTO `devicetypes` VALUES (1,'Marmitek DS90','Door/Window Sensor','X10Security'),(2,'Marmitek LW10G','Lamp Module','X10'),(3,'Marmitek LD11','Dimmer Module','X10'),(4,'Marmitek MS13E M','Motion Sensor','X10'),(5,'Marmitek MS13E L','Light Sensor','X10'),(6,'Xanura SAX35','I/O Actor','A10'),(7,'Oregon THGR238N','Temp/Hygro Sensor','Oregon'),(8,'Oregon UV138','UV Light Sensor','Oregon'),(9,'RFXPwr Module','Power Usage Sensor','RFXCom'),(10,'Marmitek TM13','Wireless Tranceiver','X10'),(11,'HDDTemp Item','Temp Monitor','HDDTemp'),(12,'Oregon THR128','Temp Sensor','Oregon'),(13,'Sony AIBO ERS-7 ','Robot Dog','AIBO'),(14,'APC SmartUPS1000','Power Supply','UPS'),(15,'Dallas DS18S20','Temp Sensor','1-Wire'),(16,'Dallas Rain Gauge','Rain Gauge','1-Wire'),(17,'Marmitek SD90','Smoke Detector','X10Security'),(18,'Bluetooth Device','Phone','Bluetooth'),(19,'ITHO ECO Fan','Central Ventilation','Weeder'),(20,'RFXPulse Gas','Gas Usage Sensor','RFXCom'),(21,'RFXPulse Water','Water Usage Sensor','RFXCom'),(22,'Oregon BWR102','Digital Bathroom Scale','Oregon'),(23,'Oregon GR101','Digital Bathroom Scale','Oregon'),(24,'Oregon THC138','Temp Sensor','Oregon'),(25,'Oregon THR138','Temp Sensor','Oregon'),(26,'Oregon THGR810','Temp/Hygro Sensor','Oregon'),(27,'Plugwise Circle','Zigbee Appliance Module','Plugwise'),(28,'Plugwise Circle+','Zigbee Appliance Module','Plugwise'),(29,'KAKU Doorbell','Wireless Doorbell','X10'),(30,'Oregon THN132N','Temp Sensor','Oregon'),(31,'Oregon THWR288','Temp Sensor','Oregon'),(32,'Oregon BTHR918N','Baro/Temp/Hygro Sensor','Oregon'),(33,'Oregon BTHR968','Baro/Temp/Hygro Sensor','Oregon'),(34,'Marmitek AD10','Switch Module','X10'),(35,'Marmitek LM12','Lamp Module','X10'),(36,'Marmitek AM12','Appliance Module','X10'),(38,'Oregon PCR800','Rain Gauge','Oregon'),(39,'Oregon RTGR328N','Temp/Hygro/Time Sensor','Oregon'),(40,'DSC PIR','Motion Sensor','DSC'),(41,'DSC Contact','Door/Window Sensor','DSC'),(42,'DSC Smoke','Smoke Detector','DSC'),(43,'KAKU AWST-8802','Wireless Wallswitch Dual','HE'),(44,'KAKU AMST-606','Door/Window Sensor','HE'),(46,'KNX/EIB Dim','EIS 2','KNX/EIB'),(45,'KNX/EIB On/Off','EIS 1','KNX/EIB'),(49,'KNX/EIB Values','EIS 5','KNX/EIB'),(48,'KNX/EIB Date','EIS 4','KNX/EIB'),(47,'KNX/EIB Time','EIS 3','KNX/EIB'),(50,'KNX/EIB Scaling %','EIS 6','KNX/EIB'),(51,'KNX/EIB Motor Drives','EIS 7','KNX/EIB'),(52,'KNX/EIB Forced Control','EIS 8','KNX/EIB'),(53,'KNX/EIB 32bit Float','EIS 9','KNX/EIB'),(54,'KNX/EIB 16bit Int','EIS 10','KNX/EIB'),(55,'KNX/EIB 32bit Int','EIS 11','KNX/EIB'),(56,'KNX/EIB 8bit Int','EIS 14','KNX/EIB'),(57,'KNX/EIB 14byte Text','EIS 15','KNX/EIB');
+INSERT INTO `devicetypes` VALUES (1,'Marmitek DS90','Door/Window Sensor','X10Security'),(2,'Marmitek LW10G','Lamp Module','X10'),(3,'Marmitek LD11','Dimmer Module','X10'),(4,'Marmitek MS13E M','Motion Sensor','X10'),(5,'Marmitek MS13E L','Light Sensor','X10'),(6,'Xanura SAX35','I/O Actor','A10'),(7,'Oregon THGR238N','Temp/Hygro Sensor','Oregon'),(8,'Oregon UV138','UV Light Sensor','Oregon'),(9,'RFXPwr Module','Power Usage Sensor','RFXCom'),(10,'Marmitek TM13','Wireless Tranceiver','X10'),(11,'HDDTemp Item','Temp Monitor','HDDTemp'),(12,'Oregon THR128','Temp Sensor','Oregon'),(13,'Sony AIBO ERS-7 ','Robot Dog','AIBO'),(14,'APC SmartUPS1000','Power Supply','UPS'),(15,'Dallas DS18S20','Temp Sensor','1-Wire'),(16,'Dallas Rain Gauge','Rain Gauge','1-Wire'),(17,'Marmitek SD90','Smoke Detector','X10Security'),(18,'Bluetooth Device','Phone','Bluetooth'),(19,'ITHO ECO Fan','Central Ventilation','Weeder'),(20,'RFXPulse Gas','Gas Usage Sensor','RFXCom'),(21,'RFXPulse Water','Water Usage Sensor','RFXCom'),(22,'Oregon BWR102','Digital Bathroom Scale','Oregon'),(23,'Oregon GR101','Digital Bathroom Scale','Oregon'),(24,'Oregon THC138','Temp Sensor','Oregon'),(25,'Oregon THR138','Temp Sensor','Oregon'),(26,'Oregon THGR810','Temp/Hygro Sensor','Oregon'),(27,'Plugwise Circle','Zigbee Appliance Module','Plugwise'),(28,'Plugwise Circle+','Zigbee Appliance Module','Plugwise'),(29,'KAKU Doorbell','Wireless Doorbell','X10'),(30,'Oregon THN132N','Temp Sensor','Oregon'),(31,'Oregon THWR288','Temp Sensor','Oregon'),(32,'Oregon BTHR918N','Baro/Temp/Hygro Sensor','Oregon'),(33,'Oregon BTHR968','Baro/Temp/Hygro Sensor','Oregon'),(34,'Marmitek AD10','Switch Module','X10'),(35,'Marmitek LM12','Lamp Module','X10'),(36,'Marmitek AM12','Appliance Module','X10'),(38,'Oregon PCR800','Rain Gauge','Oregon'),(39,'Oregon RTGR328N','Temp/Hygro/Time Sensor','Oregon'),(40,'DSC PIR','Motion Sensor','DSC'),(41,'DSC Contact','Door/Window Sensor','DSC'),(42,'DSC Smoke','Smoke Detector','DSC'),(43,'KAKU AWST-8802','Wireless Wallswitch Dual','HE'),(44,'KAKU AMST-606','Door/Window Sensor','HE'),(46,'KNX/EIB Dim','EIS 2','KNX/EIB'),(45,'KNX/EIB On/Off','EIS 1','KNX/EIB'),(49,'KNX/EIB Values','EIS 5','KNX/EIB'),(48,'KNX/EIB Date','EIS 4','KNX/EIB'),(47,'KNX/EIB Time','EIS 3','KNX/EIB'),(50,'KNX/EIB Scaling %','EIS 6','KNX/EIB'),(51,'KNX/EIB Motor Drives','EIS 7','KNX/EIB'),(52,'KNX/EIB Forced Control','EIS 8','KNX/EIB'),(53,'KNX/EIB 32bit Float','EIS 9','KNX/EIB'),(54,'KNX/EIB 16bit Int','EIS 10','KNX/EIB'),(55,'KNX/EIB 32bit Int','EIS 11','KNX/EIB'),(56,'KNX/EIB 8bit Int','EIS 14','KNX/EIB'),(57,'KNX/EIB 14byte Text','EIS 15','KNX/EIB'),(58,'Digitemp DS1820','Temp Sensor','Digitemp');
 /*!40000 ALTER TABLE `devicetypes` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -624,7 +632,7 @@ CREATE TABLE `interfaces` (
   `type` varchar(32) default NULL,
   `mode` varchar(32) default NULL,
   PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=14 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=15 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
 
 --
@@ -633,7 +641,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `interfaces` WRITE;
 /*!40000 ALTER TABLE `interfaces` DISABLE KEYS */;
-INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','A10 X10 Oregon KAKU','Read'),(2,'Xanura CTX35','A10 X10','Read Write'),(3,'Midon TEMP08','One-Wire','Read Write'),(4,'HDDTemp Socket','Build-in Module','Read'),(5,'AIBO Socket','Build-in Module','Read'),(6,'UPS Socket','Build-in Module','Read'),(7,'Heyu X10','A10 X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read Write'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC5401 Interface','DSC','Read Write'),(12,'RFXCom Transmitter','A10 X10 KAKU','Read Write'),(13,'KNX/EIB Interface','KNX EIB','Read Write');
+INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','A10 X10 Oregon KAKU','Read'),(2,'Xanura CTX35','A10 X10','Read Write'),(3,'Midon TEMP08','One-Wire','Read Write'),(4,'HDDTemp Socket','Build-in Module','Read'),(5,'AIBO Socket','Build-in Module','Read'),(6,'UPS Socket','Build-in Module','Read'),(7,'Heyu X10','A10 X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read Write'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC5401 Interface','DSC','Read Write'),(12,'RFXCom Transmitter','A10 X10 KAKU','Read Write'),(13,'KNX/EIB Interface','KNX EIB','Read Write'),(14,'Digitemp','Digitemp','Read');
 /*!40000 ALTER TABLE `interfaces` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -671,11 +679,11 @@ SET character_set_client = utf8;
 CREATE TABLE `newsfeeds` (
   `id` bigint(20) unsigned NOT NULL auto_increment,
   `name` varchar(32) default NULL,
-  `url` varchar(64) default NULL,
+  `url` varchar(254) default NULL,
   `description` text,
   `enabled` tinyint(1) default NULL,
   PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=7 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
 
 --
@@ -684,7 +692,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `newsfeeds` WRITE;
 /*!40000 ALTER TABLE `newsfeeds` DISABLE KEYS */;
-INSERT INTO `newsfeeds` VALUES (1,'Slashdot','http://rss.slashdot.org/Slashdot/slashdot','News for Nerds. Stuff that Matters.',1),(2,'Tweakers','http://gathering.tweakers.net/rss/list_activetopics','Gathering of Tweakers.',1);
+INSERT INTO `newsfeeds` VALUES (1,'Slashdot','http://rss.slashdot.org/Slashdot/slashdot','News for Nerds. Stuff that Matters.',1),(2,'Tweakers','http://gathering.tweakers.net/rss/list_activetopics','Gathering of Tweakers.',1),(3,'Weather','http://www.buienradar.nl/rssnieuws.aspx','',1);
 /*!40000 ALTER TABLE `newsfeeds` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1108,6 +1116,35 @@ LOCK TABLES `settings_ctx35` WRITE;
 /*!40000 ALTER TABLE `settings_ctx35` DISABLE KEYS */;
 INSERT INTO `settings_ctx35` VALUES (0,0,'/dev/ttyUSB0','19200',500,0),(1,0,'/dev/ttyUSB0','19200',500,0);
 /*!40000 ALTER TABLE `settings_ctx35` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `settings_digitemp`
+--
+
+DROP TABLE IF EXISTS `settings_digitemp`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `settings_digitemp` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) default NULL,
+  `command` varchar(32) default NULL,
+  `config` varchar(32) default NULL,
+  `polltime` int(11) default NULL,
+  `readtime` int(11) default NULL,
+  `debug` tinyint(1) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `settings_digitemp`
+--
+
+LOCK TABLES `settings_digitemp` WRITE;
+/*!40000 ALTER TABLE `settings_digitemp` DISABLE KEYS */;
+INSERT INTO `settings_digitemp` VALUES (0,0,'digitemp_DS9097U','/etc/digitemp.conf',300,1500,0),(1,0,'digitemp_DS9097U','/etc/digitemp.conf',300,1500,0);
+/*!40000 ALTER TABLE `settings_digitemp` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -1966,7 +2003,7 @@ SET character_set_client = utf8;
 CREATE TABLE `trafficfeeds` (
   `id` bigint(20) unsigned NOT NULL auto_increment,
   `name` varchar(32) default NULL,
-  `url` varchar(64) default NULL,
+  `url` varchar(254) default NULL,
   `description` text,
   `enabled` tinyint(1) default NULL,
   `type` int(11) default NULL,
@@ -2108,7 +2145,7 @@ CREATE TABLE `version` (
   `id` bigint(20) unsigned NOT NULL auto_increment,
   `db` varchar(16) default NULL,
   PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=2 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
 
 --
@@ -2117,8 +2154,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166');
-INSERT INTO `version` VALUES (2,'0.1.167');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2157,12 +2193,12 @@ SET character_set_client = utf8;
 CREATE TABLE `weatherfeeds` (
   `id` bigint(20) unsigned NOT NULL auto_increment,
   `name` varchar(32) default NULL,
-  `url` varchar(64) default NULL,
+  `url` varchar(254) default NULL,
   `description` text,
   `enabled` tinyint(1) default NULL,
   `type` int(11) default NULL,
   PRIMARY KEY  (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
 
 --
@@ -2171,6 +2207,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `weatherfeeds` WRITE;
 /*!40000 ALTER TABLE `weatherfeeds` DISABLE KEYS */;
+INSERT INTO `weatherfeeds` VALUES (1,'Sat24','http://www.sat24.com/image.ashx?country=nl','',1,NULL);
 /*!40000 ALTER TABLE `weatherfeeds` ENABLE KEYS */;
 UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
@@ -2183,4 +2220,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2009-07-11 11:09:38
+-- Dump completed on 2009-09-06 15:12:19
