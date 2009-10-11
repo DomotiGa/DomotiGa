@@ -75,33 +75,6 @@ LOCK TABLES `actiontypes` WRITE;
 UNLOCK TABLES;
 
 --
--- Table structure for table `bwired_devices`
---
-
-DROP TABLE IF EXISTS `bwired_devices`;
-SET @saved_cs_client     = @@character_set_client;
-SET character_set_client = utf8;
-CREATE TABLE `bwired_devices` (
-  `id` bigint(20) unsigned NOT NULL auto_increment,
-  `description` varchar(64) default NULL,
-  `devicename` varchar(32) default NULL,
-  `deviceid` int(11) default NULL,
-  `devicelabel` varchar(16) default NULL,
-  `value` text,
-  PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=9 DEFAULT CHARSET=latin1;
-SET character_set_client = @saved_cs_client;
-
---
--- Dumping data for table `bwired_devices`
---
-
-LOCK TABLES `bwired_devices` WRITE;
-/*!40000 ALTER TABLE `bwired_devices` DISABLE KEYS */;
-/*!40000 ALTER TABLE `bwired_devices` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Table structure for table `capture_camera0`
 --
 
@@ -456,6 +429,63 @@ INSERT INTO `devices` VALUES (1,'Porch Light','O02',0,10,6,'On','','',NULL,0,0,0
 UNLOCK TABLES;
 
 --
+-- Table structure for table `devices_bwired`
+--
+
+DROP TABLE IF EXISTS `devices_bwired`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `devices_bwired` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `description` varchar(64) default NULL,
+  `devicename` varchar(32) default NULL,
+  `deviceid` int(11) default NULL,
+  `devicelabel` varchar(16) default NULL,
+  `value` text,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=9 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `devices_bwired`
+--
+
+LOCK TABLES `devices_bwired` WRITE;
+/*!40000 ALTER TABLE `devices_bwired` DISABLE KEYS */;
+/*!40000 ALTER TABLE `devices_bwired` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `devices_zwave`
+--
+
+DROP TABLE IF EXISTS `devices_zwave`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `devices_zwave` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `nodeid` int(11) default NULL,
+  `typebasic` int(11) default NULL,
+  `typegeneric` int(11) default NULL,
+  `typespecific` int(11) default NULL,
+  `capabilities` int(11) default NULL,
+  `security` int(11) default NULL,
+  `sleeping` tinyint(1) default NULL,
+  `value` varchar(32) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `devices_zwave`
+--
+
+LOCK TABLES `devices_zwave` WRITE;
+/*!40000 ALTER TABLE `devices_zwave` DISABLE KEYS */;
+/*!40000 ALTER TABLE `devices_zwave` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `devicetypes`
 --
 
@@ -591,7 +621,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `globalvars` WRITE;
 /*!40000 ALTER TABLE `globalvars` DISABLE KEYS */;
-INSERT INTO `globalvars` VALUES (1,'Second','54'),(2,'Minute','46'),(3,'Hour','19'),(4,'Day','14'),(5,'Month','6'),(6,'Weekday','0'),(7,'Time_Of_Day','evening'),(8,'Year','2009'),(9,'Sunrise','4:58'),(10,'Sunset','21:48'),(11,'Sunrise_Twilight','4:07'),(12,'Sunset_Twilight','22:38'),(13,'Season','spring'),(14,'House_Mode','normal'),(15,'Mode_Set','auto'),(16,'Last_User','admin'),(17,'Mute','T'),(18,'Weekend','T'),(19,'Program_Start','06/14/2009 19:46:52.49'),(20,'Program_Uptime','0 days, 0 hrs, 0 mins, and 2 secs.'),(21,'Tagline','Adam ate the apple, and our teeth still ache.'),(22,'Dark','');
+INSERT INTO `globalvars` VALUES (1,'Second','38'),(2,'Minute','28'),(3,'Hour','20'),(4,'Day','11'),(5,'Month','10'),(6,'Weekday','0'),(7,'Time_Of_Day','evening'),(8,'Year','2009'),(9,'Sunrise','7:39'),(10,'Sunset','18:39'),(11,'Sunrise_Twilight','7:04'),(12,'Sunset_Twilight','19:14'),(13,'Season','fall'),(14,'House_Mode','normal'),(15,'Mode_Set','auto'),(16,'Last_User','admin'),(17,'Mute','T'),(18,'Weekend','T'),(19,'Program_Start','10/11/2009 20:28:06.607'),(20,'Program_Uptime','0 days, 0 hrs, 0 mins, and 31 secs.'),(21,'Tagline','If at first you don\'t succeed, skydiving is not for you.'),(22,'Dark','');
 /*!40000 ALTER TABLE `globalvars` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -667,6 +697,61 @@ LOCK TABLES `locations` WRITE;
 /*!40000 ALTER TABLE `locations` DISABLE KEYS */;
 INSERT INTO `locations` VALUES (1,''),(2,'Livingroom'),(3,'Bathroom'),(4,'Toilet'),(5,'Hallway'),(6,'Frontdoor'),(7,'Kitchen'),(8,'Garden'),(9,'Master Bedroom'),(10,'Serverroom'),(11,'Laundryroom'),(12,'Hobbyroom'),(13,'MeterCabinet'),(15,'Neighbours'),(16,'Mobile'),(17,'Boiler');
 /*!40000 ALTER TABLE `locations` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `menu`
+--
+
+DROP TABLE IF EXISTS `menu`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `menu` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `name_en` varchar(32) default NULL,
+  `name_fr` varchar(32) default NULL,
+  `name_nl` varchar(32) default NULL,
+  `item` varchar(32) default NULL,
+  `menu` int(11) default NULL,
+  `position` int(11) default NULL,
+  `icon` varchar(32) default NULL,
+  `enabled` tinyint(1) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=23 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `menu`
+--
+
+LOCK TABLES `menu` WRITE;
+/*!40000 ALTER TABLE `menu` DISABLE KEYS */;
+INSERT INTO `menu` VALUES (1,'Home','Home','Start','FHome',1,1,'home.png',1),(2,'Control','Control','Control','FControl',1,2,'control.png',1),(3,'Floorplan','Floorplan','Floorplan','FFloorplans',1,6,'floorplan.png',1),(4,'Locations','Locations','Lokaties','FLocations',1,4,'locations.png',0),(5,'Climate','Climate','Klimaat','FClimate',1,5,'climate.png',1),(6,'Security','Sécurité','Beveiliging','FSecurity',1,6,'security.png',1),(7,'HVAC','HVAC','HVAC','FHVAC',1,7,'hvac.png',1),(8,'Energy','Energy','Energie','FEnergy',1,8,'energy.png',1),(9,'Logfiles','Logfiles','Logs','FLogfiles',1,9,'logs.png',1),(10,'Phone','Téléphoner','Telefoon','FPhone',1,1,'phone.png',1),(11,'Captures','Captures','Captures','FCaptures',2,2,'captures.png',1),(12,'Barcodes','Barcodes','Barcodes','FBarcodes',2,3,'stock.png',1),(13,'Camera','Camera','Camera','FCamera',2,4,'camera.png',1),(14,'Weather','Weather','Weer','FWeather',2,5,'weather.png',1),(15,'e-mail','e-mail','e-mail','FEmail',2,6,'email.png',0),(16,'News','News','Nieuws','FNews',2,7,'news.png',1),(17,'TV Guide','TV Guide','TV Gids','FTVGuide',2,8,'tvguide.png',0),(18,'Debug','Debug','Debug','FDebug',3,1,'system.png',1),(19,'Statistics','Statistics','Statistieken','FServerStats',3,2,'serverstats.png',1),(20,'Events','Events','Events','FEvents',3,3,'events.png',1),(21,'Devices','Artifices','Apparaten','FDevices',1,2,'devices.png',1),(22,'DSC Panel','DSC Panel','DSC Paneel','FDSC',2,10,'security.png',1);
+/*!40000 ALTER TABLE `menu` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `menu_names`
+--
+
+DROP TABLE IF EXISTS `menu_names`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `menu_names` (
+  `id` int(11) NOT NULL,
+  `name` varchar(32) default NULL,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
+
+--
+-- Dumping data for table `menu_names`
+--
+
+LOCK TABLES `menu_names` WRITE;
+/*!40000 ALTER TABLE `menu_names` DISABLE KEYS */;
+INSERT INTO `menu_names` VALUES (1,'Main'),(2,'Extra'),(3,'System');
+/*!40000 ALTER TABLE `menu_names` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -1979,6 +2064,7 @@ CREATE TABLE `settings_zwave` (
   `enabled` tinyint(1) default NULL,
   `serialport` varchar(32) default NULL,
   `baudrate` varchar(32) default NULL,
+  `reloadnodes` tinyint(1) default NULL,
   `debug` tinyint(1) default NULL,
   PRIMARY KEY  (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -1990,7 +2076,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `settings_zwave` WRITE;
 /*!40000 ALTER TABLE `settings_zwave` DISABLE KEYS */;
-INSERT INTO `settings_zwave` VALUES (0,0,'/dev/ttyUSB4','115200',0),(1,0,'/dev/ttyUSB4','115200',0);
+INSERT INTO `settings_zwave` VALUES (0,0,'/dev/ttyUSB4','115200',0,0),(1,0,'/dev/ttyUSB10','115200',0,0);
 /*!40000 ALTER TABLE `settings_zwave` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2177,7 +2263,7 @@ CREATE TABLE `version` (
   `id` bigint(20) unsigned NOT NULL auto_increment,
   `db` varchar(16) default NULL,
   PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=7 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=8 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
 
 --
@@ -2186,7 +2272,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2242,36 +2328,6 @@ LOCK TABLES `weatherfeeds` WRITE;
 INSERT INTO `weatherfeeds` VALUES (1,'Sat24','http://www.sat24.com/image.ashx?country=nl','',1,NULL);
 /*!40000 ALTER TABLE `weatherfeeds` ENABLE KEYS */;
 UNLOCK TABLES;
-
---
--- Table structure for table `zwave_devices`
---
-
-DROP TABLE IF EXISTS `zwave_devices`;
-SET @saved_cs_client     = @@character_set_client;
-SET character_set_client = utf8;
-CREATE TABLE `zwave_devices` (
-  `id` bigint(20) unsigned NOT NULL auto_increment,
-  `nodeid` int(11) default NULL,
-  `typebasic` int(11) default NULL,
-  `typegeneric` int(11) default NULL,
-  `typespecific` int(11) default NULL,
-  `capabilities` int(11) default NULL,
-  `security` int(11) default NULL,
-  `sleeping` tinyint(1) default NULL,
-  `value` varchar(32) default NULL,
-  PRIMARY KEY  (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
-SET character_set_client = @saved_cs_client;
-
---
--- Dumping data for table `zwave_devices`
---
-
-LOCK TABLES `zwave_devices` WRITE;
-/*!40000 ALTER TABLE `zwave_devices` DISABLE KEYS */;
-/*!40000 ALTER TABLE `zwave_devices` ENABLE KEYS */;
-UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
@@ -2282,4 +2338,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2009-10-03 14:22:07
+-- Dump completed on 2009-10-11 18:29:15
