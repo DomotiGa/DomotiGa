@@ -472,6 +472,12 @@ CREATE TABLE `devices_zwave` (
   `security` int(11) default NULL,
   `sleeping` tinyint(1) default NULL,
   `value` varchar(32) default NULL,
+  `manufacturer` varchar(64) default NULL,
+  `model` varchar(64) default NULL,
+  `version` varchar(32) default NULL,
+  `neighbor` varchar(32) default NULL,
+  `speed` varchar(32) default NULL,
+  `classes` text,
   PRIMARY KEY  (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
@@ -671,7 +677,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `interfaces` WRITE;
 /*!40000 ALTER TABLE `interfaces` DISABLE KEYS */;
-INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','A10 X10 X10Security Oregon KAKU RFXCom HE','Read'),(2,'Xanura CTX35','A10 X10','Read Write'),(3,'Midon TEMP08','1-Wire','Read Write'),(4,'HDDTemp Socket','HDDTemp','Read'),(5,'AIBO Socket','AIBO','Read'),(6,'UPS Socket','UPS','Read'),(7,'Heyu X10','A10 X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read Write'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC5401 Interface','DSC','Read Write'),(12,'RFXCom Transmitter','X10 ARC AC RFXCom','Read Write'),(13,'KNX/EIB Interface','KNX EIB','Read Write'),(14,'Digitemp','Digitemp','Read'),(15,'Z-Wave Controller','Z-Wave','Read Write');
+INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','A10 X10 X10Security Oregon KAKU RFXCom HE','Read'),(2,'Xanura CTX35','A10 X10','Read Write'),(3,'Midon TEMP08','1-Wire','Read Write'),(4,'HDDTemp Socket','HDDTemp','Read'),(5,'AIBO Socket','AIBO','Read'),(6,'UPS Socket','UPS','Read'),(7,'Heyu X10','A10 X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read Write'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC5401 Interface','DSC','Read Write'),(12,'RFXCom Transmitter','X10 ARC AC RFXCom','Read Write'),(13,'KNX/EIB Interface','KNX/EIB','Read Write'),(14,'Digitemp','Digitemp','Read'),(15,'Z-Wave Controller','Z-Wave','Read Write');
 /*!40000 ALTER TABLE `interfaces` ENABLE KEYS */;
 UNLOCK TABLES;
 
