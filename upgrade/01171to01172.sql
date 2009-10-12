@@ -102,15 +102,12 @@ UNLOCK TABLES;
 --
 -- Table structure for table `menu`
 --
-
 DROP TABLE IF EXISTS `menu`;
 SET @saved_cs_client     = @@character_set_client;
 SET character_set_client = utf8;
 CREATE TABLE `menu` (
   `id` bigint(20) unsigned NOT NULL auto_increment,
-  `name_en` varchar(32) default NULL,
-  `name_fr` varchar(32) default NULL,
-  `name_nl` varchar(32) default NULL,
+  `name` varchar(32) default NULL,
   `item` varchar(32) default NULL,
   `menu` int(11) default NULL,
   `position` int(11) default NULL,
@@ -126,7 +123,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `menu` WRITE;
 /*!40000 ALTER TABLE `menu` DISABLE KEYS */;
-INSERT INTO `menu` VALUES (1,'Home','Home','Start','FHome',1,1,'home.png',1),(2,'Control','Control','Control','FControl',1,2,'control.png',1),(3,'Floorplan','Floorplan','Floorplan','FFloorplans',1,6,'floorplan.png',1),(4,'Locations','Locations','Lokaties','FLocations',1,4,'locations.png',0),(5,'Climate','Climate','Klimaat','FClimate',1,5,'climate.png',1),(6,'Security','Sécurité','Beveiliging','FSecurity',1,6,'security.png',1),(7,'HVAC','HVAC','HVAC','FHVAC',1,7,'hvac.png',1),(8,'Energy','Energy','Energie','FEnergy',1,8,'energy.png',1),(9,'Logfiles','Logfiles','Logs','FLogfiles',1,9,'logs.png',1),(10,'Phone','Téléphoner','Telefoon','FPhone',1,1,'phone.png',1),(11,'Captures','Captures','Captures','FCaptures',2,2,'captures.png',1),(12,'Barcodes','Barcodes','Barcodes','FBarcodes',2,3,'stock.png',1),(13,'Camera','Camera','Camera','FCamera',2,4,'camera.png',1),(14,'Weather','Weather','Weer','FWeather',2,5,'weather.png',1),(15,'e-mail','e-mail','e-mail','FEmail',2,6,'email.png',0),(16,'News','News','Nieuws','FNews',2,7,'news.png',1),(17,'TV Guide','TV Guide','TV Gids','FTVGuide',2,8,'tvguide.png',0),(18,'Debug','Debug','Debug','FDebug',3,1,'system.png',1),(19,'Statistics','Statistics','Statistieken','FServerStats',3,2,'serverstats.png',1),(20,'Events','Events','Events','FEvents',3,3,'events.png',1),(21,'Devices','Artifices','Apparaten','FDevices',1,2,'devices.png',1),(22,'DSC Panel','DSC Panel','DSC Paneel','FDSC',2,10,'security.png',1);
+INSERT INTO `menu` VALUES (1,'Home','FHome',1,1,'home.png',1),(2,'Control','FControl',1,2,'control.png',1),(3,'Floorplan','FFloorplans',1,6,'floorplan.png',1),(4,'Locations','FLocations',1,4,'locations.png',0),(5,'Climate','FClimate',1,5,'climate.png',1),(6,'Security','FSecurity',1,6,'security.png',1),(7,'HVAC','FHVAC',1,7,'hvac.png',1),(8,'Energy','FEnergy',1,8,'energy.png',1),(9,'Logfiles','FLogfiles',1,9,'logs.png',1),(10,'Phone','FPhone',1,1,'phone.png',1),(11,'Captures','FCaptures',2,2,'captures.png',1),(12,'Barcodes','FBarcodes',2,3,'stock.png',1),(13,'Camera','FCamera',2,4,'camera.png',1),(14,'Weather','FWeather',2,5,'weather.png',1),(15,'e-mail','FEmail',2,6,'email.png',0),(16,'News','FNews',2,7,'news.png',1),(17,'TV Guide','FTVGuide',2,8,'tvguide.png',0),(18,'Debug','FDebug',3,1,'system.png',1),(19,'Statistics','FServerStats',3,2,'serverstats.png',1),(20,'Events','FEvents',3,3,'events.png',1),(21,'Devices','FDevices',1,2,'devices.png',1),(22,'DSC Panel','FDSC',2,10,'security.png',1);
 /*!40000 ALTER TABLE `menu` ENABLE KEYS */;
 UNLOCK TABLES;
 
