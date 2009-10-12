@@ -17,8 +17,35 @@
 
 USE domotiga;
 
-ALTER TABLE zwave_devices RENAME devices_zwave;
+DROP TABLE IF EXISTS `zwave_devices`;
 ALTER TABLE bwired_devices RENAME devices_bwired;
+
+--
+-- Table structure for table `devices_zwave`
+--
+
+DROP TABLE IF EXISTS `devices_zwave`;
+SET @saved_cs_client     = @@character_set_client;
+SET character_set_client = utf8;
+CREATE TABLE `devices_zwave` (
+  `id` bigint(20) unsigned NOT NULL auto_increment,
+  `nodeid` int(11) default NULL,
+  `typebasic` int(11) default NULL,
+  `typegeneric` int(11) default NULL,
+  `typespecific` int(11) default NULL,
+  `capabilities` int(11) default NULL,
+  `security` int(11) default NULL,
+  `sleeping` tinyint(1) default NULL,
+  `value` varchar(32) default NULL,
+  `manufacturer` varchar(64) default NULL,
+  `model` varchar(64) default NULL,
+  `version` varchar(32) default NULL,
+  `neighbor` varchar(32) default NULL,
+  `speed` varchar(32) default NULL,
+  `classes` text,
+  PRIMARY KEY  (`id`)
+) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
+SET character_set_client = @saved_cs_client;
 
 --
 -- Table structure for table `settings_zwave`
