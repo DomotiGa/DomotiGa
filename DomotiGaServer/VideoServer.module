@@ -1,0 +1,115 @@
+' Gambas module file
+
+' Description:
+' VideoServer.module
+' Support getting captures from for Aviosys IP9100 Videoserver
+
+' Development Status:
+' Sort of working, needs better error checking.
+
+' Links:
+' http://www.sunspot.co.uk/Projects/IP_KAM_9000and9100_notes.htm
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2009 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PRIVATE hDownloadImage AS HttpClient
+PRIVATE iCamera AS Integer
+PRIVATE sMessage AS String
+PRIVATE sToAddress AS String
+PRIVATE sSubject AS String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' delete and create capture tables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB InitTables()
+
+  DIM iCam AS Integer
+  DIM tableCaptures AS Table
+
+  FOR iCam = 0 TO 3
+    Main.hDB.Tables.Remove("capture_camera" & iCam)
+    tableCaptures = Main.hDB.Tables.Add("capture_camera" & iCam)
+    tableCaptures.Fields.Add("id", db.Serial)
+    tableCaptures.Fields.Add("stamp", db.Date, 32)
+    tableCaptures.Fields.Add("image", db.Blob)
+    tableCaptures.PrimaryKey = ["id"]
+    tableCaptures.Update()
+  NEXT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' grab image from channel #iCam and store it as a blob
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Grab(iCam AS Integer, OPTIONAL sSubj AS String, OPTIONAL sMsg AS String, OPTIONAL sTo AS String)
+
+  DIM sTemp, sUrl AS String
+
+  iCamera = iCam
+  IF sMsg THEN sMessage = sMsg
+  IF sTo THEN sToAddress = sTo
+  IF sSubj THEN sSubject = sSubj
+
+  IF Main.iVideoServerPort <> 0 AND IF Main.iVideoServerPort <> 80 THEN sUrl &= ":" & Main.iVideoServerPort
+  IF Main.sVideoServerUser THEN
+    sTemp = Subst("&1:&2@&3", Main.sVideoServerUser, Main.sVideoServerPassword, Main.sVideoServerAddress)
+  ELSE
+    sTemp = Main.sVideoServerAddress
+  END IF
+  sUrl = "http://" & sTemp & "/usr/yoics" & iCam & ".jpg"
+  IF Main.bVideoServerDebug THEN Main.WriteDebugLog("[VideoServer] Fetching URL " & sUrl)
+
+  hDownloadImage = NEW HttpClient AS "hDownloadImage"
+  hDownloadImage.URL = sUrl
+  hDownloadImage.TimeOut = 5
+  hDownloadImage.Async = TRUE
+  hDownloadImage.Get()
+
+END
+
+PUBLIC SUB hDownloadImage_Finished()
+
+  DIM iCount AS Integer
+  DIM sDownload AS String
+
+  SELECT hDownloadImage.Code
+    CASE 200
+      Main.WriteLog("I have captured an image from camera #" & iCamera & ".")
+      IF Lof(hDownloadImage) THEN READ #hDownloadImage, sDownload, Lof(hDownloadImage)
+      SaveCapture(sDownload, iCamera)
+      IF sSubject THEN Mail.SendCaptureByMail(Application.Name & ": " & sSubject, sMessage, iCamera, sToAddress)
+    CASE 401
+      Main.WriteLog("Error authenticating while trying to capture a camera #" & iCamera & " image!")
+    CASE ELSE
+      Main.WriteLog("Unknown error occured while trying to capture a camera #" & iCamera & " image!")
+  END SELECT
+
+  IF NOT Main.bVideoServerDebug THEN RETURN
+  FOR iCount = 0 TO hDownloadImage.Headers.Count - 1
+    Main.WriteDebugLog("[VideoServer] " & hDownloadImage.Headers[iCount], 1)
+  NEXT
+
+END
+
+PRIVATE SUB hDownloadImage_Error()
+
+  Main.WriteDebugLog("[VideoServer] Error " & hDownloadImage.Status)
+
+END
+
+PUBLIC SUB SaveCapture(sBuffer AS String, iCam AS Integer)
+
+  DIM rResult AS Result
+
+  ' write image to capture table
+  Main.hDB.Begin()
+  rResult = Main.hDB.Create("capture_camera" & iCam)
+  rResult!image = sBuffer
+  rResult!stamp = Now()
+  rResult.Update()
+  Main.hDB.Commit()
+
+END

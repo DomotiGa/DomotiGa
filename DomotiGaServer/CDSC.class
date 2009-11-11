@@ -1,0 +1,429 @@
+' Gambas class file
+
+' Description:
+' CDSC.class
+' Support for DSC Security Panels.
+
+' Development Status:
+' Beta. Needs Testing.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2009 Ron Klinkien
+' This module is written by and Copyright(C) 2009 Timo Sariwating
+
+' Read file called COPYING for license details.
+
+PROPERTY Port AS String
+PROPERTY Baud AS String
+PROPERTY DSCDebug AS Boolean
+
+PRIVATE sPort AS String
+PRIVATE sBaud AS String
+PRIVATE bDSCDebug AS Boolean
+
+PUBLIC hDSC AS NEW SerialPort
+
+PUBLIC sBuffer AS String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the port
+  TRY hDSC.Close
+
+  ' get a new one
+  hDSC = NEW Serialport AS "DSC"
+
+  WITH hDSC
+    .PortName = sPort
+    .Speed = sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .EndOfLine = 1
+    .Open()
+  END WITH
+
+  DSC_Descriptive_Arming()
+  DSC_System_Time()
+  TX("001")
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("DSC Error: " & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Enable Descriptive Arming
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB DSC_Descriptive_Arming()
+
+  TX("0501")
+  Main.WriteDebugLog("[DSC] Descriptive Arming Enabled")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Send System Time to DSC Panel
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB DSC_System_Time()
+
+  DIM sTime_Now AS String
+
+  sTime_Now = "010" & Format$(Now, "hhnnmmddyy")
+  TX(sTime_Now)
+  Main.WriteDebugLog("[DSC] System time set to " & Now & " on alarm system")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read Serial Port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB DSC_Read()
+
+  DIM sData AS String
+
+  READ #hDSC, sData, 1
+  IF sData = Chr(10) THEN ' buffer until newline then parse
+    IF Len(sBuffer) > 1 THEN RX(sBuffer)
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' RX - Process the Received Data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB RX(sStr AS String)
+
+  DIM sString, sCommand, sData, sChecksum, sCheckSumCalculating, sCheckSumCalculated AS String
+  DIM fCheckSumFloat AS Float
+  DIM iInd, iDeviceId AS Integer
+  DIM rResult AS Result
+
+  ' read rs-232 datastream
+  sCommand = Left$(sStr, 3)
+  sData = Left$(Mid$(sStr, 4, Len(sStr)), -3)
+  sChecksum = Right$(sStr, 3)
+
+  ' calculate checksum
+  FOR iInd = 1 TO Len(sCommand)
+    sCheckSumCalculating = Asc(Mid$(sCommand, iInd, 1))
+    fCheckSumFloat = fCheckSumFloat + sCheckSumCalculating
+  NEXT
+    FOR iInd = 1 TO Len(sData)
+    sCheckSumCalculating = Asc(Mid$(sData, iInd, 1))
+    fCheckSumFloat = fCheckSumFloat + sCheckSumCalculating
+  NEXT
+  sCheckSumCalculated = Right$(Hex$(fCheckSumFloat), 2)
+
+  ' process if checksum is ok
+  IF Val(sChecksum) = Val(sCheckSumCalculated)
+    SELECT CASE sCommand
+      CASE 500
+        Main.WriteLog("[DSC] Command Acknowledge " & sData)
+      CASE 501
+        Main.WriteLog("[DSC] Bad Checksum [501]")
+      CASE 502
+        Error_Code(sData)
+      CASE 550
+        Main.WriteDebugLog("[DSC] System Time " & sData)
+      CASE 561
+        Main.WriteDebugLog("[DSC] Indoor Temperature " & sData)
+      CASE 562
+        Main.WriteDebugLog("[DSC] Outdoor Temperature " & sData)
+      CASE 601
+        Main.WriteLog("[DSC] Partition " & Left$(sData, 1) & " Zone " & Right$(sData, -1) & " !ALARM!")
+      CASE 602
+        Main.WriteLog("[DSC] Partition " & Left$(sData, 1) & " Zone " & Right$(sData, -1) & " Alarm Restored")
+      CASE 603
+        iDeviceId = Devices.Find(Right$(sData, -1), Devices.FindInterface("DSC5401 Interface"), "DSC Door/Window Sensor")
+        IF iDeviceId THEN
+          Main.WriteLog("[DSC] Partition " & Left$(sData, 1) & " Zone " & Right$(sData, -1) & " " & Devices.FindNameForDevice(iDeviceId) & " Tamper")
+          Devices.ValueUpdate(iDeviceId, "", "Tamper", "", "")
+        END IF
+      CASE 604
+        iDeviceId = Devices.Find(Right$(sData, -1), Devices.FindInterface("DSC5401 Interface"), "DSC Door/Window Sensor")
+        IF iDeviceId THEN
+          Main.WriteDebugLog("[DSC] Partition " & Left$(sData, 1) & " Zone " & Right$(sData, -1) & " " & Devices.FindNameForDevice(iDeviceId) & " Tamper Restored")
+          Devices.ValueUpdate(iDeviceId, "", "Secure", "", "")
+        END IF
+      CASE 605
+        Main.WriteDebugLog("[DSC] Zone " & sData & " Fault")
+      CASE 606
+        Main.WriteDebugLog("[DSC] Zone " & sData & " Fault Restored")
+      CASE 609
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC5401 Interface"), "DSC Pir")
+        IF bDSCDebug AND iDeviceId THEN
+          Main.WriteDebugLog("[DSC] Zone " & sData & " " & Devices.FindNameForDevice(iDeviceId) & " open")
+        END IF
+        IF iDeviceId THEN
+        Devices.ValueUpdate(iDeviceId, "Motion", "", "", "")
+        END IF
+      CASE 610
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC5401 Interface"), "DSC Pir")
+        IF bDSCDebug AND iDeviceId THEN
+          Main.WriteDebugLog("[DSC] Zone " & sData & " " & Devices.FindNameForDevice(iDeviceId) & " Restored")
+        END IF
+        IF iDeviceId THEN
+          Devices.ValueUpdate(iDeviceId, "No Motion", "", "", "")
+        END IF
+      CASE 620
+        IF bDSCDebug THEN
+          Main.WriteDebugLog("[DSC] Duress Alarm " & sData)
+        END IF
+      CASE 621
+        Main.WriteLog("[DSC] Fire Alarm Key Activated")
+      CASE 622
+        Main.WriteDebugLog("[DSC] Fire Alarm Key Restored")
+      CASE 623
+        Main.WriteLog("[DSC] Key Alarm Key Activated")
+      CASE 624
+        Main.WriteDebugLog("[DSC] Key Alarm Restored")
+      CASE 625
+        Main.WriteLog("[DSC] Panic Key Alarm Activated")
+      CASE 626
+        Main.WriteDebugLog("[DSC] Panel Key Alarm Restored")
+      CASE 631
+        Main.WriteDebugLog("[DSC] 2-Wire Smoke Alarm Activated")
+      CASE 632
+        Main.WriteDebugLog("[DSC] 2-Wire Smoke Alarm Restored")
+      CASE 650
+        IF bDSCDebug THEN
+          Main.WriteDebugLog("[DSC] Partition " & sData & " Ready")
+        END IF
+      CASE 651
+        IF bDSCDebug THEN
+        Main.WriteDebugLog("[DSC] Partition " & sData & " Not Ready")
+        END IF
+      CASE 652
+        SELECT CASE Right$(sData)
+        CASE 0
+          Main.WriteLog("[DSC] Partition " & Left$(sData) & " Armed Away")
+        CASE 1
+          Main.WriteLog("[DSC] Partition " & Left$(sData) & " Armed Stay")
+        CASE 2
+          Main.WriteLog("[DSC] Partition " & Left$(sData) & " Armed Zero Entry Away")
+        CASE 3
+          Main.WriteLog("[DSC] Partition " & Left$(sData) & " Armed Zero Entry Stay")
+        END SELECT
+      CASE 654
+        Main.WriteLog("[DSC] Partition " & sData & " !ALARM!")
+      CASE 655
+        Main.WriteLog("[DSC] Partition " & sData & " Disarmed")
+      CASE 656
+        Main.WriteLog("[DSC] Exit Delay Partition " & sData)
+      CASE 657
+        Main.WriteLog("[DSC] Entry Delay Partition " & sData)
+      CASE 658
+        Main.WriteLog("[DSC] Keypad Lock-out Partition " & sData)
+      CASE 670
+        Main.WriteLog("[DSC] Invalid Acces Code Partition " & sData)
+      CASE 671
+        Main.WriteDebugLog("[DSC] Function Not Available Partition " & sData)
+      CASE 700
+        Main.WriteLog("[DSC] Partition " & Left$(sData, 1) & " armed by user " & Right$(sData, -1))
+      CASE 701
+        Main.WriteLog("[DSC] Special Closing Partition " & sData)
+      CASE 702
+        Main.WriteLog("[DSC] Partial Closing Partition " & sData)
+      CASE 750
+        Main.WriteLog("[DSC] Partition " & Left$(sData, 1) & " disarmed by user " & Right$(sData, -1))
+      CASE 751
+        Main.WriteLog("[DSC] Special Opening Partition " & sData)
+      CASE 800
+        Main.WriteLog("[DSC] Panel Battery Trouble")
+      CASE 801
+        Main.WriteDebugLog("[DSC] Panel Battery Trouble Restore")
+      CASE 802
+        Main.WriteLog("[DSC] Panel AC Trouble")
+      CASE 803
+        Main.WriteLog("[DSC] Panel AC Trouble Restore")
+      CASE 806
+        Main.WriteLog("[DSC] System Bell Trouble")
+      CASE 807
+        Main.WriteDebugLog("[DSC] System Bell Trouble Restored")
+      CASE 810
+        Main.WriteLog("[DSC] TLM Trouble")
+      CASE 811
+        Main.WriteDebugLog("[DSC] TLM Trouble Restored")
+      CASE 812
+        Main.WriteLog("[DSC] TLM Line 2 Trouble")
+      CASE 813
+        Main.WriteDebugLog("[DSC] TLM Line 2 Trouble Restored")
+      CASE 814
+        Main.WriteLog("[DSC] FTC Trouble")
+      CASE 816
+        Main.WriteLog("[DSC] Event Buffer Near Full")
+      CASE 821
+        Main.WriteLog("[DSC] Wireless Low Battery Zone " & sData)
+      CASE 822
+        Main.WriteDebugLog("[DSC] Wireless Low Battery Restore Zone " & sData)
+      CASE 825
+        Main.WriteLog("[DSC] Wireless Low Battery Key " & sData)
+      CASE 826
+        Main.WriteDebugLog("[DSC] Wireless Low Battery Restore Key " & sData)
+      CASE 827
+        Main.WriteLog("[DSC] Wireless Low Battery Handheld " & sData)
+      CASE 828
+        Main.WriteDebugLog("[DSC] Wireless Low Battery Restore Handheld " & sData)
+      CASE 829
+        Main.WriteLog("[DSC] General System Tamper")
+      CASE 830
+        Main.WriteDebugLog("[DSC] General System Tamper Restored")
+      CASE 831
+        Main.WriteLog("[DSC] ESCORT 5580TC Trouble")
+      CASE 832
+        Main.WriteDebugLog("[DSC] ESCORT 5580TC Trouble Restored")
+      CASE 840
+        Main.WriteDebugLog("[DSC] Trouble Status Partition " & sData)
+      CASE 841
+        Main.WriteDebugLog("[DSC] Trouble Status Partition " & sData & " Restored")
+      CASE 842
+        Main.WriteLog("[DSC] Fire Trouble Alarm")
+      CASE 843
+        Main.WriteDebugLog("[DSC] Fire Trouble Restored")
+      CASE 900
+        Main.WriteLog("[DSC] Code Required")
+      END SELECT
+    'Checksum Not OK
+  ELSE
+    Main.WriteDebugLog("[DSC] Bad CheckSum")
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Process Error Codes
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Error_Code(sStr AS String)
+
+  SELECT CASE Val(sStr)
+    CASE 000
+      Main.WriteLog("[DSC] System Error - No Error")
+    CASE 001
+      Main.WriteLog("[DSC] System Error - RS-232 Receive Buffer Overrun") 
+    CASE 002
+      Main.WriteLog("[DSC] System Error - RS-232 Receive Buffer Overfow")
+    CASE 003
+      Main.WriteLog("[DSC] System Error - Keybus Transmit Buffer Overrun")
+    CASE 010
+      Main.WriteLog("[DSC] System Error - Keybus Transmit Buffer Overrun")
+    CASE 011
+      Main.WriteLog("[DSC] System Error - Keybus Transmit Time Timeout")
+    CASE 012
+      Main.WriteLog("[DSC] System Error - Keybus Transmit Mode Timeout")
+    CASE 013
+      Main.WriteLog("[DSC] System Error - Keybus Transmit Keystring Timeout")
+    CASE 014
+      Main.WriteLog("[DSC] System Error - Keybus Not Functioning")
+    CASE 015
+      Main.WriteLog("[DSC] System Error - Keybus Busy (Attempting to Arm / Disarm)")
+    CASE 016
+      Main.WriteLog("[DSC] System Error - Keybus Busy (Lockout)")
+    CASE 017
+      Main.WriteLog("[DSC] System Error - Keybus Busy (Installers Mode)")
+    CASE 020
+      Main.WriteLog("[DSC] System Error - API Command Syntax Error")
+    CASE 021
+      Main.WriteLog("[DSC] System Error - API Command Partition Error")
+    CASE 022
+      Main.WriteLog("[DSC] System Error - API Command Not Supported")
+    CASE 023
+      Main.WriteLog("[DSC] System Error - API System Not Armed")
+    CASE 024
+      Main.WriteLog("[DSC] System Error - API System Not Ready to Arm")
+    CASE 025
+      Main.WriteLog("[DSC] System Error - API Command Invalid Length")
+    CASE 026
+      Main.WriteLog("[DSC] System Error - API User Code Not Required")
+    CASE 027
+      Main.WriteLog("[DSC] System Error - API Invalid Characters in Command")
+    CASE ELSE 
+      Main.WriteLog("[DSC] System Error - " & sStr)
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' TX - Calculate the CheckSum and Transmit the data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB TX(sStr AS String)
+
+  DIM sCheckSumCalculating, sCheckSumCalculated AS String
+  DIM fCheckSumFloat AS Float
+  DIM iInd AS Integer
+
+  ' calculate checksum
+  FOR iInd = 1 TO Len(sStr)
+    sCheckSumCalculating = Asc(Mid$(sStr, iInd, 1))
+    fCheckSumFloat = fCheckSumFloat + sCheckSumCalculating
+  NEXT
+  sCheckSumCalculated = Right(Hex$(fCheckSumFloat), 2)
+
+  PRINT #hDSC, sStr & sCheckSumCalculated
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' close port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hDSC.Close
+  Main.WriteLog("DSC serial port close.")
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("DSC Error: " & ERROR.Text)
+  RETURN FALSE
+
+END
+
+' implement properties
+PRIVATE FUNCTION Port_Read() AS String
+
+  RETURN sPort
+
+END
+
+SUB Port_Write(Value AS String)
+
+  sPort = Value
+
+END
+
+PRIVATE FUNCTION Baud_Read() AS String
+
+  RETURN sBaud
+
+END
+
+PRIVATE SUB Baud_Write(Value AS String)
+
+  sBaud = Value
+
+END
+
+PRIVATE FUNCTION DSCDebug_Read() AS Boolean
+
+  RETURN bDSCDebug
+
+END
+
+PRIVATE SUB DSCDebug_Write(Value AS Boolean)
+
+  bDSCDebug = Value
+
+END

@@ -1,0 +1,108 @@
+' Gambas module file
+
+' Description:
+' Energy.module
+' Routines for logging energy usage.
+' Need to check accuracy!
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' create tables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB InitTable(sName AS String)
+
+  DIM tableEnergy AS Table
+
+  Main.hDB.Tables.Remove(sName)
+  tableEnergy = Main.hDB.Tables.Add(sName)
+  tableEnergy.Fields.Add("id", db.Serial)
+  tableEnergy.Fields.Add("counter", db.Long)
+  tableEnergy.Fields.Add("stamp", db.Date)
+  tableEnergy.Fields.Add("consumption", db.Long)
+  tableEnergy.PrimaryKey = ["id"]
+  tableEnergy.Update()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read values from rfxmeter and pulse devices and write them to *_usage tables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Log()
+
+  DIM rResult AS Result
+  DIM iRFX, iRFXMeter, iFactor AS Integer
+  DIM iUsage, iNewCounter, iPrevCounter, iValue AS Float
+  DIM aRFXMeters AS String[] = ["RFXPwr Module", "RFXPulse Gas", "RFXPulse Water"]
+  DIM sMeter, sTable AS String
+
+  IF NOT Main.bRFXComRXEnabled THEN RETURN
+
+  FOR EACH sMeter IN aRFXMeters
+    ' first find devicetype id for RFXMeter
+    rResult = Main.hDB.Exec("SELECT id FROM devicetypes WHERE name = &1 ", sMeter)
+
+    IF rResult.Available THEN
+      iRFX = rResult!id
+    ELSE
+      IF Main.bEnergyDebug THEN Main.WriteDebugLog("[Energy] No Devicetype called " & sMeter & " found!")
+      RETURN
+    END IF
+
+    ' then find device with this devicetype
+    rResult = Main.hDB.Exec("SELECT value, id FROM devices WHERE enabled = TRUE AND module = &1", iRFX)
+
+    IF rResult.Count = 1 THEN
+      IF NOT rResult!value THEN RETURN
+      iNewCounter = CFloat(rResult!value)
+      iRFXMeter = rResult!id
+
+      ' get previous counter value
+      SELECT sMeter
+        CASE "RFXPwr Module"
+          sTable = "power_usage"
+        CASE "RFXPulse Gas"
+          sTable = "gas_usage"
+        CASE "RFXPulse Water"
+          sTable = "water_usage"
+      END SELECT
+
+      ' get previous counter value
+      rResult = Main.hDB.Exec(Subst("SELECT counter FROM &1 ORDER BY stamp DESC LIMIT 1", sTable))
+
+      IF rResult.Count = 1 THEN
+        iPrevCounter = rResult!counter
+        iUsage = iNewCounter - iPrevCounter
+        ' calculate right amount used
+        SELECT sMeter
+          CASE "RFXPwr Module"
+            iValue = iUsage * 10 ' every pulse is 0.1 watt
+          CASE "RFXPulse Gas"
+            iValue = iUsage / 100 ' every pulse is 0.01 m3
+          CASE "RFXPulse Water"
+            iValue = iUsage / 2 ' every pulse is 0.5 liter
+        END SELECT
+      ELSE
+        iUsage = 0
+        iValue = 0
+      END IF
+      ' write value in usage table
+      Main.hDB.Begin()
+      rResult = Main.hDB.Create(sTable)
+      rResult!consumption = iUsage
+      rResult!stamp = Now()
+      rResult!counter = iNewCounter
+      rResult.Update()
+      Main.hDB.Commit()
+
+      ' update value2 field of device
+      rResult = Main.hDB.Exec("UPDATE devices SET value2 = &1 WHERE id = &2", CStr(iValue), iRFXMeter)
+    ELSE IF rResult.Count > 1 THEN
+      IF Main.bEnergyDebug THEN Main.WriteDebugLog("[Energy] More then one " & sMeter & " device found, not supported!")
+    END IF
+  NEXT
+
+END

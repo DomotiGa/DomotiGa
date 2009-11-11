@@ -1,0 +1,275 @@
+' Gambas module file
+
+' Description:
+' RRDTool.module
+' Support for RRDTool graphing.
+
+' Development Status:
+' Working, make hardcoded heartbeat and step values configurable, need better error checking.
+' Maybe create separate graphs table in db.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2009 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PUBLIC tRRDTool AS NEW Timer
+
+PUBLIC SUB Run()
+
+  RRDTool.CreateRRDs() ' check for missing rrd databases
+
+  ' start poll timer for RRDTool
+  tRRDTool = NEW Timer AS "tRRDTool"
+  tRRDTool.Delay = Main.iRRDToolPollTime * 1000 ' multiply for seconds
+  tRRDTool.Start
+
+END
+
+PUBLIC FUNCTION DeleteRRD(sDeviceName AS String)
+
+  DIM sRRDName, sRRD AS String
+
+  sRRDName = LCase(Replace$(sDeviceName, " ", ""))
+  sRRDName = Replace$(sRRDName, "/", "")
+  sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+  IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] Delete rrd database " & sRRD & ".")
+  SHELL "rm -f " & sRRD WAIT
+
+END
+
+PUBLIC FUNCTION DeleteAllRRDs()
+
+  IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] Delete rrd databases.")
+  SHELL "rm -f " & Main.sBaseDir &/ "rrd/*.rrd" WAIT
+
+END
+
+PUBLIC FUNCTION DeleteAllGraphs()
+
+  IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] Delete rrd graphs.")
+  SHELL "rm -f " & Main.sBaseDir &/ "rrd/graphs/*.png" WAIT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices with graph boolean enabled,
+' check for existance of rrd file, create one if missing
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION CreateRRDs()
+
+  DIM rDevice, rResult AS Result
+  DIM sRRD, sRRDCmd, sRRDName AS String
+
+  IF NOT Main.bRRDToolEnabled THEN RETURN
+
+  TRY rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE graph is TRUE AND enabled is TRUE")
+  IF (rDevice.Count > 0) THEN
+    FOR EACH rDevice
+      IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] Device with address '" & rDevice!address & "' named '" & rDevice!name & "' has graphing enabled.")
+      sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+      sRRDName = Replace$(sRRDName, "/", "")
+      sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+      ' rrdtool create name.rrd -s 60 DS:temp:GAUGE:600:U:U DS:press:GAUGE:600:U:U DS:hum:GAUGE:600:U:U RRA:AVERAGE:0.5:1:600 RRA:AVERAGE:0.5:6:600 RRA:AVERAGE:0.5:24:600 RRA:AVERAGE:0.5:288:600
+      IF NOT Exist(sRRD) THEN
+        sRRDCmd = "rrdtool create " & sRRD & " -s " & Main.iRRDToolPollTime & " "
+        IF rDevice!valuerrddsname THEN sRRDCmd = sRRDCmd & "DS:" & rDevice!valuerrddsname & ":" & rDevice!valuerrdtype & ":600:U:U "
+        IF rDevice!value2rrddsname THEN sRRDCmd = sRRDCmd & "DS:" & rDevice!value2rrddsname & ":" & rDevice!value2rrdtype & ":600:U:U "
+        IF rDevice!value3rrddsname THEN sRRDCmd = sRRDCmd & "DS:" & rDevice!value3rrddsname & ":" & rDevice!value3rrdtype & ":600:U:U "
+        IF rDevice!value4rrddsname THEN sRRDCmd = sRRDCmd & "DS:" & rDevice!value4rrddsname & ":" & rDevice!value4rrdtype & ":600:U:U "
+        sRRDCmd = sRRDCmd & "RRA:AVERAGE:0.5:1:600 RRA:AVERAGE:0.5:2:600 RRA:AVERAGE:0.5:7:600 RRA:AVERAGE:0.5:30:600 RRA:AVERAGE:0.5:365:600"
+        IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] " & sRRDCmd)
+        SHELL sRRDCmd WAIT
+      END IF
+    NEXT
+  ELSE
+    IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] No device(s) with graphing enabled found!")
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices with graph boolean enabled, create graphs
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION CreateGraphs(sGroup AS String)
+
+  DIM rDevice, rResult AS Result
+  DIM sRRD, sRRDCmd, sRRDCmd2, sRRDCmd3, sRRDCmd4, sGraphImage, sRRDName, sTime AS String
+  DIM aTimeFrame AS String[] = ["1h", "1d", "1w", "1m", "1y"]
+  DIM aTimeStr AS String[]
+
+  IF NOT Main.bRRDToolEnabled THEN RETURN
+
+  TRY rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE groups LIKE &1 AND graph is TRUE AND enabled is TRUE", "%" & sGroup & "%")
+  IF (rDevice.Count > 0) THEN
+    FOR EACH rDevice
+      sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+      sRRDName = Replace$(sRRDName, "/", "")
+      IF rDevice!valuerrddsname THEN
+        IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] Device with address '" & rDevice!address & "' named '" & rDevice!name & "' has graphing enabled for " & rDevice!valuerrddsname & ".")
+        sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+        ' rrdtool graph /home/ron/domotiga/rrd/graphs/powerusage-hour.png --lazy --start -1h -c SHADEA#FFFFFF -c SHADEB#FFFFFF -c BACK#FFFFFF -t "Power Usage - Last Hour" -v "Watt" DEF:watt=/home/ron/domotiga/rrd/powerusage.rrd:watt:AVERAGE LINE2:watt#00FF00:"Watt"
+        FOR EACH sTime IN aTimeFrame
+          sGraphImage = Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!valuerrddsname & "-" & sTime & ".png"
+          sRRDCmd = "rrdtool graph " & sGraphImage & " --lazy --start -" & sTime & " -c SHADEA#FFFFFF -c SHADEB#FFFFFF -c BACK#FFFFFF -t '" & rDevice!name & " " & Main.Caps(rDevice!valuerrddsname) & "' -v '" & rDevice!label & "' DEF:" & rDevice!valuerrddsname & "=" & sRRD & ":" & rDevice!valuerrddsname & ":AVERAGE LINE1:" & rDevice!valuerrddsname & "#00FF00:'" & Main.Caps(rDevice!valuerrddsname) & "'"
+          sRRDCmd &= " GPRINT:" & rDevice!valuerrddsname & ":MIN:'Min\\:%1.1lf' GPRINT:" & rDevice!valuerrddsname & ":MAX:'Max\\:%1.1lf' GPRINT:" & rDevice!valuerrddsname & ":AVERAGE:'Avg\\:%1.1lf' GPRINT:" & rDevice!valuerrddsname & ":LAST:'Last\\:%1.1lf'"
+          IF Main.bRRDToolDebug THEN
+            Main.WriteDebugLog("[RRDTool] " & sRRDCmd)
+          ELSE
+            sRRDCmd &= " >/dev/null" & " 2>&1"
+          END IF
+          SHELL sRRDCmd WAIT
+        NEXT
+      END IF
+      IF rDevice!value2rrddsname THEN
+        IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] Device with address '" & rDevice!address & "' named '" & rDevice!name & "' has graphing enabled for " & rDevice!value2rrddsname & ".")
+        sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+        sRRDName = Replace$(sRRDName, "/", "")
+        sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+        FOR EACH sTime IN aTimeFrame
+          aTimeStr = Scan(sTime, "*,*")
+          sGraphImage = Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!value2rrddsname & "-" & sTime & ".png"
+          ' rrdtool graph /home/ron/domotiga/rrd/graphs/powerusage-hour.png --lazy --start -1h -c SHADEA#FFFFFF -c SHADEB#FFFFFF -c BACK#FFFFFF -t "Power Usage - Last Hour" -v "Watt" DEF:watt=/home/ron/domotiga/rrd/powerusage.rrd:watt:AVERAGE LINE2:watt#00FF00:"Watt"
+          sRRDCmd2 = "rrdtool graph " & sGraphImage & " --lazy --start -" & sTime & " -c SHADEA#FFFFFF -c SHADEB#FFFFFF -c BACK#FFFFFF -t '" & rDevice!name & " " & Main.Caps(rDevice!value2rrddsname) & "' -v '" & rDevice!label2 & "' DEF:" & rDevice!value2rrddsname & "=" & sRRD & ":" & rDevice!value2rrddsname & ":AVERAGE LINE1:" & rDevice!value2rrddsname & "#00FF00:'" & Main.Caps(rDevice!value2rrddsname) & "'"
+          sRRDCmd2 &= " GPRINT:" & rDevice!value2rrddsname & ":MIN:'Min\\:%1.1lf' GPRINT:" & rDevice!value2rrddsname & ":MAX:'Max\\:%1.1lf' GPRINT:" & rDevice!value2rrddsname & ":AVERAGE:'Avg\\:%1.1lf' GPRINT:" & rDevice!value2rrddsname & ":LAST:'Last\\:%1.1lf'"
+          IF Main.bRRDToolDebug THEN
+            Main.WriteDebugLog(sRRDCmd2)
+          ELSE
+            sRRDCmd2 &= " >/dev/null" & " 2>&1"
+          END IF
+          SHELL sRRDCmd2 WAIT
+        NEXT
+      END IF
+      IF rDevice!value3rrddsname THEN
+        IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] Device with address '" & rDevice!address & "' named '" & rDevice!name & "' has graphing enabled for " & rDevice!value3rrddsname & ".")
+        sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+        sRRDName = Replace$(sRRDName, "/", "")
+        sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+        FOR EACH sTime IN aTimeFrame
+          aTimeStr = Scan(sTime, "*,*")
+          sGraphImage = Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!value3rrddsname & "-" & sTime & ".png"
+          ' rrdtool graph /home/ron/domotiga/rrd/graphs/powerusage-hour.png --lazy --start -1h -c SHADEA#FFFFFF -c SHADEB#FFFFFF -c BACK#FFFFFF -t "Power Usage - Last Hour" -v "Watt" DEF:watt=/home/ron/domotiga/rrd/powerusage.rrd:watt:AVERAGE LINE2:watt#00FF00:"Watt"
+          sRRDCmd3 = "rrdtool graph " & sGraphImage & " --lazy --start -" & sTime & " -c SHADEA#FFFFFF -c SHADEB#FFFFFF -c BACK#FFFFFF -t '" & rDevice!name & " " & Main.Caps(rDevice!value3rrddsname) & "' -v '" & rDevice!label3 & "' DEF:" & rDevice!value3rrddsname & "=" & sRRD & ":" & rDevice!value3rrddsname & ":AVERAGE LINE1:" & rDevice!value3rrddsname & "#00FF00:'" & Main.Caps(rDevice!value3rrddsname) & "'"
+          sRRDCmd3 &= " GPRINT:" & rDevice!value3rrddsname & ":MIN:'Min\\:%1.1lf' GPRINT:" & rDevice!value3rrddsname & ":MAX:'Max\\:%1.1lf' GPRINT:" & rDevice!value3rrddsname & ":AVERAGE:'Avg\\:%1.1lf' GPRINT:" & rDevice!value3rrddsname & ":LAST:'Last\\:%1.1lf'"
+          IF Main.bRRDToolDebug THEN
+            Main.WriteDebugLog("[RRDTool] " & sRRDCmd3)
+          ELSE
+            sRRDCmd3 &= " >/dev/null" & " 2>&1"
+          END IF
+          SHELL sRRDCmd3 WAIT
+        NEXT
+      END IF
+      IF rDevice!value4rrddsname THEN
+        IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] Device with address '" & rDevice!address & "' named '" & rDevice!name & "' has graphing enabled for " & rDevice!value4rrddsname & ".")
+        sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+        sRRDName = Replace$(sRRDName, "/", "")
+        sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+        FOR EACH sTime IN aTimeFrame
+          aTimeStr = Scan(sTime, "*,*")
+          sGraphImage = Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!value4rrddsname & "-" & sTime & ".png"
+          ' rrdtool graph /home/ron/domotiga/rrd/graphs/powerusage-hour.png --lazy --start -1h -c SHADEA#FFFFFF -c SHADEB#FFFFFF -c BACK#FFFFFF -t "Power Usage - Last Hour" -v "Watt" DEF:watt=/home/ron/domotiga/rrd/powerusage.rrd:watt:AVERAGE LINE2:watt#00FF00:"Watt"
+          sRRDCmd4 = "rrdtool graph " & sGraphImage & " --lazy --start -" & sTime & " -c SHADEA#FFFFFF -c SHADEB#FFFFFF -c BACK#FFFFFF -t '" & rDevice!name & " " & Main.Caps(rDevice!value4rrddsname) & "' -v '" & rDevice!label4 & "' DEF:" & rDevice!value4rrddsname & "=" & sRRD & ":" & rDevice!value4rrddsname & ":AVERAGE LINE1:" & rDevice!value4rrddsname & "#00FF00:'" & Main.Caps(rDevice!value4rrddsname) & "'"
+          sRRDCmd4 &= " GPRINT:" & rDevice!value4rrddsname & ":MIN:'Min\\:%1.1lf' GPRINT:" & rDevice!value4rrddsname & ":MAX:'Max\\:%1.1lf' GPRINT:" & rDevice!value4rrddsname & ":AVERAGE:'Avg\\:%1.1lf' GPRINT:" & rDevice!value4rrddsname & ":LAST:'Last\\:%1.1lf'"
+          IF Main.bRRDToolDebug THEN
+            Main.WriteDebugLog("[RRDTool] " & sRRDCmd4)
+          ELSE
+            sRRDCmd4 &= " >/dev/null" & " 2>&1"
+          END IF
+          SHELL sRRDCmd4 WAIT
+        NEXT
+      END IF
+    NEXT
+  ELSE
+    IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] No device(s) with graphing enabled found!")
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices with graph boolean enabled, return the names of their graphic images
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Graphs(sGroup AS String) AS String
+
+  DIM rDevice AS Result
+  DIM sGraphs, sRRDName AS String
+
+  TRY rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE groups LIKE &1 AND graph is TRUE AND enabled is TRUE", "%" & sGroup & "%")
+  IF (rDevice.Count > 0) THEN
+    FOR EACH rDevice
+      sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+      sRRDName = Replace$(sRRDName, "/", "")
+      IF rDevice!valuerrddsname THEN
+        IF Main.bRRDToolDebug THEN
+          Main.WriteDebugLog("[RRDTool] Device with address '" & rDevice!address & "' named '" & rDevice!name & " has graphing enabled for '" & rDevice!valuerrddsname & "'.")
+          Main.WriteDebugLog("[RRDTool] Graphs - " & Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!valuerrddsname)
+        END IF
+        sGraphs &= Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!valuerrddsname & "|"
+      END IF
+      IF rDevice!value2rrddsname THEN
+        IF Main.bRRDToolDebug THEN
+          Main.WriteDebugLog("[RRDTool] Device with address '" & rDevice!address & "' named '" & rDevice!name & "' has graphing enabled for '" & rDevice!value2rrddsname & "'.")
+          Main.WriteDebugLog("[RRDTool] Graphs - " & Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!value2rrddsname)
+        END IF
+        sGraphs &= Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!value2rrddsname & "|"
+      END IF
+      IF rDevice!value3rrddsname THEN
+        IF Main.bRRDToolDebug THEN
+          Main.WriteDebugLog("[RRDTool] Device with address '" & rDevice!address & "' named '" & rDevice!name & "' has graphing enabled for '" & rDevice!value3rrddsname & "'.")
+          Main.WriteDebugLog("[RRDTool] Graphs - " & Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!value3rrddsname)
+        END IF
+        sGraphs &= Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!value3rrddsname & "|"
+      END IF
+      IF rDevice!value4rrddsname THEN
+        IF Main.bRRDToolDebug THEN
+          Main.WriteDebugLog("[RRDTool] Device with address '" & rDevice!address & "' named '" & rDevice!name & "' has graphing enabled for '" & rDevice!value4rrddsname & "'.")
+          Main.WriteDebugLog("[RRDTool] Graphs - " & Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!value4rrddsname)
+        END IF
+        sGraphs &= Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice!value4rrddsname & "|"
+      END IF
+    NEXT
+  ELSE
+    IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] No device(s) with graphing enabled found!")
+  END IF
+  ' return string with all graph image names in this group
+  RETURN sGraphs
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices with graph enabled, and update rrd files with device values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION UpdateRRDs()
+
+  DIM rDevice, rResult AS Result
+  DIM sSql, sRRD, sRRDCmd, sRRDName AS String
+
+  TRY rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE AND graph is TRUE")
+  IF (rDevice.Count > 0) THEN
+    FOR EACH rDevice
+      sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+      sRRDName = Replace$(sRRDName, "/", "")
+      sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+      ' rrdtool update name.rrd N:%1:%2:%3
+      sRRDCmd = "rrdtool update " & sRRD & " N"
+      IF rDevice!valuerrddsname THEN sRRDCmd = sRRDCmd & ":" & rDevice!value
+      IF rDevice!value2rrddsname THEN sRRDCmd = sRRDCmd & ":" & rDevice!value2
+      IF rDevice!value3rrddsname THEN sRRDCmd = sRRDCmd & ":" & rDevice!value3
+      IF rDevice!value4rrddsname THEN sRRDCmd = sRRDCmd & ":" & rDevice!value4
+      IF Main.bRRDToolDebug THEN
+        Main.WriteDebugLog("[RRDTool] " & sRRDCmd)
+      ELSE
+        sRRDCmd &= " >/dev/null" & " 2>&1"
+      END IF
+      SHELL sRRDCmd WAIT
+    NEXT
+  ELSE
+    IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[RRDTool] No device(s) with graphing enabled found!")
+  END IF
+
+END
+
+PUBLIC SUB tRRDTool_Timer()
+
+  UpdateRRDs() ' update rrd values every Polltime seconds
+
+END

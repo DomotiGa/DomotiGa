@@ -1,0 +1,145 @@
+' Gambas module file
+
+' Description:
+' Bluetooth.module
+' Support for Bluetooth proximity, see if a user is around by checking his bluetooth device(s).
+
+' Development Status:
+' Just build, bugs around, maybe need to reorganize.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2009 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PUBLIC tBluetooth AS NEW Timer
+PUBLIC sOutput AS String
+
+PUBLIC FUNCTION Run()
+
+  ' start poll timer for bluetooth
+  tBluetooth = NEW Timer AS "tBluetooth"
+  tBluetooth.Delay = Main.iBluetoothPollTime * 1000 ' multiply for seconds
+  tBluetooth.Start
+
+END
+
+PUBLIC SUB CheckBluetooth()
+
+  DIM rResult, rUser AS Result
+  DIM sRSSI, sProx AS String
+  DIM iRSSI AS Integer
+
+  rResult = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE")
+  IF rResult.Available THEN
+    IF rResult.Count >= 1 THEN
+      FOR EACH rResult
+        IF InStr(Devices.FindTypeForDevice(rResult!id), "Bluetooth")
+          sRSSI = GetRSSI(rResult!address)
+          IF Main.bBluetoothDebug THEN
+            Main.WriteDebugLog("[Bluetooth] checking device named '" & rResult!name & "' with MAC address " & rResult!address)
+            Main.WriteDebugLog("[Bluetooth] " & Replace(sRSSI, gb.NewLine, ""))
+          END IF
+          IF IsInteger(Val(sRSSI)) THEN
+            iRSSI = IsInteger(Val(sRSSI))
+            IF iRSSI > Main.iBluetoothThreshold THEN
+              sProx = "Near"
+            ELSE
+              sProx = "Far"
+            END IF
+            Devices.ValueUpdate(rResult!id, Val(sRSSI), sProx, "", "")
+            IF Main.bBluetoothDebug THEN Main.WriteDebugLog("[Bluetooth] got RSSI value " & iRSSI)
+            IF iRSSI > Main.iBluetoothThreshold THEN
+              IF rResult!user THEN
+                rUser = Main.hDB.Exec("SELECT * FROM users WHERE id = &1", rResult!user)
+                IF rUser.Available THEN
+                  Main.WriteLog("Bluetooth Proximity detected that '" & rUser!fullname & "' is home!")
+                END IF
+              END IF
+            END IF
+          ELSE
+            Devices.ValueUpdate(rResult!id, ".", "Away", "", "")
+          END IF
+        END IF
+      NEXT
+    ELSE
+      IF Main.bBluetoothDebug THEN Main.WriteDebugLog("[Bluetooth] No Bluetooth device(s) found in device table!")
+    END IF
+  END IF
+
+END
+
+PUBLIC FUNCTION ConnectBT(sAddress AS String)
+
+  DIM sConnect AS String
+  DIM iDeviceId AS Integer
+
+  iDeviceId = Devices.Find(sAddress, Devices.FindInterface("Bluetooth Dongle"))
+  IF iDeviceId THEN
+    SHELL "hcitool cc " & sAddress & " 2>&1" TO sConnect
+  END IF
+
+END
+
+PUBLIC SUB SearchBluetooth()
+
+  SHELL "hcitool scan 2>&1" FOR READ AS "Bluetooth"
+  IF Main.bBluetoothDebug THEN Main.WriteDebugLog("[Bluetooth] Command 'hcitool scan' started")
+
+END
+
+PUBLIC SUB Bluetooth_Read()
+
+  DIM sLine AS String
+
+  READ #LAST, sLine, -256
+  sOutput &= sLine
+
+END
+
+PUBLIC SUB Bluetooth_Kill()
+
+  DIM sLine AS String
+  DIM aScan AS String[]
+  DIM iDeviceId AS Integer
+
+  ' Inquiring...
+  FOR EACH sLine IN Split(sOutput, "\n")
+    IF Main.bBluetoothDebug AND IF Len(sLine) THEN Main.WriteDebugLog("[Bluetooth] " & sLine)
+    IF Left(sLine, 1) = Chr(9) THEN
+      aScan = Scan(sLine, " * *")
+      IF aScan.Count = 2 THEN
+        IF Main.bBluetoothDebug AND IF Len(sLine) THEN Main.WriteDebugLog("[Bluetooth] Found a BT device with address '" & aScan[0] & "' and name '" & aScan[1] & "'")
+        iDeviceId = Devices.Find(aScan[0], Devices.FindInterface("Bluetooth Dongle"), "Bluetooth Device")
+        IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "Home", "", "", "")
+      END IF
+    END IF
+  NEXT
+  sOutput = NULL
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return field strenght
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION GetRSSI(sAddress AS String) AS String
+
+  DIM sStrength AS String
+
+  SHELL "hcitool rssi " & sAddress & " 2>&1" TO sStrength
+  IF InStr(sStrength, "Not connected.") THEN
+    RETURN sStrength
+  ELSE IF InStr(sStrength, "Read RSSI failed:") THEN
+    RETURN sStrength
+  ELSE
+    RETURN Replace$(sStrength, "RSSI return value: ", "")
+  END IF
+
+END
+
+PUBLIC SUB tBluetooth_Timer()
+
+  CheckBluetooth()
+  SearchBluetooth()
+
+END

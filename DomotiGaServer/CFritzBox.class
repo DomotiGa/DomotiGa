@@ -1,0 +1,220 @@
+' Gambas class file
+
+' Description:
+' FritzBox.class
+' Provide support for Fritz!Box phonecall monitoring. (via call log port)
+
+' Development Status:
+' Just started to build this one.
+' Incoming/outgoing call logging implemented.
+' Tested with a Fritz!Box 7170 Annex A running Firmware upto 58.04.76
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2009 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PROPERTY TCPHost AS String
+PROPERTY FritzBoxDebug AS Boolean
+
+PRIVATE sTCPHost AS String
+PRIVATE bFritzBoxDebug AS Boolean
+
+PRIVATE hFritzBox AS NEW Socket
+PRIVATE sBuffer AS String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the connection
+  TRY hFritzBox.Close
+
+  ' get a new one
+  hFritzBox = NEW Socket AS "FritzBox"
+  hFritzBox.Connect(sTCPHost, 1012)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("Fritz!Box Error: " & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB FritzBox_Ready()
+
+  Main.WriteLog("Fritz!Box TCP socket connected.")
+
+END
+
+PUBLIC SUB FritzBox_Closed()
+
+  Main.WriteLog("ERROR: Fritz!Box TCP socket connection is lost.")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hFritzBox.Close
+  Main.WriteLog("Fritz!Box TCP socket port close.")
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog("Fritz!Box Error: " & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB FritzBox_Read()
+
+  DIM sData AS String
+
+  READ #hFritzBox, sData, 1
+  IF sData = Chr(10) THEN ' buffer until linefeed then parse
+    IF Len(sBuffer) > 1 THEN ParseLine(Left(sBuffer, Len(sBuffer) - 1))
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  END IF
+
+END
+
+PRIVATE SUB ParseLine(sStr AS String)
+
+  DIM aScan AS String[]
+  DIM rResult AS Result
+  DIM iId AS Integer
+
+  IF Main.bFritzBoxDebug THEN Main.WriteDebugLog("[Fritz!Box] " & sStr)
+  ' 20.01.09 20:29:10;RING;0;0XXXXXXXXX;0XXXXXXXXX;POTS;
+  IF InStr(sStr, ";RING;") THEN
+    aScan = Scan(sStr, "*;RING;*;*;*;*;")
+    IF aScan.Count = 5 THEN
+      Main.WriteLog("Incoming phone call from " & IIf(aScan[2], aScan[2], "0000000000"))
+      IF Main.bFritzBoxDebug THEN Main.WriteDebugLog("[Fritz!Box] Incoming call [id=" & aScan[1] & "] from " & aScan[2] & " on line " & aScan[3] & " (" & aScan[4] & ")")
+      ' write data to cdr table
+      Main.hDB.Begin()
+      rResult = Main.hDB.Create("cdr")
+      rResult!calldate = Now()
+      rResult!uniqueid = aScan[1]
+      rResult!clid = IIf(aScan[2], aScan[2], "0000000000")
+      rResult!src = IIf(aScan[2], aScan[2], "0000000000")
+      rResult!dcontext = "incoming"
+      rResult!channel = aScan[3]
+      rResult!disposition = "NO ANSWER"
+      rResult.Update()
+      Main.hDB.Commit()
+    ELSE
+      Main.WriteDebugLog("[Fritz!Box] Error couldn't parse: " & sStr)
+    END IF
+  END IF
+  ' 20.01.09 20:29:19;CONNECT;0;0;0XXXXXXXXX;
+  IF InStr(sStr, ";CONNECT;") THEN
+    aScan = Scan(sStr, "*;CONNECT;*;*;*;")
+    IF aScan.Count = 4 THEN
+      Main.WriteLog("Phone call answered")
+      IF Main.bFritzBoxDebug THEN Main.WriteDebugLog("[Fritz!Box] Call [id=" & aScan[1] & "] to/from " & aScan[3] & " answered")
+      aScan[3] = IIf(aScan[3], aScan[3], "0000000000")
+      rResult = Main.hDB.Exec(Subst("SELECT * FROM cdr WHERE clid = &1 ORDER BY calldate DESC LIMIT 1", aScan[3]))
+      IF rResult THEN
+        IF rResult.Count THEN
+          iId = rResult!id
+          rResult = Main.hDB.Exec("UPDATE cdr SET disposition = 'ANSWERED', calldate = &1 WHERE id = &2", Now(), iId)
+        END IF
+      END IF
+    ELSE
+      Main.WriteDebugLog("[Fritz!Box] Error couldn't parse: " & sStr)
+    END IF
+  END IF
+  ' 20.01.09 20:50:11;DISCONNECT;0;1253;
+  IF InStr(sStr, ";DISCONNECT;") THEN
+    aScan = Scan(sStr, "*;DISCONNECT;*;*;")
+    IF aScan.Count = 3 THEN
+      Main.WriteLog("Phone call ended")
+      IF Main.bFritzBoxDebug THEN Main.WriteDebugLog("[Fritz!Box] Call [id=" & aScan[1] & "] duration was " & aScan[2] & " seconds")
+      rResult = Main.hDB.Exec("SELECT * FROM cdr ORDER BY calldate DESC LIMIT 1")
+      IF rResult.Available THEN
+        iId = rResult!id
+        rResult = Main.hDB.Exec("UPDATE cdr SET duration = &1, billsec = &1 WHERE id = &2", aScan[2], iId)
+      END IF
+    ELSE
+      Main.WriteDebugLog("[Fritz!Box] Error couldn't parse: " & sStr)
+    END IF
+  END IF
+  ' 20.01.09 22:28:50;CALL;0;0;0XXXXXXXXX;0XXXXXXXXX;POTS;
+  IF InStr(sStr, ";CALL;") THEN
+    aScan = Scan(sStr, "*;CALL;*;*;*;*;*;")
+    IF aScan.Count = 6 THEN
+      Main.WriteLog("Outgoing phone call to " & aScan[4])
+      IF Main.bFritzBoxDebug THEN Main.WriteDebugLog("[Fritz!Box] Outgoing call [id=" & aScan[1] & "] to " & aScan[4] & " with line " & aScan[3])
+      ' write data to cdr table
+      Main.hDB.Begin()
+      rResult = Main.hDB.Create("cdr")
+      rResult!calldate = Now()
+      rResult!clid = aScan[4]
+      rResult!uniqueid = aScan[1]
+      rResult!src = aScan[3]
+      rResult!dst = aScan[4]
+      rResult!dcontext = "default"
+      rResult!channel = aScan[3]
+      rResult!disposition = "NO ANSWER"
+      rResult.Update()
+      Main.hDB.Commit()
+    ELSE
+      Main.WriteDebugLog("[Fritz!Box] Error couldn't parse: " & sStr)
+    END IF
+  END IF
+
+END
+
+PUBLIC SUB FritzBox_Error()
+
+  ' handle error
+  SELECT CASE hFritzBox.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog("Fritz!Box: The system does not allow to create a socket.")
+    CASE Net.HostNotFound
+      Main.WriteLog("Fritz!Box: Host not found.")
+    CASE Net.ConnectionRefused
+      Main.WriteLog("Fritz!Box: Unable to connect. Connection refused.")
+    CASE Net.CannotRead
+      Main.WriteLog("Fritz!Box: Error reading data.")
+    CASE Net.CannotWrite
+      Main.WriteLog("Fritz!Box: Error writing data.")
+  END SELECT
+
+END
+
+' implement properties
+PRIVATE FUNCTION TCPHost_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB TCPHost_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION FritzBoxDebug_Read() AS Boolean
+
+  RETURN bFritzBoxDebug
+
+END
+
+PRIVATE SUB FritzBoxDebug_Write(Value AS Boolean)
+
+  bFritzBoxDebug = Value
+
+END
