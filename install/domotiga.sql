@@ -2052,7 +2052,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `settings_xmlrpc` WRITE;
 /*!40000 ALTER TABLE `settings_xmlrpc` DISABLE KEYS */;
-INSERT INTO `settings_xmlrpc` VALUES (0,0,9000,3,1),(1,0,9000,10,-1);
+INSERT INTO `settings_xmlrpc` VALUES (0,1,9009,3,1),(1,1,9009,10,-1);
 /*!40000 ALTER TABLE `settings_xmlrpc` ENABLE KEYS */;
 UNLOCK TABLES;
 
