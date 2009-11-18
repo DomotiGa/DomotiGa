@@ -1535,7 +1535,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `settings_main` WRITE;
 /*!40000 ALTER TABLE `settings_main` DISABLE KEYS */;
-INSERT INTO `settings_main` VALUES (0,250,5000,0,15000,1,'Home',NULL,NULL,NULL),(1,250,10000,0,15000,0,'FHome',0,0,0);
+INSERT INTO `settings_main` VALUES (0,250,5000,0,15000,1,'FHome',0,0,0),(1,250,10000,0,15000,0,'FHome',0,0,0);
 /*!40000 ALTER TABLE `settings_main` ENABLE KEYS */;
 UNLOCK TABLES;
 
