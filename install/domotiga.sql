@@ -754,7 +754,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `menu_names` WRITE;
 /*!40000 ALTER TABLE `menu_names` DISABLE KEYS */;
-INSERT INTO `menu_names` VALUES (1,'Main'),(2,'Extra'),(3,'System');
+INSERT INTO `menu_names` VALUES (1,'Main'),(2,'Extra'),(3,'System'),(4,'Locations');
 /*!40000 ALTER TABLE `menu_names` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2042,6 +2042,7 @@ CREATE TABLE `settings_xmlrpc` (
   `httpport` int(11) default NULL,
   `maxconn` int(11) default NULL,
   `debug` tinyint(1) default NULL,
+  `broadcastudp` tinyint(1) DEFAULT NULL,
   PRIMARY KEY  (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 SET character_set_client = @saved_cs_client;
@@ -2052,7 +2053,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `settings_xmlrpc` WRITE;
 /*!40000 ALTER TABLE `settings_xmlrpc` DISABLE KEYS */;
-INSERT INTO `settings_xmlrpc` VALUES (0,1,9009,3,1),(1,1,9009,10,-1);
+INSERT INTO `settings_xmlrpc` VALUES (0,1,9009,5,0,1),(1,-1,9009,10,0,-1);
 /*!40000 ALTER TABLE `settings_xmlrpc` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2276,7 +2277,7 @@ SET character_set_client = @saved_cs_client;
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
