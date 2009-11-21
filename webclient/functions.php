@@ -64,6 +64,15 @@ function get_status() {
    // domotiga version
    $retarr['program_version'] = do_xmlrpc(xmlrpc_encode_request("system.program_version",null));
 
+   // domotiga API version
+   $retarr['api_version'] = do_xmlrpc(xmlrpc_encode_request("api.version",null));
+
+   // domotiga uptime
+   $retarr['program_uptime'] = do_xmlrpc(xmlrpc_encode_request("system.program_uptime",null));
+
+   // domotiga hostname
+   $retarr['system_hostname'] = do_xmlrpc(xmlrpc_encode_request("system.hostname",null));
+
    // sun moon data
    $response = do_xmlrpc(xmlrpc_encode_request("data.sunmoon",null));
    $retarr['data_sunset'] = $response[1];
