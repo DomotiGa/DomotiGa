@@ -28,6 +28,9 @@ PUBLIC hEIB AS NEW Socket
 PUBLIC tEIB AS Timer
 PUBLIC sBuffer AS String
 
+PRIVATE CONST ON AS Byte = &H81
+PRIVATE CONST OFF AS Byte = &H80
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -49,216 +52,232 @@ PUBLIC FUNCTION Connect() AS Boolean
   RETURN TRUE
 
 CATCH ' some errors
-  Main.WriteLog("KNX/EIB Error: " & ERROR.Text)
+  Main.WriteLog(("KNX/EIB Error: ") & ERROR.Text)
   RETURN FALSE
 
 END
 
 PUBLIC SUB EIB_Ready()
 
-  Main.WriteLog("KNX/EIB TCP socket connected.")
-  TX(Chr$(0) & Chr$(Val("&h" & "26")) & Chr$(0) & Chr$(0) & Chr$(0)) ' opengroupsocket
+  DIM sCommand AS String[5]
+  sCommand[0] = &H00
+  sCommand[1] = &H26 'opengroupsocket
+  sCommand[2] = &H00
+  sCommand[3] = &H00
+  sCommand[4] = &H00
+  Main.WriteLog(("KNX/EIB TCP socket connected."))
+  TX(sCommand)
 
 END
 
 PUBLIC SUB EIB_Closed()
 
-  Main.WriteLog("KNX/EIB Error: TCP socket closed. (is eibd still running?)")
+  Main.WriteLog(("KNX/EIB Error: TCP socket closed. (is eibd still running?)"))
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' parse the received data into type, adress and data
+' Read EIB/KNX socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB EIB_Read()
 
-  DIM sBuf, sStr, sType, sCommand, sDevice, sAddress AS String
-  DIM iInd AS Integer
+  DIM bMyBuf AS Byte[512]
+  DIM iCnt, iCount AS Integer
+  DIM sDevice, sAddress AS String
+  DIM sReceived AS String[0]
 
   IF hEIB.Status <> Net.Connected THEN RETURN
+    bMyBuf[0] = 0
+    READ #hEIB, bMyBuf[0] ' read the first byte
+    FMain.pbEIB.Picture = Main.pLedOn
+    tEIB.Start
 
-  READ #hEIB, sBuf
-  sStr = sBuf
+    SELECT bMyBuf[0]
+    CASE 0
+      TRY READ #hEIB, bMyBuf[0 + 1], 1 ' read the length byte
+        FOR iCnt = 0 TO bMyBuf[1] - 1 ' read the rest of the frame
+          TRY READ #hEIB, bMyBuf[0 + 2 + iCnt], 1
+          IF NOT ERROR THEN
+          ENDIF
+        NEXT
+    END SELECT
 
-  sType = Hex$(Asc(Mid$(sStr, 1, 1)), 2) & Hex$(Asc(Mid$(sStr, 2, 1)), 2) 
-  sDevice = Left$(Hex$(Asc(Mid$(sStr, 3, 1)), 2)) & "." & Right$(Hex$(Asc(Mid$(sStr, 3, 1)), 2)) & "." & Asc(Mid$(sStr, 4, 2))
-  sAddress = Left$(Hex$(Asc(Mid$(sStr, 5, 1)), 2)) & "/" & Right$(Hex$(Asc(Mid$(sStr, 5, 1)), 2)) & "/" & Asc(Mid$(sStr, 6, 2))
-  FOR iInd = 7 TO Len(sStr)
-    sCommand &= Hex$(Asc(Mid$(sStr, iInd, 1)), 2)
-  NEXT
-
-  EIB_Data(sType, sDevice, sAddress, sCommand)
+    SELECT Hex$(bMyBuf[3])
+      CASE 26
+      Main.WriteLog(("KNX/EIB GroupSocket OK"))
+      CASE 27
+      sDevice = Left$(Hex$(bMyBuf[4], 2), 1) & "." & Right$(Hex$(bMyBuf[4], 2), 1) & "." & bMyBuf[5]
+      sAddress = Left$(Hex$(bMyBuf[6], 2), 1) & "/" & Mid$(Hex$(bMyBuf[6], 2), 2, 1) & "/" & bMyBuf[7]
+      FOR iCount = 9 TO bMyBuf.Length
+      TRY sReceived.Add(Hex$(bMyBuf[iCount], 2))
+      NEXT
+      Lookup_EIS(sDevice, sAddress, sReceived)
+    END SELECT
 
 END
 
-PRIVATE SUB EIB_Data(sType AS String, sDevice AS String, sAddress AS String, sCommand AS String)
-
-  FMain.pbEIB.Picture = Main.pLedOn
-  tEIB.Start
-
-  SELECT CASE Val(sType)
-    CASE 0026
-      Main.WriteLog("KNX/EIB GroupSocket OK: " & sType)
-    CASE 0027
-      Lookup_EIS(sDevice, sAddress, sCommand)
-  END SELECT
-
-END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' lookup the EIS type for received data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PRIVATE SUB Lookup_EIS(sDevice AS String, sAddress AS String, sCommand AS String)
+PRIVATE SUB Lookup_EIS(sDevice AS String, sAddress AS String, sReceived AS String[])
 
   DIM iDeviceId AS Integer = Devices.Find("%" & sAddress & "%", Devices.FindInterface("KNX/EIB Interface"))
   SELECT CASE Devices.FindDescriptionForID(Devices.FindModuleForDevice(iDeviceId))
     CASE "EIS 1" ' On/Off
-      EIS1(iDeviceId, sCommand)
+      EIS1(iDeviceId, sReceived)
     CASE "EIS 2" ' Dim
-      EIS2(iDeviceId, sCommand)
+      EIS2(iDeviceId, sReceived)
     CASE "EIS 3" ' Time
-      EIS3(iDeviceId, sCommand)
+      EIS3(iDeviceId, sReceived)
     CASE "EIS 4" ' Date
-      EIS4(iDeviceId, sCommand)
+      EIS4(iDeviceId, sReceived)
     CASE "EIS 5" ' Values
-      EIS5(iDeviceId, sCommand)
+      EIS5(iDeviceId, sReceived)
     CASE ELSE
-      Main.WriteDebugLog("[KNX/EIB] EIS Unknown: " & sAddress & " " & sCommand)
+      Main.WriteDebugLog(("[KNX/EIB] EIS Unknown: ") & sAddress & " " & sReceived)
   END SELECT
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' handle commands for EIB1 devices (switch on/off)
+' handle received commands for EIB1 devices (switch on/off)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PRIVATE SUB EIS1(iDeviceId AS Integer, sCommand AS String)
+PRIVATE SUB EIS1(iDeviceId AS Integer, sReceived AS String[])
 
-  SELECT CASE Right$(sCommand, 2)
+  SELECT CASE sReceived[0]
     CASE 80
       Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
       FControl.RefreshPage()
       FDevices.GetDeviceList()
-      IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS1: " & Devices.FindNameForDevice(iDeviceId) & " Off")
+      IF bEIBDebug THEN Main.WriteDebugLog(("[KNX/EIB] EIS1: ") & Devices.FindNameForDevice(iDeviceId) & " Off")
     CASE 81
       Devices.ValueUpdate(iDeviceId, "On", "", "", "")
       FControl.RefreshPage()
       FDevices.GetDeviceList()
-      IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS1: " & Devices.FindNameForDevice(iDeviceId) & " On")
+      IF bEIBDebug THEN Main.WriteDebugLog(("[KNX/EIB] EIS1: ") & Devices.FindNameForDevice(iDeviceId) & " On")
   END SELECT
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' handle commands for EIB2 devices (dim)
+' handle received commands for EIB2 devices (dim)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PRIVATE SUB EIS2(iDeviceId AS Integer, sCommand AS String)
+PRIVATE SUB EIS2(iDeviceId AS Integer, sReceived AS String[])
 
-  DIM sAddress, sA1, sA2, sDeviceName AS String
+  DIM sAddress, sDeviceName AS String
   DIM sAddressSplit AS String[]
+  DIM sCommand AS String[6]
   DIM iPercentage AS Integer
 
   sDeviceName = Devices.FindNameForDevice(iDeviceId)
   sAddress = Devices.FindAddressForDevice(sDeviceName)
 
-  SELECT CASE Right$(sCommand, 2)
+  sAddressSplit = Split(sAddress, "|" "/")
+
+  sCommand[0] = &H00
+  sCommand[1] = &H27
+  sCommand[2] = Hex$(Val(sAddressSplit[6]) & Val(sAddressSplit[7]))
+  sCommand[3] = Val(sAddressSplit[8])
+  sCommand[4] = &H00
+  sCommand[5] = &H00
+
+  SELECT CASE sReceived[0]
   CASE 80
-    IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " Off")
-    sAddressSplit = Split(sAddress, "|" "/")
-    sA1 = Val(sAddressSplit[6]) & Val(sAddressSplit[7])
-    sA2 = Val(sAddressSplit[8])
-    sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(00) & Chr$(00)
-    TX(sCommand)
+    IF bEIBDebug THEN Main.WriteDebugLog(("[KNX/EIB] EIS2: ") & sDeviceName & " Off")
+      TX(sCommand)
   CASE 81
-    IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " On")
-    sAddressSplit = Split(sAddress, "|" "/")
-    sA1 = Val(sAddressSplit[6]) & Val(sAddressSplit[7])
-    sA2 = Val(sAddressSplit[8])
-    sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(00) & Chr$(00)
-    TX(sCommand)
+    IF bEIBDebug THEN Main.WriteDebugLog(("[KNX/EIB] EIS2: ") & sDeviceName & " On")
+      TX(sCommand)
   CASE 89
-    IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " Dim")
-    sAddressSplit = Split(sAddress, "|" "/")
-    sA1 = Val(sAddressSplit[6]) & Val(sAddressSplit[7])
-    sA2 = Val(sAddressSplit[8])
-    sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(00) & Chr$(00)
-    TX(sCommand)
-  CASE ELSE
-    SELECT CASE Left$(Right$(sCommand, 4), 2)
-      CASE 40
-        iPercentage = (Val("&h" & Right$(sCommand, 2))) / 255 * 100
-        IF iPercentage = 0 THEN
-          Devices.ValueUpdate(iDeviceId, "Off", CStr(iPercentage), "", "")
-        ELSE
-          Devices.ValueUpdate(iDeviceId, "On", CStr(iPercentage), "", "")
-        END IF
+    IF bEIBDebug THEN Main.WriteDebugLog(("[KNX/EIB] EIS2: ") & sDeviceName & " Dim")
+      TX(sCommand)
+  CASE 40
+      iPercentage = Val("&h" & sReceived[1]) / 255 * 100
+      IF iPercentage = 0 THEN
+        Devices.ValueUpdate(iDeviceId, "Off", CStr(iPercentage), "", "")
+      ELSE
+        Devices.ValueUpdate(iDeviceId, "On", CStr(iPercentage), "", "")
+      END IF
       FControl.RefreshPage()
       FDevices.GetDeviceList()
-    END SELECT
   END SELECT
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' handle commands for EIB3 devices (time)
+' handle received commands for EIB3 devices (time)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PRIVATE SUB EIS3(iDeviceId AS Integer, sCommand AS String)
+PRIVATE SUB EIS3(iDeviceId AS Integer, sReceived AS String[])
 
-  DIM sA1, sA2 AS String
   DIM sAddressSplit AS String[]
+  DIM sCommand AS String[9]
   DIM iMinute, iHour, iSecond AS Integer
 
-  SELECT CASE Val(Left$(sCommand, 4))
-    CASE 0080
-      iHour = Val("&h" & (Mid$(sCommand, 5, 2)))
-      iMinute = Val("&h" & (Mid$(sCommand, 7, 2)))
-      iSecond = Val("&h" & (Mid$(sCommand, 9, 2)))
-      IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS3: " & Devices.FindNameForDevice(iDeviceId) & " " & Time(iHour, iMinute, iSecond))
-    CASE 0000
+  SELECT CASE sReceived[1]
+    CASE 80
+      iHour = Val("&h" & (Mid$(sReceived, 5, 2)))
+      iMinute = Val("&h" & (Mid$(sReceived, 7, 2)))
+      iSecond = Val("&h" & (Mid$(sReceived, 9, 2)))
+      IF bEIBDebug THEN Main.WriteDebugLog(("[KNX/EIB] EIS3: ") & Devices.FindNameForDevice(iDeviceId) & " " & Time(iHour, iMinute, iSecond))
+    CASE 00
       sAddressSplit = Split(Devices.FindAddressForDevice(Devices.FindNameForDevice(iDeviceId)), "/")
-      sA1 = sAddressSplit[0] & sAddressSplit[1]
-      sA2 = sAddressSplit[2]
-      sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(0) & Chr$(Val("&h" & "80")) & Chr$(Hour(Now)) & Chr$(Minute(Now)) & Chr$(Second(Now))
+      sCommand[0] = &H00
+      sCommand[1] = &H27
+      sCommand[2] = Hex$(Val(sAddressSplit[0]) & Val(sAddressSplit[1]))
+      sCommand[3] = Val(sAddressSplit[2])
+      sCommand[4] = &H00
+      sCommand[5] = &H80
+      sCommand[6] = Hex$(Hour(Now))
+      sCommand[7] = Hex$(Minute(Now))
+      sCommand[8] = Hex$(Second(Now))
       TX(sCommand)
-      IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS3: Time " & Time(Now) & " send to bus")
+      IF bEIBDebug THEN Main.WriteDebugLog(("[KNX/EIB] EIS3: Time ") & Time(Now) & (" send to bus"))
   END SELECT
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' handle commands for EIB4 devices (date)
+' handle received commands for EIB4 devices (date)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PRIVATE SUB EIS4(iDeviceId AS Integer, sCommand AS String)
+PRIVATE SUB EIS4(iDeviceId AS Integer, sReceived AS String[])
 
-  DIM sA1, sA2 AS String
   DIM sAddressSplit AS String[]
+  DIM sCommand AS String[9]
   DIM iDay, iMonth, iYear AS Integer
 
-  SELECT CASE Val(Left$(sCommand, 4))
-    CASE 0080
-      iday = Val("&h" & (Mid$(sCommand, 5, 2)))
-      iMonth = Val("&h" & (Mid$(sCommand, 7, 2)))
-      iYear = Val("&h" & (Mid$(sCommand, 9, 2))) + 2000
-      IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS4: " & Devices.FindNameForDevice(iDeviceId) & " " & Date(iYear, iMonth, iDay))
-    CASE 0000
+  SELECT CASE sReceived[1]
+    CASE 80
+      iday = Val("&h" & (Mid$(sReceived, 5, 2)))
+      iMonth = Val("&h" & (Mid$(sReceived, 7, 2)))
+      iYear = Val("&h" & (Mid$(sReceived, 9, 2))) + 2000
+      IF bEIBDebug THEN Main.WriteDebugLog(("[KNX/EIB] EIS4: ") & Devices.FindNameForDevice(iDeviceId) & " " & Date(iYear, iMonth, iDay))
+    CASE 00
       sAddressSplit = Split(Devices.FindAddressForDevice(Devices.FindNameForDevice(iDeviceId)), "/")
-      sA1 = sAddressSplit[0] & sAddressSplit[1]
-      sA2 = sAddressSplit[2]
-      sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(0) & Chr$(Val("&h" & "80")) & Chr$(Day(Now)) & Chr$(Month(Now)) & Chr$(Right$(CStr(Year(Now)), 2))
+      sCommand[0] = &H00
+      sCommand[1] = &H27
+      sCommand[2] = Hex$(Val(sAddressSplit[0]) & Val(sAddressSplit[1]))
+      sCommand[3] = Val(sAddressSplit[2])
+      sCommand[4] = &H00
+      sCommand[5] = &H80
+      sCommand[6] = Hex$(Day(Now))
+      sCommand[7] = Hex$(Month(Now))
+      sCommand[8] = Hex$(Right$(CStr(Year(Now)), 2))
       TX(sCommand)
-      IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS4: Date " & Day(Now) & "/" & Month(Now) & "/" & Year(Now) & " send to bus")
+      IF bEIBDebug THEN Main.WriteDebugLog(("[KNX/EIB] EIS4: Date ") & Day(Now) & "/" & Month(Now) & "/" & Year(Now) & (" send to bus"))
   END SELECT
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' handle commands for EIB5 devices (values)
+' handle received for EIB5 devices (values)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PRIVATE SUB EIS5(iDeviceId AS Integer, sCommand AS String)
+PRIVATE SUB EIS5(iDeviceId AS Integer, sReceived AS String[])
 
   DIM iValue AS Integer
 
-  iValue = Val("&h" & (Mid$(sCommand, 5, 4)))
-  Main.WriteDebugLog("[KNX/EIB] EIS5: " & Devices.FindNameForDevice(iDeviceId) & " " & iValue)
+  iValue = Val(Hex$(sReceived[1]))
+  Main.WriteDebugLog(("[KNX/EIB] EIS5: ") & Devices.FindNameForDevice(iDeviceId) & " " & iValue)
 
 END
 
@@ -267,58 +286,56 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC FUNCTION SendCommand(sAddress AS String, sValue AS String)
 
-  DIM sCommand, sModule, sA1, sA2 AS String
+  DIM sModule AS String
   DIM sAddressSplit AS String[]
+  DIM sCommand AS String[5]
+  DIM iBrightness AS Integer
 
-  sModule = Devices.FindModuleForDevice(Devices.Find(sAddress, Devices.FindInterface("KNX/EIB Interface")))
-
+  sModule = Devices.FindIDForDeviceType(Devices.FindModuleForDevice(Devices.Find(sAddress, Devices.FindInterface("KNX/EIB Interface"))))
   SELECT CASE sModule
-    CASE 45 ' EIS 1 (On/Off)
+    CASE "EIS 1" ' (On/Off)
       sAddressSplit = Split(sAddress, "/")
-      sA1 = sAddressSplit[0] & sAddressSplit[1]
-      sA2 = sAddressSplit[2]
-      sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(00)
+      sCommand[0] = &H00
+      sCommand[1] = &H27
+      sCommand[2] = Hex$(Val(sAddressSplit[0]) & Val(sAddressSplit[1]))
+      sCommand[3] = Val(sAddressSplit[2])
+      sCommand[4] = &H00
       SELECT CASE sValue
         CASE "On"
-        sCommand &= Chr$(Val("&h" & "81"))
+        sCommand.Add(ON)
         TX(sCommand)
         CASE "Off"
-        sCommand &= Chr$(Val("&h" & "80"))
+        sCommand.Add(OFF)
         TX(sCommand)
       END SELECT
-    CASE 46 ' EIS 2 (Dim)
+    CASE "EIS 2" ' (Dim)
       sAddressSplit = Split(sAddress, "|" "/")
-      sA1 = sAddressSplit[0] & sAddressSplit[1]
-      sA2 = sAddressSplit[2]
-      sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(00)
+      sCommand[0] = &H00
+      sCommand[1] = &H27
+      sCommand[2] = Hex$(Val(sAddressSplit[0]) & Val(sAddressSplit[1]))
+      sCommand[3] = Val(sAddressSplit[2])
+      sCommand[4] = &H00
       SELECT CASE sValue
         CASE "On"
-          sCommand &= Chr$(Val("&h" & "81"))
+          sCommand.Add(ON)
           TX(sCommand)
         CASE "Off"
-          sCommand &= Chr$(Val("&h" & "80"))
+          sCommand.Add(OFF)
           TX(sCommand)
         CASE "Stop"
-          sA1 = sAddressSplit[3] & sAddressSplit[4]
-          sA2 = sAddressSplit[5]
-          sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(00) & Chr$(Val("&h" & "80"))
+          sCommand[2] = Hex$(Val(sAddressSplit[3]) & Val(sAddressSplit[4]))
+          sCommand[3] = Val(sAddressSplit[5])
+          sCommand.Add(&H80)
           TX(sCommand)
-        CASE "Bright"
-          sA1 = sAddressSplit[3] & sAddressSplit[4]
-          sA2 = sAddressSplit[5]
-          sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(00) & Chr$(Val("&h" & "89"))
+        CASE ELSE
+        IF InStr(sValue, "Dim ") THEN ' DIM 0-100
+          iBrightness = Val(Replace(sValue, "Dim ", ""))
+          sCommand[2] = Hex$(Val(sAddressSplit[6]) & Val(sAddressSplit[7]))
+          sCommand[3] = Val(sAddressSplit[8])
+          sCommand.Add(&H80)
+          sCommand.Add(CInt(iBrightness * 2.55))
           TX(sCommand)
-        CASE "Dim"
-          sA1 = sAddressSplit[3] & sAddressSplit[4]
-          sA2 = sAddressSplit[5]
-          sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(00) & Chr$(Val("&h" & "81"))
-          TX(sCommand)
-        CASE sValue
-          sA1 = sAddressSplit[6] & sAddressSplit[7]
-          sA2 = sAddressSplit[8]
-          sValue = CInt(sValue * 2.55)
-          sCommand = Chr$(0) & Chr$(Val("&h" & "27")) & Chr$(sA1) & Chr$(sA2) & Chr$(00) & Chr$(Val("&h" & "80")) & Chr$(sValue)
-          TX(sCommand)
+        END IF
       END SELECT
   END SELECT
 
@@ -334,13 +351,21 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send a command to the KNX/EIB interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PRIVATE SUB TX(sCommand AS String)
+PRIVATE SUB TX(sCommand AS String[])
 
-  sCommand = Chr$(0) & Chr$(Val("&H" & Len(sCommand))) & sCommand
+  DIM sHeader AS String[2]
+  DIM sTX AS String
+  DIM iCount AS Integer
+  
+  sHeader[0] = &H00
+  sHeader[1] = Hex$(sCommand.Length)
 
   IF hEIB.Status = Net.Connected THEN
-    TRY WRITE #hEIB, sCommand, Len(sCommand)
-    sCommand = ""
+    WRITE #hEIB, Chr$(sHeader[0]) & Chr$(sHeader[1]), 2
+    FOR iCount = 0 TO sCommand.Length
+    TRY sTX &= Chr$(sCommand[iCount])
+    NEXT
+    WRITE #hEIB, sTX, sCommand.Length
   END IF
 
 END
@@ -352,13 +377,13 @@ PUBLIC FUNCTION Disconnect() AS Boolean
 
   ' try to close the connection
   TRY hEIB.Close
-  Main.WriteLog("KNX/EIB TCP socket port close.")
+  Main.WriteLog(("KNX/EIB TCP socket port close."))
 
   ' all ok
   RETURN TRUE
 
 CATCH ' some errors
-  Main.WriteLog("KNX/EIB Error: " & ERROR.Text)
+  Main.WriteLog(("KNX/EIB Error: ") & ERROR.Text)
   RETURN FALSE
 
 END
@@ -368,15 +393,15 @@ PUBLIC SUB EIB_Error()
   ' handle error
   SELECT CASE hEIB.Status
     CASE Net.CannotCreateSocket
-      Main.WriteLog("KNX/EIB: The system does not allow to create a socket.")
+      Main.WriteLog(("KNX/EIB: The system does not allow to create a socket."))
     CASE Net.HostNotFound
-      Main.WriteLog("KNX/EIB: Host not found.")
+      Main.WriteLog(("KNX/EIB: Host ") & sTCPHost & (" not found."))
     CASE Net.ConnectionRefused
-      Main.WriteLog("KNX/EIB: Unable to connect to eibd. Connection refused.")
+      Main.WriteLog(("KNX/EIB: Unable to connect to eibd. Connection refused."))
     CASE Net.CannotRead
-      Main.WriteLog("KNX/EIB: Error reading data.")
+      Main.WriteLog(("KNX/EIB: Error reading data."))
     CASE Net.CannotWrite
-      Main.WriteLog("KNX/EIB: Error writing data.")
+      Main.WriteLog(("KNX/EIB: Error writing data."))
   END SELECT
 
 END
@@ -417,35 +442,3 @@ PRIVATE SUB EIBDebug_Write(Value AS Boolean)
   bEIBDebug = Value
 
 END
-
-' EIS 1: Switches
-' EIS 2: Dimmers
-' EIS 3: Time
-' EIS 4: Date
-' EIS 5: Values(weather stations etc)
-' EIS 6: Scaling(0 - 100 %)
-' EIS 7: Motor drives
-' EIS 15: 14 byte text messages
-
-' Database Table `EIS`
-' INSERT INTO `EIS` (`ID`, `Name`, `EIS`, `Length`) VALUES
-' (1, 'Switch', 1, 1),
-' (2, 'Dim', 2, 4),
-' (3, 'Time', 3, 24),
-' (4, 'Date', 4, 16),
-' (5, 'Floating-point', 5, 16), 14Byte Text?
-' (6, 'Relative 0-255', 6, 8),
-' (7, 'Relative %', 6, 8),
-' (8, 'Relative 0-360 Angle', 6, 8),
-' (9, 'Blinds', 7, 1),
-' (10, 'Heater', 8, 2),
-' (11, 'IEEE-floating point', 9, 32),
-' (12, '16-Bit Counter (-32768...+32767)', 10, 16),
-' (13, '16-Bit Counter (0...65535)', 10, 16),
-' (14, '32-Bit Counter (- 2147483648 .. 2147483647)', 11, 32),
-' (15, '32-Bit Counter (0 ..  494967295)', 11, 32),
-' (16, 'Access: Accesscontrol', 12, 32),
-' (17, 'Character: ASCII Character', 13, 8),
-' (18, '8-Bit Counter (-128 .. 127)', 14, 8),
-' (19, '8-Bit Counter (0..255)', 14, 8),
-' (20, 'String: String (Max. 14 chars)', 15, 112);

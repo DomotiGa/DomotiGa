@@ -3,9 +3,10 @@
 ' Description:
 ' CSMS.class
 ' Support for SMS modem for outgoing SMS text messages
-' Tested with Falcom A2D
+' Tested with Siemens MC35i.
+
 ' Development Status:
-' Modem init works, sending sms text messages not fully tested yet.
+' Modem init and sending SMS text messages works.
 
 ' DomotiGa - an open source home automation program.
 ' Copyright(C) 2008-2009 Ron Klinkien
@@ -52,14 +53,14 @@ PUBLIC FUNCTION Connect() AS Boolean
   RETURN TRUE
 
 CATCH ' some errors
-  Main.WriteLog("SMS Error: " & ERROR.Text)
+  Main.WriteLog(("SMS Error: ") & ERROR.Text)
   RETURN FALSE
 
 END
 
 PUBLIC SUB InitModem() AS Boolean
 
-  DIM sResult AS String
+  DIM sResult, sNetwork AS String
 
   ' a few possible commands strings
   ' sCmd = "AT+CGMI" ' get manufacturer info
@@ -69,28 +70,48 @@ PUBLIC SUB InitModem() AS Boolean
   ' sCmd = "AT+COPS=?" ' show network(s)
   ' sCmd = "AT+CSQ" ' show network field strength
   ' sCmd = "AT+CGSN" ' show IMEI number
-
-  ' ask PIN status
-  IF bSMSDebug THEN Main.WriteDebugLog("[SMS] Ask PIN status:")
-  sResult = SendCmd("AT+CPIN?", 1)
-
-  IF InStr(sResult, "+CPIN: READY") THEN
-    ' set service centre
-    IF bSMSDebug THEN Main.WriteDebugLog("[SMS] Set ServiceCentre:")
-    sResult = SendCmd("AT+CSCA=" & sServiceCentre, 1)
+  ' init
+  IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] Send init AT:"))
+  IF InStr(SendCmd("AT"), "OK") THEN
+    ' ask PIN status
+    IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] Ask PIN status:"))
+    sResult = SendCmd("AT+CPIN?")
     IF InStr(sResult, "OK") THEN
-      Main.WriteLog("SMS modem " & Replace(SendCmd("AT+CGMI", 0), "OK", "") & " initialized.")
-      RETURN TRUE
-    ELSE
-      RETURN FALSE
+      IF InStr(sResult, "READY") THEN
+        ' set service centre
+        IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] Set ServiceCentre:"))
+        sResult = SendCmd("AT+CSCA=" & sServiceCentre)
+        IF InStr(sResult, "OK") THEN
+          sResult = SendCmd("AT+COPS?")
+          TRY sNetwork = Mid(sResult, InStr(sResult, Chr(34)), RInStr(sResult, Chr(34)) - InStr(sResult, Chr(34)) + 1)
+          Main.WriteLog(("SMS modem is initialized and registered at ") & sNetwork & (" network."))
+          ' SendSMS("If you can read this DomotiGa's SMS support is working!", sContact)
+          RETURN TRUE
+        ELSE
+          RETURN FALSE
+        END IF
+      END IF
+      IF InStr(sResult, "SIM PIN") THEN
+        ' enter PIN
+        IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] Send PIN:"))
+        SendCmd("AT+CPIN=" & sPIN)
+        ' ask for PIN status again
+        IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] Ask PIN status:"))
+        sResult = SendCmd("AT+CPIN?")
+        ' set service centre
+        IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] Set ServiceCentre:"))
+        sResult = SendCmd("AT+CSCA=" & sServiceCentre)
+        IF InStr(sResult, "OK") THEN
+          sResult = SendCmd("AT+COPS?")
+          sNetwork = Mid(sResult, InStr(sResult, Chr(34)), RInStr(sResult, Chr(34)) - InStr(sResult, Chr(34)) + 1)
+          Main.WriteLog(("SMS modem is initialized and registered at ") & sNetwork & (" network."))
+          ' SendSMS("If you can read this DomotiGa's SMS support is working!", sContact)
+          RETURN TRUE
+        ELSE
+          RETURN FALSE
+        END IF
+      END IF
     END IF
-  ELSE
-    ' enter PIN
-    IF bSMSDebug THEN Main.WriteDebugLog("[SMS] Send PIN:")
-    SendCmd("AT+CPIN=" & sPIN, 1)
-    ' ask for PIN status again
-    IF bSMSDebug THEN Main.WriteDebugLog("[SMS] Ask PIN status:")
-    SendCmd("AT+CPIN?", 1)
   END IF
   RETURN FALSE
 
@@ -98,17 +119,34 @@ END
 
 PUBLIC SUB SendSMS(sText AS String, sTo AS String) AS Boolean
 
-  DIM sCmd, sResult AS String
+  DIM sTemp, sData, sResult AS String
+  DIM iTries AS Integer = 32
 
   ' send message
-  IF bSMSDebug THEN Main.WriteDebugLog("[SMS] SendSMS:")
-  sResult = SendCmd("AT+CMGS=" & sTo & Chr$(13), 0)
-
+  IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] SendSMS:"))
+  sResult = SendCmd("AT+CMGF=1")
   IF InStr(sResult, "OK") THEN
-    RETURN TRUE
-  ELSE
-    RETURN FALSE
+    IF hSMS.Status <> Net.Active THEN RETURN
+    IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] > AT+CMGS=") & Chr(34) & sTo & Chr(34))
+    PRINT #hSMS, "AT+CMGS=" & Chr(34) & sTo & Chr(34) & Chr(13)
+
+    WHILE (iTries > 0)
+      ' see if we got some data.
+      TRY READ #hSMS, sTemp, Lof(hSMS)
+      ' wait a bit and read response.
+      SLEEP 0.01
+      sData &= sTemp
+      IF InStr(sData, ">") THEN
+        IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] got '>' at try #") & iTries)
+        IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] > ") & sText & "CTRL-Z")
+        PRINT #hSMS, sText & Chr(26);
+        Main.WriteLog(("I have just sent an SMS message to ") & sTo & ".")
+        BREAK
+      END IF
+      DEC iTries
+    WEND
   END IF
+  RETURN FALSE
 
 END
 
@@ -117,34 +155,43 @@ PUBLIC SUB ReadSMS() AS String
   DIM sCmd, sResult AS String
 
   sCmd = "AT+CMGL" ' read messages
-  IF bSMSDebug THEN Main.WriteDebugLog("[SMS] ReadSMS:")
+  IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] ReadSMS:"))
   sResult = SendCmd(sCmd, 1)
 
   RETURN sResult
 
 END
 
-PUBLIC SUB SendCmd(sCmd AS String, bEnd AS Boolean) AS String
+PUBLIC SUB SendCmd(sCmd AS String, OPTIONAL bFlag AS Boolean) AS String
 
-  DIM sBuf AS String
+  DIM sData, sTemp, sOutput AS String
+  DIM iTries AS Integer = 80
 
   IF hSMS.Status <> Net.Active THEN RETURN
 
-  'IF bEnd THEN
-  PRINT #hSMS, sCmd
-  '   PRINT #hSMS, sCmd; Chr$(13); Chr$(10);
-  ' ELSE
-  '   PRINT #hSMS, sCmd;
-  ' END IF
+  IF bFlag THEN
+    PRINT #hSMS, sCmd;
+  ELSE
+    PRINT #hSMS, sCmd; Chr$(13); Chr$(10);
+  END IF
   IF bSMSDebug THEN Main.WriteDebugLog("[SMS] > " & sCmd)
 
-  WAIT 0.2
+  WHILE (iTries > 0)
+    ' see if we got some data.
+    TRY READ #hSMS, sTemp, Lof(hSMS)
+    ' wait a bit and read response.
+    SLEEP 0.01
+    sData &= sTemp
+    IF Right(sData, 2) = Chr(13) & Chr(10) THEN
+      IF bSMSDebug THEN Main.WriteDebugLog(("[SMS] got response at try #") & iTries)
+      BREAK
+    END IF
+    DEC iTries
+  WEND
+  sOutput = Replace(sData, "\r", "")
+  IF bSMSDebug THEN Main.WriteDebugLog("[SMS] < " & sOutput)
 
-  TRY READ #hSMS, sBuf, Lof(hSMS)
-  sBuf = Replace$(sBuf, Chr$(10), "")
-  IF bSMSDebug THEN Main.WriteDebugLog("[SMS] < " & sBuf)
-
-  RETURN sBuf
+  RETURN sOutput
 
 END
 
@@ -155,13 +202,13 @@ PUBLIC FUNCTION Disconnect() AS Boolean
 
   ' try to close the connection
   TRY hSMS.Close
-  Main.WriteLog("SMS serial port close.")
+  Main.WriteLog(("SMS serial port close."))
 
   ' all ok
   RETURN TRUE
 
 CATCH ' some errors
-  Main.WriteLog("SMS Error: " & ERROR.Text)
+  Main.WriteLog(("SMS Error: ") & ERROR.Text)
   RETURN FALSE
 
 END
