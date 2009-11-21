@@ -17,6 +17,7 @@
 
 CREATE DATABASE domotiga;
 GRANT ALL ON domotiga.* TO domouser@localhost IDENTIFIED BY 'kung-fu';
+-- GRANT ALL ON domotiga.* TO domouser@'%' IDENTIFIED BY 'kung-fu';
 USE domotiga;
 
 --
