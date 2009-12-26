@@ -34,6 +34,7 @@ PUBLIC sLanguage AS String
 
 ' Client/Server
 PUBLIC bStandalone AS Boolean
+PUBLIC hBroadcastEvent AS UdpSocket
 PUBLIC sXMLRPCHost AS String
 PUBLIC iXMLRPCPort AS Integer
 
@@ -421,6 +422,13 @@ PUBLIC iPachubeFeed AS Integer
 PUBLIC iPachubePushTime AS Integer
 PUBLIC sPachubeAPIKey AS String
 PUBLIC bPachubeDebug AS Boolean
+
+' JeeLabs JeeLink
+PUBLIC bJeeLabsEnabled AS Boolean
+PUBLIC sJeeLabsSerialPort AS String
+PUBLIC sJeeLabsBaudrate AS String
+PUBLIC bJeeLabsDebug AS Boolean
+PUBLIC hJeeLabs AS CJeeLabs
 
 ' Images
 PUBLIC pLedOn AS Picture
@@ -943,6 +951,13 @@ PUBLIC SUB GetSettings()
   iPachubePushTime = rResult!pushtime
   bPachubeDebug = rResult!debug
 
+  ' JeeLabs JeeLink
+  rResult = GetSettingTable("jeelabs")
+  bJeeLabsEnabled = rResult!enabled
+  sJeeLabsSerialPort = rResult!serialport
+  sJeeLabsBaudrate = rResult!baudrate
+  bJeeLabsDebug = rResult!debug
+
 CATCH
   Message.Error(("Error: " & Error.Text & " " & Error.Code & " while loading settings!\nIs your database version correct?"))
   CloseAll()
@@ -1180,6 +1195,8 @@ PUBLIC SUB CloseAll()
   IF hOwwUDP THEN hOwwUDP.Disconnect
   ' lirc close
   IF hLIRC THEN hLIRC.Disconnect
+  ' jeelabs close
+  IF hJeeLabs THEN hJeeLabs.Disconnect
 
 END
 
@@ -1237,6 +1254,7 @@ PUBLIC SUB Setup()
   Setup_Oww() ' One-Wire Weather support
   Setup_LIRC() ' LIRC support
   Setup_Pachube() ' Pachube support
+  Setup_JeeLabs() ' JeeLabs support
   IF bStandalone THEN WriteLog(("Done with setup ..."))
 
 END
@@ -2746,6 +2764,49 @@ PUBLIC SUB Restart_Pachube()
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open jeelink serial port and initialize
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_JeeLabs()
+
+  IF bJeeLabsEnabled THEN
+    WriteLog(("JeeLabs JeeLink support enabled."))
+    IF bStandalone THEN
+      ' create a new JeeLabs class instance
+      hJeeLabs = NEW CJeeLabs
+      ' set the properties
+      WITH hJeeLabs
+        .Port = sJeeLabsSerialPort
+        .Baud = sJeeLabsBaudrate
+        .JeeLabsDebug = bJeeLabsDebug
+      END WITH
+      ' connect to the serial port
+      IF hJeeLabs.Connect() THEN
+        WriteLog(("JeeLabs JeeLink interface connected to Port ") & sJeeLabsSerialPort)
+      ELSE
+        WriteLog(("ERROR: JeeLabs JeeLink interface FAILED to connect to Port ") & sJeeLabsSerialPort)
+        hJeeLabs = NULL
+      END IF
+    END IF
+  ELSE
+    WriteLog(("JeeLabs JeeLink support disabled."))
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart jeelabs after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_JeeLabs()
+
+  IF hJeeLabs THEN
+    hJeeLabs.Disconnect
+    hJeeLabs = NULL
+  END IF
+  Setup_JeeLabs()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' main loop checking for action and acted upon
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB Check_for_Action()
@@ -4157,6 +4218,9 @@ PUBLIC FUNCTION CheckReq(iMinimalVersion AS Integer) AS Boolean
 
 END
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got broadcasted udp message from server
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB BroadcastUDPClient_Read()
 
   DIM sString AS String
@@ -4173,3 +4237,88 @@ PUBLIC SUB BroadcastUDPClient_Read()
   END IF
 
 END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' broadcast events via UDP
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB BroadcastEvent(sMessage AS String)
+
+  DIM aIPs, athisIP AS String[]
+  DIM sHost, sIP AS String
+  DIM iCount AS Integer
+
+  ' sent it to all computers on this network
+  hBroadcastEvent = NEW UdpSocket AS "BroadcastUDP"
+  hBroadcastEvent.Broadcast = TRUE
+  hBroadcastEvent.Bind(0)
+  hBroadcastEvent.TargetPort = iXMLRPCHTTPPort + 10000
+
+  EXEC ["hostname", "-i"] TO sHost
+  aIPs = Split(Trim$(sHost), " ")
+  FOR EACH sIP IN aIPs
+    athisIP = Split(sIP, ".")
+    IF CInt(athisIP[0]) = 127 THEN CONTINUE
+    hBroadcastEvent.TargetHost = athisIP[0] & "." & athisIP[1] & "." & athisIP[2] & "." & "255"
+    WRITE #hBroadcastEvent, sMessage, Len(sMessage)
+  NEXT
+
+CATCH
+  Main.WriteLog(("ERROR: Cannot broadcast UDP message!"))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' catch errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB BroadcastUDP_Error()
+
+  SELECT CASE hBroadcastEvent.Status
+    CASE Net.CannotBindSocket
+      Main.WriteDebugLog(("[BroadcastUDP] Unable to Bind to that port"))
+    CASE Net.CannotCreateSocket
+      Main.WriteDebugLog(("[BroadcastUDP] System does not allow to create a socket"))
+    CASE Net.CannotRead
+      Main.WriteDebugLog(("[BroadcastUDP] Error Sending Data"))
+    CASE Net.CannotWrite
+      Main.WriteDebugLog(("[BroadcastUDP] Error Receiving Data"))
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' some GUI related routines are placed here,
+' so max number of modules for client and server can share code.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB ControlLed(sLed AS String, sStatus AS String)
+
+  DIM oLed AS Object
+
+  IF sStatus = "on" THEN
+    oLed = Main.pLedOn
+  ELSE
+    oLed = Main.pLedOff
+  ENDIF
+
+  SELECT sLed
+    CASE "RFXCom"
+      FMain.pbRFXCom.Picture = oLed
+    CASE "X10"
+      FMain.pbX10.Picture = oLed
+    CASE "OneWire"
+      FMain.pbOneWire.Picture = oLed
+    CASE "ZWave"
+      FMain.pbZWave.Picture = oLed
+    CASE "EIB"
+      FMain.pbEIB.Picture = oLed
+  END SELECT
+
+END
+
+PUBLIC SUB RefreshDeviceList()
+
+  IF FDevices.bAutoRefresh THEN FDevices.GetDeviceList()
+  IF Main.bStandalone AND IF Main.bBroadcastUDPEnabled THEN Main.BroadcastEvent("[DeviceUpdates]")
+
+END
+
+

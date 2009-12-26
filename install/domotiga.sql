@@ -1059,6 +1059,30 @@ INSERT INTO `remarks_tempbelowmin5` VALUES (1,'Bur.'),(2,'Ya, you betcha. Oop no
 /*!40000 ALTER TABLE `remarks_tempbelowmin5` ENABLE KEYS */;
 UNLOCK TABLES;
 
+DROP TABLE IF EXISTS `settings_jeelabs`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_jeelabs` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `serialport` varchar(32) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_jeelabs`
+--
+
+LOCK TABLES `settings_jeelabs` WRITE;
+/*!40000 ALTER TABLE `settings_jeelabs` DISABLE KEYS */;
+INSERT INTO `settings_jeelabs` VALUES (0,0,'/dev/ttyUSB8','57600',0),(1,0,'/dev/ttyUSB8','57600',0);
+/*!40000 ALTER TABLE `settings_jeelabs` ENABLE KEYS */;
+UNLOCK TABLES;
+/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+
 --
 -- Table structure for table `settings_aibo`
 --
@@ -2393,7 +2417,7 @@ CREATE TABLE `version` (
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
