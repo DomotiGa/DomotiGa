@@ -2,7 +2,7 @@
 
 ' Description:
 ' FCameraControl.class
-' Support for VISCA camera control, see CVISCA.class for more.
+' Support for VISCA and Axis PTZ camera control, see CVISCA.class for more.
 
 ' Development Status:
 ' GUI design and code finished, needs better error checking.
@@ -14,111 +14,354 @@
 
 PUBLIC bPowerState AS Boolean = TRUE
 PUBLIC bBacklight AS Boolean = FALSE
-PUBLIC tVideo AS NEW Timer
 
+PRIVATE rCamera AS Result
 PRIVATE hProcess AS Process
+PRIVATE oObject AS Object
+PUBLIC hFetch AS HttpClient
 
 PUBLIC SUB Form_Close()
 
   IF hProcess THEN
-    hProcess.Kill
-    tVideo.Stop
+    PRINT #hProcess, "q";
   END IF
 
 END
 
 PUBLIC SUB Form_Open()
 
-  DIM oObject AS Object
-
   IF Main.hVISCA THEN
     rbPresetRecall.Value = TRUE
     rbPresetSet.Value = FALSE
     rbPresetReset.Value = FALSE
     IF Main.bVISCAEnabled THEN Main.hVISCA.AddressSet()
-    spAddress.Value = Main.iVISCACameraAddress
-    cmbVideoDevice.Text = Main.sVISCAVideoDevice
-
-    ' start timer for video capture
-    tVideo = NEW Timer AS "tVideo"
-    tVideo.Delay = 500
   ELSE
-    ' no connection to camera, or disabled so disable control buttons
-    FOR EACH oOBject IN ME.Children
-      oObject.Enabled = FALSE
-    NEXT
-    frameStream.Enabled = TRUE
-    FOR EACH oOBject IN frameStream.Children
-      oObject.Enabled = TRUE
-    NEXT
-    frameDevice.Enabled = TRUE
-    FOR EACH oOBject IN frameDevice.Children
-      oObject.Enabled = TRUE
-    NEXT
+    DisableControls()
   END IF
+  FillCameraCombo()
+
+END
+
+PRIVATE SUB DisableControls()
+
+  ' no connection to camera, or disabled so disable control buttons
+  FOR EACH oObject IN ME.Children
+    oObject.Enabled = FALSE
+  NEXT
+  frameStream.Enabled = TRUE
+  FOR EACH oObject IN frameStream.Children
+    oObject.Enabled = TRUE
+  NEXT
+  frameCamera.Enabled = TRUE
+  FOR EACH oObject IN frameCamera.Children
+    oObject.Enabled = TRUE
+  NEXT
+  frameStatus.Enabled = TRUE
+  FOR EACH oObject IN frameStatus.Children
+    oObject.Enabled = TRUE
+  NEXT
+
+END
+
+PUBLIC SUB cmbCameras_Click()
+
+  TRY rCamera = Main.hDB.Exec("SELECT * FROM devices_camera WHERE name = &1", cmbCameras.Text)
+
+END
+
+PRIVATE SUB FillCameraCombo()
+
+  DIM iCount AS Integer
+  DIM rResult AS Result
+
+  rResult = Main.hDB.Exec("SELECT * FROM devices_camera WHERE enabled is TRUE")
+  IF rResult.Available THEN
+    FOR iCount = 0 TO rResult.Max
+      cmbCameras.Add(rResult!name)
+      rResult.MoveNext
+    NEXT
+  ELSE
+    btnOpen.Enabled = FALSE
+  END IF
+  cmbCameras_Click()
 
 END
 
 PUBLIC SUB btnOpen_Click()
 
+  DIM sCmd AS String
+
   IF NOT Main.ProgramExist("mplayer") THEN
-    Message.Info(("Couldn't find mplayer command, did you install it?"))
+    lblStatus.Text = ("Couldn't find mplayer command, did you install it?")
     RETURN
   END IF
 
   IF hProcess THEN
-    hProcess.Kill
-    tVideo.Stop
-    btnOpen.Text = ("Open")
+    PRINT #hProcess, "q";
+    btnOpen.Text = ("View")
     lblMoviePlayer.Hide
+    cmbCameras.Enabled = TRUE
     RETURN
   END IF
-  btnOpen.Text = ("Close")
+  btnOpen.Text = ("Stop")
+  lblStatus.Text = ("Opening, please wait ...")
+  cmbCameras.Enabled = FALSE
 
-  WITH lblMoviePlayer
-    .Show
-    .Enabled = FALSE
-  END WITH
-
-  hProcess = EXEC ["mplayer", "-wid", lblMoviePlayer.Handle, "tv://", "-tv", "norm=auto:input=" & IIf(rbInput0.Value, 0, 1) & ":device=" & cmbVideoDevice.Text] FOR READ WRITE
-
-  lblMoviePlayer.Hide
-  tVideo.Enabled = TRUE
-
-END
-
-PUBLIC SUB tVideo_Timer()
+  ' enable PTZ functions if needed
+  SELECT CASE rCamera!ptztype
+    CASE "AXIS API"
+      DisableControls()
+      frameDirection.Enabled = TRUE
+      FOR EACH oObject IN frameDirection.Children
+        oObject.Enabled = TRUE
+      NEXT
+      frameZoom.Enabled = TRUE
+      FOR EACH oObject IN frameZoom.Children
+        oObject.Enabled = TRUE
+      NEXT
+      frameBacklight.Enabled = TRUE
+      FOR EACH oObject IN frameBacklight.Children
+        oObject.Enabled = TRUE
+      NEXT
+      frameSpeed.Enabled = TRUE
+      FOR EACH oObject IN frameSpeed.Children
+        oObject.Enabled = TRUE
+      NEXT
+      slZoom.MaxValue = 9999
+      slZoom.Step = 500
+      slPan.MaxValue = 180
+      slPan.MinValue = -180
+      slPan.Step = 20
+      slPan.Value = 0
+      slTilt.MaxValue = 180
+      slTilt.MinValue = -180
+      slTilt.Step = 20
+      slTilt.Value = 0
+      slTilt.Enabled = TRUE
+      slPan.Enabled = TRUE
+      slPanSpeed.MaxValue = 100
+      slPanSpeed.MinValue = 1
+      slPanSpeed.Step = 10
+      slTiltSpeed.Enabled = FALSE
+    CASE "Sony VISCA"
+      slZoom.MaxValue = 8
+      slZoom.Step = 1
+      slPan.MaxValue = 18
+      slPan.MinValue = 1
+      slPan.Step = 1
+      slTilt.MaxValue = 14
+      slTilt.MinValue = 1
+      slTilt.Step = 1
+      slTilt.Enabled = TRUE
+      slPan.Enabled = TRUE
+    CASE ELSE
+      DisableControls()
+  END SELECT
 
   lblMoviePlayer.Show
-  tVideo.Enabled = FALSE
+  lblMoviePlayer.Enabled = FALSE
+
+  SELECT CASE rCamera!type
+    CASE "Video4Linux"
+      sCmd = "mplayer -wid " & lblMoviePlayer.Handle & " " & rCamera!cmdoptions
+      hProcess = SHELL sCmd FOR READ WRITE AS "PlayerProcess"
+    CASE "Stream MJPEG"
+      sCmd = "mplayer -wid " & lblMoviePlayer.Handle & IIf(Len(rCamera!username) OR Len(rCamera!passwd), " -user " & rCamera!username & " -passwd " & rCamera!passwd, "") & " " & rCamera!cmdoptions & " " & rCamera!viewstring 
+      hProcess = SHELL sCmd FOR READ WRITE AS "PlayerProcess"
+    CASE ELSE
+      lblStatus.Text = ("Unknown camera type!")
+      btnOpen.Text = ("View")
+      cmbCameras.Enabled = TRUE
+      RETURN
+  END SELECT
+  lblMoviePlayer.Hide
 
 END
 
-PUBLIC SUB Process_Read()
+PRIVATE SUB PTZControl(sCmd AS String) AS Boolean
+
+  DIM sUrl AS String
+
+  IF rCamera!ptztype = "Sony VISCA" AND IF Main.hVISCA THEN
+    SELECT CASE LCase(sCmd)
+      CASE "up"
+        Main.hVISCA.Direction("up")
+      CASE "down"
+        Main.hVISCA.Direction("down")
+      CASE "left"
+        Main.hVISCA.Direction("left")
+      CASE "right"
+        Main.hVISCA.Direction("right")
+      CASE "upleft"
+        Main.hVISCA.Direction("upleft")
+      CASE "upright"
+        Main.hVISCA.Direction("upright")
+      CASE "downleft"
+        Main.hVISCA.Direction("downleft")
+      CASE "downright"
+        Main.hVISCA.Direction("downright")
+      CASE "home"
+        Main.hVISCA.Home()
+      CASE "tele"
+        Main.hVISCA.Zoom("tele")
+      CASE "wide"
+        Main.hVISCA.Zoom("wide")
+      CASE "backlight=off"
+        Main.hVISCA.Backlight("off")
+      CASE "backlight=on"
+        Main.hVISCA.Backlight("on")
+      CASE "power=on"
+        Main.hVISCA.Power("on")
+      CASE "power=off"
+        Main.hVISCA.Power("off")
+      CASE "stop"
+        Main.hVISCA.Direction("stop")
+      CASE "autofocus=on"
+        Main.hVISCA.Focus("auto")
+      CASE "autofocus=off"
+        Main.hVISCA.Focus("manual")
+      CASE "preset=0"
+        Main.hVISCA.Memory("0")
+      CASE "preset=1"
+        Main.hVISCA.Memory("1")
+      CASE "preset=2"
+        Main.hVISCA.Memory("2")
+      CASE "preset=3"
+        Main.hVISCA.Memory("3")
+      CASE "preset=4"
+        Main.hVISCA.Memory("4")
+      CASE "preset=5"
+        Main.hVISCA.Memory("5")
+    END SELECT
+  ELSE IF rCamera!ptztype = "AXIS API" THEN
+    SELECT CASE sCmd
+      CASE "up"
+        FetchPTZUrl("move=up")
+      CASE "down"
+        FetchPTZUrl("move=down")
+      CASE "left"
+        FetchPTZUrl("move=left")
+      CASE "right"
+        FetchPTZUrl("move=right")
+      CASE "upleft"
+        FetchPTZUrl("move=upleft")
+      CASE "upright"
+        FetchPTZUrl("move=upright")
+      CASE "downleft"
+        FetchPTZUrl("move=downleft")
+      CASE "downright"
+        FetchPTZUrl("move=downright")
+      CASE "home"
+        FetchPTZUrl("move=home")
+      CASE "tele"
+        FetchPTZUrl("zoom=9999")
+      CASE "wide"
+        FetchPTZUrl("zoom=1")
+      CASE "zoom"
+        FetchPTZUrl("zoom=" & slZoom.Value)
+      CASE "backlight=off"
+        FetchPTZUrl("backlight=off")
+      CASE "backlight=on"
+        FetchPTZUrl("backlight=on")
+      CASE "pan"
+        FetchPTZUrl("pan=" & slPan.Value)
+      CASE "tilt"
+        FetchPTZUrl("tilt=" & slTilt.Value)
+      CASE "speed"
+        FetchPTZUrl("speed=" & slPanSpeed.Value)
+      CASE "autofocus=on"
+        FetchPTZUrl("autofocus=on")
+      CASE "autofocus=off"
+        FetchPTZUrl("autofocus=off")
+      CASE "preset=0"
+        FetchPTZUrl("gotodevicepreset=0")
+      CASE "preset=1"
+        FetchPTZUrl("gotodevicepreset=1")
+      CASE "preset=2"
+        FetchPTZUrl("gotodevicepreset=2")
+      CASE "preset=3"
+        FetchPTZUrl("gotodevicepreset=3")
+      CASE "preset=4"
+        FetchPTZUrl("gotodevicepreset=4")
+      CASE "preset=5"
+        FetchPTZUrl("gotodevicepreset=5")
+    END SELECT
+  END IF
+
+END
+
+PUBLIC SUB FetchPTZUrl(sCmd AS String) AS Boolean
+
+  DIM sUrl AS String
+
+  sUrl = rCamera!ptzbaseurl & sCmd
+
+  hFetch = NEW HttpClient AS "hFetchUrl"
+  hFetch.URL = sUrl
+  hFetch.TimeOut = 5
+  IF Len(rCamera!username) THEN
+    hFetch.User = rCamera!username
+    hFetch.Password = rCamera!passwd
+  END IF
+  hFetch.Async = TRUE
+  hFetch.Get()
+
+END
+
+PUBLIC SUB hFetchUrl_Finished()
+
+  DIM iCount AS Integer
+
+  SELECT hFetch.Code
+    CASE 0
+      lblStatus.Text = (hFetch.Headers[0])
+    CASE 401
+      lblStatus.Text = ("Error authenticating!")
+    CASE 404
+      lblStatus.Text = ("Error page not found!")
+    CASE ELSE
+      lblStatus.Text = ("Unknown error occured!")
+  END SELECT
+
+END
+
+PUBLIC SUB PlayerProcess_Read()
 
   DIM sData AS String
 
   READ #LAST, sData, -255
 
+  IF InStr(sData, "format detected") THEN
+    lblStatus.Text = ("Stream format detected ...")
+  ELSE IF InStr(sData, "Cache")
+    lblStatus.Text = ("Building cache ...")
+  ELSE IF InStr(sData, "Connecting")
+    lblStatus.Text = ("Connecting ...")
+  END IF
+
 END
 
-PUBLIC SUB Process_Kill()
+PUBLIC SUB PlayerProcess_Kill()
 
+  DIM iRc AS Integer
+
+  iRc = LAST.Value
   hProcess = NULL
-  tVideo.Enabled = FALSE
   lblMoviePlayer.Hide
-  btnOpen.Text = ("Open")
+  btnOpen.Text = ("View")
+  cmbCameras.Enabled = TRUE
+  lblstatus.Text = ("Stopped ...") & IIf(iRc, (" Return code = ") & iRc, "")
 
 END
 
 PUBLIC SUB btnBL_Click()
 
   IF bBackLight THEN
-    Main.hVISCA.Backlight("Off")
+    PTZControl("backlight=off")
     btnBL.Text = "On"
     bBackLight = FALSE
   ELSE
-    Main.hVISCA.Backlight("On")
+    PTZControl("backlight=on")
     btnBL.Text = "Off"
     bBackLight = TRUE
   END IF
@@ -127,37 +370,37 @@ END
 
 PUBLIC SUB btnWBAuto_Click()
 
-  Main.hVISCA.WhiteBalance("Auto")
+  Main.hVISCA.WhiteBalance("auto")
 
 END
 
 PUBLIC SUB btnWBIndoor_Click()
 
-  Main.hVISCA.WhiteBalance("Indoor")
+  Main.hVISCA.WhiteBalance("indoor")
 
 END
 
 PUBLIC SUB btnWBOutdoor_Click()
 
-  Main.hVISCA.WhiteBalance("Outdoor")
+  Main.hVISCA.WhiteBalance("outdoor")
 
 END
 
 PUBLIC SUB btnWBOnePush_Click()
 
-  Main.hVISCA.WhiteBalance("OnePush")
+  Main.hVISCA.WhiteBalance("onepush")
 
 END
 
 PUBLIC SUB btnWBTrigger_Click()
 
-  Main.hVISCA.WhiteBalance("Trigger")
+  Main.hVISCA.WhiteBalance("trigger")
 
 END
 
 PUBLIC SUB btnAEAuto_Click()
 
-  Main.hVISCA.AutoExposure("Auto")
+  Main.hVISCA.AutoExposure("auto")
   btnAEAuto.Enabled = FALSE
   btnAEShutter.Enabled = TRUE
   btnAEBright.Enabled = TRUE
@@ -172,7 +415,7 @@ END
 
 PUBLIC SUB btnAEManual_Click()
 
-  Main.hVISCA.AutoExposure("Manual")
+  Main.hVISCA.AutoExposure("manual")
   btnAEManual.Enabled = FALSE
   btnMin.Enabled = TRUE
   btnPlus.Enabled = TRUE
@@ -186,7 +429,7 @@ END
 
 PUBLIC SUB btnAEShutter_Click()
 
-  Main.hVISCA.AutoExposure("Shutter")
+  Main.hVISCA.AutoExposure("shutter")
   btnAEShutter.Enabled = FALSE
   btnMin.Enabled = TRUE
   btnPlus.Enabled = TRUE
@@ -200,7 +443,7 @@ END
 
 PUBLIC SUB btnAEIris_Click()
 
-  Main.hVISCA.AutoExposure("Iris")
+  Main.hVISCA.AutoExposure("iris")
   btnAEIris.Enabled = FALSE
   btnMin.Enabled = TRUE
   btnPlus.Enabled = TRUE
@@ -214,7 +457,7 @@ END
 
 PUBLIC SUB btnAEBright_Click()
 
-  Main.hVISCA.AutoExposure("Bright")
+  Main.hVISCA.AutoExposure("bright")
   btnAEBright.Enabled = FALSE
   btnMin.Enabled = TRUE
   btnPlus.Enabled = TRUE
@@ -242,11 +485,11 @@ END
 PUBLIC SUB btnPower_Click()
 
   IF bPowerState THEN
-    Main.hVISCA.Power("Off")
+    PTZControl("power=off")
     btnPower.Text = "On"
     bPowerState = FALSE
-  ELSE 
-    Main.hVISCA.Power("On")
+  ELSE
+    PTZControl("power=on")
     btnPower.Text = "Off"
     bPowerState = TRUE
   END IF
@@ -255,55 +498,79 @@ END
 
 PUBLIC SUB btnUp_MouseDown()
 
-  Main.hVISCA.Direction("Up")
+  PTZControl("up")
 
 END
 
 PUBLIC SUB btnDown_MouseDown()
 
-  Main.hVISCA.Direction("Down")
+  PTZControl("down")
 
 END
 
 PUBLIC SUB btnRight_MouseDown()
 
-  Main.hVISCA.Direction("Right")
+  PTZControl("right")
 
 END
 
 PUBLIC SUB btnLeft_MouseDown()
 
-  Main.hVISCA.Direction("Left")
+  PTZControl("left")
 
 END
 
 PUBLIC SUB btnHome_MouseDown()
 
-  Main.hVISCA.Home()
+  PTZControl("home")
 
 END
 
 PUBLIC SUB btnUpLeft_MouseDown()
 
-  Main.hVISCA.Direction("UpLeft")
+  PTZControl("upleft")
 
 END
 
 PUBLIC SUB btnUpRight_MouseDown()
 
-  Main.hVISCA.Direction("UpRight")
+  PTZControl("upright")
 
 END
 
 PUBLIC SUB btnDownRight_MouseDown()
 
-  Main.hVISCA.Direction("DownRight")
+  PTZControl("downright")
 
 END
 
 PUBLIC SUB btnDownLeft_MouseDown()
 
-  Main.hVISCA.Direction("DownLeft")
+  PTZControl("downleft")
+
+END
+
+PUBLIC SUB slPan_MouseUp()
+
+  PTZControl("pan")
+
+END
+
+PUBLIC SUB slTilt_MouseUp()
+
+  PTZControl("tilt")
+
+END
+
+PUBLIC SUB slPanSpeed_MouseUp()
+
+  PTZControl("speed")
+
+END
+
+PUBLIC SUB slTiltSpeed_MouseUp()
+
+  PTZControl("speed")
 
 END
 
@@ -333,85 +600,85 @@ END
 
 PUBLIC SUB btnPreset1_Click()
 
-  Main.hVISCA.Memory("0")
+  PTZControl("preset=0")
 
 END
 
 PUBLIC SUB btnPreset2_Click()
 
-  Main.hVISCA.Memory("1")
+  PTZControl("preset=1")
 
 END
 
 PUBLIC SUB btnPreset3_Click()
 
-  Main.hVISCA.Memory("2")
+  PTZControl("preset=2")
 
 END
 
 PUBLIC SUB btnPreset4_Click()
 
-  Main.hVISCA.Memory("3")
+  PTZControl("preset=3")
 
 END
 
 PUBLIC SUB btnPreset5_Click()
 
-  Main.hVISCA.Memory("4")
+  PTZControl("preset=4")
 
 END
 
 PUBLIC SUB btnPreset6_Click()
 
-  Main.hVISCA.Memory("5")
+  PTZControl("preset=5")
 
 END
 
 PUBLIC SUB btnUp_MouseUp()
 
-  Main.hVISCA.Direction("Stop")
+  PTZControl("stop")
 
 END
 
 PUBLIC SUB btnDown_MouseUp()
 
-  Main.hVISCA.Direction("Stop")
+  PTZControl("stop")
 
 END
 
 PUBLIC SUB btnLeft_MouseUp()
 
-  Main.hVISCA.Direction("Stop")
+  PTZControl("stop")
 
 END
 
 PUBLIC SUB btnRight_MouseUp()
 
-  Main.hVISCA.Direction("Stop")
+  PTZControl("stop")
 
 END
 
 PUBLIC SUB btnUpLeft_MouseUp()
 
-  Main.hVISCA.Direction("Stop")
+  PTZControl("stop")
 
 END
 
 PUBLIC SUB btnUpRight_MouseUp()
 
-  Main.hVISCA.Direction("Stop")
+  PTZControl("stop")
 
 END
 
 PUBLIC SUB btnDownLeft_MouseUp()
 
-  Main.hVISCA.Direction("Stop")
+  PTZControl("stop")
 
 END
 
 PUBLIC SUB btnDownRight_MouseUp()
 
-  Main.hVISCA.Direction("Stop")
+  PTZControl("stop")
 
 END
 
@@ -419,14 +686,14 @@ PUBLIC SUB btnPlus_Click()
 
   DIM sMode AS String
 
-  IF btnAEShutter.Enabled = FALSE THEN 
-    sMode = "Shutter"
-  ELSE IF btnAEIris.Enabled = FALSE THEN 
-    sMode = "Iris"
-  ELSE IF btnAEBright.Enabled = FALSE THEN 
-    sMode = "Bright"
-  ELSE IF btnAEGain.Enabled = FALSE THEN 
-    sMode = "Gain"
+  IF btnAEShutter.Enabled = FALSE THEN
+    sMode = "shutter"
+  ELSE IF btnAEIris.Enabled = FALSE THEN
+    sMode = "iris"
+  ELSE IF btnAEBright.Enabled = FALSE THEN
+    sMode = "bright"
+  ELSE IF btnAEGain.Enabled = FALSE THEN
+    sMode = "gain"
   END IF
   Main.hVISCA.ManualExposure(sMode, "+")
 
@@ -436,14 +703,14 @@ PUBLIC SUB btnMin_Click()
 
   DIM sMode AS String
 
-  IF btnAEShutter.Enabled = FALSE THEN 
-    sMode = "Shutter"
-  ELSE IF btnAEIris.Enabled = FALSE THEN 
-    sMode = "Iris"
-  ELSE IF btnAEBright.Enabled = FALSE THEN 
-    sMode = "Bright"
-  ELSE IF btnAEGain.Enabled = FALSE THEN 
-    sMode = "Gain"
+  IF btnAEShutter.Enabled = FALSE THEN
+    sMode = "shutter"
+  ELSE IF btnAEIris.Enabled = FALSE THEN
+    sMode = "iris"
+  ELSE IF btnAEBright.Enabled = FALSE THEN
+    sMode = "bright"
+  ELSE IF btnAEGain.Enabled = FALSE THEN
+    sMode = "gain"
   END IF
   Main.hVISCA.ManualExposure(sMode, "-")
 
@@ -453,16 +720,16 @@ PUBLIC SUB btnReset_Click()
 
   DIM sMode AS String
 
-  IF btnAEShutter.Enabled = FALSE THEN 
-    sMode = "Shutter"
-  ELSE IF btnAEIris.Enabled = FALSE THEN 
-    sMode = "Iris"
-  ELSE IF btnAEBright.Enabled = FALSE THEN 
-    sMode = "Bright"
-  ELSE IF btnAEGain.Enabled = FALSE THEN 
-    sMode = "Gain"
+  IF btnAEShutter.Enabled = FALSE THEN
+    sMode = "shutter"
+  ELSE IF btnAEIris.Enabled = FALSE THEN
+    sMode = "iris"
+  ELSE IF btnAEBright.Enabled = FALSE THEN
+    sMode = "bright"
+  ELSE IF btnAEGain.Enabled = FALSE THEN
+    sMode = "gain"
   END IF
-  Main.hVISCA.ManualExposure(sMode, "Reset")
+  Main.hVISCA.ManualExposure(sMode, "reset")
 
 END
 
@@ -472,7 +739,7 @@ PUBLIC SUB btnFocusAuto_Click()
   btnFocusManual.Enabled = TRUE
   btnFocusNear.Enabled = FALSE
   btnFocusFar.Enabled = FALSE
-  Main.hVISCA.Focus("Auto")
+  PTZControl("autofocus=on")
 
 END
 
@@ -482,7 +749,7 @@ PUBLIC SUB btnFocusManual_Click()
   btnFocusAuto.Enabled = TRUE
   btnFocusNear.Enabled = TRUE
   btnFocusFar.Enabled = TRUE
-  Main.hVISCA.Focus("Manual")
+  PTZControl("autofocus=off")
 
 END
 
@@ -492,7 +759,7 @@ PUBLIC SUB btnFocusNear_Click()
   btnFocusManual.Enabled = FALSE
   btnFocusAuto.Enabled = TRUE
   btnFocusFar.Enabled = TRUE
-  Main.hVISCA.Focus("Near")
+  Main.hVISCA.Focus("near")
 
 END
 
@@ -502,48 +769,36 @@ PUBLIC SUB btnFocusFar_Click()
   btnFocusManual.Enabled = FALSE
   btnFocusNear.Enabled = TRUE
   btnFocusAuto.Enabled = TRUE
-  Main.hVISCA.Focus("Far")
+  Main.hVISCA.Focus("far")
 
 END
 
 PUBLIC SUB btnTele_Click()
 
-  Main.hVISCA.Zoom("Tele")
+  PTZControl("tele")
 
 END
 
 PUBLIC SUB btnWide_Click()
 
-  Main.hVISCA.Zoom("Wide")
+  PTZControl("wide")
+
+END
+
+PUBLIC SUB slZoom_Change()
+
+  PTZControl("zoom")
 
 END
 
 PUBLIC SUB btnTele_MouseUp()
 
-  Main.hVISCA.Zoom("Stop")
+  PTZControl("stop")
 
 END
 
 PUBLIC SUB btnWide_MouseUp()
 
-  Main.hVISCA.Zoom("Stop")
-
-END
-
-PUBLIC SUB spAddress_Change()
-
-  Main.hVISCA.ChangeAddress()
-
-END
-
-PUBLIC SUB rbInput0_Click()
-
-  rbInput1.Value = FALSE
-
-END
-
-PUBLIC SUB rbInput1_Click()
-
-  rbInput0.Value = FALSE
+  PTZControl("stop")
 
 END
