@@ -30,6 +30,7 @@ CREATE TABLE `settings_plcbus` (
   `serialport` varchar(32) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
+  `usercode` varchar(16) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -41,7 +42,7 @@ CREATE TABLE `settings_plcbus` (
 
 LOCK TABLES `settings_plcbus` WRITE;
 /*!40000 ALTER TABLE `settings_plcbus` DISABLE KEYS */;
-INSERT INTO `settings_plcbus` VALUES (0,0,'/dev/ttyUSB0','19200',500,0),(1,0,'/dev/ttyUSB4','19200',500,0);
+INSERT INTO `settings_plcbus` VALUES (0,0,'/dev/ttyUSB0','19200',500,'FF',0),(1,0,'/dev/ttyUSB4','19200',500,'FF',0);
 /*!40000 ALTER TABLE `settings_plcbus` ENABLE KEYS */;
 UNLOCK TABLES;
 
