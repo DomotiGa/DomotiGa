@@ -39,10 +39,10 @@ function get_device_list($view) {
       foreach($response AS $item) {
          list( $retarr[$index]['id'], $retarr[$index]['deviceicon'], $retarr[$index]['devicename'], $retarr[$index]['devicelocation'], $retarr[$index]['devicevalue'], $retarr[$index]['devicelabel'], $retarr[$index]['devicevalue2'], $retarr[$index]['devicelabel2'], $retarr[$index]['devicevalue3'], $retarr[$index]['devicelabel3'], $retarr[$index]['devicevalue4'], $retarr[$index]['devicelabel4'], $retarr[$index]['devicelastseen']) = split (';;', $item);
          if ($retarr[$index]['deviceicon']) { $retarr[$index]['deviceicon'] = "<img src='images/icons/".$retarr[$index]['deviceicon']."' height='16' width='16' alt='icon' />"; } else { $retarr[$index]['deviceicon'] = ""; }
-         if ($retarr[$index]['devicevalue'] && $retarr[$index]['devicelabel']) { $retarr[$index]['devicevalue'] =  $retarr[$index]['devicevalue']. " ".$retarr[$index]['devicelabel']; }
-         if ($retarr[$index]['devicevalue2'] && $retarr[$index]['devicelabel2']) { $retarr[$index]['devicevalue2'] =  $retarr[$index]['devicevalue2']. " ".$retarr[$index]['devicelabel2']; }
-         if ($retarr[$index]['devicevalue3'] && $retarr[$index]['devicelabel3']) { $retarr[$index]['devicevalue3'] =  $retarr[$index]['devicevalue3']. " ".$retarr[$index]['devicelabel3']; }
-         if ($retarr[$index]['devicevalue4'] && $retarr[$index]['devicelabel4']) { $retarr[$index]['devicevalue4'] =  $retarr[$index]['devicevalue4']. " ".$retarr[$index]['devicelabel4']; }
+         if (strlen($retarr[$index]['devicevalue']) && $retarr[$index]['devicelabel']) { $retarr[$index]['devicevalue'] = $retarr[$index]['devicevalue']. " ".$retarr[$index]['devicelabel']; }
+         if (strlen($retarr[$index]['devicevalue2']) && $retarr[$index]['devicelabel2']) { $retarr[$index]['devicevalue2'] = $retarr[$index]['devicevalue2']. " ".$retarr[$index]['devicelabel2']; }
+         if (strlen($retarr[$index]['devicevalue3']) && $retarr[$index]['devicelabel3']) { $retarr[$index]['devicevalue3'] = $retarr[$index]['devicevalue3']. " ".$retarr[$index]['devicelabel3']; }
+         if (strlen($retarr[$index]['devicevalue4']) && $retarr[$index]['devicelabel4']) { $retarr[$index]['devicevalue4'] = $retarr[$index]['devicevalue4']. " ".$retarr[$index]['devicelabel4']; }
          $index++;
       }
       if (isset($retarr)) {
@@ -64,15 +64,6 @@ function get_status() {
    // domotiga version
    $retarr['program_version'] = do_xmlrpc(xmlrpc_encode_request("system.program_version",null));
 
-   // domotiga API version
-   $retarr['api_version'] = do_xmlrpc(xmlrpc_encode_request("api.version",null));
-
-   // domotiga uptime
-   $retarr['program_uptime'] = do_xmlrpc(xmlrpc_encode_request("system.program_uptime",null));
-
-   // domotiga hostname
-   $retarr['system_hostname'] = do_xmlrpc(xmlrpc_encode_request("system.hostname",null));
-
    // sun moon data
    $response = do_xmlrpc(xmlrpc_encode_request("data.sunmoon",null));
    $retarr['data_sunset'] = $response[1];
@@ -83,6 +74,10 @@ function get_status() {
    $retarr['data_newmails'] = $response[0];
    $retarr['data_newcalls'] = $response[1];
    $retarr['data_newvoicemails'] = $response[2];
+
+   // test
+   $response = do_xmlrpc(xmlrpc_encode_request("setup.restart","Main"));
+   $retarr['test'] = $response[0];
 
    return $retarr;
 }
