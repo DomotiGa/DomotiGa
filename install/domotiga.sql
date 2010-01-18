@@ -2534,7 +2534,7 @@ CREATE TABLE `version` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `db` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=15 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=16 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2543,7 +2543,7 @@ CREATE TABLE `version` (
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2599,6 +2599,37 @@ LOCK TABLES `weatherfeeds` WRITE;
 INSERT INTO `weatherfeeds` VALUES (1,'Sat24','http://www.sat24.com/image.ashx?country=nl','',1,NULL);
 /*!40000 ALTER TABLE `weatherfeeds` ENABLE KEYS */;
 UNLOCK TABLES;
+
+--
+-- Table structure for table `settings_temperaturnu`
+--
+
+DROP TABLE IF EXISTS `settings_temperaturnu`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_temperaturnu` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `city` varchar(64) DEFAULT NULL,
+  `apikey` varchar(64) DEFAULT NULL,
+  `pushtime` int(11) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  `deviceid` int(11) NOT NULL,
+  `devicevalue` varchar(8) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_temperaturnu`
+--
+
+LOCK TABLES `settings_temperaturnu` WRITE;
+/*!40000 ALTER TABLE `settings_temperaturnu` DISABLE KEYS */;
+INSERT INTO `settings_temperaturnu` VALUES (0,0,'Dordrecht','123456',5,0,0,''),(1,0,'City','123456',5,0,0,'');
+/*!40000 ALTER TABLE `settings_temperaturnu` ENABLE KEYS */;
+UNLOCK TABLES;
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
