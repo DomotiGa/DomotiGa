@@ -44,6 +44,20 @@ if (isset($r_setview)) $_SESSION['view']=$r_setview;
 if (isset($r_reload)) unset($_SESSION['lastget']);
 if (!isset($_SESSION['refresh'])) $_SESSION['refresh']=$defaultrefresh;
 if (!isset($r_debug)) $r_debug=0;
+
+// Pachube view only outputs the data from Pachube.CreatePachubeData()
+if ($_SESSION['view']=="pachube") {
+   $request = xmlrpc_encode_request("pachube.list",null);
+   $response = do_xmlrpc($request);
+   if (xmlrpc_is_fault($response)) {
+       trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");
+   } else {
+     header("Content-type: application/xml");
+     print($response);
+   }
+   exit;
+}
+
 ?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
