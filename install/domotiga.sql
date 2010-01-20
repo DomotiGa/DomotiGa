@@ -710,7 +710,7 @@ CREATE TABLE `groups` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=17 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=18 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -719,7 +719,7 @@ CREATE TABLE `groups` (
 
 LOCK TABLES `groups` WRITE;
 /*!40000 ALTER TABLE `groups` DISABLE KEYS */;
-INSERT INTO `groups` VALUES (1,'Outside'),(2,'Temperature'),(3,'Humidity'),(4,'Doors'),(5,'Windows'),(6,'All Lights'),(7,'All Units'),(8,'Energy'),(9,'Server'),(10,'Motion'),(12,'HVAC'),(14,'Proximity'),(15,'Climate'),(16,'Security');
+INSERT INTO `groups` VALUES (1,'Outside'),(2,'Temperature'),(3,'Humidity'),(4,'Doors'),(5,'Windows'),(6,'All Lights'),(7,'All Units'),(8,'Energy'),(9,'Server'),(10,'Motion'),(12,'HVAC'),(14,'Proximity'),(15,'Climate'),(16,'Security'),(17,'Virtual');
 /*!40000 ALTER TABLE `groups` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -736,7 +736,7 @@ CREATE TABLE `interfaces` (
   `type` varchar(128) DEFAULT NULL,
   `mode` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=17 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=18 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -745,7 +745,7 @@ CREATE TABLE `interfaces` (
 
 LOCK TABLES `interfaces` WRITE;
 /*!40000 ALTER TABLE `interfaces` DISABLE KEYS */;
-INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','A10 X10 X10Security Oregon KAKU RFXCom HE','Read'),(2,'Xanura CTX35','A10 X10','Read Write'),(3,'Midon TEMP08','1-Wire','Read Write'),(4,'HDDTemp Socket','HDDTemp','Read'),(5,'Ping Socket','Ping','Read'),(6,'UPS Socket','UPS','Read'),(7,'Heyu X10','A10 X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read Write'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC5401 Interface','DSC','Read Write'),(12,'RFXCom Transmitter','X10 ARC AC RFXCom','Read Write'),(13,'KNX/EIB Interface','KNX/EIB','Read Write'),(14,'Digitemp','1-Wire','Read'),(15,'Z-Wave Controller','Z-Wave','Read Write'),(16,'PLCBUS Interface','PLCBUS','Read Write');
+INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','A10 X10 X10Security Oregon KAKU RFXCom HE','Read'),(2,'Xanura CTX35','A10 X10','Read Write'),(3,'Midon TEMP08','1-Wire','Read Write'),(4,'HDDTemp Socket','HDDTemp','Read'),(5,'Ping Socket','Ping','Read'),(6,'UPS Socket','UPS','Read'),(7,'Heyu X10','A10 X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read Write'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC5401 Interface','DSC','Read Write'),(12,'RFXCom Transmitter','X10 ARC AC RFXCom','Read Write'),(13,'KNX/EIB Interface','KNX/EIB','Read Write'),(14,'Digitemp','1-Wire','Read'),(15,'Z-Wave Controller','Z-Wave','Read Write'),(16,'PLCBUS Interface','PLCBUS','Read Write'),(17,'Virtual Interface','Virtual','Read');
 /*!40000 ALTER TABLE `interfaces` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1845,6 +1845,7 @@ CREATE TABLE `settings_plcbus` (
   `baudrate` varchar(32) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
   `usercode` varchar(16) DEFAULT NULL,
+  `threephase` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -1856,7 +1857,7 @@ CREATE TABLE `settings_plcbus` (
 
 LOCK TABLES `settings_plcbus` WRITE;
 /*!40000 ALTER TABLE `settings_plcbus` DISABLE KEYS */;
-INSERT INTO `settings_plcbus` VALUES (0,0,'/dev/ttyUSB0','19200',500,'FF',0),(1,0,'/dev/ttyUSB4','19200',500,'FF',0);
+INSERT INTO `settings_plcbus` VALUES (0,0,'/dev/ttyUSB0','9600',500,'250',0,0),(1,0,'/dev/ttyUSB4','9600',500,'250',0,-1);
 /*!40000 ALTER TABLE `settings_plcbus` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2534,7 +2535,7 @@ CREATE TABLE `version` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `db` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=16 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=17 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2543,7 +2544,7 @@ CREATE TABLE `version` (
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
