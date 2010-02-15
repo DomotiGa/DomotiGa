@@ -75,10 +75,6 @@ function get_status() {
    $retarr['data_newcalls'] = $response[1];
    $retarr['data_newvoicemails'] = $response[2];
 
-   // test
-   $response = do_xmlrpc(xmlrpc_encode_request("setup.restart","Main"));
-   $retarr['test'] = $response[0];
-
    return $retarr;
 }
 

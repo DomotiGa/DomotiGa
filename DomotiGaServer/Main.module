@@ -23,6 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
+PUBLIC sProgramVersion AS String = "0.1.182"
 PUBLIC sBaseDir AS String
 PUBLIC sSettings AS String = "server-domotiga.conf"
 PUBLIC bMainDebug AS Boolean
@@ -448,8 +449,24 @@ PUBLIC bTemperaturNuDebug AS Boolean
 PUBLIC iTemperaturNuDeviceId AS Integer
 PUBLIC sTemperaturNuDeviceValue AS String
 
+' SqueezeServer
+PUBLIC bSqueezeServerEnabled AS Boolean
+PUBLIC sSqueezeServerTCPHost AS String
+PUBLIC iSqueezeServerTCPPort AS Integer
+PUBLIC bSqueezeServerDebug AS Boolean
+PUBLIC hSqueezeServer AS CSqueezeServer
+
+' LEDMatrix
+PUBLIC bLEDMatrixEnabled AS Boolean
+PUBLIC sLEDMatrixSerialPort AS String
+PUBLIC sLEDMatrixID AS String
+PUBLIC iLEDMatrixColor AS Integer
+PUBLIC iLEDMatrixSpeed AS Integer
+PUBLIC bLEDMatrixDebug AS Boolean
+PUBLIC hLEDMatrix AS CLEDMatrix
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' this is where domotigaserver starts
+' this is where domotiga starts
 ' determine basedir, set language and run application
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC FUNCTION Main() AS Boolean
@@ -554,7 +571,7 @@ PUBLIC SUB DisplayProgramInfo()
 
   EXEC ["uptime"] TO sUptime
   WriteLog(("  ---- Program Restart ----"))
-  WriteLog(("Starting ") & Application.Name & " V" & Application.Version & (" last updated on ") & sModified)
+  WriteLog(("Starting ") & Application.Name & " V" & Main.sProgramVersion & (" last updated on ") & sModified)
   WriteLog(("Running on ") & System.Host & " (pid " & Application.Id & (") as user ") & System.User.Name & " (id " & System.User.Id & ")" & (" with language ") & System.Language)
   WriteLog(("Program base directory is '") & sBaseDir & "'.")
   WriteLog(("Database settings are loaded from '") & sSettings & "'.")
@@ -1004,6 +1021,22 @@ PUBLIC SUB GetSettings()
   sTemperaturNuDeviceValue = rResult!devicevalue
   bTemperaturNuDebug = rResult!debug
 
+  ' Squeeze Server
+  rResult = GetSettingTable("squeezeserver")
+  bSqueezeServerEnabled = rResult!enabled
+  sSqueezeServerTCPHost = rResult!tcphost
+  iSqueezeServerTCPPort = rResult!tcpport
+  bSqueezeServerDebug = rResult!debug
+
+  ' LED Matrix
+  rResult = GetSettingTable("ledmatrix")
+  bLEDMatrixEnabled = rResult!enabled
+  sLEDMatrixSerialPort = rResult!serialport
+  sLEDMatrixID = rResult!displayid
+  iLEDMatrixColor = rResult!color
+  iLEDMatrixSpeed = rResult!speed
+  bLEDMatrixDebug = rResult!debug
+
 CATCH
   Main.WriteLog(("Error: " & Error.Text & " " & Error.Code & " while loading settings!\nIs your database version correct?"))
   CloseAll()
@@ -1139,10 +1172,14 @@ PUBLIC SUB CloseAll()
   StopTimers()
   ' save all globalvars in db
   SaveGlobalVars()
+  ' squeezeserver close
+  TRY hSqueezeServer.Disconnect
   ' plcbus close
   TRY hPLCBUS.Disconnect
   ' ctx35 close
   TRY hCTX35.Disconnect
+  ' ledmatrix close
+  TRY hLEDMatrix.Disconnect
   ' rfxcom close
   TRY hRFXComRX.Disconnect
   TRY hRFXComTX.Disconnect
@@ -1242,6 +1279,8 @@ PUBLIC SUB Setup()
   Setup_Ping() ' Ping support
   Setup_PLCBUS() ' PLCBUS support
   Setup_TemperaturNu() ' TemperaturNu support
+  Setup_SqueezeServer() ' SqueezeServer support
+  Setup_LEDMatrix() ' LED Matrix message support
   WriteLog(("Done with setup ..."))
 
 END
@@ -1589,6 +1628,7 @@ PRIVATE SUB Setup_RFXComRX()
       ' connect to the rfxcom serial interface
       IF hRFXComRX.ConnectSerial() THEN
         WriteLog(("RFXCom receiver serial interface connected to Port ") & sRFXComRXSerialPort)
+        hRFXComRX.ProtocolSetup("MODEVAR")
       ELSE
         WriteLog(("ERROR: RFXCom receiver serial interface FAILED to connect to Port ") & sRFXComRXSerialPort)
         hRFXComRX = NULL
@@ -2824,6 +2864,90 @@ PUBLIC SUB Restart_TemperaturNu()
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with squeezeserver via socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_SqueezeServer()
+
+  IF bSqueezeServerEnabled THEN
+    WriteLog(("Squeeze Server support enabled."))
+    ' create a new SqueezeServer class instance
+    hSqueezeServer = NEW CSqueezeServer
+    ' set the properties
+    WITH hSqueezeServer
+      .TCPHost = sSqueezeServerTCPHost
+      .TCPPort = iSqueezeServerTCPPort
+      .SqueezeServerDebug = bSqueezeServerDebug
+    END WITH
+    ' connect to squeezeserver host:port
+    IF hSqueezeServer.Connect() THEN
+      WriteLog(("Squeeze Server TCP interface connecting to ") & sSqueezeServerTCPHost & ":" & iSqueezeServerTCPPort)
+    ELSE
+      WriteLog(("ERROR: Squeeze Server TCP interface FAILED to connect to ") & sSqueezeServerTCPHost & ":" & iSqueezeServerTCPPort)
+    END IF
+  ELSE
+    WriteLog(("Squeeze Server support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart squeezeserver after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_SqueezeServer()
+
+  IF hSqueezeServer THEN
+    hSqueezeServer.Disconnect
+    hSqueezeServer = NULL
+  END IF
+  Setup_SqueezeServer()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open led matrix serial port and initialize
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_LEDMatrix()
+
+  IF bLEDMatrixEnabled THEN
+    WriteLog(("LED Matrix support enabled."))
+    ' create a new LEDMatrix class instance
+    hLEDMatrix = NEW CLEDMatrix
+    ' set the properties
+    WITH hLEDMatrix
+      .Port = sLEDMatrixSerialPort
+      .LEDMatrixDebug = bLEDMatrixDebug
+      .DisplayID = sLEDMatrixID
+      .DisplayColor = iLEDMatrixColor
+      .DisplaySpeed = iLEDMatrixSpeed
+    END WITH
+    ' connect to the serial port
+    IF hLEDMatrix.Connect() THEN
+      WriteLog(("LED Matrix interface connected to Port ") & sLEDMatrixSerialPort)
+      ' show startup message
+      hLEDMatrix.Run()
+    ELSE
+      WriteLog(("ERROR: LED Matrix interface FAILED to connect to Port ") & sLEDMatrixSerialPort)
+    END IF
+  ELSE
+    WriteLog(("LED Matrix support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart led matrix after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_LEDMatrix()
+
+  IF hLEDMatrix THEN
+    hLEDMatrix.Disconnect
+    hLEDMatrix = NULL
+  END IF
+  Setup_LEDMatrix()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' main loop checking for action and acted upon
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB Check_for_Action()
@@ -3552,5 +3676,11 @@ END
 PUBLIC SUB RefreshPhoneCallList()
 
   Main.BroadcastEvent("[PhoneCallUpdate]")
+
+END
+
+PUBLIC SUB SendSMS(sText AS String, sTo AS String)
+
+  IF Main.hSMS THEN Main.hSMS.SendSMS(sText, sTo)
 
 END

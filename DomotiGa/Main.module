@@ -23,6 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
+PUBLIC sProgramVersion AS String = "0.1.182"
 PUBLIC sBaseDir AS String
 PUBLIC sSettings AS String = "domotiga.conf"
 PUBLIC bMainDebug AS Boolean
@@ -458,6 +459,22 @@ PUBLIC bTemperaturNuDebug AS Boolean
 PUBLIC iTemperaturNuDeviceId AS Integer
 PUBLIC sTemperaturNuDeviceValue AS String
 
+' SqueezeServer
+PUBLIC bSqueezeServerEnabled AS Boolean
+PUBLIC sSqueezeServerTCPHost AS String
+PUBLIC iSqueezeServerTCPPort AS Integer
+PUBLIC bSqueezeServerDebug AS Boolean
+PUBLIC hSqueezeServer AS CSqueezeServer
+
+' LEDMatrix
+PUBLIC bLEDMatrixEnabled AS Boolean
+PUBLIC sLEDMatrixSerialPort AS String
+PUBLIC sLEDMatrixID AS String
+PUBLIC iLEDMatrixColor AS Integer
+PUBLIC iLEDMatrixSpeed AS Integer
+PUBLIC bLEDMatrixDebug AS Boolean
+PUBLIC hLEDMatrix AS CLEDMatrix
+
 ' Images
 PUBLIC pLedOn AS Picture
 PUBLIC pLedOff AS Picture
@@ -532,7 +549,7 @@ PUBLIC SUB DisplayProgramInfo()
 
   EXEC ["uptime"] TO sUptime
   WriteLog(("  ---- Program Restart ----"))
-  WriteLog(("Starting ") & Application.Name & " V" & Application.Version & (" last updated on ") & sModified)
+  WriteLog(("Starting ") & Application.Name & " V" & Main.sProgramVersion & (" last updated on ") & sModified)
   WriteLog(("Running on ") & System.Host & " (pid " & Application.Id & (") as user ") & System.User.Name & " (id " & System.User.Id & ")" & (" with language ") & System.Language)
   WriteLog(("Program base directory is '") & sBaseDir & "'.")
   WriteLog(("Database settings are loaded from '") & sSettings & "'.")
@@ -1016,6 +1033,22 @@ PUBLIC SUB GetSettings()
   sTemperaturNuDeviceValue = rResult!devicevalue
   bTemperaturNuDebug = rResult!debug
 
+  ' Squeeze Server
+  rResult = GetSettingTable("squeezeserver")
+  bSqueezeServerEnabled = rResult!enabled
+  sSqueezeServerTCPHost = rResult!tcphost
+  iSqueezeServerTCPPort = rResult!tcpport
+  bSqueezeServerDebug = rResult!debug
+
+  ' LED Matrix
+  rResult = GetSettingTable("ledmatrix")
+  bLEDMatrixEnabled = rResult!enabled
+  sLEDMatrixSerialPort = rResult!serialport
+  sLEDMatrixID = rResult!displayid
+  iLEDMatrixColor = rResult!color
+  iLEDMatrixSpeed = rResult!speed
+  bLEDMatrixDebug = rResult!debug
+
 CATCH
   Message.Error(("Error: " & Error.Text & " " & Error.Code & " while loading settings at ") & Error.Where & ("!\nIs your database version correct?"))
   CloseAll()
@@ -1207,6 +1240,8 @@ PUBLIC SUB CloseAll()
   StopTimers()
   ' save all globalvars in db
   SaveGlobalVars()
+  ' squeezeserver close
+  TRY hSqueezeServer.Disconnect
   ' UDP broadcast server close
   TRY hBroadcastEvent.Close
   ' UDP broadcast client close
@@ -1215,6 +1250,8 @@ PUBLIC SUB CloseAll()
   TRY hPLCBUS.Disconnect
   ' ctx35 close
   TRY hCTX35.Disconnect
+  ' ledmatrix close
+  TRY hLEDMatrix.Disconnect
   ' rfxcom close
   TRY hRFXComRX.Disconnect
   TRY hRFXComTX.Disconnect
@@ -1272,6 +1309,8 @@ PUBLIC SUB Setup()
   ELSE
     WriteLog(("Displaying server setup ..."))
   END IF
+  ' check database version
+  CheckDatabaseVersion()
   ' setup modules
   GetSettings() ' read all settings from database
   RestoreGlobalVars() ' restore globalvars from database
@@ -1319,6 +1358,8 @@ PUBLIC SUB Setup()
   Setup_Ping() ' Ping support
   Setup_PLCBUS() ' PLCBUS support
   Setup_TemperaturNu() ' TemperaturNu support
+  Setup_SqueezeServer() ' SqueezeServer support
+  Setup_LEDMatrix() ' LED Matrix message support
   IF bStandalone THEN WriteLog(("Done with setup ..."))
 
 END
@@ -1668,6 +1709,7 @@ PRIVATE SUB Setup_RFXComRX()
         ' connect to the rfxcom serial interface
         IF hRFXComRX.ConnectSerial() THEN
           WriteLog(("RFXCom receiver serial interface connected to Port ") & sRFXComRXSerialPort)
+          hRFXComRX.ProtocolSetup("MODEVAR")
         ELSE
           WriteLog(("ERROR: RFXCom receiver serial interface FAILED to connect to Port ") & sRFXComRXSerialPort)
           hRFXComRX = NULL
@@ -2979,6 +3021,94 @@ PUBLIC SUB Restart_TemperaturNu()
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with squeezeserver via socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_SqueezeServer()
+
+  IF bSqueezeServerEnabled THEN
+    WriteLog(("Squeeze Server support enabled."))
+    IF bStandalone THEN
+      ' create a new SqueezeServer class instance
+      hSqueezeServer = NEW CSqueezeServer
+      ' set the properties
+      WITH hSqueezeServer
+        .TCPHost = sSqueezeServerTCPHost
+        .TCPPort = iSqueezeServerTCPPort
+        .SqueezeServerDebug = bSqueezeServerDebug
+      END WITH
+      ' connect to squeezeserver host:port
+      IF hSqueezeServer.Connect() THEN
+        WriteLog(("Squeeze Server TCP interface connecting to ") & sSqueezeServerTCPHost & ":" & iSqueezeServerTCPPort)
+      ELSE
+        WriteLog(("ERROR: Squeeze Server TCP interface FAILED to connect to ") & sSqueezeServerTCPHost & ":" & iSqueezeServerTCPPort)
+      END IF
+    END IF
+  ELSE
+    WriteLog(("Squeeze Server support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart squeezeserver after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_SqueezeServer()
+
+  IF hSqueezeServer THEN
+    hSqueezeServer.Disconnect
+    hSqueezeServer = NULL
+  END IF
+  Setup_SqueezeServer()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open led matrix serial port and initialize
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_LEDMatrix()
+
+  IF bLEDMatrixEnabled THEN
+    WriteLog(("LED Matrix support enabled."))
+    IF bStandalone THEN
+      ' create a new LEDMatrix class instance
+      hLEDMatrix = NEW CLEDMatrix
+      ' set the properties
+      WITH hLEDMatrix
+        .Port = sLEDMatrixSerialPort
+        .LEDMatrixDebug = bLEDMatrixDebug
+        .DisplayID = sLEDMatrixID
+        .DisplayColor = iLEDMatrixColor
+        .DisplaySpeed = iLEDMatrixSpeed
+      END WITH
+      ' connect to the serial port
+      IF hLEDMatrix.Connect() THEN
+        WriteLog(("LED Matrix interface connected to Port ") & sLEDMatrixSerialPort)
+        ' show startup message
+        hLEDMatrix.Run()
+      ELSE
+        WriteLog(("ERROR: LED Matrix interface FAILED to connect to Port ") & sLEDMatrixSerialPort)
+      END IF
+    END IF
+  ELSE
+    WriteLog(("LED Matrix support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart led matrix after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_LEDMatrix()
+
+  IF hLEDMatrix THEN
+    hLEDMatrix.Disconnect
+    hLEDMatrix = NULL
+  END IF
+  Setup_LEDMatrix()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' main loop checking for action and acted upon
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB Check_for_Action()
@@ -3076,7 +3206,7 @@ PUBLIC SUB StopTimers()
 
   WriteLog(("Stopping running timers."))
 
-  ' temperaturnu close.
+  ' temperaturnu timer.
   TRY TemperaturNu.tTemperaturNu.Stop
   ' plugwise timer
   TRY hPlugwise.tPlugwise.Stop
@@ -4488,5 +4618,69 @@ PUBLIC SUB RefreshPhoneCallList()
 
   FPhone.GetPhoneCallsList()
   IF Main.bStandalone AND IF Main.bBroadcastUDPEnabled THEN Main.BroadcastEvent("[PhoneCallUpdate]")
+
+END
+
+PUBLIC SUB SendSMS(sText AS String, sTo AS String)
+
+  IF Main.bStandalone THEN
+    IF Main.hSMS THEN Main.hSMS.SendSMS(sText, sTo)
+  ELSE
+    XMLClient.SendSMS(sTo, sText)
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' check if program and database versions match and try to update
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB CheckDatabaseVersion()
+
+  DIM rResult AS Result
+  DIM sDBVersion, sPrgVersion, sDumpFile, sToVersion AS String
+  DIM iDBVersion, iPrgVersion AS Integer
+
+  sPrgVersion = sProgramVersion
+  iPrgVersion = Val(Replace(sPrgVersion, ".", ""))
+
+  ' fetch database version from database
+  rResult = Main.hDB.Exec("SELECT * FROM version ORDER BY db DESC LIMIT 1 ")
+  IF rResult.Count = 1 THEN
+    sDBVersion = Str(rResult!db)
+    ' convert 0.1.180 to 01180
+    iDBVersion = Val(Replace(sDBVersion, ".", ""))
+    IF iDBVersion < iPrgVersion THEN
+    REPEAT
+      SELECT CASE Message.Error(("The version of your Database is ") & sDBVersion & (" but the\nversion of the Program you want to run is ") & sPrgVersion & ("!\n\nDo you want me to update your Database?"), ("Yes"), ("No"), ("Quit"))
+        CASE 1 ' yes
+          IF Main.ProgramExist("mysql") THEN
+            sToVersion = Format(Str(iDBVersion + 1), "00000")
+            sDumpFile = "upgrade/" & Replace(sDBVersion, ".", "") & "to" & sToVersion & ".sql"
+            IF Exist(sBaseDir &/ sDumpFile) THEN
+              SHELL "mysql --host=" & sSQLHost & " --user=" & sSQLUser & " --password=" & sSQLPass & " --execute='SOURCE " & sBaseDir &/ sDumpFile & "'" WAIT
+              ' check if we are there yet
+              rResult = Main.hDB.Exec("SELECT * FROM version ORDER BY db DESC LIMIT 1")
+              IF rResult.Count = 1 THEN
+                sDBVersion = Str(rResult!db)
+                ' convert 0.1.180 to 01180
+                iDBVersion = Val(Replace(sDBVersion, ".", ""))
+              ENDIF
+            ELSE
+              Message.Error(("Couldn't find upgrade file ") & sDumpFile & ("\nDatabase is now at version ") & sDBVersion)
+              RETURN
+            ENDIF
+            Message.Info(("Database has been upgraded to version ") & sDBVersion)
+            IF iPrgVersion = iDBVersion THEN RETURN
+          ELSE
+            Message.Error(("Couldn't find mysql program!"))
+          ENDIF
+        CASE 2 ' no
+          RETURN
+        CASE 3 ' quit
+          QUIT
+      END SELECT
+      UNTIL iPrgVersion = iDBVersion
+    ENDIF
+  ENDIF
 
 END

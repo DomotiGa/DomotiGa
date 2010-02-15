@@ -25,31 +25,24 @@ PRIVATE bUPSDebug AS Boolean
 
 PUBLIC hUPS AS NEW Socket
 PUBLIC tUPS AS Timer
-PUBLIC sAddress AS String
+PUBLIC sBuffer AS String
 
 PUBLIC SUB CheckUPS()
 
   DIM rResult AS Result
-  DIM iCount AS Integer
 
-  TRY rResult = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE")
-
-  IF rResult.Count THEN
-    FOR EACH rResult
-      IF InStr(Devices.FindTypeForDevice(rResult!id), "UPS")
-        IF iCount THEN
-          Main.WriteLog(("UPS: found more than one UPS device, sorry not supported!"))
-          BREAK
-        END IF
-        IF bUPSDebug THEN Main.WriteDebugLog(("[UPS] checking UPS named '") & rResult!name & ("' with address ") & rResult!address)
-        sAddress = rResult!address
-        Check(rResult!id, rResult!address)
-        INC iCount
-      END IF
-    NEXT
-  ELSE
-    Main.WriteLog(("UPS: no UPS(s) found in device table!"))
+  TRY rResult = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE", Devices.FindInterface("UPS Socket"))
+  IF NOT ERROR THEN
+    IF rResult.Count THEN
+      FOR EACH rResult
+        IF bUPSDebug THEN Main.WriteDebugLog(("[UPS] checking UPS named '") & rResult!name & ("' with address '") & rResult!address & "'")
+        Check(rResult!address, rResult!module)
+      NEXT
+    ELSE
+      Main.WriteLog(("UPS: no UPS(s) found in device table!"))
+    END IF
   END IF
+
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -113,49 +106,57 @@ END
 
 PUBLIC SUB UPS_Read()
 
-  DIM sBuf, sStatus, sExtra AS String
+  DIM sData AS String
+
+  TRY READ #hUPS, sData, 1
+  IF ERROR THEN Main.WriteDebugLog(("[UPS] Error reading data from serial port! -> ") & Error.Text)
+  IF sData = Chr(10) THEN ' buffer until newline then parse
+    IF Len(sBuffer) > 1 THEN ParseLine(sBuffer)
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  END IF
+
+END
+
+PUBLIC SUB ParseLine(sBuf AS String)
+
+  DIM sValue, sAddress AS String
   DIM iDeviceId AS Integer
 
-  LINE INPUT #hUPS, sBuf
 
-  iDeviceId = Devices.Find(sAddress, Devices.FindInterface("UPS Socket"), "UPS Device")
+  IF bUPSDebug THEN Main.WriteDebugLog(sBuf)
+
+  ' try to find address and deviceid
+  IF NOT InStr(sBuf, "ERR") THEN
+    sAddress = Replace(sBuf, "VAR ", "")
+    sAddress = Mid(sAddress, 1, InStr(sAddress, " ", 1) - 1)
+    iDeviceId = Devices.Find(sAddress, Devices.FindInterface("UPS Socket"), "UPS Device")
+  END IF
+
   ' VAR smartups1000 input.voltage "223.6"
   ' VAR smartups1000 ups.status "OL"
   ' VAR smartups1000 ups.temperature "030.1"
-  IF bUPSDebug THEN Main.WriteDebugLog(sBuf)
-  IF InStr(sBuf, "ups.status") THEN
-    IF InStr(sBuf, "OL") THEN
-      sStatus = "Online"
-    ELSE IF InStr(sBuf, "OB") THEN
-      sStatus = "On Battery"
-    ELSE IF InStr(sBuf, "LB") THEN
-      sStatus = "Low Battery"
-    ELSE IF InStr(sBuf, "ERR") THEN
-      sStatus = "Error"
-    END IF
-    ' update device
-    IF iDeviceId THEN
-      Devices.ValueUpdate(iDeviceId, sStatus, "", "", "")
-    END IF
-  ELSE IF InStr(sBuf, "input.voltage") THEN
-    IF InStr(sBuf, "ERR") THEN
-      sStatus = "Error"
-    ELSE
-      sExtra = Mid$(sBuf, Len(sBuf) - 5, -1)
-    END IF
-    ' update device
-    IF iDeviceId THEN
-      Devices.ValueUpdate(iDeviceId, "", sExtra, "", "")
-    END IF
-  ELSE IF InStr(sBuf, "ups.temperature") THEN
-    IF InStr(sBuf, "ERR") THEN
-      sStatus = "Error"
-    ELSE
-      sExtra = Mid$(sBuf, Len(sBuf) - 4, -1)
-    END IF
-    ' update device
-    IF iDeviceId THEN
-      Devices.ValueUpdate(iDeviceId, "", "", sExtra, "")
+  ' VAR smartups1000 ups.load "41"
+  IF iDeviceId THEN
+    IF InStr(sBuf, "ups.status") THEN
+      IF InStr(sBuf, "OL") THEN
+        sValue = "Online"
+      ELSE IF InStr(sBuf, "OB") THEN
+        sValue = "On Battery"
+      ELSE IF InStr(sBuf, "LB") THEN
+        sValue = "Low Battery"
+      END IF
+      Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
+    ELSE IF InStr(sBuf, "input.voltage") THEN
+      sValue = Mid$(sBuf, Len(sBuf) - 5, -1)
+      Devices.ValueUpdate(iDeviceId, "", sValue, "", "")
+    ELSE IF InStr(sBuf, "ups.temperature") THEN
+      sValue = Mid$(sBuf, Len(sBuf) - 4, -1)
+      Devices.ValueUpdate(iDeviceId, "", "", sValue, "")
+    ELSE IF InStr(sBuf, "ups.load") THEN
+      sValue = Mid$(sBuf, Len(sBuf) - 2, -1)
+      Devices.ValueUpdate(iDeviceId, "", "", sValue, "")
     END IF
   END IF
 
@@ -178,7 +179,7 @@ PUBLIC SUB tUPS_Timer()
 
 END
 
-PUBLIC SUB Check(iId AS Integer, sAddress AS String)
+PUBLIC SUB Check(sAddress AS String, iModule AS Integer)
 
   DIM sCmd AS String
 
@@ -188,7 +189,13 @@ PUBLIC SUB Check(iId AS Integer, sAddress AS String)
   sCmd = "GET VAR " & sAddress & " input.voltage"
   IF bUPSDebug THEN Main.WriteDebugLog("[UPS] " & sCmd)
   TRY PRINT #hUPS, sCmd
-  sCmd = "GET VAR " & sAddress & " ups.temperature"
+
+  SELECT CASE iModule
+    CASE 115 ' BackUPS
+      sCmd = "GET VAR " & sAddress & " ups.load"
+    CASE ELSE ' SmartUPS
+      sCmd = "GET VAR " & sAddress & " ups.temperature"
+  END SELECT
   IF bUPSDebug THEN Main.WriteDebugLog("[UPS] " & sCmd)
   TRY PRINT #hUPS, sCmd
 
