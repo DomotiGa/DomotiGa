@@ -1,6 +1,6 @@
 -- MySQL dump 10.13  Distrib 5.1.37, for debian-linux-gnu (i486)
 --
--- Host: localhost    Database: domotiga2
+-- Host: localhost    Database: domotiga
 -- ------------------------------------------------------
 -- Server version	5.1.37-1ubuntu5.1
 
