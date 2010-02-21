@@ -9,178 +9,245 @@
 ' Only fetching channel icons and tvguide.xml is finished.
 
 ' DomotiGa - an open source home automation program.
-' Copyright(C) 2008 Ron Klinkien
+' Copyright(C) 2008-2010 Ron Klinkien
+
+' Almost all of this code is written by Kris Wauters on february, 14th - 2010
+' For more info or help: kris@digitalplayground.be
 
 ' Read file called COPYING for license details.
 
-PUBLIC sChannelsOutput AS String
-PUBLIC sGuideOutput AS String
-PUBLIC hChannelsFile AS File
-PUBLIC hGuideFile AS File
+PRIVATE hTVProcess AS Process
+PRIVATE sMC2XMLLog AS String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' create tvchannels table
+' grab XML with grab command string
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC SUB InitTable()
-
-  DIM sSql AS String
-
-  sSql = "DROP TABLE IF EXISTS tvchannels"
-  Main.hDB.Exec(sSql)
-
-  sSql = "CREATE TABLE tvchannels ("
-  sSql &= "`id` bigint(20) unsigned NOT NULL auto_increment,"
-  sSql &= "`name` varchar(64) default NULL,"
-  sSql &= "`callsign` varchar(32) default NULL,"
-  sSql &= "`icon` varchar(64) default NULL,"
-  sSql &= "`channum` int(11) default NULL,"
-  sSql &= "`description` varchar(64) default NULL,"
-  sSql &= "`enabled` tinyint(1) default NULL,"
-  sSql &= "PRIMARY KEY( `id`)"
-  sSql &= ");"
-  Main.hDB.Exec(sSql)
-
-END
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' grab tvguide with grabcmd, store in xml file
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC SUB GrabGuide()
-
-  DIM sCmdDir AS String
+PUBLIC SUB ImportGuide()
 
   IF NOT Main.bTVGuideEnabled THEN RETURN
-
-  sCmdDir = Main.sBaseDir &/ "tvguide"
-  ' create tvguide xml file
-  hGuideFile = OPEN sCmdDir &/ "tvguide.xml" FOR CREATE
-
-  IF Main.bTVGuideDebug THEN Main.WriteDebugLog(("[TVGuide] Started grabbing tvguide for ") & Main.iTVGuideGrabDays & (" days."))
-  EXEC [sCmdDir &/ Main.sTVGuideGrabCommand, "--config-file", sCmdDir &/ Main.sTVGuideGrabConfig, "--days", Main.iTVGuideGrabDays, "--cache", Main.sBaseDir &/ "tvguide/cache" &/ Main.sTVGuideGrabCommand, "--imdb", Main.sBaseDir &/ "tvguide/imdb/"] FOR READ AS "Guide"
+  sMC2XMLLog = ""
+  hTVProcess = SHELL (Main.sTVGuideXMLGrabCommand) FOR READ WRITE AS "hTVProcess"
+  Main.WriteDebugLog(("[TVGuide] Started grabbing XML with '") & Main.sTVGuideXMLGrabCommand & "'.")
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' grab channels with grabcmd, store in xml file
+' save grab command output
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC SUB GrabChannels()
+PUBLIC SUB hTVProcess_Read()
 
-  DIM sCmdDir AS String
-
-  IF NOT Main.bTVGuideEnabled THEN RETURN
-
-  sCmdDir = Main.sBaseDir &/ "tvguide"
-  ' create channels xml file
-  hChannelsFile = OPEN sCmdDir &/ "channels.xml" FOR CREATE
-
-  IF Main.bTVGuideDebug THEN Main.WriteDebugLog(("[TVGuide] Started grabbing channels and icons."))
-  EXEC [sCmdDir &/ Main.sTVGuideGrabCommand, "--config-file", sCmdDir &/ Main.sTVGuideGrabConfig, "--list-channels"] FOR READ AS "Channels"
-
-END
-
-PUBLIC SUB Guide_Read()
-
+  ' declare variables
   DIM sLine AS String
 
-  READ #LAST, sLine, -256
-  sGuideOutput &= sLine
+  READ #hTVProcess, sLine, Lof(hTVProcess)
+  sMC2XMLLog = sMC2XMLLog & sLine
 
 END
 
-PUBLIC SUB Guide_Kill()
+PUBLIC SUB hTVProcess_Kill()
 
-  PRINT #hGuideFile, sGuideOutput
-  IF Main.bTVGuideDebug THEN Main.WriteDebugLog(("[TVGuide] Finished grabbing tvguide."))
-
-END
-
-PUBLIC SUB Channels_Read()
-
-  DIM sLine AS String
-
-  READ #LAST, sLine, -256
-  sChannelsOutput &= sLine
-
-END
-
-PUBLIC SUB Channels_Kill()
-
-  PRINT #hChannelsFile, sChannelsOutput
-  IF Main.bTVGuideDebug THEN Main.WriteDebugLog(("[TVGuide] Finished grabbing channels and icons."))
-  ParseChannels(sChannelsOutput)
-
-END
-
-PUBLIC SUB ParseChannels(sData AS String)
-
-  DIM Xml AS NEW Xmldocument
-  DIM Node AS XmlNode
-
-  TRY Xml.FromString(sData)
-  IF ERROR THEN RETURN
-
-  Node = Xml.Root
-  ParseNode(Node)
-
-END
-
-PUBLIC SUB FetchChannelIcon(sIcon AS String)
-
-  DIM hDownloadImage AS HttpClient
-  DIM sDownload, sFileName AS String
+  ' declare variables
   DIM hFile AS File
-  DIM iSpot AS Integer
+  DIM sLine, sFile AS String = Temp()
 
-  IF Main.bTVGuideDebug THEN Main.WriteDebugLog(("[TVGuide] Fetching channelicon ") & sIcon)
+  File.Save(sFile, sMC2XMLLog)
+  hFile = OPEN sFile FOR INPUT
+  WHILE NOT Eof(hFile)
+    LINE INPUT #hFile, sLine
+    IF Left(sLine, 15) = "Start time .. :" THEN Main.WriteDebugLog(("[TVGuide] EPG - Valid from:") & " " & Right(sLine, Len(sLine) - 15))
+    IF Left(sLine, 15) = "End time .... :" THEN Main.WriteDebugLog(("[TVGuide] EPG - Valid until:") & " " & Right(sLine, Len(sLine) - 15))
+    IF Left(sLine, 15) = "Parsing ..... :" THEN Main.WriteDebugLog(("[TVGuide] Identifier:") & " " & Right(sLine, Len(sLine) - 15))
+    IF Left(sLine, 15) = "Completed ... :" THEN Main.WriteDebugLog(("[TVGuide] Summary:") & " " & PushTVGuideXMLToDB(Main.sTVGuideXMLFile))
+    IF Left(sLine, 15) = "Status ...... :" THEN Main.WriteDebugLog(("[TVGuide] Status:") & " " & Right(sLine, Len(sLine) - 15))
+  WEND
+  hFile.Close
+  KILL sFile
 
-  hDownloadImage = NEW HttpClient AS "Download"
-  hDownloadImage.URL = sIcon
-  hDownloadImage.Async = FALSE
-  hDownloadImage.TimeOut = 3
-  hDownloadImage.Get()
+END
 
-  IF hDownloadImage.Status < 0 THEN
-    IF Main.bTVGuideDebug THEN Main.WriteDebugLog(("[TVGuide] Error fetching channelicon ") & sIcon)
-  ELSE
-    ' success - read the data
-    IF Lof(hDownloadImage) THEN READ #hDownloadImage, sDownload, Lof(hDownloadImage)
+' push the retrieved xml file to the DB
+PUBLIC FUNCTION PushTVGuideXMLToDB(sData AS String) AS String
+
+    ' declare variables
+   DIM XmlR AS NEW XmlReader
+   DIM iCI, iPI, iChannelCount, iProgramCount, iCategoriesCount AS Integer
+   DIM sChannel, sProgram, sChannelInfo, sProgramInfo AS String
+   DIM rRes AS Result
+
+   ' init variables & cleanup DB
+   Main.WriteDebugLog(("[TVGuide] Parsing XML file ..."))
+   WAIT
+   sChannelInfo = ("[TVGuide] Processing XML file ... Channels so far: ")
+   sProgramInfo = ("[TVGuide] Processing XML file ... Programs so far: ")
+   XmlR = NEW XmlReader
+   XmlR.Open(sData)
+   Main.hDB.Exec("UPDATE tv_channels SET isupdated = 0")
+   Main.hDB.Exec("UPDATE tv_categories SET isupdated = 0")
+   Main.hDB.Exec("UPDATE tv_subcategories SET isupdated = 0")
+   Main.hDB.Exec("DELETE FROM tv_programs")
+   sChannel = ""
+   sProgram = ""
+   iChannelCount = 0
+   iProgramCount = 0
+   iPI = 0
+   iCI = 0
+
+   ' loop trough the whole XML buffer
+   WHILE NOT XmlR.Eof
+    ' PRINT " - - - " & XmlR.Node.name & "=" & XmlR.Node.Value & "(" & iPI & ")"
+      SELECT CASE XmlR.Node.Name
+        CASE "display-name"
+          INC iCI
+        CASE "title", "desc", "category"
+          INC iPI
+      END SELECT
+      IF XmlR.Node.name = "#text" THEN
+        IF iCI = 6 THEN
+          sChannel &= XmlR.Node.Value
+          SaveChannelToDB(sChannel, Main.sActiveUserID)
+        ELSE
+          IF iPI = 2 OR IF iPI = 4 OR IF iPI = 6 OR IF iPI = 8 THEN
+            sProgram &= XmlR.Node.value & "|"
+          END IF
+          IF iPI = 8 THEN
+            SaveProgramToDB(sProgram, Main.sActiveUserID)
+          END IF
+        END IF
+      ELSE
+      ' here we have an XML node with subelements, split it up in different lines
+      SELECT CASE XmlR.Node.Type
+        CASE XmlReaderNodeType.Element
+          IF XmlR.Node.Attributes.count > 0 THEN
+            FOR EACH XmlR.Node.Attributes
+              ' PRINT "***" & XmlR.Node.Name & "=" & XmlR.Node.value & "***"
+              SELECT CASE XmlR.Node.Name
+                CASE "id"
+                  sChannel = XmlR.Node.Value & "|"
+                  iCI = 1
+                  INC iChannelCount
+                  IF iChannelCount / 10 = Int(iChannelCount / 10) THEN
+                    Main.WriteDebugLog(sChannelInfo & CStr(iChannelCount))
+                    WAIT
+                  END IF
+                CASE "start"
+                  sProgram = Left(XmlR.Node.Value, 12) & "|"
+                  iPI = 1
+                  INC iProgramCount
+                  IF (iProgramCount / 1000 = Int(iProgramCount / 1000)) OR IF (iProgramCount = 1) THEN
+                    Main.WriteDebugLog(sProgramInfo & CStr(iProgramCount))
+                    WAIT
+                  END IF
+                CASE "stop"
+                  sProgram &= Left(XmlR.Node.Value, 12) & "|"
+                CASE "channel"
+                  sProgram &= XmlR.Node.Value & "|"
+              END SELECT
+            NEXT
+          END IF
+      END SELECT
+      END IF
+      XmlR.Read()
+   WEND
+   XmlR.Close
+   XmlR = NULL
+   ' do a little cleanup in the channels
+   Main.hDB.Exec("DELETE FROM tv_channels WHERE isupdated = 0")
+   Main.hDB.Exec("DELETE FROM tv_categories WHERE isupdated = 0")
+   Main.hDB.Exec("DELETE FROM tv_subcategories WHERE isupdated = 0")
+   ' we converted all channels and programs, now update category/subcategory tables
+   iCategoriesCount = UpdateTVCategories(Main.sActiveUserID)
+   RETURN "Finished. " & iChannelCount & " " & ("Channels") & ", " & CStr(iCategoriesCount) & " " & ("Main Categories and") & " " & CStr(iProgramCount) & " " & ("Programs processed !")
+
+CATCH
+  Main.WriteDebugLog(("[TVGuide] Error parsing XML file: ") & Error.Text & (" at ") & Error.Where)
+
+END
+
+' write the info in the channeltag (taken from the MC XML file) into the database
+PRIVATE SUB SaveChannelToDB(sChannelTag AS String, sUserID AS String)
+
+  ' declare variables
+  DIM sQuery AS String
+  DIM rRes AS Result
+
+  ' first check if channel already exists
+  sQuery = "SELECT * FROM tv_channels WHERE ChannelName = '" & Main.ParseTag(sChannelTag, 2, "|") & "' AND ChannelID = '" & Main.ParseTag(sChannelTag, 1, "|") & "'"
+  rRes = Main.hDB.Exec(sQuery)
+  IF rRes THEN
+    ' channel found, update modification info, and set IsUpdated
+    IF rRes.Count THEN
+      sQuery = "UPDATE tv_channels SET IsUpdated=1, ModificationDate='" & Format(Now, "yyyymmddhhnn") & "',FK_Users=" & sUserID & " WHERE ChannelName='" & Main.ParseTag(sChannelTag, 2, "|") & "' AND ChannelID='" & Main.ParseTag(sChannelTag, 1, "|") & "'"
+    ELSE
+      sChannelTag = Replace(sChannelTag, "'", "`")
+      sQuery = "INSERT INTO tv_channels (ChannelName, ChannelID, CreationDate, ModificationDate, FK_Users, IsUsed, IsUpdated) values('" & Main.ParseTag(sChannelTag, 2, "|") & "','" & Main.ParseTag(sChannelTag, 1, "|") & "','"
+      sQuery &= Format(Now, "yyyymmddhhnn") & "','" & Format(Now, "yyyymmddhhnn") & "'," & sUserID & ",0,1)"
+    END IF
+    Main.hDB.Exec(sQuery)
   END IF
 
-  iSpot = RInStr(sIcon, "/")
-  sFileName = Mid$(sIcon, iSpot + 1, Len(sIcon) - iSpot)
-  OPEN Main.sBaseDir &/ "tvguide/icons" &/ sFileName FOR CREATE AS #hFile
-  WRITE #hFile, sDownload
-  CLOSE #hFile
+END
+
+' update the categories/categories table, based on contents of the tv_programs table
+PRIVATE SUB UpdateTVCategories(sUserID AS String) AS Integer
+
+  ' declare variables
+  DIM rRes, rResTmp AS Result
+  DIM sQuery AS String
+  DIM bOK AS Boolean
+
+  Main.WriteDebugLog(("[TVGuide] Processing Categories ..."))
+  rRes = Main.hDB.Exec("SELECT DISTINCT CategoryName FROM tv_programs ORDER BY CategoryName")
+  IF rRes THEN
+    IF rRes.Count > 0 THEN
+      FOR EACH rRes
+        ' first check if category exists
+        sQuery = "SELECT * FROM tv_categories WHERE CategoryName='" & rRes!CategoryName & "'"
+        bOK = FALSE
+        rResTmp = Main.hDB.Exec(sQuery)
+        IF rResTmp THEN
+          ' category found, update it
+          IF rResTmp.count > 0 THEN
+            bOK = TRUE
+            sQuery = "UPDATE tv_categories SET IsUpdated = 1, ModificationDate = '" & Format(Now, "yyyymmddhhnn") & "', FK_Users = " & sUserID & " WHERE CategoryName = '" & rRes!CategoryName & "'"
+            Main.hDB.Exec(sQuery)
+          END IF
+        END IF
+        ' when category not yet found, add it to database
+        IF bOK = FALSE THEN 
+          sQuery = "INSERT INTO tv_categories (CategoryName, CreationDate, ModificationDate, FK_Users, IsUpdated) values('" & rRes!CategoryName & "','" & Format(Now, "yyyymmddhhnn") & "','"
+          sQuery &= Format(Now, "yyyymmddhhnn") & "'," & sUserID & ",1)"
+         Main.hDB.Exec(sQuery)
+        END IF
+      NEXT
+    END IF
+  END IF
+  ' return count of categories
+  rRes = Main.hDB.Exec("SELECT * FROM tv_categories")
+  IF rRes THEN
+    IF rRes.count > 0 THEN
+      RETURN rRes.Count
+    END IF
+  END IF
 
 END
 
-' doesn't work yet!
-SUB ParseNode(Node AS Xmlnode)
+' write the info in the ProgramTag (taken from the MC XML file) into the database
+PRIVATE SUB SaveProgramToDB(sProgramTag AS String, sUserID AS String)
 
-  DIM t, t1 AS Integer
-  DIM node1 AS XmlNode
-  DIM buf AS String
-  DIM title, description, item_link AS String
+  ' declare variables
+  DIM sQuery AS String
+  DIM iI AS Integer
 
-  FOR t = 0 TO node.Children.Count - 1
-    node1 = node.Children[t]
-    IF node1.name = "channel" THEN
-      FOR t1 = 0 TO node1.Children.Count - 1
-        buf = node1.Children[t1].name
-        IF buf = "display-name" THEN
-          title = node1.Children[t1].value
-          IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] TITLE: " & title)
-        ELSE IF buf = "icon" THEN
-          description = node1.Children[t1].value
-          IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] DESC: " & description)
-        ELSE IF buf = "link" THEN
-          item_link = node1.Children[t1].value
-          IF Main.bTVGuideDebug THEN Main.WriteDebugLog("[TVGuide] ITEM: " & item_link)
-        END IF
-      NEXT
+  sQuery = "INSERT INTO tv_programs (StartPoint, EndPoint, ChannelID, ProgramName, ProgramDescription, CategoryName, SubCategoryName, CreationDate, FK_Users) values("
+  sProgramTag = Replace(sProgramTag, "'", "`")
+  FOR iI = 1 TO 7
+    IF iI = 6 OR IF iI = 7 THEN
+      sQuery &= "'" & Main.ParseTag(sProgramTag, iI, "|") & "',"
     ELSE
-      IF node1.Children.Count > 0 THEN parseNode(node1)
+      sQuery &= "'" & Main.ParseTag(sProgramTag, iI, "|") & "',"
     END IF
   NEXT
+  sQuery &= "'" & Format(Now, "yyyymmddhhnn") & "'," & sUserID & ")"
+  Main.hDB.Exec(sQuery)
 
 END
