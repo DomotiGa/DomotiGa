@@ -49,7 +49,7 @@ if (!isset($r_debug)) $r_debug=0;
 if ($_SESSION['view']=="pachube") {
    $request = xmlrpc_encode_request("pachube.list",null);
    $response = do_xmlrpc($request);
-   if (xmlrpc_is_fault($response)) {
+   if (is_array($response) && xmlrpc_is_fault($response)) {
        trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");
    } else {
      header("Content-type: application/xml");
