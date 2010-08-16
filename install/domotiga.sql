@@ -1932,6 +1932,7 @@ CREATE TABLE `settings_plugwise` (
   `enabled` tinyint(1) DEFAULT NULL,
   `serialport` varchar(32) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
+  `firmware` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -1943,7 +1944,7 @@ CREATE TABLE `settings_plugwise` (
 
 LOCK TABLES `settings_plugwise` WRITE;
 /*!40000 ALTER TABLE `settings_plugwise` DISABLE KEYS */;
-INSERT INTO `settings_plugwise` VALUES (0,1,'/dev/ttyUSB7',300,1),(1,0,'/dev/ttyUSB7',300,-1);
+INSERT INTO `settings_plugwise` VALUES (0,1,'/dev/ttyUSB7',300,2008,1),(1,0,'/dev/ttyUSB7',300,2008,-1);
 /*!40000 ALTER TABLE `settings_plugwise` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2770,7 +2771,7 @@ CREATE TABLE `version` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `db` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=19 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=20 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2779,7 +2780,7 @@ CREATE TABLE `version` (
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
