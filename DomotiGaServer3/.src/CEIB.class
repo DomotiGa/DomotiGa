@@ -1,0 +1,439 @@
+' Gambas class file
+
+' Description:
+' EIB.class
+' Provide support for KNX / EIB using eibd.
+
+' Development Status:
+' Just started developing this one.
+
+' Links:
+' http://www.auto.tuwien.ac.at/~mkoegler/index.php/eibd
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2010 Ron Klinkien
+' This module is written by and Copyright(C) 2009 Timo Sariwating
+
+' Read file called COPYING for license details.
+
+Property TCPHost As String
+Property TCPPort As String
+Property EIBDebug As Boolean
+
+Private sTCPHost As String
+Private sTCPPort As String
+Private bEIBDebug As Boolean
+
+Public hEIB As New Socket
+Public tEIB As Timer
+Public sBuffer As String
+
+Private Const ON As Byte = &H81
+Private Const OFF As Byte = &H80
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Connect() As Boolean
+
+  ' try to close the connection
+  Try hEIB.Close
+
+  ' get a new one
+  hEIB = New Socket As "eib"
+  hEIB.Connect(sTCPHost, sTCPPort)
+
+  ' start poll timer for KNX/EIB status LED
+  tEIB = New Timer As "tEIBLED"
+  tEIB.Delay = 250
+  tEIB.Stop
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("KNX/EIB Error: ") & ERROR.Text)
+  Return False
+
+End
+
+Public Sub EIB_Ready()
+
+  Dim sCommand As New String[5]
+
+  sCommand[0] = &H00
+  sCommand[1] = &H26 ' opengroupsocket
+  sCommand[2] = &H00
+  sCommand[3] = &H00
+  sCommand[4] = &H00
+  Main.WriteLog(("KNX/EIB TCP socket connected."))
+  TX(sCommand)
+
+End
+
+Public Sub EIB_Closed()
+
+  Main.WriteLog(("KNX/EIB Error: TCP socket closed. (is eibd still running?)"))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read EIB/KNX socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub EIB_Read()
+
+  Dim bMyBuf As New Byte[512]
+  Dim iCnt, iCount As Integer
+  Dim sDevice, sAddress As String
+  Dim sReceived As New String[0]
+
+  If hEIB.Status <> Net.Connected Then Return
+    bMyBuf[0] = 0
+    Read #hEIB, bMyBuf[0] ' read the first byte
+    Main.ControlLed("EIB", "On")
+    If Main.bStandalone Then tEIB.Start
+
+    Select bMyBuf[0]
+      Case 0
+        Try Read #hEIB, bMyBuf[0 + 1], 1 ' read the length byte
+        For iCnt = 0 To bMyBuf[1] - 1 ' read the rest of the frame
+          Try Read #hEIB, bMyBuf[0 + 2 + iCnt], 1
+        Next
+    End Select
+
+    Select Hex$(bMyBuf[3])
+      Case 26
+        Main.WriteLog(("KNX/EIB GroupSocket OK"))
+      Case 27
+        sDevice = Left$(Hex$(bMyBuf[4], 2), 1) & "." & Right$(Hex$(bMyBuf[4], 2), 1) & "." & bMyBuf[5]
+        sAddress = Left$(Hex$(bMyBuf[6], 2), 1) & "/" & Mid$(Hex$(bMyBuf[6], 2), 2, 1) & "/" & bMyBuf[7]
+        For iCount = 9 To bMyBuf.Length
+          Try sReceived.Add(Hex$(bMyBuf[iCount], 2))
+        Next
+        Lookup_EIS(sDevice, sAddress, sReceived)
+    End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' lookup the EIS type for received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Lookup_EIS(sDevice As String, sAddress As String, sReceived As String[])
+
+  Dim iDeviceId As Integer = Devices.Find("%" & sAddress & "%", Devices.FindInterface("KNX/EIB Interface"))
+
+  If iDeviceId Then
+    Select Case Devices.FindDescriptionForID(Devices.FindModuleForDevice(iDeviceId))
+      Case "EIS 1" ' On/Off
+        EIS1(iDeviceId, sReceived)
+      Case "EIS 2" ' Dim
+        EIS2(iDeviceId, sReceived)
+      Case "EIS 3" ' Time
+        EIS3(iDeviceId, sReceived)
+      Case "EIS 4" ' Date
+        EIS4(iDeviceId, sReceived)
+      Case "EIS 5" ' Values
+        EIS5(iDeviceId, sReceived)
+      Case Else
+        Main.WriteDebugLog(("[KNX/EIB] EIS Unknown: ") & sAddress & " " & sReceived)
+    End Select
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' handle received commands for EIB1 devices (switch on/off)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub EIS1(iDeviceId As Integer, sReceived As String[])
+
+  Select Case sReceived[0]
+    Case 80
+      Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
+      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS1: ") & Devices.FindNameForDevice(iDeviceId) & " Off")
+    Case 81
+      Devices.ValueUpdate(iDeviceId, "On", "", "", "")
+      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS1: ") & Devices.FindNameForDevice(iDeviceId) & " On")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' handle received commands for EIB2 devices (dim)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub EIS2(iDeviceId As Integer, sReceived As String[])
+
+  Dim sAddress, sDeviceName As String
+  Dim sAddressSplit As String[]
+  Dim sCommand As New String[6]
+  Dim iPercentage As Integer
+
+  sDeviceName = Devices.FindNameForDevice(iDeviceId)
+  sAddress = Devices.FindAddressForDevice(sDeviceName)
+
+  sAddressSplit = Split(sAddress, "|" "/")
+
+  sCommand[0] = &H00
+  sCommand[1] = &H27
+  sCommand[2] = Hex$(Val(sAddressSplit[6]) & Val(sAddressSplit[7]))
+  sCommand[3] = Val(sAddressSplit[8])
+  sCommand[4] = &H00
+  sCommand[5] = &H00
+
+  Select Case sReceived[0]
+    Case 80
+      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS2: ") & sDeviceName & " Off")
+      TX(sCommand)
+    Case 81
+      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS2: ") & sDeviceName & " On")
+      TX(sCommand)
+    Case 89
+      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS2: ") & sDeviceName & " Dim")
+      TX(sCommand)
+    Case 40
+      iPercentage = Val("&h" & sReceived[1]) / 255 * 100
+      If iPercentage = 0 Then
+        Devices.ValueUpdate(iDeviceId, "Off", CStr(iPercentage), "", "")
+      Else
+        Devices.ValueUpdate(iDeviceId, "On", CStr(iPercentage), "", "")
+      Endif
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' handle received commands for EIB3 devices (time)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub EIS3(iDeviceId As Integer, sReceived As String[])
+
+  Dim sAddressSplit As String[]
+  Dim sCommand As New String[9]
+  Dim iMinute, iHour, iSecond As Integer
+
+  Select Case sReceived[1]
+    Case 80
+      iHour = Val("&h" & (Mid$(sReceived, 5, 2)))
+      iMinute = Val("&h" & (Mid$(sReceived, 7, 2)))
+      iSecond = Val("&h" & (Mid$(sReceived, 9, 2)))
+      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS3: ") & Devices.FindNameForDevice(iDeviceId) & " " & Time(iHour, iMinute, iSecond))
+    Case 00
+      sAddressSplit = Split(Devices.FindAddressForDevice(Devices.FindNameForDevice(iDeviceId)), "/")
+      sCommand[0] = &H00
+      sCommand[1] = &H27
+      sCommand[2] = Hex$(Val(sAddressSplit[0]) & Val(sAddressSplit[1]))
+      sCommand[3] = Val(sAddressSplit[2])
+      sCommand[4] = &H00
+      sCommand[5] = &H80
+      sCommand[6] = Hex$(Hour(Now))
+      sCommand[7] = Hex$(Minute(Now))
+      sCommand[8] = Hex$(Second(Now))
+      TX(sCommand)
+      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS3: Time ") & Time(Now) & (" send to bus"))
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' handle received commands for EIB4 devices (date)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub EIS4(iDeviceId As Integer, sReceived As String[])
+
+  Dim sAddressSplit As String[]
+  Dim sCommand As New String[9]
+  Dim iDay, iMonth, iYear As Integer
+
+  Select Case sReceived[1]
+    Case 80
+      iday = Val("&h" & (Mid$(sReceived, 5, 2)))
+      iMonth = Val("&h" & (Mid$(sReceived, 7, 2)))
+      iYear = Val("&h" & (Mid$(sReceived, 9, 2))) + 2000
+      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS4: ") & Devices.FindNameForDevice(iDeviceId) & " " & Date(iYear, iMonth, iDay))
+    Case 00
+      sAddressSplit = Split(Devices.FindAddressForDevice(Devices.FindNameForDevice(iDeviceId)), "/")
+      sCommand[0] = &H00
+      sCommand[1] = &H27
+      sCommand[2] = Hex$(Val(sAddressSplit[0]) & Val(sAddressSplit[1]))
+      sCommand[3] = Val(sAddressSplit[2])
+      sCommand[4] = &H00
+      sCommand[5] = &H80
+      sCommand[6] = Hex$(Day(Now))
+      sCommand[7] = Hex$(Month(Now))
+      sCommand[8] = Hex$(Right$(CStr(Year(Now)), 2))
+      TX(sCommand)
+      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS4: Date ") & Day(Now) & "/" & Month(Now) & "/" & Year(Now) & (" send to bus"))
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' handle received for EIB5 devices (values)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub EIS5(iDeviceId As Integer, sReceived As String[])
+
+  Dim iValue As Integer
+
+  iValue = Val(Hex$(sReceived[1]))
+  Main.WriteDebugLog(("[KNX/EIB] EIS5: ") & Devices.FindNameForDevice(iDeviceId) & " " & iValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' prepare a command for sending to the KNX/EIB interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sValue As String)
+
+  Dim sModule As String
+  Dim sAddressSplit As String[]
+  Dim sCommand As New String[5]
+  Dim iBrightness As Integer
+
+  sModule = Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(Devices.Find(sAddress, Devices.FindInterface("KNX/EIB Interface"))))
+  Select Case sModule
+    Case "EIS 1" ' (On/Off)
+      sAddressSplit = Split(sAddress, "/")
+      sCommand[0] = &H00
+      sCommand[1] = &H27
+      sCommand[2] = Val("&H" & (Val(sAddressSplit[0]) & Val(sAddressSplit[1])))
+      sCommand[3] = Val(sAddressSplit[2])
+      sCommand[4] = &H00
+      Select Case sValue
+        Case "On"
+          sCommand.Add(ON)
+          TX(sCommand)
+        Case "Off"
+          sCommand.Add(OFF)
+          TX(sCommand)
+      End Select
+    Case "EIS 2" ' (Dim)
+      sAddressSplit = Split(sAddress, "|" "/")
+      sCommand[0] = &H00
+      sCommand[1] = &H27
+      sCommand[2] = Val("&H" & (Val(sAddressSplit[0]) & Val(sAddressSplit[1])))
+      sCommand[3] = Val(sAddressSplit[2])
+      sCommand[4] = &H00
+      Select Case sValue
+        Case "On"
+          sCommand.Add(ON)
+          TX(sCommand)
+        Case "Off"
+          sCommand.Add(OFF)
+          TX(sCommand)
+        Case "Stop"
+          sCommand[2] = Val("&H" & (Val(sAddressSplit[3]) & Val(sAddressSplit[4])))
+          sCommand[3] = Val(sAddressSplit[5])
+          sCommand.Add(&H80)
+          TX(sCommand)
+        Case Else
+          If InStr(sValue, "Dim ") Then ' DIM 0-100
+            iBrightness = Val(Replace(sValue, "Dim ", ""))
+            sCommand[2] = Val("&H" & (Val(sAddressSplit[6]) & Val(sAddressSplit[7])))
+            sCommand[3] = Val(sAddressSplit[8])
+            sCommand.Add(&H80)
+            sCommand.Add(CInt(iBrightness * 2.55))
+            TX(sCommand)
+          Endif
+      End Select
+  End Select
+
+End
+
+Public Sub tEIBLED_Timer()
+
+  Main.ControlLed("EIB", "Off")
+  tEIB.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send a command to the KNX/EIB interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub TX(sCommand As String[])
+
+  Dim sHeader As New String[2]
+  Dim sTX As String
+  Dim iCount As Integer
+
+  sHeader[0] = &H00
+  sHeader[1] = Hex$(sCommand.Length)
+
+  If hEIB.Status = Net.Connected Then
+    Write #hEIB, Chr$(sHeader[0]) & Chr$(sHeader[1]), 2
+    For iCount = 0 To sCommand.Length
+      Try sTX &= Chr$(sCommand[iCount])
+    Next
+    Write #hEIB, sTX, sCommand.Length
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hEIB.Close
+  Main.WriteLog(("KNX/EIB TCP socket port close."))
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("KNX/EIB Error: ") & ERROR.Text)
+  Return False
+
+End
+
+Public Sub EIB_Error()
+
+  ' handle error
+  Select Case hEIB.Status
+    Case Net.CannotCreateSocket
+      Main.WriteLog(("KNX/EIB: The system does not allow to create a socket."))
+    Case Net.HostNotFound
+      Main.WriteLog(("KNX/EIB: Host '") & sTCPHost & ("' not found."))
+    Case Net.ConnectionRefused
+      Main.WriteLog(("KNX/EIB: Unable to connect to eibd. Connection refused."))
+    Case Net.CannotRead
+      Main.WriteLog(("KNX/EIB: Error reading data."))
+    Case Net.CannotWrite
+      Main.WriteLog(("KNX/EIB: Error writing data."))
+  End Select
+
+End
+
+' implement properties
+Private Function TCPHost_Read() As String
+
+  Return sTCPHost
+
+End
+
+Private Sub TCPHost_Write(Value As String)
+
+  sTCPHost = Value
+
+End
+
+Private Function TCPPort_Read() As String
+
+  Return sTCPPort
+
+End
+
+Private Function TCPPort_Write(Value As String)
+
+  sTCPPort = Value
+
+End
+
+Private Function EIBDebug_Read() As Boolean
+
+  Return bEIBDebug
+
+End
+
+Private Sub EIBDebug_Write(Value As Boolean)
+
+  bEIBDebug = Value
+
+End

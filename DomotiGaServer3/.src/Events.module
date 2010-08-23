@@ -1,0 +1,272 @@
+' Gambas module file
+
+' Description:
+' Events.module
+' This module provides support for events, triggers and actions.
+
+' Development Status:
+'   Rewritten by Geert-Jan van den Hurk
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2010 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PUBLIC SUB getCondition(rResult AS Result, sCondition AS String) AS Result
+
+  DIM rResultCondition AS Result
+
+  rResultCondition = Main.hDB.Exec("SELECT * FROM conditions WHERE id = " & rResult[sCondition])
+
+  RETURN rResultCondition
+
+END
+
+PRIVATE SUB CheckCondition(sValue AS Variant, sOperand AS String, sCond AS Variant) AS Boolean
+
+  DIM bReturn AS Boolean
+
+  IF IsBoolean(sCond) THEN sCond = CBool(sValue)
+
+  bReturn = FALSE
+
+  SELECT sOperand
+    CASE "="
+      IF Comp(sValue, sCond) = 0 THEN bReturn = TRUE
+    CASE "<>"
+      IF sValue <> sCond THEN bReturn = TRUE
+    CASE ">"
+      sValue = "" & sValue ' Be sure it are strings
+      sCond = "" & sCond
+      IF IsDigit(sValue) AND IsDigit(sCond) THEN
+        IF Val(sValue) > Val(sCond) THEN bReturn = TRUE
+      ENDIF
+    CASE "<"
+      sValue = "" & sValue ' Be sure it are strings
+      sCond = "" & sCond
+      IF IsDigit(sValue) AND IsDigit(sCond) THEN
+        IF Val(sValue) < Val(sCond) THEN bReturn = TRUE
+      ENDIF
+    CASE ELSE
+      IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Unsupported operand found!"))
+  END SELECT
+    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Check condition ") & sCond & " " & sOperand & " " & sValue & " = " & Main.DisplayBool(bReturn))
+  RETURN bReturn
+
+END
+
+PUBLIC SUB CheckSingleCondition(rResultCondition AS Result) AS Boolean
+
+  DIM bResult AS Boolean
+  DIM sValue AS String
+
+  bResult = TRUE
+
+  SELECT rResultCondition!type
+    CASE 1 ' Time
+      ' Not supported as condition
+    CASE 2 ' Variable
+      bResult = CheckCondition(Main.GlobalVar[rResultCondition!param1], rResultCondition!param2, rResultCondition!param3)
+    CASE 3  ' Device Status
+      IF Comp(rResultCondition!param2, "Value") = 0 THEN
+        sValue = Devices.GetCurrentValueForDevice(rResultCondition!param1)
+      ELSE IF Comp(rResultCondition!param2, "Value2") = 0 THEN
+        sValue = Devices.GetCurrentValue2ForDevice(rResultCondition!param1)
+      ELSE IF Comp(rResultCondition!param2, "Value3") = 0 THEN
+        sValue = Devices.GetCurrentValue3ForDevice(rResultCondition!param1)
+      ELSE IF Comp(rResultCondition!param2, "Value4") = 0 THEN
+        sValue = Devices.GetCurrentValue4ForDevice(rResultCondition!param1)
+      ELSE
+        sValue = Devices.GetCurrentValueForDevice(rResultCondition!param1)
+      END IF
+      bResult = CheckCondition(sValue, rResultCondition!param3, rResultCondition!param4)
+  END SELECT
+
+  RETURN bResult
+
+END
+
+PUBLIC SUB CheckConditions(rResult AS Result) AS Boolean
+
+  DIM bCondition, bCondition1, bCondition2 AS Boolean
+  DIM rResultCondition AS Result
+
+  ' Assume that all conditions are met
+  bCondition = TRUE
+
+  IF rResult["events.condition1"] THEN
+    rResultCondition = getCondition(rResult, "events.condition1")
+
+    IF rResultCondition THEN
+      bCondition1 = CheckSingleCondition(rResultCondition)
+      IF rResult["events.condition2"] THEN
+        rResultCondition = getCondition(rResult, "events.condition2")
+        bCondition2 = CheckSingleCondition(rResultCondition)
+      ELSE
+        bCondition2 = bCondition1
+      END IF
+      ' Check the OR and AND clause
+      IF bCondition1 = FALSE AND bCondition2 = FALSE THEN
+        bCondition = FALSE
+      ELSE IF rResult["events.operand"] == "AND" THEN
+        IF bCondition1 = FALSE OR bCondition2 = FALSE THEN
+          bCondition = FALSE
+        END IF
+      END IF
+    END IF
+  END IF
+  RETURN bCondition
+
+END
+
+PUBLIC SUB RunSingleAction(rResult AS Result, action AS String)
+
+  DIM rResultAction AS Result
+
+  IF rResult[action] THEN
+    rResultAction = Main.hDB.Exec("SELECT * FROM actions WHERE id = &1 ", rResult[action])
+    IF rResultAction THEN
+      IF RunAction(rResult[action]) = TRUE THEN UpdateEvent(rResult["events.id"]) 
+    END IF
+  END IF
+
+END
+
+PUBLIC SUB RunActions(rResult AS Result)
+
+  IF rResult.Count THEN
+    FOR EACH rResult
+      IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Event '") & rResult["events.name"] & ("' is triggered."))
+      RunSingleAction(rResult, "events.action1")
+      RunSingleAction(rResult, "events.action2")
+      RunSingleAction(rResult, "events.action3")
+    NEXT
+  END IF
+
+END
+
+PRIVATE SUB doEvent(rResult AS Result)
+
+  DIM bReRunOK AS Boolean
+
+  IF rResult.Count THEN 
+    FOR EACH rResult
+
+      bReRunOK = TRUE
+      IF rResult!rerunenabled = TRUE AND IsDate(rResult!lastrun) THEN
+        bReRunOK = CheckReRunCondition(rResult!lastrun, rResult!reruntype, rResult!rerunvalue)
+      END IF
+      IF bReRunOK = TRUE AND CheckConditions(rResult) = TRUE THEN
+        RunActions(rResult)
+      END IF
+    NEXT
+  END IF
+
+END
+
+PUBLIC SUB CheckTimeNowEvents()
+
+  DIM rResult AS Result
+
+  rResult = Main.hDB.Exec("SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 1 AND events.enabled AND triggers.param1 = &1 AND triggers.param2 = &2", Format(Main.GlobalVar["Hour"], "00"), Format(Main.GlobalVar["Minute"], "00"))
+  IF rResult THEN
+    doEvent(rResult)
+  END IF
+
+END
+
+PUBLIC SUB CheckDeviceChangeEvents(iId AS Integer, sField AS String, sValue AS String)
+
+  DIM rResult AS Result
+
+  rResult = Main.hDB.Exec("SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 3 AND events.enabled AND triggers.param1 = &1", iId)
+  IF rResult THEN
+    doEvent(rResult)
+  END IF
+
+END
+
+PRIVATE SUB CheckReRunCondition(dDate AS Date, sPeriod AS String, iValue AS Integer) AS Boolean
+
+  IF DateDiff(dDate, Now(), Eval(sPeriod)) > iValue THEN
+    RETURN TRUE
+  ELSE
+    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Event Rerun condition ") & iValue & " " & sPeriod & (" is false."))
+    RETURN FALSE
+  END IF
+
+END
+
+PUBLIC SUB RunAction(iAction AS Integer) AS Boolean
+
+  DIM rResultAction AS Result
+  DIM bOk AS Boolean
+
+  rResultAction = Main.hDB.Exec("SELECT * FROM actions WHERE id = &1 ", iAction)
+  IF rResultAction.Available THEN
+    SELECT rResultAction!type
+      CASE 1 ' device change
+        IF rResultAction!param1 AND IF rResultAction!param2 AND IF rResultAction!param3 THEN
+          Devices.SetDevice(Devices.FindNameForDevice(rResultAction!param1), rResultAction!param3)
+          bOk = TRUE
+        END IF
+      CASE 5 ' execute command
+        SHELL rResultAction!param5
+        bOk = TRUE
+      CASE ELSE
+        bOk = FALSE
+    END SELECT
+  END IF
+
+  IF bOk THEN
+    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Action '") & rResultAction!name & ("' executed!"))
+    RETURN TRUE
+  ELSE
+    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Action '") & rResultAction!name & ("' failed to execute!"))
+    RETURN FALSE
+  END IF
+
+END
+
+PUBLIC SUB UpdateEvent(iId AS Integer)
+
+  DIM rResult AS Result
+
+  rResult = Main.hDB.Exec("SELECT * FROM events where id = &1", iId)
+  IF rResult.Available THEN
+    IF rResult.Count = 1 THEN
+      IF rResult!firstrun = "00:00:00" OR rResult!firstrun = "" THEN
+        rResult = Main.hDB.Exec("UPDATE events SET firstrun = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), iId)
+      END IF
+    END IF
+    rResult = Main.hDB.Exec("UPDATE events SET lastrun = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), iId)
+  END IF
+
+END
+
+PRIVATE SUB CheckTrigger(sValue AS Variant, sOperand AS String, sCond AS Variant) AS Boolean
+
+  DIM bReturn AS Boolean
+
+  IF IsBoolean(sCond) THEN sCond = CBool(sValue)
+
+  SELECT sOperand
+    CASE "="
+      IF Comp(sValue, sCond) = 0 THEN bReturn = TRUE
+    CASE "<>"
+      IF sValue <> sCond THEN bReturn = TRUE
+    CASE ">"
+      IF IsDigit(sValue) AND IF IsDigit(sCond) = FALSE THEN
+        IF Val(sValue) > Val(sCond) THEN bReturn = TRUE
+      END IF
+    CASE "<"
+      IF IsDigit(sValue) AND IF IsDigit(sCond) = FALSE THEN
+        IF Val(sValue) < Val(sCond) THEN bReturn = TRUE
+      END IF
+    CASE ELSE
+      IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Unsupported operand found!"))
+  END SELECT
+    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Check trigger ") & sCond & " " & sOperand & " " & sValue & " = " & Main.DisplayBool(bReturn))
+  RETURN bReturn
+
+END

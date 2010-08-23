@@ -1,0 +1,895 @@
+' Gambas class file
+
+' Description:
+' CRFXComTX.class
+' Connect to RFXCom transmitter interface via tcp socket or serial port.
+
+' Development Status:
+' ARC Tech devices are supported. (KAKU as moduletype)
+' X10 RF devices are supported. (X10 as moduletype)
+' HE UK devices are supported. (HE as moduletype)
+
+' Credits:
+' Thanks to Bert Weijenberg of RFXCom.com.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2010 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+Property TCPHost As String
+Property TCPPort As Integer
+Property Interface As String
+Property SerPort As String
+Property Baud As String
+Property RFXComDebug As Boolean
+Property Handshake As Boolean
+Property RelayPort As Integer
+Property DisableX10 As Boolean
+Property EnableARC As Boolean
+Property EnableHarrison As Boolean
+Property EnableKoppla As Boolean
+Property ACAddress1 As String
+Property ACAddress2 As String
+
+Private sTCPHost As String
+Private iTCPPort As Integer
+Private sInterface As String
+Private sSerPort As String
+Private sBaud As String
+Private bHandshake As Boolean
+Private bRFXComTXDebug As Boolean
+Private iRelayPort As Integer
+Private bDisableX10 As Boolean
+Private bEnableARC As Boolean
+Private bEnableHarrison As Boolean
+Private bEnableKoppla As Boolean
+Private sACAddress1 As String
+Private sACAddress2 As String
+
+Public hRFXComTX As New Socket
+Public hRFXComTXSer As New SerialPort
+Public hRFXComTXRelay As New ServerSocket
+Public hRelayTXClient As Object[]
+Public hRelayTXSocket As New Socket
+
+Const GETSW As Byte = &H30
+Const MODERB32 As Byte = &H32
+Const MODERBRB48 As Byte = &H33
+Const MODEHAR As Byte = &H34
+Const MODEB32 As Byte = &H36
+Const MODEBRB48 As Byte = &H37
+Const MODERKAKU As Byte = &H3A
+Const MODEKAKU As Byte = &H3B
+Const MODERCM16 As Byte = &H11
+Const MODECM16 As Byte = &H12
+
+Private bMessage As Boolean
+Private bProtocol As Byte = MODERBRB48
+Private bAck As Boolean = False
+Private CmCmd[2] As Integer
+
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim iDeviceId As Integer
+  Dim sType As String
+  Dim bUnit, bDevice As Byte
+
+  iDeviceId = Devices.Find(sAddress, Devices.FindInterface("RFXCom Transmitter"))
+  If iDeviceId Then
+    sType = Devices.FindTypeForDevice(iDeviceId)
+  Else
+    Return
+  End If
+
+  Select sType
+    Case "ARC", "X10", "KAKU" ' X10, KAKU with CodeWheel, NEXA, DomiaLite
+      If sType = "X10" And If Main.bRFXComTXDisableX10 Then
+        Main.WriteDebugLog(("[RFXComTX] You have disabled the X10 protocol, unable to control device!"))
+        Return
+      End If
+      If sType = "ARC" Or sType = "KAKU" And If Not Main.bRFXComTXEnableARC Then
+        Main.WriteDebugLog(("[RFXComTX] You have not enabled the KAKU/ARC protocol, unable to control device!"))
+        Return
+      End If
+      If Left$(sAddress, 1) Like "[A-Z]" And Right$(sAddress, 1) Like "[0-9]" Then
+        ARC(sAddress, sCmd, iDeviceId)
+      Else
+        Main.WriteDebugLog(("[RFXComTX] Invalid X10, ARC or KAKU address '") & sAddress & ("' given!"))
+      End If
+    Case "AC", "HE" ' AC protocol, KAKU without CodeWheel, HomeEasy UK, Chacon.
+      If Left$(sAddress, 1) Like "[A-Z]" And Right$(sAddress, 1) Like "[0-9]" Then
+        AC(sAddress, Main.sRFXComTXACAddress1, Main.sRFXComTXACAddress2, sCmd, iDeviceId)
+      Else
+        Main.WriteDebugLog(("[RFXComTX] Invalid AC address '") & sAddress & ("' given!"))
+      End If
+    Case "HEEU" ' HE EU protocol, you need an xmitter and closed source for this.
+      Main.WriteDebugLog(("[RFXComTX] HomeEasy EU protocol is not supported!"))
+      Return
+    Default
+      Main.WriteDebugLog(("[RFXComTX] " & sType & " protocol is not supported!"))
+      Return
+  End Select
+
+End
+
+Private Sub WriteMessage(Ml As Byte[], Kar As Byte[])
+
+  Dim sMessage As String
+  Dim bTemp As Byte
+  Dim iTries As Integer
+
+  If (bProtocol = MODERCM16 Or bProtocol = MODECM16) And Kar[0] <> &HF0 Then
+    CmCmd[0] = Kar[0]
+    If Ml[0] > 8 Then
+      CmCmd[1] = Kar[1]
+    End If
+  End If
+
+  ' write a user specified command to the interface.
+  If bProtocol = MODERBRB48 Or If bProtocol = MODEBRB48 Then
+    WriteCom(Ml)
+    WriteCom(Kar)
+  Else
+    WriteCom(Kar)
+  End If
+
+  If Main.bRFXComTXDebug Then
+    If bProtocol = MODERBRB48 Or bProtocol = MODEBRB48 Then
+      sMessage = Hex(Ml[0], 2)
+      sMessage = sMessage & Hex(Kar[0], 2)
+      sMessage = sMessage & Hex(Kar[1], 2)
+      sMessage = sMessage & Hex(Kar[2], 2)
+      sMessage = sMessage & Hex(Kar[3], 2)
+      If Ml[0] > 32 Then
+        sMessage = sMessage & Hex(Kar[4], 2)
+        If Ml[0] > 40 Then
+          sMessage = sMessage & Hex(Kar[5], 2)
+          If Ml(0) > 48 Then
+            sMessage = sMessage & Hex(Kar[6], 2)
+            sMessage = sMessage & Hex(Kar[7], 2)
+            If Ml[0] > 64 Then
+              sMessage = sMessage & Hex(Kar[8], 2)
+            End If
+          End If
+        End If
+      End If
+    Else If bProtocol = MODERKAKU Or bProtocol = MODEKAKU Then
+      sMessage = Hex(Ml[0], 2)
+      sMessage = sMessage & Hex(Kar[0], 2)
+      sMessage = sMessage & Hex(Kar[1], 2)
+      sMessage = sMessage & Hex(Kar[2], 2)
+    Else If bProtocol = MODERB32 Or bProtocol = MODEB32 Or bProtocol = MODEHAR Then
+      sMessage = Hex(Kar[0], 2)
+      sMessage = sMessage & Hex(Kar[1], 2)
+      sMessage = sMessage & Hex(Kar[2], 2)
+      sMessage = sMessage & Hex(Kar[3], 2)
+    Else If bProtocol = MODERCM16 Or bProtocol = MODECM16 Then
+      sMessage = Hex(Kar[0], 2)
+      If Ml[0] > 8 Then sMessage = sMessage & Hex(Kar[1], 2)
+    Else
+      sMessage = Hex(Kar[0], 2)
+      sMessage = sMessage & Hex(Kar[1], 2)
+      sMessage = sMessage & Hex(Kar[2], 2)
+    End If
+    Main.WriteRFXDebugLog(sMessage & "\n")
+  End If
+
+  ' as long as there is information, read one byte at a time and output it.
+  For iTries = 0 To 35
+    If sInterface = "tcp" Then
+      Try Read #hRFXComTX, bTemp
+      If Not Error Then Break
+    Else
+      Try Read #hRFXComTXSer, bTemp
+      If Not Error Then Break
+    End If
+    Sleep 0.1
+  Next
+
+  If bTemp Then
+  Else
+    Main.WriteDebugLog(("[RFXComTX] No ACK received witin 3 seconds!\n"), True)
+    Return
+  End If
+
+  If Main.bRFXComTXDebug Then
+    If bTemp = bProtocol Then
+      Main.WriteRFXDebugLog("ACK=> ", False)
+    Else If bTemp = &H5A Then
+      Main.WriteRFXDebugLog("NAK=> ", False)
+    End If
+    Main.WriteRFXDebugLog(Hex(bTemp, 2) & "\n", True)
+   End If
+
+End
+
+Private Sub WriteCom(Kar As Array)
+
+  Dim iCmd As Byte
+
+  For Each iCmd In Kar
+    If sInterface = "tcp" Then
+      ' send the message to the tcp stream.
+      Try Write #hRFXComTX, iCmd
+      ' warn the user.
+      If Error Then Main.WriteRFXDebugLog(("[RFXComTX] Unable to write to TCP port!"))
+    Else
+      ' write an user specified command to the interface.
+      Try Write #hRFXComTXSer, iCmd
+      ' warn the user.
+      If Error Then Main.WriteRFXDebugLog(("[RFXComTX] Unable to write to serial port!"))
+    End If
+  Next
+
+End
+
+Private Sub WriteCommand(Kar As Array)
+
+  Dim iCmd, bOk, bTemp As Byte
+  Dim iTries As Integer
+
+  For Each iCmd In Kar
+    If sInterface = "tcp" Then
+      ' send the message to the tcp stream.
+      Try Write #hRFXComTX, iCmd
+      ' warn the user.
+      If Error Then Main.WriteRFXDebugLog(("[RFXComTX] Unable to write to TCP port!"))
+    Else
+      ' write an user specified command to the interface.
+      Try Write #hRFXComTXSer, iCmd
+      ' warn the user.
+      If Error Then Main.WriteRFXDebugLog(("[RFXComTX] Unable to write to serial port!"))
+    End If
+  Next
+
+  For iTries = 0 To 5
+    If sInterface = "tcp" Then
+      Try Read #hRFXComTX, bTemp
+      If Not Error Then Break
+    Else
+      Try Read #hRFXComTXSer, bTemp
+      If Not Error Then Break
+    End If
+    Sleep 0.05
+  Next
+  If bTemp = bProtocol Or If bProtocol = MODERCM16 Or If bProtocol = MODECM16 Then
+    If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog("ACK=> ", False)
+  End If
+  If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2), True)
+
+  If (bProtocol = MODERCM16 Or bProtocol = MODECM16) And CmCmd[0] <> &HF0 Then
+    If bTemp = ((CmCmd[0] + CmCmd[1]) And &HFF) Then
+      bOk[0] = &H0
+      WriteCom(bOk)
+      If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog("00", False)
+      CmCmd[0] = 0
+    Else If CmCmd[0] = 0 And bTemp = &H55 Then
+      If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog((" cmd executed"), False)
+    Else
+      If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog((" checksum ERROR"), False)
+    End If
+  End If
+  If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog("\n", True)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hRFXComTX.Close
+  Try hRFXComTXSer.Close
+  Try hRFXComTXRelay.Close
+  Main.WriteLog(("RFXCom transmitter TCP socket/serial port close."))
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("RFXCom Error: ") & ERROR.Text & ((" at ")) & ERROR.Where)
+  Return False
+
+End
+
+Public Sub RFXComTX_Error()
+
+  Dim sString As String = "RFXCom transmitter: "
+
+  ' handle error
+  Select Case hRFXComTX.Status
+    Case Net.CannotCreateSocket
+      Main.WriteLog(sString & ("The system does not allow to create a socket."))
+    Case Net.HostNotFound
+      Main.WriteLog(sString & ("Host '") & sTCPHost & ("' not found."))
+    Case Net.ConnectionRefused
+      Main.WriteLog(sString & ("Unable to connect. Connection refused."))
+    Case Net.CannotRead
+      Main.WriteLog(sString & ("Error reading data."))
+    Case Net.CannotWrite
+      Main.WriteLog(sString & ("Error writing data."))
+  End Select
+
+End
+
+Public Sub RFXComTX_Ready()
+
+  Main.WriteLog(("RFXCom transmitter TCP socket connected."))
+
+End
+
+Public Function StartRelay() As Boolean
+
+  hRFXComTXRelay = New ServerSocket As "RFXComTXRelay"
+  hRFXComTXRelay.Type = Net.Internet
+  hRFXComTXRelay.Port = iRelayPort
+  ' we start listening for max 1 connection
+  hRFXComTXRelay.Listen(1)
+
+  If hRFXComTXRelay.Status = Net.Active Then
+    hRelayTXClient = New Object[]
+    ' all ok
+    Return True
+  Else
+    Return False
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectTCP() As Boolean
+
+  ' try to close the connection
+  Try hRFXComTX.Close
+
+  ' get a new one
+  hRFXComTX = New Socket As "RFXComTX"
+  hRFXComTX.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("RFXCom transmitter Error: ") & ERROR.Text & ((" at ")) & ERROR.Where)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectSerial() As Boolean
+
+  ' try to close the connection
+  Try hRFXComTXSer.Close
+
+  ' get a new one
+  hRFXComTXSer = New Serialport As "RFXComTXSer"
+  With hRFXComTXSer
+    .PortName = sSerPort
+    .Speed = sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 2
+    .FlowControl = 0
+    .Open()
+  End With
+
+  SetInitMode() ' set 48 bits
+  GetVersion()  ' get transmitter version and enable X10
+
+  If bDisableX10 Then DisableX10TX()
+  If bEnableARC Then EnableARCTX()
+  If bEnableHarrison Then EnableHarrisonTX()
+  If bEnableKoppla Then EnableKopplaTX()
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("RFXCom transmitter Error: ") & ERROR.Text & ((" at ")) & ERROR.Where)
+  Return False
+
+End
+
+Public Sub RFXComTXRelay_Connection(sHost As String)
+
+  Dim sHostName As String
+
+  hRelayTXSocket = New Socket As "RelayTXSocket"
+  ' accept client
+  If hRFXComTXRelay.Status <= Net.Inactive Then Return
+  If Main.bRFXComTXDebug Then Main.WriteDebugLog(("[RFXComTXSRelay] Connection request from: ") & sHost)
+
+  hRelayTXSocket = hRFXComTXRelay.Accept()
+  hRelayTXClient.Add(hRelayTXSocket)
+  If hRelayTXSocket.Status = Net.Connected Then
+    sHostName = DNS.ResolveHost(hRelayTXSocket.RemoteHost)
+    If Not sHostName Then sHostName = hRelayTXSocket.RemoteHost
+    Main.WriteLog(("RFXCom transmitter Relay connection from ") & sHostName & (" accepted."))
+  End If
+
+End
+
+Public Sub RFXComTXRelay_Error()
+
+  ' handle error
+  Select Case hRFXComTXRelay.Status
+    Case Net.CannotCreateSocket
+      Main.WriteDebugLog(("[RFXComTXRelay] The system does not allow to create a socket."))
+    Case Net.CannotBindSocket
+      Main.WriteDebugLog(("[RFXComTXRelay] Cannot bind socket."))
+    Case Net.CannotListen
+      Main.WriteDebugLog(("[RFXComTXRelay] Cannot listen on port."))
+  End Select
+
+End
+
+Public Sub Socket_Closed()
+
+  Main.WriteLog(("RFXCom transmitter Relay client connection closed."))
+  hRelayTXClient.Remove(hRelayTXClient.Find(Last))
+
+End
+
+Public Function SetInitMode()
+
+  Dim b1 As Byte[] = [CByte(&HF0), CByte(&H33), CByte(&HF0), CByte(&H33)] ' handshake
+  Dim b2 As Byte[] = [CByte(&HF0), CByte(&H37), CByte(&HF0), CByte(&H37)] ' no handshake
+
+  If bHandshake Then
+    If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog(("Initialized Transmitter for Handshake usage with => ") & Hex(b1[0]) & Hex(b1[1]) & Hex(b1[2]) & Hex(b1[3]) & "\n")
+    bProtocol = MODERBRB48
+    WriteCommand(b1)
+  Else
+    If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog(("Initialized Transmitter for No Handshake usage with => ") & Hex(b2[0]) & Hex(b2[1]) & Hex(b2[2]) & Hex(b2[3]) & "\n")
+    bProtocol = MODEBRB48
+    WriteCommand(b2)
+  End If
+
+End
+
+Public Sub DisableX10TX()
+
+  Dim b As Byte[] = [CByte(&HF0), CByte(&H3F), CByte(&HF0), CByte(&H3F)]
+
+  If Main.bRFXComTXDebug Then
+    Main.WriteRFXDebugLog(("Cmd to transmitter => F03FF03F\n"), False)
+    Main.WriteRFXDebugLog(("Disable X10 RF\n"), False)
+  End If
+  WriteCommand(b)
+
+End Sub
+
+' enable ARC aka KAKU
+Public Function EnableARCTX()
+
+  Dim b As Byte[] = [CByte(&HF0), CByte(&H3D), CByte(&HF0), CByte(&H3D)]
+
+  If Main.bRFXComTXDebug Then
+    Main.WriteRFXDebugLog(("Cmd to transmitter => F03DF03D\n"), False)
+    Main.WriteRFXDebugLog(("Enable KlikAan-KlikUit RF\n"), False)
+  End If
+
+  WriteCommand(b)
+
+End
+
+Public Sub EnableHarrisonTX()
+
+  Dim b As Byte[] = [CByte(&HF0), CByte(&H3C), CByte(&HF0), CByte(&H3C)]
+
+  If Main.bRFXComTXDebug Then
+    Main.WriteRFXDebugLog(("Cmd to transmitter => F03CF03C\n"), False)
+    Main.WriteRFXDebugLog(("Enable Harrison RF\n"), False)
+  End If
+
+  WriteCommand(b)
+
+End
+
+Public Sub EnableKopplaTX()
+
+  Dim b As Byte[] = [CByte(&HF0), CByte(&H3E), CByte(&HF0), CByte(&H3E)]
+
+  If Main.bRFXComTXDebug Then
+    Main.WriteRFXDebugLog(("Cmd to transmitter => F03EF03E\n"), False)
+    Main.WriteRFXDebugLog(("Enable Flamingo / Koppla RF\n"), False)
+  End If
+
+  WriteCommand(b)
+
+End
+
+' ask for firmware version
+Public Function GetVersion()
+
+  Dim b As Byte[] = [CByte(&HF0), CByte(GETSW), CByte(&HF0), CByte(GETSW)]
+
+  If Main.bRFXComTXDebug Then
+    Main.WriteRFXDebugLog(("Version request to transmitter => F030F030\n"), False)
+    Main.WriteRFXDebugLog(("RF Modes are reset to: X10 enabled and all other modes are disabled\n"), False)
+    Main.WriteRFXDebugLog(("Transmitter Firmware Version: "), False)
+  End If
+
+  WriteCommand(b)
+
+End
+
+Public Function GetUnit(iUnit As Integer) As Byte
+
+  Dim bTemp As Byte
+
+  If iUnit > 8 Then
+    iUnit -= 8
+  End If
+
+  Select Case iUnit
+    Case 1
+      bTemp = &H0
+    Case 2
+      bTemp = &H10
+    Case 3
+      bTemp = &H8
+    Case 4
+      bTemp = &H18
+    Case 5
+      bTemp = &H40
+    Case 6
+      bTemp = &H50
+    Case 7
+      bTemp = &H48
+    Case 8
+      bTemp = &H58
+  End Select
+  Return bTemp
+
+End
+
+Public Function GetHouse(sHouse As String, iUnit As Integer) As Byte
+
+  Dim bTemp As Byte
+
+  Select Case sHouse
+    Case "A"
+      bTemp = &H60
+    Case "B"
+      bTemp = &H70
+    Case "C"
+      bTemp = &H40
+    Case "D"
+      bTemp = &H50
+    Case "E"
+      bTemp = &H80
+    Case "F"
+      bTemp = &H90
+    Case "G"
+      bTemp = &HA0
+    Case "H"
+      bTemp = &HB0
+    Case "I"
+      bTemp = &HE0
+    Case "J"
+      bTemp = &HF0
+    Case "K"
+      bTemp = &HC0
+    Case "L"
+      bTemp = &HD0
+    Case "M"
+      bTemp = &H0
+    Case "N"
+      bTemp = &H10
+    Case "O"
+      bTemp = &H20
+    Case "P"
+      bTemp = &H30
+    Case Else
+      bTemp = &H60
+  End Select
+  If iUnit > 8 Then
+    bTemp = bTemp Or &H4
+  End If
+  Return bTemp
+
+End
+
+' ARC / X10 / KAKU
+Public Sub ARC(sAddress As String, sCmd As String, Optional iDeviceId As Integer)
+
+  Dim bHeLength As Byte[] = [CByte(&H20)]
+  Dim bHeBuf As New Byte[4]
+  Dim bHouse, bUnit As Byte
+
+  bHouse = GetHouse(Left$(sAddress, 1), Right$(sAddress, 2))
+  bUnit = GetUnit(Right$(sAddress, 2))
+
+  bHeBuf[0] = bHouse And &HF0
+  bHeBuf[1] = &HFF - bHeBuf[0]
+
+  Select UCase(sCmd)
+    Case "ON"
+      bHeBuf[0] = bHouse
+      bHeBuf[1] = &HFF - bHeBuf[0]
+      bHeBuf[2] = bUnit
+      bHeBuf[3] = &HFF - bHeBuf[2]
+      ' nothing to do
+    Case "OFF"
+      bHeBuf[2] = bUnit Or &H20
+      bHeBuf[3] = &HFF - bHeBuf[2]
+    Case "BRIGHT"
+      bHeBuf[2] = &H88
+      bHeBuf[3] = &HFF - bHeBuf[2]
+    Case "DIM"
+      bHeBuf[2] = &H98
+      bHeBuf[3] = &HFF - bHeBuf[2]
+    Case "ALL_LIGHTS_ON"
+      bHeBuf[2] = &H90
+      bHeBuf[3] = &HFF - bHeBuf[2]
+    Case "ALL_LIGHTS_OFF"
+      bHeBuf[2] = &H80
+      bHeBuf[3] = &HFF - bHeBuf[2]
+    Case "ALL_UNITS_OFF"
+      ' not supported
+    Case "STOP"
+      ' not supported
+    Default
+      Main.WriteDebugLog(("[RFXComTX] Unknown command '") & UCase(sCmd) & ("' given!"))
+      Return
+  End Select
+
+  WriteMessage(bHeLength, bHeBuf)
+
+End
+
+Public Sub ACHouse(sCode As String) As Byte
+
+  Dim bHouse As Byte
+
+  Select Case UCase(sCode)
+    Case "A"
+      bHouse = &H60
+    Case "B"
+      bHouse = &H70
+    Case "C"
+      bHouse = &H40
+    Case "D"
+      bHouse = &H50
+    Case "E"
+      bHouse = &H80
+    Case "F"
+      bHouse = &H90
+    Case "G"
+      bHouse = &HA0
+    Case "H"
+      bHouse = &HB0
+    Case "I"
+      bHouse = &HE0
+    Case "J"
+      bHouse = &HF0
+    Case "K"
+      bHouse = &HC0
+    Case "L"
+      bHouse = &HD0
+    Case "M"
+      bHouse = &H0
+    Case "N"
+      bHouse = &H10
+    Case "O"
+      bHouse = &H20
+    Case "P"
+      bHouse = &H30
+  End Select
+  Return bHouse
+
+End
+
+Public Sub AC(sAddress As String, sACAddress1 As String, sACAddress2 As String, sCmd As String, Optional iDeviceId As Integer)
+
+  Dim bHeLength As Byte[] = [CByte(33)]
+  Dim bHeBuf As New Byte[5]
+  Dim iDim, iBrightness As Integer
+
+  bHeBuf[0] = ACHouse(Left$(sAddress, 1))
+  bHeBuf[1] = CByte(Val("&H" & sACAddress1))
+  bHeBuf[2] = CByte(Val("&H" & sACAddress2))
+  bHeBuf[3] = CByte(Val(Right$(sAddress, 2)) - 1)
+  bHeBuf[4] = 0
+
+  sCmd = UCase(sCmd)
+
+  If InStr(sCmd, "ON") Then
+    bHeBuf[3] = CByte(bHeBuf[3] Or &H10)
+  Else If InStr(sCmd, "OFF") Then
+    ' nothing to do
+  Else If InStr(sCmd, "DIM ") Then ' DIM 1 - 99
+    iBrightness = Val(Replace(sCmd, "DIM ", ""))
+    If iBrightness > 0 Then
+      iDim = Round(0.32 * iBrightness) ' 32 steps
+      iDim = CInt((iBrightness / 2) - 1)
+      If iDim >= 14 Then
+        bHeBuf[4] = CByte(bHeBuf[4] Or &HF0)
+      Else If iDim > 0 Then
+        bHeBuf[4] = CByte(bHeBuf[4] Or ((iDim * 16) And &HF0))
+      End If
+      bHeLength = [CByte(36)]
+    End If
+  Else
+    Main.WriteDebugLog(("[RFXComTX] Unknown command '") & UCase(sCmd) & ("' given!"))
+  End If
+
+  WriteMessage(bHeLength, bHeBuf)
+
+End
+
+' implement properties
+Private Function TCPHost_Read() As String
+
+  Return sTCPHost
+
+End
+
+Private Sub TCPHost_Write(Value As String)
+
+  sTCPHost = Value
+
+End
+
+Private Function TCPPort_Read() As Integer
+
+  Return iTCPPort
+
+End
+
+Private Sub TCPPort_Write(Value As Integer)
+
+  iTCPPort = Value
+
+End
+
+Private Function Interface_Read() As String
+
+  Return sInterface
+
+End
+
+Private Sub Interface_Write(Value As String)
+
+  sInterface = Value
+
+End
+
+Private Function Baud_Read() As String
+
+  Return sBaud
+
+End
+
+Private Sub Baud_Write(Value As String)
+
+  sBaud = Value
+
+End
+
+Private Function SerPort_Read() As String
+
+  Return sSerPort
+
+End
+
+Private Sub SerPort_Write(Value As String)
+
+  sSerPort = Value
+
+End
+
+Private Function RFXComDebug_Read() As Boolean
+
+  Return bRFXComTXDebug
+
+End
+
+Private Sub RFXComDebug_Write(Value As Boolean)
+
+  bRFXComTXDebug = Value
+
+End
+
+Private Sub Handshake_Write(Value As Boolean)
+
+  bHandshake = Value
+
+End
+
+Private Function Handshake_Read() As Boolean
+
+  Return bHandshake
+
+End
+
+Private Function RelayPort_Read() As Integer
+
+  Return iRelayPort
+
+End
+
+Private Sub RelayPort_Write(Value As Integer)
+
+  iRelayPort = Value
+
+End
+
+Private Sub DisableX10_Write(Value As Boolean)
+
+  bDisableX10 = Value
+
+End
+
+Private Function DisableX10_Read() As Boolean
+
+  Return bDisableX10
+
+End
+
+Private Sub EnableARC_Write(Value As Boolean)
+
+  bEnableARC = Value
+
+End
+
+Private Function EnableARC_Read() As Boolean
+
+  Return bEnableARC
+
+End
+
+Private Sub EnableHarrison_Write(Value As Boolean)
+
+  bEnableHarrison = Value
+
+End
+
+Private Function EnableHarrison_Read() As Boolean
+
+  Return bEnableHarrison
+
+End
+
+Private Sub EnableKoppla_Write(Value As Boolean)
+
+  bEnableKoppla = Value
+
+End
+
+Private Function EnableKoppla_Read() As Boolean
+
+  Return bEnableKoppla
+
+End
+
+Private Function ACAddress1_Read() As String
+
+  Return sACAddress1
+
+End
+
+Private Sub ACAddress1_Write(Value As String)
+
+  sACAddress1 = Value
+
+End
+
+Private Function ACAddress2_Read() As String
+
+  Return sACAddress2
+
+End
+
+Private Sub ACAddress2_Write(Value As String)
+
+  sACAddress2 = Value
+
+End

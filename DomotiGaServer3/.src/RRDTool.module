@@ -1,0 +1,247 @@
+' Gambas module file
+
+' Description:
+' RRDTool.module
+' Support for RRDTool graphing.
+
+' Development Status:
+' Working, make hardcoded heartbeat and step values configurable, need better error checking.
+' Maybe create separate graphs table in db.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2010 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+Public tRRDTool As Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' check for/create missing rrd files and start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Run()
+
+  ' check for missing rrd databases
+  CreateRRDs()
+
+  ' start poll timer for RRDTool
+  tRRDTool = New Timer As "tRRDTool"
+  tRRDTool.Delay = Main.iRRDToolPollTime * 1000 ' multiply for seconds
+  tRRDTool.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tRRDTool_Timer()
+
+  UpdateRRDs() ' update rrd values every Polltime seconds
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' delete rrd file belonging to device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DeleteRRD(sDeviceName As String)
+
+  Dim sRRDName, sRRD, sCmd As String
+
+  sRRDName = LCase(Replace$(sDeviceName, " ", ""))
+  sRRDName = Replace$(sRRDName, "/", "")
+  sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+  sCmd = "rm -f " & sRRD
+  If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] Delete rrd database ") & sRRD & (" with ") & sCmd & ".")
+  Shell sCmd Wait
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' delete all rrd files
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DeleteAllRRDs()
+
+  Dim sCmd As String
+
+  sCmd = "rm -f " & Main.sBaseDir &/ "rrd/*.rrd"
+  If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] Delete rrd databases with ") & sCmd & ".")
+  Shell sCmd Wait
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' delete all graphic images
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DeleteAllGraphs()
+
+  Dim sCmd As String
+
+  sCmd = "rm -f " & Main.sBaseDir &/ "rrd/graphs/*.png"
+  If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] Delete rrd graphs with ") & sCmd & ".")
+  Shell sCmd Wait
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find all devices with graph boolean enabled and
+' check for existance of rrd file, create one if missing
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CreateRRDs()
+
+  Dim rDevice As Result
+  Dim sRRD, sRRDCmd, sRRDName As String
+
+  If Not Main.bRRDToolEnabled Then Return
+
+  Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE graph is TRUE AND enabled is TRUE")
+  If (rDevice.Count > 0) Then
+    For Each rDevice
+      If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] Device with address '") & rDevice!address & ("' named '") & rDevice!name & ("' has graphing enabled."))
+      sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+      sRRDName = Replace$(sRRDName, "/", "")
+      sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+      If Not Exist(sRRD) Then
+        sRRDCmd = "rrdtool create " & sRRD & " -s " & Main.iRRDToolPollTime & " "
+        If rDevice!valuerrddsname Then sRRDCmd = sRRDCmd & "DS:" & rDevice!valuerrddsname & ":" & rDevice!valuerrdtype & ":600:U:U "
+        If rDevice!value2rrddsname Then sRRDCmd = sRRDCmd & "DS:" & rDevice!value2rrddsname & ":" & rDevice!value2rrdtype & ":600:U:U "
+        If rDevice!value3rrddsname Then sRRDCmd = sRRDCmd & "DS:" & rDevice!value3rrddsname & ":" & rDevice!value3rrdtype & ":600:U:U "
+        If rDevice!value4rrddsname Then sRRDCmd = sRRDCmd & "DS:" & rDevice!value4rrddsname & ":" & rDevice!value4rrdtype & ":600:U:U "
+        sRRDCmd = sRRDCmd & "RRA:AVERAGE:0.5:1:600 RRA:AVERAGE:0.5:2:600 RRA:AVERAGE:0.5:7:600 RRA:AVERAGE:0.5:30:600 RRA:AVERAGE:0.5:365:600"
+
+        If Main.bRRDToolDebug Then
+          Main.WriteDebugLog("[RRDTool] " & sRRDCmd)
+        Else
+          sRRDCmd &= " 2>&1 >/dev/null"
+        End If
+        Shell sRRDCmd Wait
+      End If
+    Next
+  Else
+    If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] No device(s) with graphing enabled found!"))
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices with graph boolean enabled and create graphs
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CreateGraphs(sGroup As String, sTime As String)
+
+  Dim rDevice As Result
+  Dim sRRD, sRRDCmd, sGraphImage, sRRDName, sValueRRDsName As String
+  Dim aValueRRDsName As String[] = ["valuerrddsname", "value2rrddsname", "value3rrddsname", "value4rrddsname"]
+
+  If Not Main.bRRDToolEnabled Then Return
+
+  Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE groups LIKE &1 AND graph is TRUE AND enabled is TRUE", "%" & sGroup & "%")
+  If (rDevice.Count > 0) Then
+    For Each rDevice
+      sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+      sRRDName = Replace$(sRRDName, "/", "")
+      For Each sValueRRDsName In aValueRRDsName
+        If rDevice[sValueRRDsName] Then
+          If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] Device with address '") & rDevice!address & ("' named '") & rDevice!name & ("' has graphing enabled for ") & rDevice[sValueRRDsName] & ".")
+          sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+          sGraphImage = Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice[sValueRRDsName] & "-" & sTime & ".png"
+          sRRDCmd = "rrdtool graph " & sGraphImage & " --lazy --start -" & sTime & " -c SHADEA#FFFFFF -c SHADEB#FFFFFF -c BACK#FFFFFF -t '" & rDevice!name & " " & Main.Caps(rDevice[sValueRRDsName]) & "' -v '" & rDevice!label & "' DEF:" & rDevice[sValueRRDsName] & "=" & sRRD & ":" & rDevice[sValueRRDsName] & ":AVERAGE LINE1:" & rDevice[sValueRRDsName] & "#00FF00:'" & Main.Caps(rDevice[sValueRRDsName]) & "'"
+          sRRDCmd &= " GPRINT:" & rDevice[sValueRRDsName] & ":MIN:'Min\\:%1.1lf' GPRINT:" & rDevice[sValueRRDsName] & ":MAX:'Max\\:%1.1lf' GPRINT:" & rDevice[sValueRRDsName] & ":AVERAGE:'Avg\\:%1.1lf' GPRINT:" & rDevice[sValueRRDsName] & ":LAST:'Last\\:%1.1lf'"
+
+          If Main.bRRDToolDebug Then
+            Main.WriteDebugLog("[RRDTool] " & sRRDCmd)
+          Else
+            sRRDCmd &= " 2>&1 >/dev/null"
+          End If
+          Shell sRRDCmd Wait
+        End If
+      Next
+    Next
+  Else
+    If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] No device(s) with graphing enabled found!"))
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices with graph boolean enabled, return the names of their graphic images
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Graphs(sGroup As String) As String
+
+  Dim rDevice As Result
+  Dim sGraphs, sRRDName, sValueRRDsName As String
+  Dim aValueRRDsName As String[] = ["valuerrddsname", "value2rrddsname", "value3rrddsname", "value4rrddsname"]
+
+  Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE groups LIKE &1 AND graph is TRUE AND enabled is TRUE", "%" & sGroup & "%")
+  If (rDevice.Count > 0) Then
+    For Each rDevice
+      sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+      sRRDName = Replace$(sRRDName, "/", "")
+      For Each sValueRRDsName In aValueRRDsName
+        If rDevice[sValueRRDsName] Then
+          sGraphs &= Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice[sValueRRDsName] & "|"
+          If Not Main.bRRDToolDebug Then Continue
+          Main.WriteDebugLog(("[RRDTool] Device with address '") & rDevice!address & ("' named '") & rDevice!name & (" has graphing enabled for '") & rDevice[sValueRRDsName] & "'.")
+          Main.WriteDebugLog(("[RRDTool] Graphs - ") & Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice[sValueRRDsName])
+        End If
+      Next
+    Next
+  Else
+    If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] No device(s) with graphing enabled found!"))
+  End If
+  ' return string with all graph image names in this group
+  Return sGraphs
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices with graph enabled, and update rrd files with device values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub UpdateRRDs()
+
+  Dim rDevice As Result
+  Dim sRRDCmd, sRRDName As String
+
+  Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE AND graph is TRUE")
+  If (rDevice.Count > 0) Then
+    For Each rDevice
+      sRRDName = LCase(Replace$(rDevice!name, " ", ""))
+      sRRDName = Replace$(sRRDName, "/", "")
+      sRRDCmd = "rrdtool update " & Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd" & " N"
+      If rDevice!valuerrddsname Then
+        If rDevice!valuerrdtype = "COUNTER" Then
+          sRRDCmd &= ":" & Format(rDevice!value, "#")
+        Else
+          sRRDCmd &= ":" & Val(rDevice!value)
+        End If
+      End If
+      If rDevice!value2rrddsname Then
+        If rDevice!value2rrdtype = "COUNTER" Then
+          sRRDCmd &= ":" & Format(rDevice!value2, "#")
+        Else
+          sRRDCmd &= ":" & Val(rDevice!value2)
+        End If
+      End If
+      If rDevice!value3rrddsname Then
+        If rDevice!value3rrdtype = "COUNTER" Then
+          sRRDCmd &= ":" & Format(rDevice!value3, "#")
+        Else
+          sRRDCmd &= ":" & Val(rDevice!value3)
+        End If
+      End If
+      If rDevice!value4rrddsname Then
+        If rDevice!value4rrdtype = "COUNTER" Then
+          sRRDCmd &= ":" & Format(rDevice!value4, "#")
+        Else
+          sRRDCmd &= ":" & Val(rDevice!value4)
+        End If
+      End If
+      If Main.bRRDToolDebug Then
+        Main.WriteDebugLog("[RRDTool] " & sRRDCmd)
+      Else
+        sRRDCmd &= " 2>&1 >/dev/null"
+      End If
+      Shell sRRDCmd Wait
+    Next
+  Else
+    If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] No device(s) with graphing enabled found!"))
+  End If
+
+End
