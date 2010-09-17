@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-PUBLIC sProgramVersion AS String = "0.1.186"
+PUBLIC sProgramVersion AS String = "0.1.187"
 PUBLIC sBaseDir AS String
 PUBLIC sSettings AS String = "server-domotiga.conf"
 PUBLIC bMainDebug AS Boolean
@@ -31,6 +31,7 @@ PUBLIC bExitProgram AS Boolean ' exit program flag
 PUBLIC bProgramStartup AS Boolean ' program is started
 PRIVATE iLoopTickCount AS Integer ' main loop counter
 PUBLIC sLanguage AS String
+PUBLIC bAllowAutoUpgrade AS Boolean
 
 ' Client/Server
 PUBLIC bStandalone AS Boolean = FALSE
@@ -499,12 +500,12 @@ PUBLIC FUNCTION Main() AS Boolean
   ELSE IF Exist(Mid$(Application.Path &/ "logs", 1, RInStr(Application.Path, "/")))
     sBaseDir = Mid$(Application.Path, 1, RInStr(Application.Path, "/"))
   ELSE
-    Main.WriteLog(("Couldn't determine DomotiGa's basedir."))
+    Main.WriteLog(("Error: Couldn't determine DomotiGa's basedir."))
     QUIT
   END IF
 
-  ' start as a daemon in the background if -d argument is given
-  IF Application.Args.Count = 2 AND IF RInStr(Application.Args[1], "-d") THEN Application.Daemon = TRUE
+  ' parse cmd line arguments
+  ParseArgs()
 
   ' load program settings
   Main.GetConfig()
@@ -520,9 +521,12 @@ PUBLIC FUNCTION Main() AS Boolean
   ' connect to the mysql database
   WriteLog(("Connecting to database ..."))
   IF NOT Main.ConnectDatabase() THEN
-    Main.WriteLog(("Couldn't open the database (called '") & Main.sSQLDatabase & ("')\nCheck '") & Main.sSettings & ("' or create & load a database."))
+    Main.WriteLog(("Error: Couldn't open the database (called '") & Main.sSQLDatabase & ("') Check '") & Main.sSettings & ("' or create & load a database."))
     QUIT
   END IF
+
+  ' check versions
+  CheckDatabaseVersion()
 
   ' start all setups for modules
   Main.WriteLog(("Loading modules ..."))
@@ -555,6 +559,58 @@ CATCH ' error trap
   Main.WriteLog(("Error: ") & Error.Text & " " & Error.Code & " " & Error.Where)
   Main.WriteLog(("Program abort."))
   QUIT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse command line arguments
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE FUNCTION ParseArgs()
+
+  DIM sArg AS String
+  DIM iCnt AS Integer
+
+  FOR iCnt = 1 TO Application.Args.Count - 1
+    sArg = Application.Args[iCnt]
+    IF Left(sArg) = "-" THEN
+      IF sArg = "-d" THEN
+        ' start as a daemon in the background
+        Application.Daemon = TRUE
+      ELSE IF sArg = "-h" THEN
+        ' display help info
+        PRINT Application.Name & " version " & sProgramVersion
+        PRINT "Copyright(C) 2008-2010 Ron Klinkien"
+        PRINT
+        PRINT "This program is free software; you can redistribute it and/or"
+        PRINT "modify it under the terms of the GNU General Public License as"
+        PRINT "published by the Free Software Foundation; either version 2, or"
+        PRINT "(at your option) any later version."
+        PRINT
+        PRINT "Usage: " & Application.Args[0] & " [options]"
+        PRINT
+        PRINT "Options:"
+        PRINT " -h              display this help"
+        PRINT " -a              allow automatic upgrade"
+        PRINT " -c <configfile> specify config file"
+        PRINT
+        QUIT
+      ELSE IF sArg = "-a" THEN
+        ' allow automatic database upgrade
+        bAllowAutoUpgrade = TRUE
+      ELSE IF Left(sArg, 2) = "-c" THEN
+        ' run with specified config file
+        IF Len(sArg) > 2 THEN
+          sSettings = Trim(Right(sArg, Len(sArg) - 2))
+        ELSE
+          IF iCnt < (Application.Args.Count - 1) THEN 
+            sSettings = Trim(Application.Args[iCnt + 1])
+          ELSE
+            Main.WriteLog(("Error: No config filename specified, using default ..."))
+          ENDIF
+        ENDIF
+      ENDIF
+    ENDIF
+  NEXT
 
 END
 
@@ -662,6 +718,7 @@ PUBLIC SUB GetConfig()
     hSettings.Save
     ' re-load
     GetConfig()
+    Main.WriteLog(("Couldn't open config file called '") & Main.sSettings & ("'. Created one with default settings!"))
   ELSE
     sSQLHost = GetConfigValue("MySQL/Host", "localhost")
     sSQLUser = GetConfigValue("MySQL/User", "domouser")
@@ -1086,7 +1143,7 @@ PUBLIC SUB GetSettings()
   bCurrentCostDebug = rResult!debug
 
 CATCH
-  Main.WriteLog(("Error: " & Error.Text & " " & Error.Code & " while loading settings!\nIs your database version correct?"))
+  Main.WriteLog(("Error: " & Error.Text & " " & Error.Code & " while loading settings! Is your database version correct?"))
   CloseAll()
   QUIT
 
@@ -3835,6 +3892,66 @@ PUBLIC SUB DisplayBool(bSwitch AS Boolean) AS String
     CASE ELSE
         RETURN ("False")
   END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' check if program and database versions match and try to update
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB CheckDatabaseVersion()
+
+  DIM rResult AS Result
+  DIM sDBVersion, sPrgVersion, sDumpFile, sToVersion AS String
+  DIM iDBVersion, iPrgVersion AS Integer
+  DIM hMysql AS Process
+
+  sPrgVersion = sProgramVersion
+  iPrgVersion = Val(Replace(sPrgVersion, ".", ""))
+
+  ' fetch database version from database
+  rResult = Main.hDB.Exec("SELECT * FROM version ORDER BY db DESC LIMIT 1 ")
+  IF rResult.Count = 1 THEN
+    sDBVersion = Str(rResult!db)
+    ' convert 0.1.180 to 01180
+    iDBVersion = Val(Replace(sDBVersion, ".", ""))
+    IF iDBVersion < iPrgVersion THEN
+      Main.WriteLog(("The version of your database is ") & sDBVersion & (" but the version of the program is ") & sPrgVersion & ("!"))
+      REPEAT
+        IF bAllowAutoUpgrade THEN
+          IF Main.ProgramExist("mysql") THEN
+            sToVersion = Format(Str(iDBVersion + 1), "00000")
+            sDumpFile = "upgrade/" & Replace(sDBVersion, ".", "") & "to" & sToVersion & ".sql"
+            IF Exist(sBaseDir &/ sDumpFile) THEN
+              hMysql = SHELL "mysql --host=" & sSQLHost & " --user=" & sSQLUser & " --password=" & sSQLPass & " --execute='SOURCE " & sBaseDir &/ sDumpFile & "'" WAIT
+              IF hMysql.Value THEN ' mysql returned an error
+                Main.WriteLog(("Mysql command returned an error! The database is now at version ") & sDBVersion)
+                QUIT
+              ELSE
+                ' check if we are there yet
+                rResult = Main.hDB.Exec("SELECT * FROM version ORDER BY db DESC LIMIT 1")
+                IF rResult.Count = 1 THEN
+                  sDBVersion = Str(rResult!db)
+                  ' convert 0.1.180 to 01180
+                  iDBVersion = Val(Replace(sDBVersion, ".", ""))
+                END IF
+              END IF
+            ELSE
+              Main.WriteLog(("Couldn't find upgrade file ") & sDumpFile & ("! The Database is now at version ") & sDBVersion)
+              QUIT
+            END IF
+            Main.WriteLog(("Database has been upgraded to version ") & sDBVersion)
+            IF iPrgVersion = iDBVersion THEN RETURN
+          ELSE
+            Main.WriteLog(("Couldn't find mysql program!"))
+            QUIT
+          END IF
+        ELSE
+          Main.WriteLog(("You can run " & Application.Name & " with the -a parameter to allow automatic upgrade!"))
+          QUIT
+        END IF
+      UNTIL iPrgVersion = iDBVersion
+    END IF
+  END IF
 
 END
 

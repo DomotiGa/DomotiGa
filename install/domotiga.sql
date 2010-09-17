@@ -2067,7 +2067,7 @@ CREATE TABLE `settings_serverstats` (
 
 LOCK TABLES `settings_serverstats` WRITE;
 /*!40000 ALTER TABLE `settings_serverstats` DISABLE KEYS */;
-INSERT INTO `settings_serverstats` VALUES (0,1,'cyberjunky.nl',0),(1,-1,'DomotiGa Server',0);
+INSERT INTO `settings_serverstats` VALUES (0,-1,'cyberjunky.nl',0),(1,1,'DomotiGa Server',1);
 /*!40000 ALTER TABLE `settings_serverstats` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2824,7 +2824,7 @@ CREATE TABLE `version` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `db` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=22 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=23 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2833,7 +2833,7 @@ CREATE TABLE `version` (
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2889,6 +2889,74 @@ LOCK TABLES `weatherfeeds` WRITE;
 INSERT INTO `weatherfeeds` VALUES (1,'Sat24','http://www.sat24.com/image.ashx?country=nl','',1,NULL);
 /*!40000 ALTER TABLE `weatherfeeds` ENABLE KEYS */;
 UNLOCK TABLES;
+
+--
+-- Table structure for table `graphs`
+--
+
+DROP TABLE IF EXISTS `graphs`;
+
+CREATE TABLE IF NOT EXISTS `graphs` (
+ `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(32) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `comments` varchar(32) DEFAULT NULL,
+  `graph_title` varchar(32) NOT NULL,
+  `graph_height` int(10) NOT NULL,
+  `graph_width` int(10) NOT NULL,
+  `color_background` int(11) NOT NULL,
+  `color_canvas` int(11) NOT NULL,
+  `color_shadea` int(11) NOT NULL,
+  `color_shadeb` int(11) NOT NULL,
+  `color_font` int(11) NOT NULL,
+  `color_grid` int(11) NOT NULL,
+  `color_majorgrid` int(11) NOT NULL,
+  `color_frame` int(11) NOT NULL,
+  `color_axis` int(11) NOT NULL,
+  `color_arrow` int(11) NOT NULL,
+  `unit` varchar(10) NOT NULL,
+  `logarithmic_scale` tinyint(1) NOT NULL DEFAULT '0',
+  `date` tinyint(1) NOT NULL,
+  `grid_type` varchar(32) NOT NULL,
+  PRIMARY KEY (`id`)
+);
+
+--
+-- Table structure for table `graph_data`
+--
+
+DROP TABLE IF EXISTS `graph_data`;
+
+CREATE TABLE IF NOT EXISTS `graph_data` (
+  `id` bigint(11) NOT NULL AUTO_INCREMENT,
+  `graph_id` bigint(20) NOT NULL,
+  `graph_name` varchar(32) NOT NULL,
+  `graph_max` tinyint(1) unsigned NOT NULL DEFAULT '0',
+  `graph_min` tinyint(1) unsigned NOT NULL DEFAULT '0',
+  `graph_last` tinyint(1) unsigned NOT NULL DEFAULT '0',
+  `graph_avg` tinyint(1) unsigned NOT NULL DEFAULT '0',
+  `graph_value_max` tinyint(1) unsigned NOT NULL DEFAULT '0',
+  `graph_value_avg` tinyint(1) unsigned NOT NULL DEFAULT '0',
+  `graph_value_min` tinyint(1) unsigned NOT NULL DEFAULT '0',
+  `graph_value_max_color` int(11) NOT NULL,
+  `graph_value_avg_color` int(11) NOT NULL,
+  `graph_value_min_color` int(11) NOT NULL,
+  `graph_line_type` varchar(10) NOT NULL DEFAULT 'LINE1',
+  `graph_rrddsname` varchar(32) NOT NULL,
+  `graph_color` int(11) NOT NULL DEFAULT '65280',
+  `graph_trend` tinyint(1) NOT NULL,
+  `graph_trend_value` int(20) NOT NULL,
+  `graph_timeshift` tinyint(1) NOT NULL,
+  `graph_timeshift_value` int(20) NOT NULL,
+  `graph_operation` tinyint(1) NOT NULL,
+  `graph_operation_operator` char(1) NOT NULL,
+  `graph_operation_value` int(11) NOT NULL,
+  `graph_devicename` varchar(32) NOT NULL,
+  `ds_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `graph_id` (`graph_id`)
+) ;
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
