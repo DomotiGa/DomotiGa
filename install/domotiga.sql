@@ -32,11 +32,11 @@ CREATE TABLE `actions` (
   `name` varchar(64) DEFAULT NULL,
   `type` int(11) DEFAULT NULL,
   `description` text,
-  `param1` varchar(32) DEFAULT NULL,
-  `param2` varchar(32) DEFAULT NULL,
-  `param3` varchar(32) DEFAULT NULL,
-  `param4` varchar(32) DEFAULT NULL,
-  `param5` varchar(32) DEFAULT NULL,
+  `param1` text,
+  `param2` text,
+  `param3` text,
+  `param4` text,
+  `param5` text,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=8 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2636,31 +2636,6 @@ LOCK TABLES `triggers` WRITE;
 /*!40000 ALTER TABLE `triggers` DISABLE KEYS */;
 INSERT INTO `triggers` VALUES (1,'Time is SunSet',1,'Test description.','17','15','','',''),(2,'Time is SunRise',1,NULL,'08','00','','',''),(3,'Bathroom is Humid',3,NULL,'9','Value2','>','60',''),(4,'Movement in Kitchen is Detected',3,NULL,'17','Value','=','Motion',''),(5,'No Movement in Kitchen is Detected',3,NULL,'17','Value','=','No Motion',''),(6,'Bathroom Humidity is Normal',3,NULL,'9','Value3','=','Normal',''),(7,'Movement Outside Detected',3,NULL,'38','Value','=','Motion',''),(8,'Outside No Movement Detected',3,NULL,'38','Value','=','No Motion',''),(9,'Test Time trigger',1,NULL,'03','01','','','');
 /*!40000 ALTER TABLE `triggers` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Table structure for table `triggertypes`
---
-
-DROP TABLE IF EXISTS `triggertypes`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `triggertypes` (
-  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  `name` varchar(64) DEFAULT NULL,
-  `tab` int(11) DEFAULT NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `triggertypes`
---
-
-LOCK TABLES `triggertypes` WRITE;
-/*!40000 ALTER TABLE `triggertypes` DISABLE KEYS */;
-INSERT INTO `triggertypes` VALUES (1,'Time Now',0),(2,'Variable',1),(3,'Device Status',2);
-/*!40000 ALTER TABLE `triggertypes` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
