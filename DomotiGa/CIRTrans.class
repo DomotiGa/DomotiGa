@@ -1,0 +1,336 @@
+' Gambas class file
+
+' Description:
+' IRTrans.class
+' Provide support for IRTrans.
+
+' Development Status:
+' Just started developing this one.
+
+' Links:
+' http://www.irtrans.de
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2009 Ron Klinkien.
+
+' This module is written by and Copyright(C) 2010 Daniel Keller. 
+
+' Read file called COPYING for license details.
+
+PROPERTY TCPHost AS String
+PROPERTY TCPPort AS String
+PROPERTY IRTransDebug AS Boolean
+PROPERTY Interface AS String
+PROPERTY SerPort AS String
+PROPERTY Baud AS String
+
+PRIVATE sTCPHost AS String
+PRIVATE iTCPPort AS String
+PRIVATE bIRTransDebug AS Boolean
+PRIVATE sInterface AS String
+PRIVATE sSerPort AS String
+PRIVATE sBaud AS String
+
+PUBLIC hIRTrans AS NEW Socket
+PUBLIC hIRTransSer AS NEW SerialPort
+
+PUBLIC sBuffer AS String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectTCP() AS Boolean
+
+  ' try to close the connection
+  TRY hIRTrans.Close
+
+  ' get a new one
+  hIRTrans = NEW Socket AS "IRTrans"
+  hIRTrans.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("IRTrans Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectSerial() AS Boolean
+
+  ' try to close the connection
+  TRY hIRTransSer.Close
+
+  ' get a new one
+  hIRTransSer = NEW Serialport AS "IRTransSer"
+  WITH hIRTransSer
+    .PortName = sSerPort
+    .Speed = sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  END WITH
+
+  ' initialise the ASCII communication
+  TRY WRITE #hIRTransSer, "ASCI", 4
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("IRTrans Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB IRTrans_Ready()
+
+  Main.WriteLog(("IRTrans TCP socket connected."))
+
+  ' initialise the ASCII communication
+  TRY WRITE #hIRTrans, "ASCI", 4
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is closed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB IRTrans_Closed()
+
+  Main.WriteLog(("IRTrans Error: TCP socket closed."))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hIRTrans.Close
+  TRY hIRTransSer.Close
+  IF InStr(sInterface, "tcp") THEN
+    Main.WriteLog(("IRTrans TCP socket close."))
+  ELSE
+    Main.WriteLog(("IRTrans serial port close."))
+  END IF
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("IRTrans Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB IRTrans_Error()
+
+  ' handle error
+  SELECT CASE hIRTrans.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog(("IRTrans: The system does not allow to create a socket."))
+    CASE Net.HostNotFound
+      Main.WriteLog(("IRTrans: Host '") & sTCPHost & ("' not found."))
+    CASE Net.ConnectionRefused
+      Main.WriteLog(("IRTrans: Unable to connect to interface. Connection refused."))
+    CASE Net.CannotRead
+      Main.WriteLog(("IRTrans: Error reading data."))
+    CASE Net.CannotWrite
+      Main.WriteLog(("IRTrans: Error writing data."))
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send generic command via serial port or tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendCommand(sCmd AS String)
+
+  IF Main.bIRTransDebug THEN Main.WriteDebugLog(("[IRTrans] Send command: ") & sCmd)
+  IF sInterface = "tcp" THEN
+    TRY WRITE #hIRTrans, sCmd & Chr$(10), Len(sCmd) + 1
+    IF ERROR THEN Main.WriteDebugLog(("[IRTrans] Error writing data to the TCP port! -> ") & Error.Text)
+  ELSE
+    TRY WRITE #hIRTransSer, sCmd & Chr$(10), Len(sCmd) + 1
+    IF ERROR THEN Main.WriteDebugLog(("[IRTrans] Error writing data to the serial port! -> ") & Error.Text)
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send IR command via serial port or tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendIRCommand(sCmd AS String)
+
+  IF Main.bIRTransDebug THEN Main.WriteDebugLog(("[IRTrans] Send IR command: ") & sCmd)
+  sCmd = "Asnd " & sCmd
+  IF sInterface = "tcp" THEN
+    TRY WRITE #hIRTrans, sCmd & Chr$(10), Len(sCmd) + 1
+    IF ERROR THEN Main.WriteDebugLog(("[IRTrans] Error writing data to the TCP port! -> ") & Error.Text)
+  ELSE
+    TRY WRITE #hIRTransSer, sCmd & Chr$(10), Len(sCmd) + 1
+    IF ERROR THEN Main.WriteDebugLog(("[IRTrans] Error writing data to the serial port! -> ") & Error.Text)
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' data received on tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB IRTrans_Read()
+
+  DIM sData AS String
+
+  TRY READ #hIRTrans, sData, 1
+  IF ERROR THEN Main.WriteDebugLog(("[IRTrans] Error reading data from the TCP port! -> ") & Error.Text)
+  IF sData = Chr(10) THEN ' buffer until linefeed then parse
+    IF Len(sBuffer) > 1 THEN ParseLine(Left(sBuffer, Len(sBuffer)))
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' data received on serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB IRTransSer_Read()
+
+  DIM sData AS String
+
+  TRY READ #hIRTransSer, sData, 1
+  IF ERROR THEN Main.WriteDebugLog(("[IRTrans] Error reading data from the serial port! -> ") & Error.Text)
+  IF sData = Chr$(10) THEN ' buffer until linefeed then parse
+    IF Len(sBuffer) > 1 THEN ParseLine(Left(sBuffer, Len(sBuffer)))
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB ParseLine(sStr AS String)
+
+  DIM sScan AS String[]
+  DIM sRemote, sButton AS String
+
+  IF Main.bIRTransDebug THEN Main.WriteDebugLog(("[IRTrans] Received string: ") & sStr)
+
+  IF InStr(sStr, "RCV_COM") THEN
+    ' received IR command
+    ' format: **00037 RCV_COM mediacenter,play,0,0 (remote, button, bus, device)
+    sStr = Right(sStr, Len(sStr) - 16)
+    sScan = Split(sStr, ",")
+    IF sScan.Count = 4 THEN
+      ' do something with the received commands
+      sRemote = sScan[0]
+      sButton = sScan[1]
+      Events.CheckIRRemoteEvents(sRemote, sButton)
+      IF Main.bIRTransDebug THEN Main.WriteDebugLog(("[IRTrans] Remote: ") & sRemote & (" Button: ") & sButton & (" Bus: ") & sScan[2] & (" Device: ") & sScan[3])
+    ENDIF
+    RETURN
+  ENDIF
+
+  IF InStr(sStr, "RESULT OK") THEN
+    IF Main.bIRTransDebug THEN Main.WriteDebugLog(("[IRTrans] Command succesfully received by interface."))
+    RETURN
+  ENDIF
+
+  IF InStr(sStr, "RESULT ERROR") THEN
+    IF Main.bIRTransDebug THEN Main.WriteDebugLog(("[IRTrans] Error received from interface.") & sStr)
+    RETURN
+  ENDIF
+
+  ' unsupported result
+  IF Main.bIRTransDebug THEN Main.WriteDebugLog(("[IRTrans] Unsupported response received: ") & sStr)
+
+END
+
+' implement properties
+PRIVATE FUNCTION TCPHost_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB TCPHost_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION TCPPort_Read() AS String
+
+  RETURN iTCPPort
+
+END
+
+PRIVATE SUB TCPPort_Write(Value AS String)
+
+  iTCPPort = Value
+
+END
+
+PRIVATE FUNCTION IRTransDebug_Read() AS Boolean
+
+  RETURN bIRTransDebug
+
+END
+
+PRIVATE SUB IRTransDebug_Write(Value AS Boolean)
+
+  bIRTransDebug = Value
+
+END
+
+PRIVATE FUNCTION Baud_Read() AS String
+
+  RETURN sBaud
+
+END
+
+PRIVATE SUB Baud_Write(Value AS String)
+
+  sBaud = Value
+
+END
+
+PRIVATE FUNCTION SerPort_Read() AS String
+
+  RETURN sSerPort
+
+END
+
+PRIVATE SUB SerPort_Write(Value AS String)
+
+  sSerPort = Value
+
+END
+
+PRIVATE FUNCTION Interface_Read() AS String
+
+  RETURN sInterface
+
+END
+
+PRIVATE SUB Interface_Write(Value AS String)
+
+  sInterface = Value
+
+END

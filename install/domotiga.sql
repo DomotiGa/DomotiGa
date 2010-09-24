@@ -2799,7 +2799,7 @@ CREATE TABLE `version` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `db` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=23 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=24 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2808,7 +2808,7 @@ CREATE TABLE `version` (
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187'),(23,'0.1.188');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2866,6 +2866,66 @@ INSERT INTO `weatherfeeds` VALUES (1,'Sat24','http://www.sat24.com/image.ashx?co
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_denon`
+--
+
+DROP TABLE IF EXISTS `settings_denon`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_denon` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `type` varchar(32) DEFAULT NULL,
+  `serialport` varchar(32) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_denon`
+--
+
+LOCK TABLES `settings_denon` WRITE;
+/*!40000 ALTER TABLE `settings_denon` DISABLE KEYS */;
+INSERT INTO `settings_denon` VALUES (0,0,'192.168.100.7',23,'tcp','/dev/ttyUSB3','9600',0),(1,0,'192.168.100.7',23,'serial','/dev/ttyUSBD0','9600',0);
+/*!40000 ALTER TABLE `settings_denon` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `settings_irtrans`
+--
+
+DROP TABLE IF EXISTS `settings_irtrans`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_irtrans` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `type` varchar(32) DEFAULT NULL,
+  `serialport` varchar(32) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_irtrans`
+--
+
+LOCK TABLES `settings_irtrans` WRITE;
+/*!40000 ALTER TABLE `settings_irtrans` DISABLE KEYS */;
+INSERT INTO `settings_irtrans` VALUES (0,0,'192.168.100.7',21000,'tcp','/dev/ttyUSB3','38400',0),(1,0,'192.168.100.7',21000,'serial','/dev/ttyUSBD0','38400',0);
+/*!40000 ALTER TABLE `settings_irtrans` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `graphs`
 --
 
@@ -2893,6 +2953,7 @@ CREATE TABLE IF NOT EXISTS `graphs` (
   `logarithmic_scale` tinyint(1) NOT NULL DEFAULT '0',
   `date` tinyint(1) NOT NULL,
   `grid_type` varchar(32) NOT NULL,
+  `groups` varchar(128) DEFAULT NULL,
   PRIMARY KEY (`id`)
 );
 
