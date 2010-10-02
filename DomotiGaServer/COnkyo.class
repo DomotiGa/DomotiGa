@@ -1,0 +1,392 @@
+' Gambas class file
+
+' Description:
+' COnkyo.class
+' Support for Onkyo/Integra receiver control.
+
+' Development Status:
+' Beta. Needs Testing.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2010 Ron Klinkien.
+
+' Read file called COPYING for license details.
+
+PROPERTY TCPHost AS String
+PROPERTY TCPPort AS String
+PROPERTY OnkyoDebug AS Boolean
+PROPERTY Interface AS String
+PROPERTY SerPort AS String
+PROPERTY Baud AS String
+
+PRIVATE sTCPHost AS String
+PRIVATE iTCPPort AS String
+PRIVATE bOnkyoDebug AS Boolean
+PRIVATE sInterface AS String
+PRIVATE sSerPort AS String
+PRIVATE sBaud AS String
+
+PUBLIC hOnkyo AS NEW Socket
+PUBLIC hOnkyoSer AS NEW SerialPort
+
+PUBLIC sBuffer AS String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectTCP() AS Boolean
+
+  ' try to close the connection
+  TRY hOnkyo.Close
+
+  ' get a new one
+  hOnkyo = NEW Socket AS "Onkyo"
+  hOnkyo.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("Onkyo receiver Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectSerial() AS Boolean
+
+  ' try to close the connection
+  TRY hOnkyoSer.Close
+
+  ' get a new one
+  hOnkyoSer = NEW Serialport AS "OnkyoSer"
+  WITH hOnkyoSer
+    .PortName = sSerPort
+    .Speed = sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  END WITH
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("Onkyo receiver Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Onkyo_Ready()
+
+  Main.WriteLog(("Onkyo TCP socket connected."))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is closed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Onkyo_Closed()
+
+  Main.WriteLog(("Onkyo TCP socket closed."))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hOnkyo.Close
+  TRY hOnkyoSer.Close
+  IF InStr(sInterface, "tcp") THEN
+    Main.WriteLog(("Onkyo receiver TCP socket close."))
+  ELSE
+    Main.WriteLog(("Onkyo receiver TCP serial port close."))
+  END IF
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("Onkyo receiver Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Onkyo_Error()
+
+  ' handle error
+  SELECT CASE hOnkyo.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog(("Onkyo: The system does not allow to create a socket."))
+    CASE Net.HostNotFound
+      Main.WriteLog(("Onkyo: Host '") & sTCPHost & ("' not found.")) 
+    CASE Net.ConnectionRefused
+      Main.WriteLog(("Onkyo: Unable to connect to receiver. Connection refused."))
+    CASE Net.CannotRead
+      Main.WriteLog(("Onkyo: Error reading data."))
+    CASE Net.CannotWrite
+      Main.WriteLog(("Onkyo: Error writing data."))
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send command via serial port or tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB SendCmd(sCmd AS String)
+
+  DIM sStr AS String = "ISCP\x00\x00\x00\x10\x00\x00\x00" & Chr(Len(sCmd)) & "\x01\x00\x00\x00!1" & sCmd & "\n"
+
+  ' IF Main.bOnkyoDebug THEN Main.WriteDebugLog(("[Onkyo] Sending '") & sCmd & ("' to Receiver."))
+
+  IF sInterface = "tcp" THEN
+    TRY PRINT #hOnkyo, sStr
+    IF ERROR THEN Main.WriteDebugLog(("[Onkyo] Error writing data to the TCP port! -> ") & Error.Text)
+  ELSE
+    TRY PRINT #hOnkyoSer, sStr
+    IF ERROR THEN Main.WriteDebugLog(("[Onkyo] Error writing data to the serial port! -> ") & Error.Text)
+  END IF
+  IF bOnkyoDebug THEN Main.WriteDebugLog("[Onkyo] > " & sCmd)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' to switch unit with device control
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendCommand(sAddress AS String, sValue AS String)
+
+  ' ignore sAddress, only fixed unit 1?
+  SELECT CASE LCase(sValue)
+    CASE "on"
+      SendCmd("PWR01")
+    CASE "off"
+      SendCmd("PWR00")
+    CASE ELSE
+      IF Main.bOnkyoDebug THEN Main.WriteDebugLog(("[Onkyo] Unsupported command received: ") & sValue)
+  END SELECT
+
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' to control from xmlrpc or music page buttons
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SetCommand(sCmd AS String, sValue AS String, sAddress AS String)
+
+  ' commands here are for Integra DTR-40.1
+  ' ignore sAddress, only fixed unit 1
+  SELECT CASE LCase(sCmd)
+    CASE "power"
+      ' 00 - Off, 01 - On, QSTN - status
+      SendCmd(IIf(sValue == "on", "PWR01", "PWR00"))
+    CASE "volume", "vol"
+      ' 0-64 Hex
+      SendCmd("MVL" & Hex(Val(sValue)))
+    CASE "mute"
+      ' 00 - Off, 01 - On, QSTN - status
+      SendCmd(IIf(sValue == "on", "AMT01", "AMT00"))
+    CASE "input"
+      SELECT CASE sValue
+        CASE 1 ' DVD/BD
+          SendCmd("SLI10")
+        CASE 2 ' VCR/DVR
+          SendCmd("SLI00")
+        CASE 3 ' CBL/SAT
+          SendCmd("SLI01")
+        CASE 4 ' Game
+          SendCmd("SLI02")
+        CASE 5 ' AUX
+          SendCmd("SLI03")
+        CASE 6 ' TV/Tape
+          SendCmd("SLI20")
+        CASE 7 ' Tuner
+          SendCmd("SLI24")
+        CASE 8 ' CD
+          SendCmd("SLI23")
+        CASE 9 ' Phono
+          SendCmd("SLI22")
+        CASE 10 ' Port
+          SendCmd("SLI40")
+        CASE 11 ' Net
+          SendCmd("SLI27")
+      END SELECT
+    CASE ELSE
+      IF Main.bOnkyoDebug THEN Main.WriteDebugLog(("[Onkyo] Unsupported command received: ") & sValue)
+  END SELECT
+
+END
+
+PUBLIC SUB GetCommand(sCmd AS String, sAddress AS String)
+
+  ' ignore sAddress, only fixed unit 1
+  SELECT CASE LCase(sCmd)
+    CASE "power"
+      SendCmd("QSTN")
+    CASE ELSE
+      IF Main.bOnkyoDebug THEN Main.WriteDebugLog(("[Onkyo] Unsupported get value received: ") & sCmd)
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' data received on tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Onkyo_Read()
+
+  DIM sData AS String
+
+  TRY READ #hOnkyo, sData, 1
+  IF ERROR THEN
+    Main.WriteDebugLog(("[Onkyo] Error reading data from the TCP port! -> ") & Error.Text)
+  ELSE
+    IF sData = Chr$(26) THEN ' buffer until linefeed then parse
+      IF Len(sBuffer) > 1 THEN ParseLine(sBuffer)
+      sBuffer = NULL
+    ELSE
+      sBuffer &= sData
+    ENDIF
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' data received on serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB OnkyoSer_Read()
+
+  DIM sData AS String
+
+  TRY READ #hOnkyoSer, sData, 1
+  IF ERROR THEN
+    Main.WriteDebugLog(("[Onkyo] Error reading data from the serial port! -> ") & Error.Text)
+  ELSE
+    IF sData = Chr$(26) THEN ' buffer until linefeed then parse
+      IF Len(sBuffer) > 1 THEN ParseLine(sBuffer)
+      sBuffer = NULL
+    ELSE
+      sBuffer &= sData
+    ENDIF
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB ParseLine(sBuffer AS String)
+
+  DIM sStr, sCat, sItem, sValue AS String
+
+  IF InStr(sBuffer, "ISCP", 1) THEN
+    sStr = Mid(sBuffer, InStr(sBuffer, "!") + 2, 5)
+    sCat = Left(sStr, 3)
+    IF Main.bOnkyoDebug THEN Main.WriteDebugLog(("[Onkyo] < ") & sStr)
+
+    SELECT CASE sCat
+      CASE "PWR"
+        ' main power
+        sItem = "Power"
+        IF sStr = "PWR01" THEN sValue = "On"
+        IF sStr = "PWR00" THEN sValue = "Off"
+        OnkyoSetValue(sItem, sValue)
+
+    END SELECT
+
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' save received values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB OnkyoSetValue(sItem AS String, vValue AS Variant)
+
+  Main.SetGlobalVar("Onkyo_" & sItem, vValue)
+  IF Main.bDenonDebug THEN Main.WriteDebugLog("[Onkyo] Received Item: " & sItem & " Value: " & vValue)
+
+END
+
+' implement properties
+PRIVATE FUNCTION TCPHost_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB TCPHost_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION TCPPort_Read() AS String
+
+  RETURN iTCPPort
+
+END
+
+PRIVATE SUB TCPPort_Write(Value AS String)
+
+  iTCPPort = Value
+
+END
+
+PRIVATE FUNCTION OnkyoDebug_Read() AS Boolean
+
+  RETURN bOnkyoDebug
+
+END
+
+PRIVATE SUB OnkyoDebug_Write(Value AS Boolean)
+
+  bOnkyoDebug = Value
+
+END
+
+PRIVATE FUNCTION Baud_Read() AS String
+
+  RETURN sBaud
+
+END
+
+PRIVATE SUB Baud_Write(Value AS String)
+
+  sBaud = Value
+
+END
+
+PRIVATE FUNCTION SerPort_Read() AS String
+
+  RETURN sSerPort
+
+END
+
+PRIVATE SUB SerPort_Write(Value AS String)
+
+  sSerPort = Value
+
+END
+
+PRIVATE FUNCTION Interface_Read() AS String
+
+  RETURN sInterface
+
+END
+
+PRIVATE SUB Interface_Write(Value AS String)
+
+  sInterface = Value
+
+END

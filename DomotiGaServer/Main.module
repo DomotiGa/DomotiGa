@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-PUBLIC sProgramVersion AS String = "0.1.188"
+PUBLIC sProgramVersion AS String = "0.1.189"
 PUBLIC sBaseDir AS String
 PUBLIC sSettings AS String = "server-domotiga.conf"
 PUBLIC bMainDebug AS Boolean
@@ -132,6 +132,7 @@ PUBLIC MoonIsLeapYear AS Boolean
 ' Heyu
 PUBLIC bHeyuEnabled AS Boolean
 PUBLIC sHeyuCommand AS String
+PUBLIC bHeyuMonitor AS Boolean
 PUBLIC bHeyuDebug AS Boolean
 
 ' CTX35
@@ -349,6 +350,7 @@ PUBLIC bBwiredMapDebug AS Boolean
 PUBLIC bTwitterEnabled AS Boolean
 PUBLIC sTwitterUser AS String
 PUBLIC sTwitterPassword AS String
+PUBLIC bTwitterTimeStamp AS Boolean
 PUBLIC bTwitterDebug AS Boolean
 
 ' DSC Security
@@ -502,11 +504,26 @@ PUBLIC hDenon AS CDenon
 PUBLIC bIRTransEnabled AS Boolean
 PUBLIC sIRTransTCPHost AS String
 PUBLIC iIRTransTCPPort AS Integer
-PUBLIC sIRTransSerialPort AS String
-PUBLIC sIRTransBaudrate AS String
-PUBLIC sIRTransType AS String
 PUBLIC bIRTransDebug AS Boolean
 PUBLIC hIRTrans AS CIRTrans
+
+' Onkyo/Intergra
+PUBLIC bOnkyoEnabled AS Boolean
+PUBLIC sOnkyoTCPHost AS String
+PUBLIC iOnkyoTCPPort AS Integer
+PUBLIC sOnkyoSerialPort AS String
+PUBLIC sOnkyoBaudrate AS String
+PUBLIC sOnkyoType AS String
+PUBLIC bOnkyoDebug AS Boolean
+PUBLIC hOnkyo AS COnkyo
+
+' Anel PwrCtrl
+PUBLIC bPwrCtrlEnabled AS Boolean
+PUBLIC iPwrCtrlUDPRead AS Integer
+PUBLIC iPwrCtrlUDPSend AS Integer
+PUBLIC bPwrCtrlDebug AS Boolean
+PUBLIC sPwrCtrlUserPw AS String
+PUBLIC hPwrCtrl AS CPwrCtrl
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' this is where domotiga starts
@@ -795,9 +812,10 @@ PUBLIC SUB GetSettings()
   bAstroDST = rResult!dst
 
   ' Heyu
-  rResult = GetSettingTable("heyu")  
+  rResult = GetSettingTable("heyu")
   bHeyuEnabled = rResult!enabled
   sHeyuCommand = rResult!command
+  bHeyuMonitor = rResult!monitor
   bHeyuDebug = rResult!debug
 
   ' CTX35
@@ -1019,6 +1037,7 @@ PUBLIC SUB GetSettings()
   bTwitterEnabled = rResult!enabled
   sTwitterUser = rResult!username
   sTwitterPassword = rResult!password
+  bTwitterTimeStamp = rResult!sendtimestamp
   bTwitterDebug = rResult!debug
 
   ' DSC Security
@@ -1177,10 +1196,25 @@ PUBLIC SUB GetSettings()
   bIRTransEnabled = rResult!enabled
   sIRTransTCPHost = rResult!tcphost
   iIRTransTCPPort = rResult!tcpport
-  sIRTransType = rResult!type
-  sIRTransSerialPort = rResult!serialport
-  sIRTransBaudrate = rResult!baudrate
   bIRTransDebug = rResult!debug
+
+  ' Onkyo/Integra
+  rResult = GetSettingTable("onkyo")
+  bOnkyoEnabled = rResult!enabled
+  sOnkyoTCPHost = rResult!tcphost
+  iOnkyoTCPPort = rResult!tcpport
+  sOnkyoType = rResult!type
+  sOnkyoSerialPort = rResult!serialport
+  sOnkyoBaudrate = rResult!baudrate
+  bOnkyoDebug = rResult!debug
+
+  ' Anel PWrCtrl
+  rResult = GetSettingTable("pwrctrl")
+  bPwrCtrlEnabled = rResult!enabled
+  iPwrCtrlUDPRead = rResult!udpread
+  iPwrCtrlUDPSend = rResult!udpsend
+  sPwrCtrlUserPw = rResult!userpw
+  bPwrCtrlDebug = rResult!debug
 
 CATCH
   Main.WriteLog(("Error: " & Error.Text & " " & Error.Code & " while loading settings! Is your database version correct?"))
@@ -1317,6 +1351,8 @@ PUBLIC SUB CloseAll()
   StopTimers()
   ' save all globalvars in db
   SaveGlobalVars()
+  ' stop Heyu monitor
+  TRY Heyu.Monitor_Stop
   ' squeezeserver close
   TRY hSqueezeServer.Disconnect
   ' plcbus close
@@ -1354,6 +1390,8 @@ PUBLIC SUB CloseAll()
   TRY hDSC.Disconnect
   ' denon close
   TRY hDenon.Disconnect
+  ' onkyo close
+  TRY hOnkyo.Disconnect
   ' irtrans close
   TRY hIRTrans.Disconnect
   ' eib close
@@ -1373,6 +1411,8 @@ PUBLIC SUB CloseAll()
   TRY hEZcontrol.Disconnect()
   ' current cost close
   TRY hCurrentCost.Disconnect()
+  ' pwrctrl cloese
+  TRY hPwrCtrl.Disconnect()
   ' webserver close
   TRY hWebserver.Disconnect
   ' db close
@@ -1439,6 +1479,8 @@ PUBLIC SUB Setup()
   Setup_CurrentCost() ' Current Cost support
   Setup_Denon() ' Denon support
   Setup_IRTrans() ' IRTrans support
+  Setup_Onkyo() ' Onkyo/Integra support
+  Setup_PwrCtrl() ' Anel PwrCtrl support
   WriteLog(("Done with setup ..."))
 
 END
@@ -1736,6 +1778,7 @@ END
 PUBLIC SUB Restart_Heyu()
 
   ' not much todo now
+  TRY Heyu.Monitor_Stop
   Setup_Heyu()
 
 END
@@ -3270,27 +3313,14 @@ PRIVATE SUB Setup_IRTrans()
     WITH hIRTrans
       .TCPHost = sIRTransTCPHost
       .TCPPort = iIRTransTCPPort
-      .Interface = sIRTransType
-      .Baud = sIRTransBaudrate
-      .SerPort = sIRTransSerialPort
       .IRTransDebug = bIRTransDebug
     END WITH
-    IF InStr(sIRTransType, "tcp") THEN
-      ' connect to the irtrans host:port
-      IF hIRTrans.ConnectTCP() THEN
-        WriteLog(("IRTrans TCP interface connecting to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
-      ELSE
-        WriteLog(("ERROR: IRTrans TCP interface FAILED to connect to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
-        hIRTrans = NULL
-      END IF
+    ' connect to the irtrans host:port
+    IF hIRTrans.Connect() THEN
+      WriteLog(("IRTrans TCP interface connecting to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
     ELSE
-      ' connect to the irtrans serial interface
-      IF hIRTrans.ConnectSerial() THEN
-        WriteLog(("IRTrans serial interface connected to Port ") & sIRTransSerialPort)
-      ELSE
-        WriteLog(("ERROR: IRTrans serial interface FAILED to connect to Port ") & sIRTransSerialPort)
-        hIRTrans = NULL
-      END IF
+      WriteLog(("ERROR: IRTrans TCP interface FAILED to connect to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
+      hIRTrans = NULL
     END IF
   ELSE
     WriteLog(("IRTrans support disabled."))
@@ -3308,6 +3338,103 @@ PUBLIC SUB Restart_IRTrans()
     hIRTrans = NULL
   END IF
   Setup_IRTrans()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with onkyo receiver tcp host:port or serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_Onkyo()
+
+  IF bOnkyoEnabled THEN
+    WriteLog(("Onkyo/Integra receiver support enabled."))
+    ' create a new Onkyo class instance
+    hOnkyo = NEW COnkyo
+    ' set the properties
+    WITH hOnkyo
+      .TCPHost = sOnkyoTCPHost
+      .TCPPort = iOnkyoTCPPort
+      .Interface = sOnkyoType
+      .Baud = sOnkyoBaudrate
+      .SerPort = sOnkyoSerialPort
+      .OnkyoDebug = bOnkyoDebug
+    END WITH
+    IF InStr(sOnkyoType, "tcp") THEN
+      ' connect to the onkyo host:port
+      IF hOnkyo.ConnectTCP() THEN
+        WriteLog(("Onkyo/Integra receiver TCP interface connecting to ") & sOnkyoTCPHost & ":" & iOnkyoTCPPort)
+      ELSE
+        WriteLog(("ERROR: Onkyo/Integra receiver TCP interface FAILED to connect to ") & sOnkyoTCPHost & ":" & iOnkyoTCPPort)
+        hOnkyo = NULL
+      END IF
+    ELSE
+      ' connect to the onkyo serial interface
+      IF hOnkyo.ConnectSerial() THEN
+        WriteLog(("Onkyo/Integra receiver serial interface connected to Port ") & sOnkyoSerialPort)
+      ELSE
+        WriteLog(("ERROR: Onkyo/integra receiver serial interface FAILED to connect to Port ") & sOnkyoSerialPort)
+        hOnkyo = NULL
+      END IF
+    END IF
+  ELSE
+    WriteLog(("Onkyo/Integra receiver support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart onkyo after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_Onkyo()
+
+  IF hOnkyo THEN
+    hOnkyo.Disconnect
+    hOnkyo = NULL
+  END IF
+  Setup_Onkyo()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with pwrctrl interface via udpsocket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_PwrCtrl()
+
+  IF bPwrCtrlEnabled THEN
+    WriteLog(("PwrCtrl support enabled."))
+      ' create a new PwrCtrl class instance
+      hPwrCtrl = NEW CPwrCtrl
+      ' set the properties
+      WITH hPwrCtrl
+        .UDPPortRead = iPwrCtrlUDPRead
+        .UDPPortSend = iPwrCtrlUDPSend
+        .PwrCtrlDebug = bPwrCtrlDebug
+        .PwrCtrlUserPw = sPwrCtrlUserPw
+      END WITH
+      ' connect to interface host:port
+      IF hPwrCtrl.Connect() THEN
+        WriteLog(("PwrCtrl listening on UDP port ") & iPwrCtrlUDPRead)
+        ' get state for all devices
+        hPwrCtrl.GetAllState()
+      ELSE
+        WriteLog(("ERROR: PwrCtrl UDP interface FAILED to setup to listen for Port ") & iPwrCtrlUDPRead)
+      END IF
+  ELSE
+    WriteLog(("PwrCtrl support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart PwrCtrl after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_PwrCtrl()
+
+  IF hPwrCtrl THEN
+    hPwrCtrl.Disconnect
+    hPwrCtrl = NULL
+  END IF
+  Setup_PwrCtrl()
 
 END
 
@@ -3540,11 +3667,6 @@ PRIVATE SUB SetGlobalVars()
 
     dPrev_Time = dTime
     GlobalVar["Second"] = Second(dTime)
-    GlobalVar["Minute"] = Minute(dTime)
-    GlobalVar["Hour"] = Hour(dTime)
-    GlobalVar["Day"] = Day(dTime)
-    GlobalVar["Month"] = Month(dTime)
-    GlobalVar["Weekday"] = WeekDay(dTime)
 
     ' new second
     IF (iPrev_Sec <> GlobalVar["Second"]) THEN
@@ -3769,7 +3891,7 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB SetGlobalVar(sVar AS String, vValue AS Variant)
 
-  IF Events.CheckCondition(Main.GlobalVar[sVar], "<>", vValue) THEN Events.CheckGlobalVarEvents(sVar, vValue)
+  IF Events.CheckCondition(Main.GlobalVar[sVar], "<>", vValue, TRUE) THEN Events.CheckGlobalVarEvents(sVar, vValue)
   Main.GlobalVar[sVar] = vValue
 
 END

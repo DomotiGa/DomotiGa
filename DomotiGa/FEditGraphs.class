@@ -14,32 +14,34 @@
 
 ' Read file called COPYING for license details.
 
+PUBLIC rGraph AS Result
+
 PUBLIC SUB Form_Open()
 
   ME.Move(FMain.X + 50, FMain.Y + 70)
   Populate_device_list()
   Reset_graph()
   Graph_list()
+  PopulateGroups()
 
 END
 
 PUBLIC SUB ComboBoxGraph_name_Change()
 
- DIM rGraph AS Result
-
- IF ComboBoxGraph_name.Text <> " " THEN
-  TRY rGraph = Main.hDB.Exec("SELECT name FROM graphs WHERE name = &1", ComboBoxGraph_name.Text)
-   IF rGraph.Count <> 0 THEN
-     Load_graph(ComboBoxGraph_name.Text)
-     FrameGraph_data.Enabled = TRUE
-     FramePreview.Enabled = TRUE
-     Load_graph_data(ComboBoxGraph_name.Tag, ComboBoxGraphList.Text)
-   ENDIF
- ELSE
-   Populate_device_list()
-   Reset_graph()
-   Reset_graph_data()
- ENDIF
+  IF ComboBoxGraph_name.Text <> " " THEN
+    TRY rGraph = Main.hDB.Exec("SELECT name FROM graphs WHERE name = &1", ComboBoxGraph_name.Text)
+    IF rGraph.Count <> 0 THEN
+      Load_graph(ComboBoxGraph_name.Text)
+      FrameGraph_data.Enabled = TRUE
+      FramePreview.Enabled = TRUE
+      Load_graph_data(ComboBoxGraph_name.Tag, ComboBoxGraphList.Text)
+      AssignGroups()
+    ENDIF
+  ELSE
+    Populate_device_list()
+    Reset_graph()
+    Reset_graph_data()
+  ENDIF
 
 END
 
@@ -68,17 +70,6 @@ PUBLIC SUB ComboBoxGraph_device_Change() ' select device -> update ds
 
 END
 
-PUBLIC SUB DeviceName2RRDName(sDeviceName AS String) AS String
-
-  DIM sRRDName AS String
-
-  sRRDName = LCase(Replace$(sDeviceName, " ", ""))
-  sRRDName = Replace$(sRRDName, "/", "")
-  sRRDName = Replace$(sRRDName, ".", "")
-  RETURN sRRDName
-
-END
-
 PUBLIC SUB Reset_graph()
 
   ComboBoxGraph_name.Tag = ""
@@ -101,8 +92,8 @@ PUBLIC SUB Reset_graph()
   ' general color
   ColorButtonGraph_background.Value = 16777215
   ColorButtonGraph_canvas.Value = 16777215
-  ColorButtonGraph_shadea.Value = 0
-  ColorButtonGraph_shadeb.Value = 0
+  ColorButtonGraph_shadea.Value = 16777215
+  ColorButtonGraph_shadeb.Value = 16777215
   ColorButtonGraph_font.Value = 0
   ColorButtonGraph_grid.Value = 0
   ColorButtonGraph_majorgrid.Value = 0
@@ -157,12 +148,10 @@ END
 
 PUBLIC SUB Graph_list()
 
-  DIM rGraph, rDevice AS Result
-
   ComboBoxGraph_name.Clear
   ComboBoxGraph_name.Add(" ")
 
-  TRY rGraph = Main.hDB.Exec("SELECT name FROM graphs")
+  TRY rGraph = Main.hDB.Exec("SELECT name, groups FROM graphs")
   IF rGraph THEN
     FOR EACH rGraph
       ComboBoxGraph_name.Add(rGraph!name)
@@ -191,13 +180,10 @@ END
 
 PUBLIC SUB Load_graph(Graph_name AS String) AS Boolean
 
-  DIM rGraph AS Result
   DIM Graph_id AS Integer
 
   TRY rGraph = Main.hDB.Exec("SELECT * FROM graphs WHERE name = &1", Graph_name)
-
   IF rGraph.Count <> 0 THEN
-
     Graph_id = rGraph!id
     ComboBoxGraph_name.Tag = rGraph!id
 
@@ -224,6 +210,7 @@ PUBLIC SUB Load_graph(Graph_name AS String) AS Boolean
     ComboBoxGraph_height.Text = rGraph!graph_height
 
     CheckBoxLogarithmicscale.Value = rGraph!logarithmic_scale
+    PopulateGroups()
 
   ENDIF
 
@@ -280,7 +267,7 @@ PUBLIC SUB CheckMissingGraphName() AS Boolean
 
   IF ComboBoxGraph_name.Text = " " THEN
     ComboBoxGraph_name.SetFocus
-    Balloon("Graph name missing", ComboBoxGraph_name,, 50, 10)
+    Balloon("Graph name missing!", ComboBoxGraph_name,, 50, 10)
     RETURN FALSE
   ELSE
     RETURN TRUE
@@ -294,7 +281,7 @@ PUBLIC SUB Populate_device_list()
 
   ComboBoxGraph_device.Clear
   ComboBoxGraph_device.Add(" ")
-  TRY rDevice = Main.hDB.Exec("SELECT name FROM devices WHERE graph IS TRUE ORDER BY name")
+  TRY rDevice = Main.hDB.Exec("SELECT name FROM devices WHERE rrd IS TRUE ORDER BY name")
   IF rDevice THEN
     FOR EACH rDevice
       ComboBoxGraph_device.Add(rDevice!name)
@@ -325,8 +312,8 @@ PUBLIC SUB ButtonGraphPreview_Click()
   DIM sTempFile AS String = Temp()
 
   IF ComboBoxGraph_name.Tag THEN
-    sRRDCmd = Generate_Graph(ComboBoxGraph_name.Tag, sTempFile, ComboBoxRange_Preview.Text)
-    Generate_Picture(sRRDCmd)
+    sRRDCmd = RRDTool.GenerateGraph(ComboBoxGraph_name.Tag, sTempFile, ComboBoxRange_Preview.Text)
+    SHELL sRRDCmd WAIT
     IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[Graph Editor] " & sRRDCmd)
     Display_Graph_Preview(sTempFile)
   ENDIF
@@ -339,206 +326,11 @@ PUBLIC SUB ButtonGraphPreviewUpdate(sRange AS String)
   DIM sTempFile AS String = Temp()
 
   IF ComboBoxGraph_name.Tag THEN
-    sRRDCmd = Generate_Graph(ComboBoxGraph_name.Tag, sTempFile, sRange)
-    Generate_Picture(sRRDCmd)
+    sRRDCmd = RRDTool.GenerateGraph(ComboBoxGraph_name.Tag, sTempFile, sRange)
+    SHELL sRRDCmd WAIT
     IF Main.bRRDToolDebug THEN Main.WriteDebugLog("[Graph Editor] " & sRRDCmd)
     Display_Graph_Preview(sTempFile, TRUE)
   ENDIF
-
-END
-
-PUBLIC SUB Generate_Graph(iGraph_id AS Integer, sFile AS String, sRange AS String) AS String
-
-  DIM rGraph_head, rGraph_data, rGraph_print AS Result
-  DIM sRRDCmd, sRRD_graph, sRRDCmd_Main, sRRDCmd_DEF, sRRDCmd_SHIFT, sRRDCmd_CDEF, sRRDCmd_VDEF, sRRDCmd_GPRINT, sRRDCmd_GPRINT_Title, sRRRCmd_TIMESTAMP AS String
-  DIM sRRDCmd_Graph, sRRDCmd_HRULE, sGraph_trend, sGraph_shift, sRRDName AS String
-  DIM Graph_Height, Graph_Width, Graph_Color_Background, iGraph_Number AS Integer
-
-  sRRDCmd_Main = "rrdtool graph " & sFile & " --lazy --start end-" & sRange & " -a PNG --slope-mode --font DEFAULT:7: --watermark 'Domotiga v" & Main.sProgramVersion & "'"
-
-  TRY rGraph_print = Main.hDB.Exec("Select * FROM graphs WHERE id = &1", iGraph_id)
-  IF rGraph_print.Count <> 0 THEN
-    sRRDCmd_Main &= " --width " & rGraph_print!graph_width
-    sRRDCmd_Main &= " --height " & rGraph_print!graph_height
-    sRRDCmd_Main &= " -c BACK#" & Hex$(rGraph_print!color_background, 6)
-    sRRDCmd_Main &= " -c CANVAS#" & Hex$(rGraph_print!color_canvas, 6)
-    sRRDCmd_Main &= " -c SHADEA#" & Hex$(rGraph_print!color_shadea, 6)
-    sRRDCmd_Main &= " -c SHADEB#" & Hex$(rGraph_print!color_shadeb, 6)
-    sRRDCmd_Main &= " -c GRID#" & Hex$(rGraph_print!color_grid, 6)
-    sRRDCmd_Main &= " -c MGRID#" & Hex$(rGraph_print!color_majorgrid, 6)
-    sRRDCmd_Main &= " -c FONT#" & Hex$(rGraph_print!color_font, 6)
-    sRRDCmd_Main &= " -c AXIS#" & Hex$(rGraph_print!color_axis, 6)
-    sRRDCmd_Main &= " -c FRAME#" & Hex$(rGraph_print!color_frame, 6)
-    sRRDCmd_Main &= " -c ARROW#" & Hex$(rGraph_print!color_arrow, 6)
-    sRRDCmd_Main &= " --title='" & rGraph_print!graph_title & "'"
-    sRRDCmd_Main &= " --vertical-label '" & rGraph_print!unit & "'"
-    ' RRDTool 2.4 sRRDCmd &= " " & grid_type(rGraph_print.gridtype)
-
-    Graph_Height = rGraph_print!graph_height + 95
-    Graph_Width = rGraph_print!graph_width + 95
-    Graph_Color_Background = rGraph_print!color_background
-
-    IF rGraph_print!logarithmic_scale = TRUE THEN
-      sRRDCmd_Main &= " --logarithmic --units=si"
-    ENDIF
-    ' sRRDCmd_Main &= " --right-axis " &  1000:0
-  ENDIF
-
-  TRY rGraph_head = Main.hDB.Exec("SELECT max(graph_max) as head_max, max(graph_min) as head_min, max(graph_avg) as head_avg, max(graph_last) as head_last FROM graph_data WHERE graph_id = &1;", iGraph_id)
-
-  sRRDCmd_GPRINT_Title = " COMMENT:'\\s' COMMENT:'" & Space(22)
-
-  IF rGraph_head!head_min = TRUE THEN
-    sRRDCmd_GPRINT_Title &= "' COMMENT:'Min" & Space(2)
-  ENDIF
-  IF rGraph_head!head_max = TRUE THEN
-    sRRDCmd_GPRINT_Title &= "' COMMENT:'Max" & Space(2)
-  ENDIF
-  IF rGraph_head!head_avg = TRUE THEN
-    sRRDCmd_GPRINT_Title &= "' COMMENT:'Avg" & Space(2)
-  ENDIF
-  IF rGraph_head!head_last = TRUE THEN
-    sRRDCmd_GPRINT_Title &= "' COMMENT:'Last"
-  ENDIF
-
-  sRRDCmd_GPRINT_Title &= "' COMMENT:'\\l' "
-
-  TRY rGraph_data = Main.hDB.Exec("Select * FROM graph_data WHERE graph_id = &1", iGraph_id)
-  IF rGraph_head.Count <> 0 THEN
-    FOR EACH rGraph_data
-      sGraph_trend = ""
-      sGraph_shift = ""
-
-      sRRD_graph = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
-
-      IF rGraph_data!graph_trend = TRUE THEN
-        sGraph_trend = "trend_"
-      ENDIF
-      IF rGraph_data!graph_timeshift = TRUE THEN
-        sGraph_shift = "shift_"
-      ENDIF
-
-      '# timeshift :
-      '# DEF:timeshift_name=rrd:name:AVERAGE:start={int}:end={int}
-      '# SHIFT:trend_name:{int}
-      '
-      '# trend :
-      '# DEF:trend_name=rrd:name:AVERAGE
-      '# CDEF:t_rrd_name=trend_name,{int},TREND
-      '
-      '# trend & timeshift : 
-      '# DEF:trend_timeshift_name=rrd:name:AVERAGE:start={int}:end={int}
-      '# SHIFT:trend_timeshift_name:{int}
-      '# CDEF:st_trend_timeshift_name=trend_timeshift_name,{int},TREND
-      '
-      '# Operation
-      '# DEF:operation_name=rrd:name:AVERAGE
-      '# CDEF:cdef_operation_name=operation_name,{int},operator
-
-      sRRDCmd_DEF = Function_DEF(iGraph_id, sRange)
-      sRRDCmd_SHIFT = Function_SHIFT(iGraph_id)
-      sRRDName = DeviceName2RRDName(rGraph_data!graph_devicename)
-
-      IF rGraph_data!graph_timeshift = TRUE AND rGraph_data!graph_trend = FALSE THEN
-        sRRDCmd_GPRINT &= rGraph_data!graph_line_type & ":" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & "#" & Hex$(rGraph_data!graph_color, 6) & ":'" & rGraph_data!graph_name & Space(20 - Len(rGraph_data!graph_name)) & "'"
-      ELSE IF rGraph_data!graph_trend = TRUE AND rGraph_data!graph_timeshift = FALSE THEN
-        sRRDCmd_CDEF &= " CDEF:" & Left(sGraph_shift, 1) & Left(sGraph_trend, 1) & "_" & sRRDName & "_" & rGraph_data!graph_rrddsname & "=" & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & "," & rGraph_data!graph_trend_value & ",TREND"
-        sRRDCmd_GPRINT &= rGraph_data!graph_line_type & ":" & Left(sGraph_shift, 1) & Left(sGraph_trend, 1) & "_" & sRRDName & "_" & rGraph_data!graph_rrddsname & "#" & Hex$(rGraph_data!graph_color, 6) & ":'" & rGraph_data!graph_name & Space(20 - Len(rGraph_data!graph_name)) & "'"
-      ELSE IF rGraph_data!graph_trend = TRUE AND rGraph_data!graph_timeshift = TRUE THEN
-        sRRDCmd_CDEF &= " CDEF:" & Left(sGraph_shift, 1) & Left(sGraph_trend, 1) & "_" & sRRDName & "_" & rGraph_data!graph_rrddsname & "=" & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & "," & rGraph_data!graph_trend_value & ",TREND"
-        sRRDCmd_GPRINT &= rGraph_data!graph_line_type & ":" & Left(sGraph_shift, 1) & Left(sGraph_trend, 1) & "_" & sRRDName & "_" & rGraph_data!graph_rrddsname & "#" & Hex$(rGraph_data!graph_color, 6) & ":'" & rGraph_data!graph_name & Space(20 - Len(rGraph_data!graph_name)) & "'"
-      ' ELSE IF
-        ' sRRDCmd_CDEF &= " CDEF:ratio_" & rGraph_data!graph_devicename & "_" & rGraph_data!graph_rrddsname
-        ' CDEF:mydatabits=mydata,8,*
-      ELSE
-        sRRDCmd_GPRINT &= rGraph_data!graph_line_type & ":" & sRRDName & "_" & rGraph_data!graph_rrddsname & "#" & Hex$(rGraph_data!graph_color, 6) & ":'" & rGraph_data!graph_name & Space(20 - Len(rGraph_data!graph_name)) & "'"
-      ENDIF
-      IF rGraph_data!graph_min = TRUE THEN
-        sRRDCmd_GPRINT &= " GPRINT:" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ":MIN:" & "'%4.1lf '"
-      ELSE IF rGraph_head!head_min = TRUE THEN
-        sRRDCmd_GPRINT &= " COMMENT:'" & Space(5) & "'"
-      ENDIF
-      IF rGraph_data!graph_max = TRUE THEN
-        sRRDCmd_GPRINT &= " GPRINT:" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ":MAX:" & "'%4.1lf '"
-      ELSE IF rGraph_head!head_max = TRUE THEN
-        sRRDCmd_GPRINT &= " COMMENT:'" & Space(5) & "'"
-      ENDIF
-      IF rGraph_data!graph_avg = TRUE THEN
-        sRRDCmd_GPRINT &= " GPRINT:" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ":AVERAGE:" & "'%4.1lf '"
-      ELSE IF rGraph_head!head_avg = TRUE THEN
-        sRRDCmd_GPRINT &= " COMMENT:'" & Space(5) & "'"
-      ENDIF
-      IF rGraph_data!graph_last = TRUE THEN
-        sRRDCmd_GPRINT &= " GPRINT:" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ":LAST:" & "'%4.1lf ' "
-      ELSE IF rGraph_head!head_last = TRUE THEN
-        sRRDCmd_GPRINT &= " COMMENT:'" & Space(5) & "'"
-      ENDIF
-      IF rGraph_data!graph_value_max = TRUE THEN
-        sRRDCmd_VDEF &= " VDEF:" & sGraph_trend & sGraph_shift & sRRDName & "_max=" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ",MAXIMUM"
-        sRRDCmd_Graph &= " HRULE:" & sGraph_trend & sGraph_shift & sRRDName & "_max#" & Hex$(rGraph_data!graph_value_max_color, 6)
-      ENDIF
-      IF rGraph_data!graph_value_avg = TRUE THEN
-        sRRDCmd_VDEF &= " VDEF:" & sGraph_trend & sGraph_shift & sRRDName & "_avg=" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ",AVERAGE"
-        sRRDCmd_Graph &= " HRULE:" & sGraph_trend & sGraph_shift & sRRDName & "_avg#" & Hex$(rGraph_data!graph_value_avg_color, 6)
-      ENDIF
-      IF rGraph_data!graph_value_min = TRUE THEN
-        sRRDCmd_VDEF &= " VDEF:" & sGraph_trend & sGraph_shift & sRRDName & "_min=" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ",MINIMUM"
-        sRRDCmd_Graph &= " HRULE:" & sGraph_trend & sGraph_shift & sRRDName & "_min#" & Hex$(rGraph_data!graph_value_avg_color, 6)
-      ENDIF
-      sRRDCmd_GPRINT &= " COMMENT:'\\s'" & " COMMENT:'\\s' "
-    NEXT
-  ENDIF
-
-  IF rGraph_print!date = TRUE THEN
-    sRRRCmd_TIMESTAMP &= " COMMENT:'Date \\: " & Year(Now) & "-" & Month(Now) & "-" & Day(Now) & " " & Hour(Now) & "\\:" & Minute(Now) & "\\:" & Second(Now) & "\\r'"
-  ENDIF
-
-  sRRDCmd &= sRRDCmd_Main & sRRDCmd_DEF & sRRDCmd_SHIFT & sRRDCmd_CDEF & sRRDCmd_VDEF & sRRDCmd_GPRINT_Title & sRRDCmd_GPRINT & sRRDCmd_Graph & sRRRCmd_TIMESTAMP
-  sRRDCmd &= " 2>&1 >/dev/null"
-
-  RETURN sRRDCmd
-
-END
-
-PUBLIC SUB Function_DEF(graph_id AS Integer, sRange AS String) AS String
-
-  DIM DEF AS String
-  DIM iCount AS Integer
-  DIM rGraph_DEF AS Result
-
-  TRY rGraph_DEF = Main.hDB.Exec("SELECT distinct `graph_devicename`, `graph_rrddsname`, `graph_timeshift`, `graph_timeshift_value` FROM graph_data WHERE graph_id = &1", graph_id)
-  IF rGraph_DEF.Count <> 0 THEN
-    FOR EACH rGraph_DEF
-      IF rGraph_DEF!graph_timeshift = TRUE THEN
-        DEF &= " DEF:" & "shift_" & DeviceName2RRDName(rGraph_DEF!graph_devicename) & "_" & rGraph_DEF!graph_rrddsname & "=" & Main.sBaseDir &/ "rrd" &/ DeviceName2RRDName(rGraph_DEF!graph_devicename) & ".rrd" & ":" & rGraph_DEF!graph_rrddsname & ":" & "AVERAGE" & ":start='-" & rGraph_DEF!graph_timeshift_value & "-" & sRange & "':end='-" & sRange & "'"
-      ELSE
-        DEF &= " DEF:" & DeviceName2RRDName(rGraph_DEF!graph_devicename) & "_" & rGraph_DEF!graph_rrddsname & "=" & Main.sBaseDir &/ "rrd" &/ DeviceName2RRDName(rGraph_DEF!graph_devicename) & ".rrd" & ":" & rGraph_DEF!graph_rrddsname & ":" & "AVERAGE"
-      ENDIF
-    NEXT
-    RETURN DEF
-  ENDIF
-
-END
-
-PUBLIC SUB Function_SHIFT(graph_id AS Integer) AS String
-
-  DIM SHIFT AS String
-  DIM iCount AS Integer
-  DIM rGraph_SHIFT AS Result
-
-  TRY rGraph_SHIFT = Main.hDB.Exec("SELECT `graph_devicename`, `graph_rrddsname`, `graph_timeshift`, `graph_timeshift_value` FROM graph_data WHERE graph_id = &1 and `graph_timeshift` = TRUE", graph_id)
-  IF rGraph_SHIFT.Count <> 0 THEN
-    FOR EACH rGraph_SHIFT
-      SHIFT &= " SHIFT:" & "shift_" & rGraph_SHIFT!graph_devicename & "_" & rGraph_SHIFT!graph_rrddsname & ":" & rGraph_SHIFT!graph_timeshift_value
-    NEXT
-    RETURN SHIFT
-  ENDIF
-
-END
-
-PUBLIC SUB Generate_Picture(sRRDCmd AS String)
-
-  SHELL sRRDCmd WAIT
 
 END
 
@@ -570,7 +362,7 @@ PUBLIC SUB DeleteGraphData_Button_Click()
 
   DIM rGraph AS Result
 
-  TRY rGraph = Main.hDB.Exec("Delete from graph_data where id = &1", ComboBoxGraphList.Tag)
+  TRY rGraph = Main.hDB.Exec("DELETE FROM graph_data WHERE id = &1", ComboBoxGraphList.Tag)
   IF rGraph THEN
     ComboBoxGraphList.Tag = ""
     Main.WriteDebugLog("[Graph Editor] DS deleted")
@@ -585,7 +377,7 @@ PUBLIC SUB SaveGraphData_Button_Click()
 
   IF ComboBoxGraph_device.Text AND ComboBoxGraph_ds.Text THEN
     IF ComboBoxGraphList.Tag THEN
-      TRY rGraph = Main.hDB.Exec("UPDATE graph_data set graph_name = &1, graph_max = &2, graph_min = &3, graph_last = &4, graph_avg = &5, graph_value_max = &6, graph_value_avg = &7, graph_value_min = &8, graph_value_max_color = &9, graph_value_avg_color = &10, graph_value_min_color = &11, graph_line_type = &12, graph_rrddsname = &13, graph_color = &14, graph_trend = &15, graph_trend_value = &16, graph_timeshift = &17, graph_timeshift_value = &18, graph_operation = &19, graph_operation_operator = &20, graph_operation_value = &21, graph_devicename = &22 WHERE id = &23", TextBoxGraph_name.Text, Abs(CheckBoxGraph_max.Value), Abs(CheckBoxGraph_min.Value), Abs(CheckBoxGraph_last.Value), Abs(CheckBoxGraph_avg.Value), Abs(CheckBoxGraph_graphvalue_max.Value), Abs(CheckBoxGraph_graphvalue_avg.Value), Abs(CheckBoxGraph_graphvalue_min.Value), ColorButtonGraph_graphvalue_max_color.Value, ColorButtonGraph_graphvalue_avg_color.Value, ColorButtonGraph_graphvalue_min_color.Value, ComboBoxGraph_type.Text, ComboBoxGraph_ds.Text, ColorButtonGraph.Value, Abs(CheckBoxTrend.Value), SpinBoxTrend.Value, Abs(CheckBoxShift.Value), SpinBoxShift.Value, Abs(CheckBoxOperation.Value), ComboBoxOperation.Text, SpinBoxOperation.Value, ComboBoxGraph_device.Text, ComboBoxGraphList.Tag)
+      TRY rGraph = Main.hDB.Exec("UPDATE graph_data SET graph_name = &1, graph_max = &2, graph_min = &3, graph_last = &4, graph_avg = &5, graph_value_max = &6, graph_value_avg = &7, graph_value_min = &8, graph_value_max_color = &9, graph_value_avg_color = &10, graph_value_min_color = &11, graph_line_type = &12, graph_rrddsname = &13, graph_color = &14, graph_trend = &15, graph_trend_value = &16, graph_timeshift = &17, graph_timeshift_value = &18, graph_operation = &19, graph_operation_operator = &20, graph_operation_value = &21, graph_devicename = &22 WHERE id = &23", TextBoxGraph_name.Text, Abs(CheckBoxGraph_max.Value), Abs(CheckBoxGraph_min.Value), Abs(CheckBoxGraph_last.Value), Abs(CheckBoxGraph_avg.Value), Abs(CheckBoxGraph_graphvalue_max.Value), Abs(CheckBoxGraph_graphvalue_avg.Value), Abs(CheckBoxGraph_graphvalue_min.Value), ColorButtonGraph_graphvalue_max_color.Value, ColorButtonGraph_graphvalue_avg_color.Value, ColorButtonGraph_graphvalue_min_color.Value, ComboBoxGraph_type.Text, ComboBoxGraph_ds.Text, ColorButtonGraph.Value, Abs(CheckBoxTrend.Value), SpinBoxTrend.Value, Abs(CheckBoxShift.Value), SpinBoxShift.Value, Abs(CheckBoxOperation.Value), ComboBoxOperation.Text, SpinBoxOperation.Value, ComboBoxGraph_device.Text, ComboBoxGraphList.Tag)
     ELSE IF TextBoxGraph_name.Text THEN
       TRY rGraph = Main.hDB.Exec("INSERT INTO graph_data (graph_id, graph_name, graph_max, graph_min, graph_last, graph_avg, graph_value_max, graph_value_avg, graph_value_min, graph_value_max_color, graph_value_avg_color, graph_value_min_color, graph_line_type, graph_rrddsname, graph_color, graph_trend, graph_trend_value, graph_timeshift, graph_timeshift_value, graph_operation, graph_operation_operator, graph_operation_value, graph_devicename, ds_id) values (&1,&2,&3,&4,&5,&6,&7,&8,&9,&10,&11,&12,&13,&14,&15,&16,&17,&18,&19,&20,&21,&22,&23,&24)", ComboBoxGraph_name.Tag, TextBoxGraph_name.Text, Abs(CheckBoxGraph_max.Value), Abs(CheckBoxGraph_min.Value), Abs(CheckBoxGraph_last.Value), Abs(CheckBoxGraph_avg.Value), Abs(CheckBoxGraph_graphvalue_max.Value), Abs(CheckBoxGraph_graphvalue_avg.Value), Abs(CheckBoxGraph_graphvalue_min.Value), ColorButtonGraph_graphvalue_max_color.Value, ColorButtonGraph_graphvalue_avg_color.Value, ColorButtonGraph_graphvalue_min_color.Value, ComboBoxGraph_type.Text, ComboBoxGraph_ds.Text, ColorButtonGraph.Value, Abs(CheckBoxTrend.Value), SpinBoxTrend.Value, Abs(CheckBoxShift.Value), SpinBoxShift.Value, Abs(CheckBoxOperation.Value), ComboBoxOperation.Text, SpinBoxOperation.Value, ComboBoxGraph_device.Text, ComboBoxGraphList.Text)
       Load_graph_data(ComboBoxGraph_name.Tag, ComboBoxGraphList.Text)
@@ -597,14 +389,21 @@ PUBLIC SUB SaveGraphData_Button_Click()
 
 END
 
+PUBLIC SUB ButtonGraphSave2_Click()
+
+  SaveGraphData_Button_Click()
+  ButtonGraphSave_Click()
+
+END
+
 PUBLIC SUB ButtonGraphSave_Click()
 
   DIM rGraph AS Result
 
   IF ComboBoxGraph_name.Tag THEN
-    TRY rGraph = Main.hDB.Exec("UPDATE graphs set name = &1, enabled = &2, comments = &3, graph_title = &4, graph_height = &5, graph_width = &6, color_background = &7, color_canvas = &8, color_shadea = &9, color_shadeb = &10, color_font = &11, color_grid = &12, color_majorgrid = &13, color_frame = &14, color_axis = &15, color_arrow = &16, unit = &17, logarithmic_scale = &18, date = &19, grid_type = &20 WHERE id = &21", ComboBoxGraph_name.Text, Abs(CheckBoxGraph_enabled.Value), TGraphComment.Text, Graph_title.Text, ComboBoxGraph_height.Text, ComboBoxGraph_width.Text, ColorButtonGraph_background.Value, ColorButtonGraph_canvas.Value, ColorButtonGraph_shadea.Value, ColorButtonGraph_shadeb.Value, ColorButtonGraph_font.Value, ColorButtonGraph_grid.Value, ColorButtonGraph_majorgrid.Value, ColorButtonGraph_frame.Value, ColorButtonGraph_axis.Value, ColorButtonGraph_arrow.Value, Graph_unit.Text, Abs(CheckBoxLogarithmicscale.Value), CheckBoxDate.Value, ComboBoxGraph_gridtype.Text, ComboBoxGraph_name.Tag)
+    TRY rGraph = Main.hDB.Exec("UPDATE graphs SET name = &1, enabled = &2, comments = &3, graph_title = &4, graph_height = &5, graph_width = &6, color_background = &7, color_canvas = &8, color_shadea = &9, color_shadeb = &10, color_font = &11, color_grid = &12, color_majorgrid = &13, color_frame = &14, color_axis = &15, color_arrow = &16, unit = &17, logarithmic_scale = &18, date = &19, grid_type = &20, groups = &21 WHERE id = &22", ComboBoxGraph_name.Text, Abs(CheckBoxGraph_enabled.Value), TGraphComment.Text, Graph_title.Text, ComboBoxGraph_height.Text, ComboBoxGraph_width.Text, ColorButtonGraph_background.Value, ColorButtonGraph_canvas.Value, ColorButtonGraph_shadea.Value, ColorButtonGraph_shadeb.Value, ColorButtonGraph_font.Value, ColorButtonGraph_grid.Value, ColorButtonGraph_majorgrid.Value, ColorButtonGraph_frame.Value, ColorButtonGraph_axis.Value, ColorButtonGraph_arrow.Value, Graph_unit.Text, Abs(CheckBoxLogarithmicscale.Value), CheckBoxDate.Value, ComboBoxGraph_gridtype.Text, GetGroups(), ComboBoxGraph_name.Tag)
   ELSE IF ComboBoxGraph_name.Text <> " " THEN
-    TRY rGraph = Main.hDB.Exec("INSERT INTO graphs (name, enabled, comments, graph_title, graph_height, graph_width, color_background, color_canvas, color_shadea, color_shadeb, color_font, color_grid, color_majorgrid, color_frame, color_axis, color_arrow, logarithmic_scale, date, unit, grid_type) values (&1,&2,&3,&4,&5,&6,&7,&8,&9,&10,&11,&12,&13,&14,&15,&16,&17,&18,&19,&20)", ComboBoxGraph_name.Text, Abs(CheckBoxGraph_enabled.Value), TGraphComment.Text, Graph_title.Text, ComboBoxGraph_height.Text, ComboBoxGraph_width.Text, ColorButtonGraph_background.Value, ColorButtonGraph_canvas.Value, ColorButtonGraph_shadea.Value, ColorButtonGraph_shadeb.Value, ColorButtonGraph_font.Value, ColorButtonGraph_grid.Value, ColorButtonGraph_majorgrid.Value, ColorButtonGraph_frame.Value, ColorButtonGraph_axis.Value, ColorButtonGraph_arrow.Value, Abs(CheckBoxLogarithmicscale.Value), Abs(CheckBoxDate.Value), Graph_unit.Text, ComboBoxGraph_gridtype.Text)
+    TRY rGraph = Main.hDB.Exec("INSERT INTO graphs (name, enabled, comments, graph_title, graph_height, graph_width, color_background, color_canvas, color_shadea, color_shadeb, color_font, color_grid, color_majorgrid, color_frame, color_axis, color_arrow, logarithmic_scale, date, unit, grid_type, groups) values (&1,&2,&3,&4,&5,&6,&7,&8,&9,&10,&11,&12,&13,&14,&15,&16,&17,&18,&19,&20,&21)", ComboBoxGraph_name.Text, Abs(CheckBoxGraph_enabled.Value), TGraphComment.Text, Graph_title.Text, ComboBoxGraph_height.Text, ComboBoxGraph_width.Text, ColorButtonGraph_background.Value, ColorButtonGraph_canvas.Value, ColorButtonGraph_shadea.Value, ColorButtonGraph_shadeb.Value, ColorButtonGraph_font.Value, ColorButtonGraph_grid.Value, ColorButtonGraph_majorgrid.Value, ColorButtonGraph_frame.Value, ColorButtonGraph_axis.Value, ColorButtonGraph_arrow.Value, Abs(CheckBoxLogarithmicscale.Value), Abs(CheckBoxDate.Value), Graph_unit.Text, ComboBoxGraph_gridtype.Text, GetGroups())
     Graph_list()
     ComboBoxGraph_name.Select(ComboBoxGraph_name.Count, 1)
     Load_graph(ComboBoxGraph_name.Text)
@@ -623,5 +422,76 @@ PUBLIC SUB ButtonGraphDelete_Click()
     Reset_graph_data()
     Graph_list()
   ENDIF
+
+END
+
+PUBLIC SUB PopulateGroups()
+
+  DIM rResultGroups AS Result
+
+  lvGroupAvail.Clear
+  ' fill available groups list
+  rResultGroups = Main.hDB.Exec("SELECT * FROM groups ORDER BY name")
+  IF rResultGroups THEN
+    IF rResultGroups.Count THEN
+      FOR EACH rResultGroups
+        lvGroupAvail.Add(rResultGroups!name, rResultGroups!name)
+      NEXT
+    ELSE
+      Message(("No groups found!"))
+    ENDIF
+  ELSE
+    Message(("No groups database table found!"))
+  ENDIF
+
+END
+
+PUBLIC SUB AssignGroups()
+
+  DIM rResultGroups AS Result
+
+  lvGroupActive.Clear
+  ' fill available groups list
+  rResultGroups = Main.hDB.Exec("SELECT * FROM groups")
+  IF (rResultGroups.Count >= 1) THEN
+    FOR EACH rResultGroups
+      IF InStr("|" & rGraph!groups & "|", "|" & rResultGroups!name & "|") THEN
+        lvGroupActive.Add(rResultGroups!name, rResultGroups!name)
+        lvGroupAvail.Remove(rResultGroups!name)
+      ENDIF
+    NEXT
+  ELSE
+    Message(("No groups found!"))
+  ENDIF
+
+END
+
+PUBLIC SUB lvGroupAvail_Click()
+
+  lvGroupActive.Add(lvGroupAvail.Item.Key, lvGroupAvail.Item.Key) 
+  lvGroupAvail.Remove(lvGroupAvail.Item.Key)
+
+END
+
+PUBLIC SUB lvGroupActive_Click()
+
+  lvGroupAvail.Add(lvGroupActive.Item.Key, lvGroupActive.Item.Key) 
+  lvGroupActive.Remove(lvGroupActive.Item.Key)
+
+END
+
+PUBLIC SUB GetGroups() AS String
+
+  DIM iCount AS Integer
+  DIM sGroups AS String = "|"
+
+  lvGroupActive.MoveFirst
+
+  FOR iCount = 1 TO lvGroupActive.Count
+    sGroups = sGroups & lvGroupActive.Item.Text & "|"
+    lvGroupActive.MoveNext
+  NEXT
+
+  RETURN sGroups
 
 END

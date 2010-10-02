@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-PUBLIC sProgramVersion AS String = "0.1.188"
+PUBLIC sProgramVersion AS String = "0.1.189"
 PUBLIC sBaseDir AS String
 PUBLIC sSettings AS String = "domotiga.conf"
 PUBLIC bMainDebug AS Boolean
@@ -142,6 +142,7 @@ PUBLIC MoonIsLeapYear AS Boolean
 ' Heyu
 PUBLIC bHeyuEnabled AS Boolean
 PUBLIC sHeyuCommand AS String
+PUBLIC bHeyuMonitor AS Boolean
 PUBLIC bHeyuDebug AS Boolean
 
 ' CTX35
@@ -360,6 +361,7 @@ PUBLIC bBwiredMapDebug AS Boolean
 PUBLIC bTwitterEnabled AS Boolean
 PUBLIC sTwitterUser AS String
 PUBLIC sTwitterPassword AS String
+PUBLIC bTwitterTimeStamp AS Boolean
 PUBLIC bTwitterDebug AS Boolean
 
 ' DSC Security
@@ -513,11 +515,26 @@ PUBLIC hDenon AS CDenon
 PUBLIC bIRTransEnabled AS Boolean
 PUBLIC sIRTransTCPHost AS String
 PUBLIC iIRTransTCPPort AS Integer
-PUBLIC sIRTransSerialPort AS String
-PUBLIC sIRTransBaudrate AS String
-PUBLIC sIRTransType AS String
 PUBLIC bIRTransDebug AS Boolean
 PUBLIC hIRTrans AS CIRTrans
+
+' Onkyo/Intergra
+PUBLIC bOnkyoEnabled AS Boolean
+PUBLIC sOnkyoTCPHost AS String
+PUBLIC iOnkyoTCPPort AS Integer
+PUBLIC sOnkyoSerialPort AS String
+PUBLIC sOnkyoBaudrate AS String
+PUBLIC sOnkyoType AS String
+PUBLIC bOnkyoDebug AS Boolean
+PUBLIC hOnkyo AS COnkyo
+
+' Anel PwrCtrl
+PUBLIC bPwrCtrlEnabled AS Boolean
+PUBLIC iPwrCtrlUDPRead AS Integer
+PUBLIC iPwrCtrlUDPSend AS Integer
+PUBLIC bPwrCtrlDebug AS Boolean
+PUBLIC sPwrCtrlUserPw AS String
+PUBLIC hPwrCtrl AS CPwrCtrl
 
 ' Images
 PUBLIC pLedOn AS Picture
@@ -825,9 +842,10 @@ PUBLIC SUB GetSettings()
   bAstroDST = rResult!dst
 
   ' Heyu
-  rResult = GetSettingTable("heyu")  
+  rResult = GetSettingTable("heyu")
   bHeyuEnabled = rResult!enabled
   sHeyuCommand = rResult!command
+  bHeyuMonitor = rResult!monitor
   bHeyuDebug = rResult!debug
 
   ' CTX35
@@ -1049,6 +1067,7 @@ PUBLIC SUB GetSettings()
   bTwitterEnabled = rResult!enabled
   sTwitterUser = rResult!username
   sTwitterPassword = rResult!password
+  bTwitterTimeStamp = rResult!sendtimestamp
   bTwitterDebug = rResult!debug
 
   ' DSC Security
@@ -1207,10 +1226,25 @@ PUBLIC SUB GetSettings()
   bIRTransEnabled = rResult!enabled
   sIRTransTCPHost = rResult!tcphost
   iIRTransTCPPort = rResult!tcpport
-  sIRTransType = rResult!type
-  sIRTransSerialPort = rResult!serialport
-  sIRTransBaudrate = rResult!baudrate
   bIRTransDebug = rResult!debug
+
+  ' Onkyo/Integra
+  rResult = GetSettingTable("onkyo")
+  bOnkyoEnabled = rResult!enabled
+  sOnkyoTCPHost = rResult!tcphost
+  iOnkyoTCPPort = rResult!tcpport
+  sOnkyoType = rResult!type
+  sOnkyoSerialPort = rResult!serialport
+  sOnkyoBaudrate = rResult!baudrate
+  bOnkyoDebug = rResult!debug
+
+  ' Anel PWrCtrl
+  rResult = GetSettingTable("pwrctrl")
+  bPwrCtrlEnabled = rResult!enabled
+  iPwrCtrlUDPRead = rResult!udpread
+  iPwrCtrlUDPSend = rResult!udpsend
+  sPwrCtrlUserPw = rResult!userpw
+  bPwrCtrlDebug = rResult!debug
 
 CATCH
   Message.Error(("Error: " & Error.Text & " " & Error.Code & " while loading settings at ") & Error.Where & ("!\nIs your database version correct?"))
@@ -1403,6 +1437,8 @@ PUBLIC SUB CloseAll()
   StopTimers()
   ' save all globalvars in db
   SaveGlobalVars()
+  ' stop Heyu monitor
+  TRY Heyu.Monitor_Stop
   ' squeezeserver close
   TRY hSqueezeServer.Disconnect
   ' UDP broadcast server close
@@ -1444,6 +1480,8 @@ PUBLIC SUB CloseAll()
   TRY hDSC.Disconnect
   ' denon close
   TRY hDenon.Disconnect
+  ' onkyo close
+  TRY hOnkyo.Disconnect
   ' irtrans close
   TRY hIRTrans.Disconnect
   ' eib close
@@ -1463,6 +1501,8 @@ PUBLIC SUB CloseAll()
   TRY hEZcontrol.Disconnect()
   ' current cost close
   TRY hCurrentCost.Disconnect()
+  ' pwrctrl cloese
+  TRY hPwrCtrl.Disconnect()
   ' webserver close
   TRY hWebserver.Disconnect
   ' db close
@@ -1536,6 +1576,8 @@ PUBLIC SUB Setup()
   Setup_CurrentCost() ' Current Cost support
   Setup_Denon() ' Denon support
   Setup_IRTrans() ' IRTrans support
+  Setup_Onkyo() ' Onkyo/Integra support
+  Setup_PwrCtrl() ' Anel PwrCtrl support
   IF bStandalone THEN WriteLog(("Done with setup ..."))
 
 END
@@ -1816,6 +1858,12 @@ PRIVATE SUB Setup_Heyu()
       IF ProgramExist(sHeyuCommand) THEN
         EXEC [sHeyuCommand, "version"] TO sTemp
         WriteLog(("Found executable Heyu ") & sTemp)
+        IF bHeyuMonitor THEN
+          WriteLog((" Heyu X10 Monitor enabled."))
+          Heyu.Monitor
+        ELSE
+          WriteLog((" Heyu X10 Monitor disabled."))
+        ENDIF
       ELSE
         WriteLog(("ERROR: Heyu command '") & sHeyuCommand & ("' not found, did you install it?"))
         bHeyuEnabled = FALSE
@@ -1823,6 +1871,7 @@ PRIVATE SUB Setup_Heyu()
       END IF
     END IF
   ELSE
+    TRY Heyu.Monitor_Stop
     WriteLog(("Heyu X10 support disabled."))
   END IF
 
@@ -1834,6 +1883,7 @@ END
 PUBLIC SUB Restart_Heyu()
 
   ' not much todo now
+  TRY Heyu.Monitor_Stop
   Setup_Heyu()
 
 END
@@ -3441,7 +3491,7 @@ PUBLIC SUB Restart_Denon()
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' connect with irtrans receiver tcp host:port or serial port
+' connect with irtrans receiver tcp host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PRIVATE SUB Setup_IRTrans()
 
@@ -3454,27 +3504,14 @@ PRIVATE SUB Setup_IRTrans()
       WITH hIRTrans
         .TCPHost = sIRTransTCPHost
         .TCPPort = iIRTransTCPPort
-        .Interface = sIRTransType
-        .Baud = sIRTransBaudrate
-        .SerPort = sIRTransSerialPort
         .IRTransDebug = bIRTransDebug
       END WITH
-      IF InStr(sIRTransType, "tcp") THEN
-        ' connect to the irtrans host:port
-        IF hIRTrans.ConnectTCP() THEN
-          WriteLog(("IRTrans TCP interface connecting to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
-        ELSE
-          WriteLog(("ERROR: IRTrans TCP interface FAILED to connect to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
-          hIRTrans = NULL
-        END IF
+      ' connect to the irtrans host:port
+      IF hIRTrans.Connect() THEN
+        WriteLog(("IRTrans TCP interface connecting to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
       ELSE
-        ' connect to the irtrans serial interface
-        IF hIRTrans.ConnectSerial() THEN
-          WriteLog(("IRTrans serial interface connected to Port ") & sIRTransSerialPort)
-        ELSE
-          WriteLog(("ERROR: IRTrans serial interface FAILED to connect to Port ") & sIRTransSerialPort)
-          hIRTrans = NULL
-        END IF
+        WriteLog(("ERROR: IRTrans TCP interface FAILED to connect to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
+        hIRTrans = NULL
       END IF
     END IF
   ELSE
@@ -3493,6 +3530,107 @@ PUBLIC SUB Restart_IRTrans()
     hIRTrans = NULL
   END IF
   Setup_IRTrans()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with onkyo receiver tcp host:port or serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_Onkyo()
+
+  IF bOnkyoEnabled THEN
+    WriteLog(("Onkyo/Integra receiver support enabled."))
+    IF bStandalone THEN
+      ' create a new Onkyo class instance
+      hOnkyo = NEW COnkyo
+      ' set the properties
+      WITH hOnkyo
+        .TCPHost = sOnkyoTCPHost
+        .TCPPort = iOnkyoTCPPort
+        .Interface = sOnkyoType
+        .Baud = sOnkyoBaudrate
+        .SerPort = sOnkyoSerialPort
+        .OnkyoDebug = bOnkyoDebug
+      END WITH
+      IF InStr(sOnkyoType, "tcp") THEN
+        ' connect to the onkyo host:port
+        IF hOnkyo.ConnectTCP() THEN
+          WriteLog(("Onkyo/Integra receiver TCP interface connecting to ") & sOnkyoTCPHost & ":" & iOnkyoTCPPort)
+        ELSE
+          WriteLog(("ERROR: Onkyo/Integra receiver TCP interface FAILED to connect to ") & sOnkyoTCPHost & ":" & iOnkyoTCPPort)
+          hOnkyo = NULL
+        END IF
+      ELSE
+        ' connect to the onkyo serial interface
+        IF hOnkyo.ConnectSerial() THEN
+          WriteLog(("Onkyo/Integra receiver serial interface connected to Port ") & sOnkyoSerialPort)
+        ELSE
+          WriteLog(("ERROR: Onkyo/integra receiver serial interface FAILED to connect to Port ") & sOnkyoSerialPort)
+          hOnkyo = NULL
+        END IF
+      END IF
+    END IF
+  ELSE
+    WriteLog(("Onkyo/Integra receiver support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart onkyo after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_Onkyo()
+
+  IF hOnkyo THEN
+    hOnkyo.Disconnect
+    hOnkyo = NULL
+  END IF
+  Setup_Onkyo()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with pwrctrl interface via udpsocket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_PwrCtrl()
+
+  IF bPwrCtrlEnabled THEN
+    WriteLog(("PwrCtrl support enabled."))
+    IF bStandalone THEN
+      ' create a new PwrCtrl class instance
+      hPwrCtrl = NEW CPwrCtrl
+      ' set the properties
+      WITH hPwrCtrl
+        .UDPPortRead = iPwrCtrlUDPRead
+        .UDPPortSend = iPwrCtrlUDPSend
+        .PwrCtrlDebug = bPwrCtrlDebug
+        .PwrCtrlUserPw = sPwrCtrlUserPw
+      END WITH
+      ' connect to interface host:port
+      IF hPwrCtrl.Connect() THEN
+        WriteLog(("PwrCtrl listening on UDP port ") & iPwrCtrlUDPRead)
+        ' get state for all devices
+        hPwrCtrl.GetAllState()
+      ELSE
+        WriteLog(("ERROR: PwrCtrl UDP interface FAILED to setup to listen for Port ") & iPwrCtrlUDPRead)
+      END IF
+    END IF
+  ELSE
+    WriteLog(("PwrCtrl support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart PwrCtrl after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_PwrCtrl()
+
+  IF hPwrCtrl THEN
+    hPwrCtrl.Disconnect
+    hPwrCtrl = NULL
+  END IF
+  Setup_PwrCtrl()
 
 END
 
@@ -3978,7 +4116,7 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB SetGlobalVar(sVar AS String, vValue AS Variant)
 
-  IF Events.CheckCondition(Main.GlobalVar[sVar], "<>", vValue) THEN Events.CheckGlobalVarEvents(sVar, vValue)
+  IF Events.CheckCondition(Main.GlobalVar[sVar], "<>", vValue, TRUE) THEN Events.CheckGlobalVarEvents(sVar, vValue)
   Main.GlobalVar[sVar] = vValue
 
 END
@@ -4269,9 +4407,8 @@ PUBLIC SUB DisplayGraphs(iMode AS Integer, sGroup AS String, oPanel AS Object, O
 
   DIM pGraph AS Picture
   DIM sGraphs AS String[]
-  DIM sList, sGraph AS String
+  DIM sList, sGraph, sType, sName AS String
   DIM hPictureBox AS PictureBox
-  DIM sType, sName AS String
   DIM oObject AS Object
   DIM rDevices AS Result
   DIM iHeight AS Integer
@@ -4288,65 +4425,61 @@ PUBLIC SUB DisplayGraphs(iMode AS Integer, sGroup AS String, oPanel AS Object, O
     DisplaySensors(sGroup, oPanel, sGroup)
   END IF
 
-  sList = RRDTool.Graphs(sGroup)
-  sGraphs = Split(sList, "|")
-  IF sGraphs.Count THEN
+  IF Main.bRRDToolEnabled THEN
+    sList = RRDTool.Graphs(sGroup)
+    sGraphs = Split(sList, "|")
+    IF sGraphs.Count THEN
+      SELECT CASE iMode
+        CASE 0
+          sType = "1h"
+          sName = ("Hour")
+        CASE 1
+          sType = "1d"
+          sName = ("Day")
+        CASE 2
+          sType = "1w"
+          sName = ("Week")
+        CASE 3
+          sType = "1m"
+          sName = ("Month")
+        CASE 4
+          sType = "1y"
+          sName = ("Year")
+      END SELECT
 
-    SELECT CASE iMode
-      CASE 0
-        sType = "1h"
-        sName = ("Hour")
-      CASE 1
-        sType = "1d"
-        sName = ("Day")
-      CASE 2
-        sType = "1w"
-        sName = ("Week")
-      CASE 3
-        sType = "1m"
-        sName = ("Month")
-      CASE 4
-        sType = "1y"
-        sName = ("Year")
-    END SELECT
-
-    DisplayHeader(sGroup & (" Statistics - Last") & " " & sName, oPanel)
-
-    IF Main.bRRDToolEnabled THEN RRDTool.CreateGraphs(sGroup, sType)
-
-    FOR EACH sGraph IN sGraphs
-      IF sGraph THEN
-        sGraph &= "-" & sType & ".png"
-        TRY pGraph = Picture.Load(sGraph)
-        IF pGraph THEN
-          hPictureBox = NEW PictureBox(oPanel) AS "Graph"
-          WITH hPictureBox
-            .Picture = pGraph
-            .Height = 200
-            .Width = 528
-            .Tag = sGraph
-          END WITH
-        END IF
-      END IF
-    NEXT
-    iHeight = 0
-    ' calculated needed scrollview height
-    FOR EACH oObject IN oPanel.Children
-      iHeight += oObject.Height
-    NEXT
-    oPanel.Height = iHeight
-  END IF
+      DisplayHeader(sGroup & (" Statistics - Last") & " " & sName, oPanel)
+      RRDTool.CreateGraphs(sGroup, sType)
+      RRDTool.CreateExtGraphs(sGroup, sType)
+      FOR EACH sGraph IN sGraphs
+        IF sGraph THEN
+          sGraph &= "-" & sType & ".png"
+          TRY pGraph = Picture.Load(sGraph)
+          IF pGraph THEN
+            hPictureBox = NEW PictureBox(oPanel) AS "Graph"
+            WITH hPictureBox
+              .Picture = pGraph
+              .Height = pGraph.Height + 5
+              .Width = pGraph.Width + 5
+              .Border = 0
+              .Tag = sGraph
+            END WITH
+          ENDIF
+        ENDIF
+      NEXT
+      iHeight = 0
+      ' calculated needed scrollview height
+      FOR EACH oObject IN oPanel.Children
+        iHeight += oObject.Height + 10
+      NEXT
+      oPanel.Height = iHeight
+    ENDIF
+  ENDIF
 
 END
 
 PUBLIC SUB DisplaySecurity(sGroup AS String, oPanel AS Object)
 
-  DIM pGraph AS Picture
-  DIM sGraphs AS String[]
-  DIM sList, sGraph, sType AS String
-  DIM hPictureBox AS PictureBox
   DIM oObject AS Object
-  DIM rDevices AS Result
 
   ' delete previous graphs first
   FOR EACH oObject IN oPanel.Children
@@ -4927,13 +5060,13 @@ PUBLIC SUB Broadcast_Error()
 
   SELECT CASE hBroadcast.Status
     CASE Net.CannotBindSocket
-      Main.WriteDebugLog(("[WOL] Unable to Bind to that port"))
+      Main.WriteDebugLog(("[WOL] Unable to bind to that port."))
     CASE Net.CannotCreateSocket
-      Main.WriteDebugLog(("[WOL] System does not allow to create a socket"))
+      Main.WriteDebugLog(("[WOL] The system does not allow to create a socket."))
     CASE Net.CannotRead
-      Main.WriteDebugLog(("[WOL] Error Sending Data"))
+      Main.WriteDebugLog(("[WOL] Error receiving data."))
     CASE Net.CannotWrite
-      Main.WriteDebugLog(("[WOL] Error Receiving Data"))
+      Main.WriteDebugLog(("[WOL] Error sending data."))
   END SELECT
 
 END
@@ -5087,13 +5220,13 @@ PUBLIC SUB BroadcastUDP_Error()
 
   SELECT CASE hBroadcastEvent.Status
     CASE Net.CannotBindSocket
-      Main.WriteDebugLog(("[BroadcastUDP] Unable to Bind to that port"))
+      Main.WriteDebugLog(("[BroadcastUDP] Unable to bind to that port."))
     CASE Net.CannotCreateSocket
-      Main.WriteDebugLog(("[BroadcastUDP] System does not allow to create a socket"))
+      Main.WriteDebugLog(("[BroadcastUDP] The system does not allow to create a socket."))
     CASE Net.CannotRead
-      Main.WriteDebugLog(("[BroadcastUDP] Error Sending Data"))
+      Main.WriteDebugLog(("[BroadcastUDP] Error receiving data."))
     CASE Net.CannotWrite
-      Main.WriteDebugLog(("[BroadcastUDP] Error Receiving Data"))
+      Main.WriteDebugLog(("[BroadcastUDP] Error sending data."))
   END SELECT
 
 END
