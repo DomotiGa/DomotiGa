@@ -19,6 +19,12 @@
 ' device change      |   3  | id       | fieldno | operand | value
 ' ir remote received |   4  | remote   | button  | repeat
 
+' condition database table
+' description        | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
+' time now           |   1  | hour     | minute
+' globalvar value    |   2  | variable | operand | value
+' device value       |   3  | id       | fieldno | operand | value
+
 ' called every new minute from EventLoop.Run()
 PUBLIC SUB CheckTimeNowEvents()
 
@@ -282,7 +288,7 @@ END
 ' description       | rResultAction!type | rResultAction!param1      | rResultAction!param2 | rResultAction!param3 | rResultAction!param4 | rResultAction!param5
 ' set device value  | 1                  | deviceid                  | value fieldname      | value
 ' set globalvar     | 2                  | globalvar name            | value
-' send e-mail       | 3                  | to address                | subject              | subject
+' send e-mail       | 3                  | to address                | subject              | body
 ' speak text        | 4                  | voice or 'female', 'male' | text
 ' execute command   | 5                  | shell command to run
 ' send tweet        | 6                  | tweet message to send
@@ -290,6 +296,7 @@ END
 ' send IRTrans IR   | 8                  | command string
 ' play sound        | 9                  | sound file                | volume
 ' write log entry   | 10                 | log text
+' display led msg   | 11                 | message to display        | display id           | color                | speed
 
 PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
 
@@ -306,13 +313,13 @@ PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
           sDeviceName = Devices.FindNameForDevice(rResultAction!param1)
           IF Len(sDeviceName) THEN
             IF Comp(rResultAction!param2, "Value1") = 0 THEN
-              Devices.SetDevice(sDeviceName, rResultAction!param3)
+              Devices.SetDevice(sDeviceName, ParseText(rResultAction!param3))
             ELSE IF Comp(rResultAction!param2, "Value2") = 0 THEN
-              Devices.ValueUpdate(rResultAction!param1, "", rResultAction!param3, "", "")
+              Devices.ValueUpdate(rResultAction!param1, "", ParseText(rResultAction!param3), "", "")
             ELSE IF Comp(rResultAction!param2, "Value3") = 0 THEN
-              Devices.ValueUpdate(rResultAction!param1, "", "", rResultAction!param3, "")
+              Devices.ValueUpdate(rResultAction!param1, "", "", ParseText(rResultAction!param3), "")
             ELSE IF Comp(rResultAction!param2, "Value4") = 0 THEN
-              Devices.ValueUpdate(rResultAction!param1, "", "", "", rResultAction!param3)
+              Devices.ValueUpdate(rResultAction!param1, "", "", "", ParseText(rResultAction!param3))
             ENDIF
             bOk = TRUE
           ELSE
@@ -323,7 +330,7 @@ PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
       CASE 2 ' set globalvar value
         ' if globalvar doesn't exist it will be created
         IF rResultAction!param1 AND IF rResultAction!param2 THEN
-          TRY Main.GlobalVar[rResultAction!param1] = rResultAction!param2
+          TRY Main.GlobalVar[rResultAction!param1] = ParseText(rResultAction!param2)
           IF ERROR THEN
             bOk = FALSE
           ELSE
@@ -332,7 +339,7 @@ PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
         ENDIF
       CASE 3 ' send e-mail
         IF Main.bEmailEnabled THEN
-          TRY Mail.SendMail(rResultAction!param2, rResultAction!param3, rResultAction!param1)
+          TRY Mail.SendMail(ParseText(rResultAction!param2), ParseText(rResultAction!param3), rResultAction!param1)
           IF ERROR THEN
             bOk = FALSE
           ELSE
@@ -343,7 +350,7 @@ PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
         ENDIF
       CASE 4 ' speak text
         IF Main.bVoiceTextEnabled THEN
-          TRY VoiceText.Speak(rResultAction!param2, rResultAction!param1)
+          TRY VoiceText.Speak(ParseText(rResultAction!param2), rResultAction!param1)
           IF ERROR THEN
             bOk = FALSE
           ELSE
@@ -361,7 +368,7 @@ PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
         ENDIF
       CASE 6 ' send tweet
         IF Main.bTwitterEnabled THEN
-          TRY Twitter.PostTweet(rResultAction!param1)
+          TRY Twitter.PostTweet(ParseText(rResultAction!param1))
           IF ERROR THEN
             bOk = FALSE
           ELSE
@@ -372,7 +379,7 @@ PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
         ENDIF
       CASE 7 ' send SMS message
         IF Main.bSMSEnabled THEN
-          TRY Main.hSMS.SendSMS(rResultAction!param2, rResultAction!param1)
+          TRY Main.hSMS.SendSMS(ParseText(rResultAction!param2), rResultAction!param1)
           IF ERROR THEN
             bOk = FALSE
           ELSE
@@ -404,7 +411,23 @@ PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
           IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3b. Sound support is disabled!"))
         ENDIF
       CASE 10 ' write log entry
-        Main.WriteLog(rResultAction!param1)
+        TRY Main.WriteLog(ParseText(rResultAction!param1))
+        IF ERROR THEN
+          bOk = FALSE
+        ELSE
+          bOk = TRUE
+        ENDIF
+      CASE 11 ' display message on led matrix display
+        IF Main.bLEDMatrixEnabled THEN
+          TRY Main.hLEDMatrix.DisplayMessage(rResultAction!param2, ParseText(rResultAction!param1), rResultAction!param3, rResultAction!param4)
+          IF ERROR THEN
+            bOk = FALSE
+          ELSE
+            bOk = TRUE
+          ENDIF
+        ELSE
+          IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3b. LED Matrix support is disabled!"))
+        ENDIF
       CASE ELSE
         bOk = FALSE
     END SELECT
@@ -434,5 +457,71 @@ PRIVATE SUB UpdateEvent(iId AS Integer)
     ENDIF
     rResult = Main.hDB.Exec("UPDATE events SET lastrun = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), iId)
   ENDIF
+
+END
+
+' replace <%global var%> and <#device values|1#> fields in text
+PRIVATE SUB ParseText(sText AS String) AS String
+
+  DIM iPos1, iPos2, iPos3 AS Integer
+  DIM sTag, sResult AS String
+
+  IF InStr(stext, "<") AND IF InStr(stext, ">") THEN
+    iPos1 = InStr(sText, "<")
+    DO WHILE iPos1 > 0
+      iPos2 = InStr(sText, ">", iPos1 + 1)
+      IF iPos2 > 0 THEN ' tags found
+        sTag = Mid(sText, iPos1 + 1, iPos2 - iPos1 - 1)
+        IF Left(sTag, 1) = "%" AND IF Right(sTag, 1) = "%" THEN ' globalvar tag
+          sText = Replace(sText, "<" & sTag & ">", InsertGlobalVar(sTag))
+        ENDIF
+        IF Left(sTag, 1) = "#" AND IF Right(sTag, 1) = "#" THEN ' deviceval tag
+          sText = Replace(SText, "<" & sTag & ">", InsertDeviceValue(sTag))
+        ENDIF
+      ENDIF
+      iPos3 = InStr(sText, "<")
+      IF iPos3 <= iPos1 THEN
+        BREAK
+      ELSE
+        iPos1 = iPos3
+      ENDIF
+    LOOP
+  ENDIF
+  RETURN sText
+
+END
+
+' return value of %global var%
+PRIVATE SUB InsertGlobalVar(sTag AS String) AS String
+
+  TRY RETURN Main.GlobalVar[Mid(sTag, 2, Len(sTag) - 2)]
+  IF ERROR THEN RETURN ("ERROR!")
+
+END
+
+' return value of <#device name|field#>
+PRIVATE SUB InsertDeviceValue(sTag AS String) AS String
+
+  DIM aScan AS String[]
+  DIM sValue AS String
+
+  IF InStr(sTag, "|") THEN
+    aScan = Scan(sTag, "#*|*#")
+    IF aScan.Count = 2 THEN
+      SELECT CASE aScan[1]
+        CASE "1", "2", "3", "4"
+          sValue = Devices.GetValueForDevice(aScan[0], aScan[1])
+        CASE ELSE
+          sValue = Devices.GetValueForDevice(aScan[0])
+      END SELECT
+    ENDIF
+  ELSE
+    sValue = Devices.GetValueForDevice(Mid(sTag, 2, Len(sTag) - 2))
+  ENDIF
+  RETURN sValue
+
+CATCH
+  ' RETURN ERROR.Text & " at " & Error.Where
+  RETURN ("ERROR!")
 
 END
