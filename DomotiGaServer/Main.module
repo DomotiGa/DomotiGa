@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-PUBLIC sProgramVersion AS String = "0.1.189"
+PUBLIC sProgramVersion AS String = "0.1.190"
 PUBLIC sBaseDir AS String
 PUBLIC sSettings AS String = "server-domotiga.conf"
 PUBLIC bMainDebug AS Boolean
@@ -34,7 +34,7 @@ PUBLIC sLanguage AS String
 PUBLIC bAllowAutoUpgrade AS Boolean
 
 ' Client/Server
-PUBLIC bStandalone AS Boolean = FALSE
+PUBLIC bServer AS Boolean = TRUE
 PUBLIC hBroadcastEvent AS UdpSocket
 PUBLIC aBroadcastAddrs AS NEW String[]
 
@@ -525,6 +525,43 @@ PUBLIC bPwrCtrlDebug AS Boolean
 PUBLIC sPwrCtrlUserPw AS String
 PUBLIC hPwrCtrl AS CPwrCtrl
 
+' SharpTV
+PUBLIC bSharpTVEnabled AS Boolean
+PUBLIC sSharpTVTCPHost AS String
+PUBLIC iSharpTVTCPPort AS Integer
+PUBLIC sSharpTVSerialPort AS String
+PUBLIC sSharpTVBaudrate AS String
+PUBLIC sSharpTVType AS String
+PUBLIC bSharpTVDebug AS Boolean
+PUBLIC hSharpTV AS CSharpTV
+
+' iViewer
+PUBLIC bIViewerEnabled AS Boolean
+PUBLIC iIViewerTCPPort AS Integer
+PUBLIC bIViewerDebug AS Boolean
+PUBLIC sIViewerPassword AS String
+PUBLIC hIViewer AS CIViewer
+
+' LGTV
+PUBLIC bLGTVEnabled AS Boolean
+PUBLIC sLGTVTCPHost AS String
+PUBLIC iLGTVTCPPort AS Integer
+PUBLIC sLGTVSerialPort AS String
+PUBLIC sLGTVBaudrate AS String
+PUBLIC sLGTVType AS String
+PUBLIC bLGTVDebug AS Boolean
+PUBLIC hLGTV AS CLGTV
+
+' iPort
+PUBLIC bIPortEnabled AS Boolean
+PUBLIC sIPortTCPHost AS String
+PUBLIC iIPortTCPPort AS Integer
+PUBLIC sIPortSerialPort AS String
+PUBLIC sIPortBaudrate AS String
+PUBLIC sIPortType AS String
+PUBLIC bIPortDebug AS Boolean
+PUBLIC hIPort AS CIPort
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' this is where domotiga starts
 ' determine basedir, set language and run application
@@ -537,7 +574,7 @@ PUBLIC FUNCTION Main() AS Boolean
   ELSE IF Exist(Mid$(Application.Path &/ "logs", 1, RInStr(Application.Path, "/")))
     sBaseDir = Mid$(Application.Path, 1, RInStr(Application.Path, "/"))
   ELSE
-    Main.WriteLog(("Error: Couldn't determine DomotiGa's basedir."))
+    Main.WriteLog(("Error: Couldn't determine DomotiGaServer's base directory."))
     QUIT
   END IF
 
@@ -1216,6 +1253,43 @@ PUBLIC SUB GetSettings()
   sPwrCtrlUserPw = rResult!userpw
   bPwrCtrlDebug = rResult!debug
 
+  ' SharpTV
+  rResult = GetSettingTable("sharptv")
+  bSharpTVEnabled = rResult!enabled
+  sSharpTVTCPHost = rResult!tcphost
+  iSharpTVTCPPort = rResult!tcpport
+  sSharpTVType = rResult!type
+  sSharpTVSerialPort = rResult!serialport
+  sSharpTVBaudrate = rResult!baudrate
+  bSharpTVDebug = rResult!debug
+
+  ' iViewer
+  rResult = GetSettingTable("iviewer")
+  bIViewerEnabled = rResult!enabled
+  iIViewerTCPPort = rResult!tcpport
+  sIViewerPassword = rResult!password
+  bIViewerDebug = rResult!debug
+
+  ' iPort
+  rResult = GetSettingTable("iport")
+  bIPortEnabled = rResult!enabled
+  sIPortTCPHost = rResult!tcphost
+  iIPortTCPPort = rResult!tcpport
+  sIPortType = rResult!type
+  sIPortSerialPort = rResult!serialport
+  sIPortBaudrate = rResult!baudrate
+  bIPortDebug = rResult!debug
+
+  ' LGTV
+  rResult = GetSettingTable("lgtv")
+  bLGTVEnabled = rResult!enabled
+  sLGTVTCPHost = rResult!tcphost
+  iLGTVTCPPort = rResult!tcpport
+  sLGTVType = rResult!type
+  sLGTVSerialPort = rResult!serialport
+  sLGTVBaudrate = rResult!baudrate
+  bLGTVDebug = rResult!debug
+
 CATCH
   Main.WriteLog(("Error: " & Error.Text & " " & Error.Code & " while loading settings! Is your database version correct?"))
   CloseAll()
@@ -1353,8 +1427,14 @@ PUBLIC SUB CloseAll()
   SaveGlobalVars()
   ' stop Heyu monitor
   TRY Heyu.Monitor_Stop
+  ' iviewer close
+  TRY hIViewer.Disconnect
   ' squeezeserver close
   TRY hSqueezeServer.Disconnect
+  ' UDP broadcast server close
+  TRY hBroadcastEvent.Close
+  ' pachube
+  TRY Pachube.hPost.Close
   ' plcbus close
   TRY hPLCBUS.Disconnect
   ' ctx35 close
@@ -1413,6 +1493,12 @@ PUBLIC SUB CloseAll()
   TRY hCurrentCost.Disconnect()
   ' pwrctrl cloese
   TRY hPwrCtrl.Disconnect()
+  ' sharptv close
+  TRY hSharpTV.Disconnect
+  ' lgtv close
+  TRY hLGTV.Disconnect
+  ' iport close
+  TRY hIPort.Disconnect
   ' webserver close
   TRY hWebserver.Disconnect
   ' db close
@@ -1481,6 +1567,10 @@ PUBLIC SUB Setup()
   Setup_IRTrans() ' IRTrans support
   Setup_Onkyo() ' Onkyo/Integra support
   Setup_PwrCtrl() ' Anel PwrCtrl support
+  Setup_SharpTV() ' Sharp TV support
+  Setup_iViewer() ' iViewer support
+  Setup_iPort() ' iPort dock support
+  Setup_LGTV() ' LG TV support
   WriteLog(("Done with setup ..."))
 
 END
@@ -1546,23 +1636,21 @@ PRIVATE SUB Setup_Webserver()
 
   IF bWebserverEnabled THEN
     IF bWebserverDebug THEN WriteLog(("Webserver enabled."))
-
+    IF bServer THEN
       ' create a new WebServer class instance
       hWebserver = NEW CWebServer
 
-    ' create a new WebServer class instance
-    hWebserver = NEW CWebServer
+      ' set the properties
+      hWebserver.DocRoot = sWebserverDocRoot
+      hWebserver.HTTPPort = iWebserverHTTPPort
+      hWebserver.WebServerDebug = bWebserverDebug
 
-    ' set the properties
-    hWebserver.DocRoot = sWebserverDocRoot
-    hWebserver.HTTPPort = iWebserverHTTPPort
-    hWebserver.WebServerDebug = bWebserverDebug
-
-    ' start webserver
-    IF hWebserver.Connect() THEN
-      WriteLog(("Webserver active on Port ") & iWebserverHTTPPort, bMainDebug)
-    ELSE
-      WriteLog(("ERROR: Webserver FAILED to start on Port ") & iWebserverHTTPPort)
+      ' start webserver
+      IF hWebserver.Connect() THEN
+        WriteLog(("Webserver active on Port ") & iWebserverHTTPPort, bMainDebug)
+      ELSE
+        WriteLog(("ERROR: Webserver FAILED to start on Port ") & iWebserverHTTPPort)
+      END IF
     END IF
   ELSE
     WriteLog(("Webserver disabled."))
@@ -1590,25 +1678,26 @@ PRIVATE SUB Setup_XMLRPC()
 
   IF bXMLRPCEnabled THEN
     IF bXMLRPCDebug THEN WriteLog(("XML-RPC server enabled."))
+    IF bServer THEN
+      ' create a new xmlrpc class instance
+      hXMLRPC = NEW CXMLRPC
 
-    ' create a new xmlrpc class instance
-    hXMLRPC = NEW CXMLRPC
+      ' set the properties
+      hXMLRPC.MaxConn = iXMLRPCMaxconn
+      hXMLRPC.HTTPPort = iXMLRPCHTTPPort
+      hXMLRPC.XMLRPCDebug = bXMLRPCDebug
 
-    ' set the properties
-    hXMLRPC.MaxConn = iXMLRPCMaxconn
-    hXMLRPC.HTTPPort = iXMLRPCHTTPPort
-    hXMLRPC.XMLRPCDebug = bXMLRPCDebug
-
-    ' start xmlrpc server
-    IF hXMLRPC.Connect() THEN
-      WriteLog(("XML-RPC server listening on Port ") & iXMLRPCHTTPPort, bMainDebug)
-    ELSE
-      WriteLog(("ERROR: XML-RPC server FAILED to start on Port ") & iXMLRPCHTTPPort)
-    END IF
-    IF bBroadcastUDPEnabled THEN
-      WriteLog(("UDP Broadcasts are enabled on Port ") & Str(iXMLRPCHTTPPort + 10000))
-    ELSE
-      WriteLog(("UDP Broadcasts are disabled."))
+      ' start xmlrpc server
+      IF hXMLRPC.Connect() THEN
+        WriteLog(("XML-RPC server listening on Port ") & iXMLRPCHTTPPort, bMainDebug)
+      ELSE
+        WriteLog(("ERROR: XML-RPC server FAILED to start on Port ") & iXMLRPCHTTPPort)
+      END IF
+      IF bBroadcastUDPEnabled THEN
+        WriteLog(("UDP Broadcasts are enabled on Port ") & Str(iXMLRPCHTTPPort + 10000))
+      ELSE
+        WriteLog(("UDP Broadcasts are disabled."))
+      END IF
     END IF
   ELSE
     WriteLog(("XML-RPC server disabled."))
@@ -1659,7 +1748,7 @@ PRIVATE SUB Setup_Gmail()
 
   IF bGmailEnabled THEN
     WriteLog(("Gmail RSS feed support enabled."), bMainDebug)
-    Mail.GmailRun()
+    IF bServer THEN Mail.GmailRun()
   ELSE
     WriteLog(("Gmail RSS feed support disabled."))
   ENDIF
@@ -1706,11 +1795,11 @@ END
 PRIVATE SUB Setup_BwiredMap()
 
   IF bBwiredMapEnabled THEN
-    WriteLog(("Bwired XML upload enabled."))
-    ' start timer
-    Bwired.Run()
+    WriteLog(("Bwired XML upload support enabled."))
+    IF bServer THEN Bwired.Run()
   ELSE
-    WriteLog(("Bwired XML upload disabled."))
+    TRY Bwired.tBwired.Stop
+    WriteLog(("Bwired XML upload support disabled."))
   END IF
 
 END
@@ -1757,16 +1846,25 @@ PRIVATE SUB Setup_Heyu()
   DIM sTemp AS String
 
   IF bHeyuEnabled THEN
-    WriteLog(("Heyu X10 interface enabled."))
-    IF ProgramExist(sHeyuCommand) THEN
-      EXEC [sHeyuCommand, "version"] TO sTemp
-      WriteLog(("Found executable Heyu ") & sTemp)
-    ELSE
-      WriteLog(("ERROR: Heyu command '") & sHeyuCommand & ("' not found, did you install it?"))
-      bHeyuEnabled = FALSE
-      WriteLog(("Heyu X10 interface disabled."))
+    WriteLog(("Heyu X10 support enabled."))
+    IF bServer THEN
+      IF ProgramExist(sHeyuCommand) THEN
+        EXEC [sHeyuCommand, "version"] TO sTemp
+        WriteLog(("Found executable Heyu ") & sTemp)
+        IF bHeyuMonitor THEN
+          WriteLog(("Heyu X10 Monitor enabled."))
+          Heyu.Monitor
+        ELSE
+          WriteLog(("Heyu X10 Monitor disabled."))
+        ENDIF
+      ELSE
+        WriteLog(("ERROR: Heyu command '") & sHeyuCommand & ("' not found, did you install it?"))
+        bHeyuEnabled = FALSE
+        WriteLog(("Heyu X10 interface disabled."))
+      END IF
     END IF
   ELSE
+    TRY Heyu.Monitor_Stop
     WriteLog(("Heyu X10 support disabled."))
   END IF
 
@@ -1808,44 +1906,46 @@ PRIVATE SUB Setup_RFXComRX()
 
   IF bRFXComRXEnabled THEN
     WriteLog(("RFXCom receiver support enabled."))
-    ' create a new RFXCom class instance
-    hRFXComRX = NEW CRFXComRX
-    ' set the properties
-    WITH hRFXComRX
-      .TCPHost = sRFXComRXTCPHost
-      .TCPPort = iRFXComRXTCPPort
-      .Interface = sRFXComRXType
-      .Baud = sRFXComRXBaudrate
-      .SerPort = sRFXComRXSerialPort
-      .RFXComDebug = bRFXComRXDebug
-      .RelayPort = iRFXComRXRelayPort
-    END WITH
-    IF InStr(sRFXComRXType, "tcp") THEN
-      ' connect to the rfxcom host:port
-      IF hRFXComRX.ConnectTCP() THEN
-        WriteLog(("RFXCom receiver TCP interface connecting to ") & sRFXComRXTCPHost & ":" & iRFXComRXTCPPort)
+    IF bServer THEN
+      ' create a new RFXCom class instance
+      hRFXComRX = NEW CRFXComRX
+      ' set the properties
+      WITH hRFXComRX
+        .TCPHost = sRFXComRXTCPHost
+        .TCPPort = iRFXComRXTCPPort
+        .Interface = sRFXComRXType
+        .Baud = sRFXComRXBaudrate
+        .SerPort = sRFXComRXSerialPort
+        .RFXComDebug = bRFXComRXDebug
+        .RelayPort = iRFXComRXRelayPort
+      END WITH
+      IF InStr(sRFXComRXType, "tcp") THEN
+        ' connect to the rfxcom host:port
+        IF hRFXComRX.ConnectTCP() THEN
+          WriteLog(("RFXCom receiver TCP interface connecting to ") & sRFXComRXTCPHost & ":" & iRFXComRXTCPPort)
+        ELSE
+          WriteLog(("ERROR: RFXCom receiver TCP interface FAILED to connect to ") & sRFXComRXTCPHost & ":" & iRFXComRXTCPPort)
+          hRFXComRX = NULL
+        END IF
       ELSE
-        WriteLog(("ERROR: RFXCom receiver TCP interface FAILED to connect to ") & sRFXComRXTCPHost & ":" & iRFXComRXTCPPort)
-        hRFXComRX = NULL
+        ' connect to the rfxcom serial interface
+        IF hRFXComRX.ConnectSerial() THEN
+          WriteLog(("RFXCom receiver serial interface connected to Port ") & sRFXComRXSerialPort)
+          hRFXComRX.ProtocolSetup("MODEVAR")
+        ELSE
+          WriteLog(("ERROR: RFXCom receiver serial interface FAILED to connect to Port ") & sRFXComRXSerialPort)
+          hRFXComRX = NULL
+        END IF
       END IF
-    ELSE
-      ' connect to the rfxcom serial interface
-      IF hRFXComRX.ConnectSerial() THEN
-        WriteLog(("RFXCom receiver serial interface connected to Port ") & sRFXComRXSerialPort)
-        hRFXComRX.ProtocolSetup("MODEVAR")
+      IF hRFXComRX AND IF bRFXComRXRelayEnabled THEN
+        IF hRFXComRX.StartRelay() THEN
+          WriteLog(("RFXCom receiver Relay listening for client on port ") & iRFXComRXRelayPort)
+        ELSE
+          WriteLog(("ERROR: RFXCom receiver Relay FAILED to listen on port ") & iRFXComRXRelayPort)
+        END IF
       ELSE
-        WriteLog(("ERROR: RFXCom receiver serial interface FAILED to connect to Port ") & sRFXComRXSerialPort)
-        hRFXComRX = NULL
+        WriteLog(("RFXCom receiver Relay disabled."))
       END IF
-    END IF
-    IF hRFXComRX AND IF bRFXComRXRelayEnabled THEN
-      IF hRFXComRX.StartRelay() THEN
-        WriteLog(("RFXCom receiver Relay listening for client on port ") & iRFXComRXRelayPort)
-      ELSE
-        WriteLog(("ERROR: RFXCom receiver Relay FAILED to listen on port ") & iRFXComRXRelayPort)
-      END IF
-    ELSE
-      WriteLog(("RFXCom receiver Relay disabled."))
     END IF
   ELSE
     WriteLog(("RFXCom receiver support disabled."))
@@ -1873,50 +1973,52 @@ PRIVATE SUB Setup_RFXComTX()
 
   IF bRFXComTXEnabled THEN
     WriteLog(("RFXCom transmitter support enabled."))
-    ' create a new RFXCom class instance
-    hRFXComTX = NEW CRFXComTX
-    ' set the properties
-    WITH hRFXComTX
-      .TCPHost = sRFXComTXTCPHost
-      .TCPPort = iRFXComTXTCPPort
-      .Interface = sRFXComTXType
-      .Baud = sRFXComTXBaudrate
-      .SerPort = sRFXComTXSerialPort
-      .RFXComDebug = bRFXComTXDebug
-      .RelayPort = iRFXComTXRelayPort
-      .Handshake = bRFXComTXHandshake
-      .DisableX10 = bRFXComTXDisableX10
-      .EnableARC = bRFXComTXEnableARC
-      .EnableHarrison = bRFXComTXEnableHarrison
-      .EnableKoppla = bRFXComTXEnableKoppla
-      .ACAddress1 = sRFXComTXACAddress1
-      .ACAddress2 = sRFXComTXACAddress2
-    END WITH
-    IF InStr(sRFXComTXType, "tcp") THEN
-      ' connect to the rfxcom host:port
-      IF hRFXComTX.ConnectTCP() THEN
-        WriteLog(("RFXCom transmitter TCP interface connecting to ") & sRFXComTXTCPHost & ":" & iRFXComTXTCPPort)
+    IF bServer THEN
+      ' create a new RFXCom class instance
+      hRFXComTX = NEW CRFXComTX
+      ' set the properties
+      WITH hRFXComTX
+        .TCPHost = sRFXComTXTCPHost
+        .TCPPort = iRFXComTXTCPPort
+        .Interface = sRFXComTXType
+        .Baud = sRFXComTXBaudrate
+        .SerPort = sRFXComTXSerialPort
+        .RFXComDebug = bRFXComTXDebug
+        .RelayPort = iRFXComTXRelayPort
+        .Handshake = bRFXComTXHandshake
+        .DisableX10 = bRFXComTXDisableX10
+        .EnableARC = bRFXComTXEnableARC
+        .EnableHarrison = bRFXComTXEnableHarrison
+        .EnableKoppla = bRFXComTXEnableKoppla
+        .ACAddress1 = sRFXComTXACAddress1
+        .ACAddress2 = sRFXComTXACAddress2
+      END WITH
+      IF InStr(sRFXComTXType, "tcp") THEN
+        ' connect to the rfxcom host:port
+        IF hRFXComTX.ConnectTCP() THEN
+          WriteLog(("RFXCom transmitter TCP interface connecting to ") & sRFXComTXTCPHost & ":" & iRFXComTXTCPPort)
+        ELSE
+          WriteLog(("ERROR: RFXCom transmitter TCP interface FAILED to connect to ") & sRFXComTXTCPHost & ":" & iRFXComTXTCPPort)
+          hRFXComTX = NULL
+        END IF
       ELSE
-        WriteLog(("ERROR: RFXCom transmitter TCP interface FAILED to connect to ") & sRFXComTXTCPHost & ":" & iRFXComTXTCPPort)
-        hRFXComTX = NULL
+        ' connect to the rfxcom serial interface
+        IF hRFXComTX.ConnectSerial() THEN
+          WriteLog(("RFXCom transmitter serial interface connected to Port ") & sRFXComTXSerialPort)
+        ELSE
+          WriteLog(("ERROR: RFXCom transmitter serial interface FAILED to connect to Port ") & sRFXComTXSerialPort)
+          hRFXComTX = NULL
+        END IF
       END IF
-    ELSE
-      ' connect to the rfxcom serial interface
-      IF hRFXComTX.ConnectSerial() THEN
-        WriteLog(("RFXCom transmitter serial interface connected to Port ") & sRFXComTXSerialPort)
+      IF hRFXComTX AND IF bRFXComTXRelayEnabled THEN
+        IF hRFXComTX.StartRelay() THEN
+          WriteLog(("RFXCom transmitter Relay listening for client on port ") & iRFXComTXRelayPort)
+        ELSE
+          WriteLog(("ERROR: RFXCom transmitter Relay FAILED to listen on port ") & iRFXComTXRelayPort)
+        END IF
       ELSE
-        WriteLog(("ERROR: RFXCom transmitter serial interface FAILED to connect to Port ") & sRFXComTXSerialPort)
-        hRFXComTX = NULL
+        WriteLog(("RFXCom transmitter Relay disabled."))
       END IF
-    END IF
-    IF hRFXComTX AND IF bRFXComTXRelayEnabled THEN
-      IF hRFXComTX.StartRelay() THEN
-        WriteLog(("RFXCom transmitter Relay listening for client on port ") & iRFXComTXRelayPort)
-      ELSE
-        WriteLog(("ERROR: RFXCom transmitter Relay FAILED to listen on port ") & iRFXComTXRelayPort)
-      END IF
-    ELSE
-      WriteLog(("RFXCom transmitter Relay disabled."))
     END IF
   ELSE
     hRFXComTX = NULL
@@ -1943,24 +2045,26 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PRIVATE SUB Setup_CTX35()
 
-  IF bCTX35Enabled THEN 
+  IF bCTX35Enabled THEN
     WriteLog(("Xanura CTX35 X10 support enabled."))
-    ' create a new CTX35 class instance
-    hCTX35 = NEW CCTX35
-    ' set the properties
-    WITH hCTX35
-      .Port = sCTX35SerialPort
-      .Baud = sCTX35Baudrate
-      .PollTime = iCTX35PollTime
-      .CTX35Debug = bCTX35Debug
-    END WITH
-    ' connect to the serial port
-    IF hCTX35.Connect() THEN
-      WriteLog(("Xanura CTX35 interface connected to Port ") & sCTX35SerialPort)
-      hCTX35.Run()
-    ELSE
-      WriteLog(("ERROR: Xanura CTX35 interface FAILED to connect to Port ") & sCTX35SerialPort)
-      hCTX35 = NULL
+    IF bServer THEN
+      ' create a new CTX35 class instance
+      hCTX35 = NEW CCTX35
+      ' set the properties
+      WITH hCTX35
+        .Port = sCTX35SerialPort
+        .Baud = sCTX35Baudrate
+        .PollTime = iCTX35PollTime
+        .CTX35Debug = bCTX35Debug
+      END WITH
+      ' connect to the serial port
+      IF hCTX35.Connect() THEN
+        WriteLog(("Xanura CTX35 interface connected to Port ") & sCTX35SerialPort)
+        hCTX35.Run()
+      ELSE
+        WriteLog(("ERROR: Xanura CTX35 interface FAILED to connect to Port ") & sCTX35SerialPort)
+        hCTX35 = NULL
+      END IF
     END IF
   ELSE
     WriteLog(("Xanura CTX35 X10 support disabled."))
@@ -1989,24 +2093,26 @@ PRIVATE SUB Setup_PLCBUS()
 
   IF bPLCBUSEnabled THEN
     WriteLog(("PLCBUS support enabled."))
-    ' create a new PLCBUS class instance
-    hPLCBUS = NEW CPLCBUS
-    ' set the properties
-    WITH hPLCBUS
-      .Port = sPLCBUSSerialPort
-      .Baud = sPLCBUSBaudrate
-      .PollTime = iPLCBUSPollTime
-      .UserCode = sPLCBUSUserCode
-      .ThreePhase = bPLCBUSThreePhase
-      .PLCBUSDebug = bPLCBUSDebug
-    END WITH
-    ' connect to the serial port
-    IF hPLCBUS.Connect() THEN
-      WriteLog(("PLCBUS interface connected to Port ") & sPLCBUSSerialPort)
-      hPLCBUS.Run()
-    ELSE
-      WriteLog(("ERROR: PLCBUS interface FAILED to connect to Port ") & sPLCBUSSerialPort)
-      hPLCBUS = NULL
+    IF bServer THEN
+      ' create a new PLCBUS class instance
+      hPLCBUS = NEW CPLCBUS
+      ' set the properties
+      WITH hPLCBUS
+        .Port = sPLCBUSSerialPort
+        .Baud = sPLCBUSBaudrate
+        .PollTime = iPLCBUSPollTime
+        .UserCode = sPLCBUSUserCode
+        .ThreePhase = bPLCBUSThreePhase
+        .PLCBUSDebug = bPLCBUSDebug
+      END WITH
+      ' connect to the serial port
+      IF hPLCBUS.Connect() THEN
+        WriteLog(("PLCBUS interface connected to Port ") & sPLCBUSSerialPort)
+        hPLCBUS.Run()
+      ELSE
+        WriteLog(("ERROR: PLCBUS interface FAILED to connect to Port ") & sPLCBUSSerialPort)
+        hPLCBUS = NULL
+      END IF
     END IF
   ELSE
     WriteLog(("PLCBUS support disabled."))
@@ -2036,20 +2142,22 @@ PRIVATE SUB Setup_UPS()
 
   IF bUPSEnabled THEN
     WriteLog(("UPS TCP support enabled."))
-    ' create a new UPS class instance
-    hUPS = NEW CUPS
-    ' set the properties
-    WITH hUPS
-      .Host = sUPSTCPHost
-      .Port = iUPSTCPPort
-      .PollTime = iUPSPollTime
-      .UPSDebug = bUPSDebug
-    END WITH
-    ' connect to the ups host:port
-    IF hUPS.Connect() THEN
-      WriteLog(("UPS TCP interface connecting to ") & sUPSTCPHost & ":" & iUPSTCPPort)
-    ELSE
-      WriteLog(("ERROR: UPS TCP interface FAILED to connect to ") & sUPSTCPHost & ":" & iUPSTCPPort)
+    IF bServer THEN
+      ' create a new UPS class instance
+      hUPS = NEW CUPS
+      ' set the properties
+      WITH hUPS
+        .Host = sUPSTCPHost
+        .Port = iUPSTCPPort
+        .PollTime = iUPSPollTime
+        .UPSDebug = bUPSDebug
+      END WITH
+      ' connect to the ups host:port
+      IF hUPS.Connect() THEN
+        WriteLog(("UPS TCP interface connecting to ") & sUPSTCPHost & ":" & iUPSTCPPort)
+      ELSE
+        WriteLog(("ERROR: UPS TCP interface FAILED to connect to ") & sUPSTCPHost & ":" & iUPSTCPPort)
+      END IF
     END IF
   ELSE
     TRY hUPS.tUPS.Stop
@@ -2079,27 +2187,27 @@ PRIVATE SUB Setup_SMS()
 
   IF bSMSEnabled THEN
     WriteLog(("SMS modem support enabled."))
-
-    ' create a new SMS class instance
-    hSMS = NEW CSMS
-
-    ' set the properties
-    WITH hSMS
-      .Port = sSMSSerialPort
-      .Baud = sSMSBaudrate
-      .PIN = sSMSPIN
-      .ServiceCentre = sSMSServiceCentre
-      .Contact = sSMSContact
-      .SMSDebug = bSMSDebug
-    END WITH
-    ' connect to the serial port
-    IF hSMS.Connect() THEN
-      WriteLog(("SMS modem interface connected to Port ") & sSMSSerialPort)
-      IF NOT hSMS.InitModem() THEN
-        WriteLog(("ERROR: SMS modem interface FAILED to initialize."))
+    IF bServer THEN
+      ' create a new SMS class instance
+      hSMS = NEW CSMS
+      ' set the properties
+      WITH hSMS
+        .Port = sSMSSerialPort
+        .Baud = sSMSBaudrate
+        .PIN = sSMSPIN
+        .ServiceCentre = sSMSServiceCentre
+        .Contact = sSMSContact
+        .SMSDebug = bSMSDebug
+      END WITH
+      ' connect to the serial port
+      IF hSMS.Connect() THEN
+        WriteLog(("SMS modem interface connected to Port ") & sSMSSerialPort)
+        IF NOT hSMS.InitModem() THEN
+          WriteLog(("ERROR: SMS modem interface FAILED to initialize."))
+        END IF
+      ELSE
+        WriteLog(("ERROR: SMS modem interface FAILED to connect to Port ") & sSMSSerialPort)
       END IF
-    ELSE
-      WriteLog(("ERROR: SMS modem interface FAILED to connect to Port ") & sSMSSerialPort)
     END IF
   ELSE
     WriteLog(("SMS modem support disabled."))
@@ -2128,7 +2236,7 @@ PRIVATE SUB Setup_Ping()
   IF bPingEnabled THEN
     WriteLog(("Network Ping support enabled."))
     ' start timer
-    Ping.Run()
+    IF bServer THEN Ping.Run()
   ELSE
     TRY Ping.tPing.Stop
     WriteLog(("Network Ping support disabled."))
@@ -2156,11 +2264,13 @@ PRIVATE SUB Setup_Bluetooth()
     IF ProgramExist("hcitool") THEN
       WriteLog(("Bluetooth Proximity support enabled."))
       ' start timer
-      Bluetooth.Run()
+      IF bServer THEN Bluetooth.Run()
     ELSE
-      WriteLog(("ERROR: Bluetooth command 'hcitool' not found, did you install it?"))
-      bBluetoothEnabled = FALSE
-      WriteLog(("Bluetooth Proximity support disabled."))
+      IF bServer THEN
+        WriteLog(("ERROR: Bluetooth command 'hcitool' not found, did you install it?"))
+        bBluetoothEnabled = FALSE
+        WriteLog(("Bluetooth Proximity support disabled."))
+      END IF
     END IF
   ELSE
     TRY Bluetooth.tBluetooth.Stop
@@ -2186,20 +2296,21 @@ PRIVATE SUB Setup_GPS()
 
   IF bGPSEnabled THEN
     WriteLog(("GPS receiver support enabled."))
-    ' create a new GPS class instance
-    hGPS = NEW CGPS
-    ' set the properties
-    WITH hGPS
-      .Port = sGPSSerialPort
-      .Baud = sGPSBaudrate
-      .GPSDebug = bGPSDebug
-    END WITH
-
-    ' connect to the serial port
-    IF hGPS.Connect() THEN
-      WriteLog(("GPS receiver connected to Port ") & sGPSSerialPort)
-    ELSE
-      WriteLog(("ERROR: GPS receiver FAILED to connect to Port ") & sGPSSerialPort)
+    IF bServer THEN
+      ' create a new GPS class instance
+      hGPS = NEW CGPS
+      ' set the properties
+      WITH hGPS
+        .Port = sGPSSerialPort
+        .Baud = sGPSBaudrate
+        .GPSDebug = bGPSDebug
+      END WITH
+      ' connect to the serial port
+      IF hGPS.Connect() THEN
+        WriteLog(("GPS receiver connected to Port ") & sGPSSerialPort)
+      ELSE
+        WriteLog(("ERROR: GPS receiver FAILED to connect to Port ") & sGPSSerialPort)
+      END IF
     END IF
   ELSE
     WriteLog(("GPS receiver support disabled."))
@@ -2227,20 +2338,22 @@ PRIVATE SUB Setup_Weeder()
 
   IF bWeederEnabled THEN
     WriteLog(("Weeder Module support enabled."))
-    ' create a new Weeder class instance
-    hWeeder = NEW CWeeder
-    ' set the properties
-    WITH hWeeder
-      .Port = sWeederSerialPort
-      .WeederDebug = bWeederDebug
-    END WITH
+    IF bServer THEN
+      ' create a new Weeder class instance
+      hWeeder = NEW CWeeder
+      ' set the properties
+      WITH hWeeder
+        .Port = sWeederSerialPort
+        .WeederDebug = bWeederDebug
+      END WITH
 
-    ' connect to the serial port
-    IF hWeeder.Connect() THEN
-      WriteLog(("Weeder Module(s) connected to Port ") & sWeederSerialPort)
-    ELSE
-      WriteLog(("ERROR: Weeder Module FAILED to connect to Port ") & sWeederSerialPort)
-      hWeeder = NULL
+      ' connect to the serial port
+      IF hWeeder.Connect() THEN
+        WriteLog(("Weeder Module(s) connected to Port ") & sWeederSerialPort)
+      ELSE
+        WriteLog(("ERROR: Weeder Module FAILED to connect to Port ") & sWeederSerialPort)
+        hWeeder = NULL
+      END IF
     END IF
   ELSE
     WriteLog(("Weeder Module support disabled."))
@@ -2268,19 +2381,21 @@ PRIVATE SUB Setup_OneWire()
 
   IF bOneWireEnabled THEN
     WriteLog(("Midon 1-Wire support enabled."))
-    ' create a new OneWire class instance
-    hOneWire = NEW COneWire
-    ' set the properties
-    WITH hOneWire
-      .Port = sOneWireSerialPort
-      .Baud = sOneWireBaudrate
-      .OneWireDebug = bOneWireDebug
-    END WITH
-    ' connect to the serial port
-    IF hOneWire.Connect() THEN
-      WriteLog(("Midon 1-Wire interface connected to Port ") & sOneWireSerialPort)
-    ELSE
-      WriteLog(("ERROR: Midon 1-Wire interface FAILED to connect to Port ") & sOneWireSerialPort)
+    IF bServer THEN
+      ' create a new OneWire class instance
+      hOneWire = NEW COneWire
+      ' set the properties
+      WITH hOneWire
+        .Port = sOneWireSerialPort
+        .Baud = sOneWireBaudrate
+        .OneWireDebug = bOneWireDebug
+      END WITH
+      ' connect to the serial port
+      IF hOneWire.Connect() THEN
+        WriteLog(("Midon 1-Wire interface connected to Port ") & sOneWireSerialPort)
+      ELSE
+        WriteLog(("ERROR: Midon 1-Wire interface FAILED to connect to Port ") & sOneWireSerialPort)
+      END IF
     END IF
   ELSE
     WriteLog(("Midon 1-Wire support disabled."))
@@ -2308,16 +2423,18 @@ PRIVATE SUB Setup_VISCA()
 
   IF bVISCAEnabled THEN
     WriteLog(("Sony VISCA support enabled."))
-    ' create a new VISCA class instance
-    hVISCA = NEW CVISCA
-    ' set the properties
-    hVISCA.Port = sVISCASerialPort
-    hVISCA.VISCADebug = bVISCADebug
-    ' connect to the serial port
-    IF hVISCA.Connect() THEN
-      WriteLog(("Sony VISCA interface connected to Port ") & sVISCASerialPort)
-    ELSE
-      WriteLog(("ERROR: Sony VISCA interface FAILED to connect to Port ") & sVISCASerialPort)
+    IF bServer THEN
+      ' create a new VISCA class instance
+      hVISCA = NEW CVISCA
+      ' set the properties
+      hVISCA.Port = sVISCASerialPort
+      hVISCA.VISCADebug = bVISCADebug
+      ' connect to the serial port
+      IF hVISCA.Connect() THEN
+        WriteLog(("Sony VISCA interface connected to Port ") & sVISCASerialPort)
+      ELSE
+        WriteLog(("ERROR: Sony VISCA interface FAILED to connect to Port ") & sVISCASerialPort)
+      END IF
     END IF
   ELSE
     WriteLog(("Sony VISCA support disabled."))
@@ -2346,7 +2463,7 @@ PRIVATE SUB Setup_HDDTemp()
   IF bHDDTempEnabled THEN
     WriteLog(("HDDTemp support enabled."))
     ' start timer
-    HDDTemp.Run()
+    IF bServer THEN HDDTemp.Run()
   ELSE
     TRY HDDTemp.tHDDTemp.Stop
     WriteLog(("HDDTemp support disabled."))
@@ -2391,19 +2508,19 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PRIVATE SUB Setup_RRDTool()
 
-  IF bRRDToolEnabled THEN
-    IF ProgramExist("rrdtool") THEN
-      RRDTool.Run()
-      WriteLog(("RRDTool support enabled."))
+    IF bRRDToolEnabled THEN
+      IF ProgramExist("rrdtool") THEN
+        IF bServer THEN RRDTool.Run()
+        WriteLog(("RRDTool support enabled."))
+      ELSE
+        WriteLog(("ERROR: RRDTool command 'rrdtool' not found, did you install it?"))
+        bRRDToolEnabled = FALSE
+        WriteLog(("RRDTool support disabled."))
+      END IF
     ELSE
-      WriteLog(("ERROR: RRDTool command 'rrdtool' not found, did you install it?"))
-      bRRDToolEnabled = FALSE
+      TRY RRDTool.tRRDTool.Stop
       WriteLog(("RRDTool support disabled."))
     END IF
-  ELSE
-    TRY RRDTool.tRRDTool.Stop
-    WriteLog(("RRDTool support disabled."))
-  END IF
 
 END
 
@@ -2424,25 +2541,24 @@ PRIVATE SUB Setup_Asterisk()
 
   IF bAsteriskEnabled THEN
     WriteLog(("Asterisk API support enabled."))
-
-    ' create a new Asterisk class instance
-    hAsterisk = NEW CAsterisk
-
-    ' set the properties
-    WITH hAsterisk
-      .TCPHost = sAsteriskTCPHost
-      .TCPPort = iAsteriskTCPPort
-      .User = sAsteriskUser
-      .Password = sAsteriskPassword
-      .Polltime = iAsteriskPollTime
-      .AsteriskDebug = bAsteriskDebug
-    END WITH
-
-    ' connect to the asterisk host:port
-    IF hAsterisk.Connect() THEN
-      WriteLog(("Asterisk API interface connecting to ") & sAsteriskTCPHost & ":" & iAsteriskTCPPort)
-    ELSE
-      WriteLog(("ERROR: Asterisk API interface FAILED to connect to ") & sAsteriskTCPHost & ":" & iAsteriskTCPPort)
+    IF bServer THEN
+      ' create a new Asterisk class instance
+      hAsterisk = NEW CAsterisk
+      ' set the properties
+      WITH hAsterisk
+        .TCPHost = sAsteriskTCPHost
+        .TCPPort = iAsteriskTCPPort
+        .User = sAsteriskUser
+        .Password = sAsteriskPassword
+        .PollTime = iAsteriskPollTime
+        .AsteriskDebug = bAsteriskDebug
+      END WITH
+      ' connect to the asterisk host:port
+      IF hAsterisk.Connect() THEN
+        WriteLog(("Asterisk API interface connecting to ") & sAsteriskTCPHost & ":" & iAsteriskTCPPort)
+      ELSE
+        WriteLog(("ERROR: Asterisk API interface FAILED to connect to ") & sAsteriskTCPHost & ":" & iAsteriskTCPPort)
+      END IF
     END IF
   ELSE
     WriteLog(("Asterisk API support disabled."))
@@ -2491,7 +2607,7 @@ END
 PRIVATE SUB Setup_ServerStats()
 
   IF bServerStatsEnabled THEN
-    ServerStats.Run()
+    IF bServer THEN ServerStats.Run()
     WriteLog(("Server Statistics enabled."))
   ELSE
     TRY ServerStats.tServerStats.Stop
@@ -2516,20 +2632,22 @@ PRIVATE SUB Setup_IRMan()
 
   IF bIRManEnabled THEN
     WriteLog(("IRMan IR support enabled."))
-    ' create a new IRMan class instance
-    hIRMan = NEW CIRMan
-    ' set the properties
-    WITH hIRMan
-      .Port = sIRManSerialPort
-      .IRManDebug = bIRManDebug
-    END WITH
-    ' connect to the serial port
-    IF hIRMan.Connect() THEN
-      WriteLog(("IRMan IR interface connected to Port ") & sIRManSerialPort)
-      ' wakeup device
-      hIRMan.Run()
-    ELSE
-      WriteLog(("ERROR: IRMan IR interface FAILED to connect to Port ") & sIRManSerialPort)
+    IF bServer THEN 
+      ' create a new IRMan class instance
+      hIRMan = NEW CIRMan
+      ' set the properties
+      WITH hIRMan
+        .Port = sIRManSerialPort
+        .IRManDebug = bIRManDebug
+      END WITH
+      ' connect to the serial port
+      IF hIRMan.Connect() THEN
+        WriteLog(("IRMan IR interface connected to Port ") & sIRManSerialPort)
+        ' wakeup device
+        hIRMan.Run()
+      ELSE
+        WriteLog(("ERROR: IRMan IR interface FAILED to connect to Port ") & sIRManSerialPort)
+      END IF
     END IF
   ELSE
     WriteLog(("IRMan IR support disabled."))
@@ -2557,23 +2675,25 @@ PRIVATE SUB Setup_Plugwise()
 
   IF bPlugwiseEnabled THEN
     WriteLog(("Plugwise support enabled."))
-    ' create a new Plugwise class instance
-    hPlugwise = NEW CPlugwise
-    ' set the properties
-    WITH hPlugwise
-      .Port = sPlugwiseSerialPort
-      .Polltime = iPlugwisePolltime
-      .PlugwiseDebug = bPlugwiseDebug
-      .Firmware = iPlugwiseFirmware
-    END WITH
-    ' connect to the serial port
-    IF hPlugwise.Connect() THEN
-      WriteLog(("Plugwise interface connected to Port ") & sPlugwiseSerialPort)
-      WriteLog(("Plugwise is configured for firmware version ") & iPlugwiseFirmware)
-      hPlugwise.Run()
-    ELSE
-      WriteLog(("ERROR: Plugwise interface FAILED to connect to Port ") & sPlugwiseSerialPort)
-      hPlugwise = NULL
+    IF bServer THEN
+      ' create a new Plugwise class instance
+      hPlugwise = NEW CPlugwise
+      ' set the properties
+      WITH hPlugwise
+        .Port = sPlugwiseSerialPort
+        .PollTime = iPlugwisePolltime
+        .PlugwiseDebug = bPlugwiseDebug
+        .Firmware = iPlugwiseFirmware
+      END WITH
+      ' connect to the serial port
+      IF hPlugwise.Connect() THEN
+        WriteLog(("Plugwise interface connected to Port ") & sPlugwiseSerialPort)
+        WriteLog(("Plugwise is configured for firmware version ") & iPlugwiseFirmware)
+        hPlugwise.Run()
+      ELSE
+        WriteLog(("ERROR: Plugwise interface FAILED to connect to Port ") & sPlugwiseSerialPort)
+        hPlugwise = NULL
+      END IF
     END IF
   ELSE
     WriteLog(("Plugwise support disabled."))
@@ -2602,21 +2722,20 @@ PRIVATE SUB Setup_FritzBox()
 
   IF bFritzBoxEnabled THEN
     WriteLog(("Fritz!Box API support enabled."))
-
-    ' create a new FritzBox class instance
-    hFritzBox = NEW CFritzBox
-
-    ' set the properties
-    WITH hFritzBox
-      .TCPHost = sFritzBoxTCPHost
-      .FritzBoxDebug = bFritzBoxDebug
-    END WITH
-
-    ' connect to the fritzbox host:port
-    IF hFritzBox.Connect() THEN
-      WriteLog(("Fritz!Box API interface connecting to ") & sFritzBoxTCPHost & ":1012")
-    ELSE
-      WriteLog(("ERROR: Fritz!Box API interface FAILED to connect to ") & sFritzBoxTCPHost & ":1012")
+    IF bServer THEN
+      ' create a new FritzBox class instance
+      hFritzBox = NEW CFritzBox
+      ' set the properties
+      WITH hFritzBox
+        .TCPHost = sFritzBoxTCPHost
+        .FritzBoxDebug = bFritzBoxDebug
+      END WITH
+      ' connect to the fritzbox host:port
+      IF hFritzBox.Connect() THEN
+        WriteLog(("Fritz!Box API interface connecting to ") & sFritzBoxTCPHost & ":1012")
+      ELSE
+        WriteLog(("ERROR: Fritz!Box API interface FAILED to connect to ") & sFritzBoxTCPHost & ":1012")
+      END IF
     END IF
   ELSE
     WriteLog(("Fritz!Box API support disabled."))
@@ -2667,19 +2786,21 @@ PRIVATE SUB Setup_DSC()
 
   IF bDSCEnabled THEN
     WriteLog(("DSC Security support enabled."))
-    ' create a new DSC class instance
-    hDSC = NEW CDSC
-    ' set the properties
-    WITH hDSC
-      .Port = sDSCSerialPort
-      .Baud = sDSCBaudrate
-      .DSCDebug = bDSCDebug
-    END WITH
-    ' connect to the serial port
-    IF hDSC.Connect() THEN
-      WriteLog(("DSC Security interface connected to Port ") & sDSCSerialPort)
-    ELSE
-      WriteLog(("ERROR: DSC Security interface FAILED to connect to Port ") & sDSCSerialPort)
+    IF bServer THEN
+      ' create a new DSC class instance
+      hDSC = NEW CDSC
+      ' set the properties
+      WITH hDSC
+        .Port = sDSCSerialPort
+        .Baud = sDSCBaudrate
+        .DSCDebug = bDSCDebug
+      END WITH
+      ' connect to the serial port
+      IF hDSC.Connect() THEN
+        WriteLog(("DSC Security interface connected to Port ") & sDSCSerialPort)
+      ELSE
+        WriteLog(("ERROR: DSC Security interface FAILED to connect to Port ") & sDSCSerialPort)
+      END IF
     END IF
   ELSE
     WriteLog(("DSC Security support disabled."))
@@ -2707,19 +2828,21 @@ PRIVATE SUB Setup_EIB()
 
   IF bEIBEnabled THEN
     WriteLog(("KNX/EIB TCP support enabled."))
-    ' create a new EIB class instance
-    hEIB = NEW CEIB
-    ' set the properties
-    WITH hEIB
-      .TCPHost = sEIBTCPHost
-      .TCPPort = iEIBTCPPort
-      .EIBDebug = bEIBDebug
-    END WITH
-    ' connect to eibd host:port
-    IF hEIB.Connect() THEN
-      WriteLog(("KNX/EIB TCP interface connecting to ") & sEIBTCPHost & ":" & iEIBTCPPort)
-    ELSE
-      WriteLog(("ERROR: KNX/EIB TCP interface FAILED to connect to ") & sEIBTCPHost & ":" & iEIBTCPPort)
+    IF bServer THEN
+      ' create a new EIB class instance
+      hEIB = NEW CEIB
+      ' set the properties
+      WITH hEIB
+        .TCPHost = sEIBTCPHost
+        .TCPPort = iEIBTCPPort
+        .EIBDebug = bEIBDebug
+      END WITH
+      ' connect to eibd host:port
+      IF hEIB.Connect() THEN
+        WriteLog(("KNX/EIB TCP interface connecting to ") & sEIBTCPHost & ":" & iEIBTCPPort)
+      ELSE
+        WriteLog(("ERROR: KNX/EIB TCP interface FAILED to connect to ") & sEIBTCPHost & ":" & iEIBTCPPort)
+      END IF
     END IF
   ELSE
     WriteLog(("KNX/EIB TCP support disabled."))
@@ -2747,18 +2870,20 @@ PRIVATE SUB Setup_Domotica()
 
   IF bDomoticaEnabled THEN
     WriteLog(("Domotica support enabled."))
-    ' create a new Domotica class instance
-    hDomotica = NEW CDomotica
-    ' set the properties
-    WITH hDomotica
-      .Port = sDomoticaSerialPort
-      .DomoticaDebug = bDomoticaDebug
-    END WITH
-    ' connect to the serial port
-    IF hDomotica.Connect() THEN
-      WriteLog(("Domotica interface connected to Port ") & sDomoticaSerialPort)
-    ELSE
-      WriteLog(("ERROR: Domotica interface FAILED to connect to Port ") & sDomoticaSerialPort)
+    IF bServer THEN
+      ' create a new Domotica class instance
+      hDomotica = NEW CDomotica
+      ' set the properties
+      WITH hDomotica
+        .Port = sDomoticaSerialPort
+        .DomoticaDebug = bDomoticaDebug
+      END WITH
+      ' connect to the serial port
+      IF hDomotica.Connect() THEN
+        WriteLog(("Domotica interface connected to Port ") & sDomoticaSerialPort)
+      ELSE
+        WriteLog(("ERROR: Domotica interface FAILED to connect to Port ") & sDomoticaSerialPort)
+      END IF
     END IF
   ELSE
     WriteLog(("Domotica support disabled."))
@@ -2801,7 +2926,7 @@ PRIVATE SUB Setup_Digitemp()
     ELSE
       WriteLog(("Digitemp support enabled."))
       ' start timer
-      Digitemp.Run()
+      IF bServer THEN Digitemp.Run()
     END IF
   ELSE
     TRY Digitemp.tDigitemp.Stop
@@ -2827,22 +2952,24 @@ PRIVATE SUB Setup_ZWave()
 
   IF bZWaveEnabled THEN
     WriteLog(("Z-Wave support enabled."))
-    ' create a new Z-Wave class instance
-    hZWave = NEW CZWave
-    ' set the properties
-    WITH hZWave
-      .Port = sZWaveSerialPort
-      .Baud = sZWaveBaudrate
-      .ZWaveDebug = bZWaveDebug
-      .ReloadNodes = bZWaveReloadNodes
-    END WITH
-    ' connect to the serial port
-    IF hZWave.Connect() THEN
-      WriteLog(("Z-Wave interface connected to Port ") & sZWaveSerialPort)
-      hZWave.InitZWave()
-    ELSE
-      WriteLog(("ERROR: Z-Wave interface FAILED to connect to Port ") & sZWaveSerialPort)
-      hZWave = NULL
+    IF bServer THEN
+      ' create a new Z-Wave class instance
+      hZWave = NEW CZWave
+      ' set the properties
+      WITH hZWave
+        .Port = sZWaveSerialPort
+        .Baud = sZWaveBaudrate
+        .ZWaveDebug = bZWaveDebug
+        .ReloadNodes = bZWaveReloadNodes
+      END WITH
+      ' connect to the serial port
+      IF hZWave.Connect() THEN
+        WriteLog(("Z-Wave interface connected to Port ") & sZWaveSerialPort)
+        hZWave.InitZWave()
+      ELSE
+        WriteLog(("ERROR: Z-Wave interface FAILED to connect to Port ") & sZWaveSerialPort)
+        hZWave = NULL
+      END IF
     END IF
   ELSE
     WriteLog(("Z-Wave support disabled."))
@@ -2871,36 +2998,38 @@ PRIVATE SUB Setup_Oww()
 
   IF bOwwEnabled THEN
     WriteLog(("One-Wire Weather support enabled."))
-    ' create a new One-Wire Weather class instance
-    IF sOwwServerType = "Henriksen WServer UDP" THEN
-      hOwwUDP = NEW COww
-      ' set the properties
-      WITH hOwwUDP
-        .TCPHost = sOwwTCPHost
-        .TCPPort = iOwwTCPPort
-        .ServerType = sOwwServerType
-        .OwwDebug = bOwwDebug
-      END WITH
-      ' connect to the One-Wire Weather host:port
-      IF hOwwUDP.Connect() THEN
-        WriteLog(("One-Wire Weather UDP interface listening on port: ") & iOwwTCPPort)
+    IF bServer THEN
+      ' create a new One-Wire Weather class instance
+      IF sOwwServerType = "Henriksen WServer UDP" THEN
+        hOwwUDP = NEW COww
+        ' set the properties
+        WITH hOwwUDP
+          .TCPHost = sOwwTCPHost
+          .TCPPort = iOwwTCPPort
+          .ServerType = sOwwServerType
+          .OwwDebug = bOwwDebug
+        END WITH
+        ' connect to the One-Wire Weather host:port
+        IF hOwwUDP.Connect() THEN
+          WriteLog(("One-Wire Weather UDP interface listening on port: ") & iOwwTCPPort)
+        ELSE
+          WriteLog(("ERROR: One-Wire Weather UDP interface FAILED to connect to port: ") & iOwwTCPPort)
+        END IF
       ELSE
-        WriteLog(("ERROR: One-Wire Weather UDP interface FAILED to connect to port: ") & iOwwTCPPort)
-      END IF
-    ELSE
-      hOwwTCP = NEW COww
-      ' set the properties
-      WITH hOwwTCP
-        .TCPHost = sOwwTCPHost
-        .TCPPort = iOwwTCPPort
-        .ServerType = sOwwServerType
-        .OwwDebug = bOwwDebug
-      END WITH
-      ' connect to the One-Wire Weather host:port
-      IF hOwwTCP.Connect() THEN
-        WriteLog(("One-Wire Weather TCP interface connecting to ") & sOwwTCPHost & ":" & iOwwTCPPort)
-      ELSE
-        WriteLog(("ERROR: One-Wire Weather TCP interface FAILED to connect to ") & sOwwTCPHost & ":" & iOwwTCPPort)
+        hOwwTCP = NEW COww
+        ' set the properties
+        WITH hOwwTCP
+          .TCPHost = sOwwTCPHost
+          .TCPPort = iOwwTCPPort
+          .ServerType = sOwwServerType
+          .OwwDebug = bOwwDebug
+        END WITH
+        ' connect to the One-Wire Weather host:port
+        IF hOwwTCP.Connect() THEN
+          WriteLog(("One-Wire Weather TCP interface connecting to ") & sOwwTCPHost & ":" & iOwwTCPPort)
+        ELSE
+          WriteLog(("ERROR: One-Wire Weather TCP interface FAILED to connect to ") & sOwwTCPHost & ":" & iOwwTCPPort)
+        END IF
       END IF
     END IF
   ELSE
@@ -2933,19 +3062,21 @@ PRIVATE SUB Setup_LIRC()
 
   IF bLIRCEnabled THEN
     WriteLog(("LIRC support enabled."))
-    ' create a new LIRC class instance
-    hLIRC = NEW CLIRC
-    ' set the properties
-    WITH hLIRC
-      .TCPHost = sLIRCTCPHost
-      .TCPPort = iLIRCTCPPort
-      .LIRCDebug = bLIRCDebug
-    END WITH
-    ' connect to the LIRC host:port
-    IF hLIRC.Connect() THEN
-      WriteLog(("LIRC interface connecting to ") & sLIRCTCPHost & ":" & iLIRCTCPPort)
-    ELSE
-      WriteLog(("ERROR: LIRC interface FAILED to connect to ") & sLIRCTCPHost & ":" & iLIRCTCPPort)
+    IF bServer THEN
+      ' create a new LIRC class instance
+      hLIRC = NEW CLIRC
+      ' set the properties
+      WITH hLIRC
+        .TCPHost = sLIRCTCPHost
+        .TCPPort = iLIRCTCPPort
+        .LIRCDebug = bLIRCDebug
+      END WITH
+      ' connect to the LIRC host:port
+      IF hLIRC.Connect() THEN
+        WriteLog(("LIRC interface connecting to ") & sLIRCTCPHost & ":" & iLIRCTCPPort)
+      ELSE
+        WriteLog(("ERROR: LIRC interface FAILED to connect to ") & sLIRCTCPHost & ":" & iLIRCTCPPort)
+      END IF
     END IF
   ELSE
     WriteLog(("LIRC support disabled."))
@@ -2973,8 +3104,11 @@ PRIVATE SUB Setup_Pachube()
 
   IF bPachubeEnabled THEN
     WriteLog(("Pachube support with ") & IIf(Main.iPachubePushTime, "Manual", "Automatic") & (" feeds enabled."))
-    IF Main.iPachubePushTime THEN
-      Pachube.Run()
+    ' start timer
+    IF bServer THEN
+      IF Main.iPachubePushTime THEN
+        Pachube.Run()
+      END IF
     END IF
   ELSE
     TRY Pachube.tPachube.Stop
@@ -2999,20 +3133,22 @@ PRIVATE SUB Setup_JeeLabs()
 
   IF bJeeLabsEnabled THEN
     WriteLog(("JeeLabs JeeLink support enabled."))
-    ' create a new JeeLabs class instance
-    hJeeLabs = NEW CJeeLabs
-    ' set the properties
-    WITH hJeeLabs
-      .Port = sJeeLabsSerialPort
-      .Baud = sJeeLabsBaudrate
-      .JeeLabsDebug = bJeeLabsDebug
-    END WITH
-    ' connect to the serial port
-    IF hJeeLabs.Connect() THEN
-      WriteLog(("JeeLabs JeeLink interface connected to Port ") & sJeeLabsSerialPort)
-    ELSE
-      WriteLog(("ERROR: JeeLabs JeeLink interface FAILED to connect to Port ") & sJeeLabsSerialPort)
-      hJeeLabs = NULL
+    IF bServer THEN
+      ' create a new JeeLabs class instance
+      hJeeLabs = NEW CJeeLabs
+      ' set the properties
+      WITH hJeeLabs
+        .Port = sJeeLabsSerialPort
+        .Baud = sJeeLabsBaudrate
+        .JeeLabsDebug = bJeeLabsDebug
+      END WITH
+      ' connect to the serial port
+      IF hJeeLabs.Connect() THEN
+        WriteLog(("JeeLabs JeeLink interface connected to Port ") & sJeeLabsSerialPort)
+      ELSE
+        WriteLog(("ERROR: JeeLabs JeeLink interface FAILED to connect to Port ") & sJeeLabsSerialPort)
+        hJeeLabs = NULL
+      END IF
     END IF
   ELSE
     WriteLog(("JeeLabs JeeLink support disabled."))
@@ -3041,7 +3177,11 @@ PRIVATE SUB Setup_TemperaturNu()
   IF bTemperaturNuEnabled THEN
     WriteLog(("TemperaturNu support enabled."))
     ' start timer
-    IF Main.iTemperaturNuPushTime THEN TemperaturNu.Run()
+    IF bServer THEN
+      IF Main.iTemperaturNuPushTime THEN
+        TemperaturNu.Run()
+      END IF
+    END IF
   ELSE
     TRY TemperaturNu.tTemperaturNu.Stop
     WriteLog(("TemperaturNu support disabled."))
@@ -3065,19 +3205,21 @@ PRIVATE SUB Setup_SqueezeServer()
 
   IF bSqueezeServerEnabled THEN
     WriteLog(("Squeeze Server support enabled."))
-    ' create a new SqueezeServer class instance
-    hSqueezeServer = NEW CSqueezeServer
-    ' set the properties
-    WITH hSqueezeServer
-      .TCPHost = sSqueezeServerTCPHost
-      .TCPPort = iSqueezeServerTCPPort
-      .SqueezeServerDebug = bSqueezeServerDebug
-    END WITH
-    ' connect to squeezeserver host:port
-    IF hSqueezeServer.Connect() THEN
-      WriteLog(("Squeeze Server TCP interface connecting to ") & sSqueezeServerTCPHost & ":" & iSqueezeServerTCPPort)
-    ELSE
-      WriteLog(("ERROR: Squeeze Server TCP interface FAILED to connect to ") & sSqueezeServerTCPHost & ":" & iSqueezeServerTCPPort)
+    IF bServer THEN
+      ' create a new SqueezeServer class instance
+      hSqueezeServer = NEW CSqueezeServer
+      ' set the properties
+      WITH hSqueezeServer
+        .TCPHost = sSqueezeServerTCPHost
+        .TCPPort = iSqueezeServerTCPPort
+        .SqueezeServerDebug = bSqueezeServerDebug
+      END WITH
+      ' connect to squeezeserver host:port
+      IF hSqueezeServer.Connect() THEN
+        WriteLog(("Squeeze Server TCP interface connecting to ") & sSqueezeServerTCPHost & ":" & iSqueezeServerTCPPort)
+      ELSE
+        WriteLog(("ERROR: Squeeze Server TCP interface FAILED to connect to ") & sSqueezeServerTCPHost & ":" & iSqueezeServerTCPPort)
+      END IF
     END IF
   ELSE
     WriteLog(("Squeeze Server support disabled."))
@@ -3105,23 +3247,25 @@ PRIVATE SUB Setup_LEDMatrix()
 
   IF bLEDMatrixEnabled THEN
     WriteLog(("LED Matrix support enabled."))
-    ' create a new LEDMatrix class instance
-    hLEDMatrix = NEW CLEDMatrix
-    ' set the properties
-    WITH hLEDMatrix
-      .Port = sLEDMatrixSerialPort
-      .LEDMatrixDebug = bLEDMatrixDebug
-      .DisplayID = sLEDMatrixID
-      .DisplayColor = iLEDMatrixColor
-      .DisplaySpeed = iLEDMatrixSpeed
-    END WITH
-    ' connect to the serial port
-    IF hLEDMatrix.Connect() THEN
-      WriteLog(("LED Matrix interface connected to Port ") & sLEDMatrixSerialPort)
-      ' show startup message
-      hLEDMatrix.Run()
-    ELSE
-      WriteLog(("ERROR: LED Matrix interface FAILED to connect to Port ") & sLEDMatrixSerialPort)
+    IF bServer THEN
+      ' create a new LEDMatrix class instance
+      hLEDMatrix = NEW CLEDMatrix
+      ' set the properties
+      WITH hLEDMatrix
+        .Port = sLEDMatrixSerialPort
+        .LEDMatrixDebug = bLEDMatrixDebug
+        .DisplayID = sLEDMatrixID
+        .DisplayColor = iLEDMatrixColor
+        .DisplaySpeed = iLEDMatrixSpeed
+      END WITH
+      ' connect to the serial port
+      IF hLEDMatrix.Connect() THEN
+        WriteLog(("LED Matrix interface connected to Port ") & sLEDMatrixSerialPort)
+        ' show startup message
+        hLEDMatrix.Run()
+      ELSE
+        WriteLog(("ERROR: LED Matrix interface FAILED to connect to Port ") & sLEDMatrixSerialPort)
+      END IF
     END IF
   ELSE
     WriteLog(("LED Matrix support disabled."))
@@ -3172,6 +3316,7 @@ PRIVATE SUB Setup_EZcontrol()
 
   IF bEZcontrolEnabled THEN
     WriteLog(("EZcontrol support enabled."))
+    IF bServer THEN
       ' create a new EZcontrol class instance
       hEZcontrol = NEW CEZcontrol
       ' set the properties
@@ -3186,6 +3331,7 @@ PRIVATE SUB Setup_EZcontrol()
       ELSE
         WriteLog(("ERROR: EZcontrol UDP interface FAILED to setup for ") & sEZcontrolUDPHost & ":" & iEZcontrolUDPPort & ".")
       END IF
+    END IF
   ELSE
     WriteLog(("EZcontrol support disabled."))
   END IF
@@ -3212,6 +3358,7 @@ PRIVATE SUB Setup_CurrentCost()
 
   IF bCurrentCostEnabled THEN
     WriteLog(("CurrentCost receiver support enabled."))
+    IF bServer THEN
       ' create a new CurrentCost class instance
       hCurrentCost = NEW CCurrentCost
       ' set the properties
@@ -3227,6 +3374,7 @@ PRIVATE SUB Setup_CurrentCost()
         WriteLog(("ERROR: CurrentCost receiver serial interface FAILED to connect to Port ") & sCurrentCostSerialPort)
         hCurrentCost = NULL
       END IF
+    END IF
   ELSE
     WriteLog(("CurrentCost receiver support disabled."))
   END IF
@@ -3253,32 +3401,34 @@ PRIVATE SUB Setup_Denon()
 
   IF bDenonEnabled THEN
     WriteLog(("Denon receiver support enabled."))
-    ' create a new Denon class instance
-    hDenon = NEW CDenon
-    ' set the properties
-    WITH hDenon
-      .TCPHost = sDenonTCPHost
-      .TCPPort = iDenonTCPPort
-      .Interface = sDenonType
-      .Baud = sDenonBaudrate
-      .SerPort = sDenonSerialPort
-      .DenonDebug = bDenonDebug
-    END WITH
-    IF InStr(sDenonType, "tcp") THEN
-      ' connect to the denon host:port
-      IF hDenon.ConnectTCP() THEN
-        WriteLog(("Denon receiver TCP interface connecting to ") & sDenonTCPHost & ":" & iDenonTCPPort)
+    IF bServer THEN
+      ' create a new Denon class instance
+      hDenon = NEW CDenon
+      ' set the properties
+      WITH hDenon
+        .TCPHost = sDenonTCPHost
+        .TCPPort = iDenonTCPPort
+        .Interface = sDenonType
+        .Baud = sDenonBaudrate
+        .SerPort = sDenonSerialPort
+        .DenonDebug = bDenonDebug
+      END WITH
+      IF InStr(sDenonType, "tcp") THEN
+        ' connect to the denon host:port
+        IF hDenon.ConnectTCP() THEN
+          WriteLog(("Denon receiver TCP interface connecting to ") & sDenonTCPHost & ":" & iDenonTCPPort)
+        ELSE
+          WriteLog(("ERROR: Denon receiver TCP interface FAILED to connect to ") & sDenonTCPHost & ":" & iDenonTCPPort)
+          hDenon = NULL
+        END IF
       ELSE
-        WriteLog(("ERROR: Denon receiver TCP interface FAILED to connect to ") & sDenonTCPHost & ":" & iDenonTCPPort)
-        hDenon = NULL
-      END IF
-    ELSE
-      ' connect to the denon serial interface
-      IF hDenon.ConnectSerial() THEN
-        WriteLog(("Denon receiver serial interface connected to Port ") & sDenonSerialPort)
-      ELSE
-        WriteLog(("ERROR: Denon receiver serial interface FAILED to connect to Port ") & sDenonSerialPort)
-        hDenon = NULL
+        ' connect to the denon serial interface
+        IF hDenon.ConnectSerial() THEN
+          WriteLog(("Denon receiver serial interface connected to Port ") & sDenonSerialPort)
+        ELSE
+          WriteLog(("ERROR: Denon receiver serial interface FAILED to connect to Port ") & sDenonSerialPort)
+          hDenon = NULL
+        END IF
       END IF
     END IF
   ELSE
@@ -3301,26 +3451,28 @@ PUBLIC SUB Restart_Denon()
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' connect with irtrans receiver tcp host:port or serial port
+' connect with irtrans receiver tcp host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PRIVATE SUB Setup_IRTrans()
 
   IF bIRTransEnabled THEN
     WriteLog(("IRTrans support enabled."))
-    ' create a new IRTrans class instance
-    hIRTrans = NEW CIRTrans
-    ' set the properties
-    WITH hIRTrans
-      .TCPHost = sIRTransTCPHost
-      .TCPPort = iIRTransTCPPort
-      .IRTransDebug = bIRTransDebug
-    END WITH
-    ' connect to the irtrans host:port
-    IF hIRTrans.Connect() THEN
-      WriteLog(("IRTrans TCP interface connecting to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
-    ELSE
-      WriteLog(("ERROR: IRTrans TCP interface FAILED to connect to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
-      hIRTrans = NULL
+    IF bServer THEN
+      ' create a new IRTrans class instance
+      hIRTrans = NEW CIRTrans
+      ' set the properties
+      WITH hIRTrans
+        .TCPHost = sIRTransTCPHost
+        .TCPPort = iIRTransTCPPort
+        .IRTransDebug = bIRTransDebug
+      END WITH
+      ' connect to the irtrans host:port
+      IF hIRTrans.Connect() THEN
+        WriteLog(("IRTrans TCP interface connecting to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
+      ELSE
+        WriteLog(("ERROR: IRTrans TCP interface FAILED to connect to ") & sIRTransTCPHost & ":" & iIRTransTCPPort)
+        hIRTrans = NULL
+      END IF
     END IF
   ELSE
     WriteLog(("IRTrans support disabled."))
@@ -3348,32 +3500,34 @@ PRIVATE SUB Setup_Onkyo()
 
   IF bOnkyoEnabled THEN
     WriteLog(("Onkyo/Integra receiver support enabled."))
-    ' create a new Onkyo class instance
-    hOnkyo = NEW COnkyo
-    ' set the properties
-    WITH hOnkyo
-      .TCPHost = sOnkyoTCPHost
-      .TCPPort = iOnkyoTCPPort
-      .Interface = sOnkyoType
-      .Baud = sOnkyoBaudrate
-      .SerPort = sOnkyoSerialPort
-      .OnkyoDebug = bOnkyoDebug
-    END WITH
-    IF InStr(sOnkyoType, "tcp") THEN
-      ' connect to the onkyo host:port
-      IF hOnkyo.ConnectTCP() THEN
-        WriteLog(("Onkyo/Integra receiver TCP interface connecting to ") & sOnkyoTCPHost & ":" & iOnkyoTCPPort)
+    IF bServer THEN
+      ' create a new Onkyo class instance
+      hOnkyo = NEW COnkyo
+      ' set the properties
+      WITH hOnkyo
+        .TCPHost = sOnkyoTCPHost
+        .TCPPort = iOnkyoTCPPort
+        .Interface = sOnkyoType
+        .Baud = sOnkyoBaudrate
+        .SerPort = sOnkyoSerialPort
+        .OnkyoDebug = bOnkyoDebug
+      END WITH
+      IF InStr(sOnkyoType, "tcp") THEN
+        ' connect to the onkyo host:port
+        IF hOnkyo.ConnectTCP() THEN
+          WriteLog(("Onkyo/Integra receiver TCP interface connecting to ") & sOnkyoTCPHost & ":" & iOnkyoTCPPort)
+        ELSE
+          WriteLog(("ERROR: Onkyo/Integra receiver TCP interface FAILED to connect to ") & sOnkyoTCPHost & ":" & iOnkyoTCPPort)
+          hOnkyo = NULL
+        END IF
       ELSE
-        WriteLog(("ERROR: Onkyo/Integra receiver TCP interface FAILED to connect to ") & sOnkyoTCPHost & ":" & iOnkyoTCPPort)
-        hOnkyo = NULL
-      END IF
-    ELSE
-      ' connect to the onkyo serial interface
-      IF hOnkyo.ConnectSerial() THEN
-        WriteLog(("Onkyo/Integra receiver serial interface connected to Port ") & sOnkyoSerialPort)
-      ELSE
-        WriteLog(("ERROR: Onkyo/integra receiver serial interface FAILED to connect to Port ") & sOnkyoSerialPort)
-        hOnkyo = NULL
+        ' connect to the onkyo serial interface
+        IF hOnkyo.ConnectSerial() THEN
+          WriteLog(("Onkyo/Integra receiver serial interface connected to Port ") & sOnkyoSerialPort)
+        ELSE
+          WriteLog(("ERROR: Onkyo/integra receiver serial interface FAILED to connect to Port ") & sOnkyoSerialPort)
+          hOnkyo = NULL
+        END IF
       END IF
     END IF
   ELSE
@@ -3402,6 +3556,7 @@ PRIVATE SUB Setup_PwrCtrl()
 
   IF bPwrCtrlEnabled THEN
     WriteLog(("PwrCtrl support enabled."))
+    IF bServer THEN
       ' create a new PwrCtrl class instance
       hPwrCtrl = NEW CPwrCtrl
       ' set the properties
@@ -3419,6 +3574,7 @@ PRIVATE SUB Setup_PwrCtrl()
       ELSE
         WriteLog(("ERROR: PwrCtrl UDP interface FAILED to setup to listen for Port ") & iPwrCtrlUDPRead)
       END IF
+    END IF
   ELSE
     WriteLog(("PwrCtrl support disabled."))
   END IF
@@ -3439,6 +3595,216 @@ PUBLIC SUB Restart_PwrCtrl()
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with sharptv
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_SharpTV()
+
+  IF bSharpTVEnabled THEN
+    WriteLog(("Sharp TV receiver support enabled."))
+    IF bServer THEN
+      ' create a new SharpTV class instance
+      hSharpTV = NEW CSharpTV
+      ' set the properties
+      WITH hSharpTV
+        .TCPHost = sSharpTVTCPHost
+        .TCPPort = iSharpTVTCPPort
+        .Interface = sSharpTVType
+        .Baud = sSharpTVBaudrate
+        .SerPort = sSharpTVSerialPort
+        .SharpTVDebug = bSharpTVDebug
+      END WITH
+      IF InStr(sSharpTVType, "tcp") THEN
+        ' connect to the sharptv host:port
+        IF hSharpTV.ConnectTCP() THEN
+          WriteLog(("Sharp TV receiver TCP interface connecting to ") & sSharpTVTCPHost & ":" & iSharpTVTCPPort)
+        ELSE
+          WriteLog(("ERROR: Sharp TV receiver TCP interface FAILED to connect to ") & sSharpTVTCPHost & ":" & iSharpTVTCPPort)
+          hSharpTV = NULL
+        ENDIF
+      ELSE
+        ' connect to the sharptv serial interface
+        IF hSharpTV.ConnectSerial() THEN
+          WriteLog(("Sharp TV receiver serial interface connected to Port ") & sSharpTVSerialPort)
+        ELSE
+          WriteLog(("ERROR: Sharp TV receiver serial interface FAILED to connect to Port ") & sSharpTVSerialPort)
+          hSharpTV = NULL
+        ENDIF
+      ENDIF
+    ENDIF
+  ELSE
+    WriteLog(("Sharp TV receiver support disabled."))
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart sharptv after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_SharpTV()
+
+  IF hSharpTV THEN
+    hSharpTV.Disconnect
+    hSharpTV = NULL
+  END IF
+  Setup_SharpTV()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with lgtv
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_LGTV()
+
+  IF bLGTVEnabled THEN
+    WriteLog(("LG TV receiver support enabled."))
+    IF bServer THEN
+      ' create a new LGTV class instance
+      hLGTV = NEW CLGTV
+      ' set the properties
+      WITH hLGTV
+        .TCPHost = sLGTVTCPHost
+        .TCPPort = iLGTVTCPPort
+        .Interface = sLGTVType
+        .Baud = sLGTVBaudrate
+        .SerPort = sLGTVSerialPort
+        .LGTVDebug = bLGTVDebug
+      END WITH
+      IF InStr(sLGTVType, "tcp") THEN
+        ' connect to the lgtv host:port
+        IF hLGTV.ConnectTCP() THEN
+          WriteLog(("LG TV receiver TCP interface connecting to ") & sLGTVTCPHost & ":" & iLGTVTCPPort)
+        ELSE
+          WriteLog(("ERROR: LG TV receiver TCP interface FAILED to connect to ") & sLGTVTCPHost & ":" & iLGTVTCPPort)
+          hLGTV = NULL
+        ENDIF
+      ELSE
+        ' connect to the lgtv serial interface
+        IF hLGTV.ConnectSerial() THEN
+          WriteLog(("LG TV receiver serial interface connected to Port ") & sLGTVSerialPort)
+        ELSE
+          WriteLog(("ERROR: LG TV receiver serial interface FAILED to connect to Port ") & sLGTVSerialPort)
+          hLGTV = NULL
+        ENDIF
+      ENDIF
+    ENDIF
+  ELSE
+    WriteLog(("LG TV receiver support disabled."))
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart lgtv after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_LGTV()
+
+  IF hLGTV THEN
+    hLGTV.Disconnect
+    hLGTV = NULL
+  END IF
+  Setup_LGTV()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with iport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_iPort()
+
+  IF bIPortEnabled THEN
+    WriteLog(("iPort dock support enabled."))
+    IF bServer THEN
+      ' create a new IPort class instance
+      hIPort = NEW CIPort
+      ' set the properties
+      WITH hIPort
+        .TCPHost = sIPortTCPHost
+        .TCPPort = iIPortTCPPort
+        .Interface = sIPortType
+        .Baud = sIPortBaudrate
+        .SerPort = sIPortSerialPort
+        .IPortDebug = bIPortDebug
+      END WITH
+      IF InStr(sIPortType, "tcp") THEN
+        ' connect to the iport host:port
+        IF hIPort.ConnectTCP() THEN
+          WriteLog(("iPort dock TCP interface connecting to ") & sIPortTCPHost & ":" & iIPortTCPPort)
+        ELSE
+          WriteLog(("ERROR: iPort dock TCP interface FAILED to connect to ") & sIPortTCPHost & ":" & iIPortTCPPort)
+          hIPort = NULL
+        ENDIF
+      ELSE
+        ' connect to the iport serial interface
+        IF hIPort.ConnectSerial() THEN
+          WriteLog(("iPort dock serial interface connected to Port ") & sIPortSerialPort)
+        ELSE
+          WriteLog(("ERROR: iPort dock serial interface FAILED to connect to Port ") & sIPortSerialPort)
+          hIPort = NULL
+        ENDIF
+      ENDIF
+    ENDIF
+  ELSE
+    WriteLog(("iPort dock support disabled."))
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart iport after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_iPort()
+
+  IF hIPort THEN
+    hIPort.Disconnect
+    hIPort = NULL
+  END IF
+  Setup_iPort()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start listening for cf iviewer remotes
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Setup_iViewer()
+
+  IF bIViewerEnabled THEN
+    IF bIViewerDebug THEN Main.WriteLog(("CF iViewer support enabled."))
+    IF bServer THEN
+      ' create a new iViewer class instance
+      hIViewer = NEW CIViewer
+
+      ' set the properties
+      hIViewer.IViewerPassword = sIViewerPassword
+      hIViewer.IViewerPort = iIViewerTCPPort
+      hIViewer.IViewerDebug = bIViewerDebug
+
+      ' start iviewer
+      IF hIViewer.Connect() THEN
+        Main.WriteLog(("CF iViewer server listening on Port ") & iIViewerTCPPort)
+      ELSE
+        Main.WriteLog(("ERROR: CF iViewer server FAILED to start on Port ") & iIViewerTCPPort)
+      END IF
+    END IF
+  ELSE
+    Main.WriteLog(("CF iViewer support disabled."))
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart cf iviewer after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_IViewer()
+
+  IF hIViewer THEN
+    hIViewer.Disconnect
+    hIViewer = NULL
+  END IF
+  Setup_IViewer()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' main loop checking for action and acted upon
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB Check_for_Action()
@@ -3451,7 +3817,7 @@ PUBLIC SUB Check_for_Action()
 
   SetGlobalVars()
   bProgramStartup = FALSE
-  EventLoop.Run()
+  IF bServer THEN EventLoop.Run()
 
 END
 
@@ -3460,8 +3826,8 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB ChangeHouseMode(sMode AS String)
 
-  Main.GlobalVar["House_Mode"] = sMode
-  Main.WriteLog(("House mode is set to '") & Caps(sMode) & "'.")
+  SetGlobalVar("House_Mode", sMode)
+  WriteLog(("House mode is set to '") & Caps(sMode) & "'.")
 
 END
 
@@ -3473,9 +3839,9 @@ PUBLIC SUB ChangeMuteMode(bMode AS Boolean)
   SetGlobalVar("Mute", bMode)
 
   IF bMode THEN
-    Main.WriteLog(("Mute mode is set to 'Audio Disabled'."))
+    WriteLog(("Mute mode is set to 'Audio Disabled'."))
   ELSE
-    Main.WriteLog(("Mute mode is set to 'Audio Enabled'."))
+    WriteLog(("Mute mode is set to 'Audio Enabled'."))
   END IF
 
 END
@@ -3505,7 +3871,13 @@ PUBLIC SUB SetupTimers()
 
   ' main loop sleep timer
   tMainSleep = NEW Timer AS "tSleep"
-  tMainSleep.Delay = iMainSleepTime
+
+  IF bServer THEN
+    tMainSleep.Delay = iMainSleepTime
+  ELSE
+    ' only refresh ones per second to keep clock uptodate
+    tMainSleep.Delay = 1000
+  END IF
   tMainSleep.Enabled = TRUE
 
   ' flush logfile buffers to disk
@@ -3709,9 +4081,11 @@ PRIVATE SUB SetGlobalVars()
         ELSE
           SetGlobalVar("Time_Of_Day", ("night"))
         END IF
-        WriteLog("The Time of Day is " & Main.GlobalVar["Time_Of_Day"] & ".")
-        WriteLog("It's " & IIf(GlobalVar["Dark"], ("dark"), ("light")) & " outside.")
-        WriteLog(("DomotiGa is running for ") & Main.GlobalVar["Program_Uptime"])
+        IF bServer THEN
+          WriteLog("The Time of Day is " & Main.GlobalVar["Time_Of_Day"] & ".")
+          WriteLog("It's " & IIf(GlobalVar["Dark"], ("dark"), ("light")) & " outside.")
+          WriteLog(("DomotiGa is running for ") & Main.GlobalVar["Program_Uptime"])
+        ENDIF
         ' new day
         IF (iPrev_Mday <> GlobalVar["Day"]) THEN
           bNew_Day = 1
@@ -3742,18 +4116,23 @@ PRIVATE SUB SetGlobalVars()
           IF (sAstroTwilight = "astronomical") THEN iTwilight = 3
           SetGlobalVar("Sunrise_Twilight", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunRise, iTwilight))
           SetGlobalVar("Sunset_Twilight", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunSet, iTwilight))
-          WriteLog("Twilight Sunrise at " & GlobalVar["Sunrise_Twilight"] & (", Twilight Sunset at ") & GlobalVar["Sunset_Twilight"] & " (" & sAstroTwilight & ")")
+
+          IF bServer THEN
+            WriteLog("Sunrise at " & GlobalVar["Sunrise"] & (", Sunset at ") & GlobalVar["Sunset"])
+            WriteLog("Twilight Sunrise at " & GlobalVar["Sunrise_Twilight"] & (", Twilight Sunset at ") & GlobalVar["Sunset_Twilight"] & " (" & sAstroTwilight & ")")
+          ENDIF
 
           ' calculate moon data
           Astro.CalcMoonPhase()
-
-          WriteLog(("Moon phase is ") & MoonPhase & ".")
-          WriteLog(("Moon is in ") & MoonZodiac & ".")
-          WriteLog(("Age from new ") & MoonAge & (" days."))
-          WriteLog(("Distance ") & MoonDistance & (" Earth radii."))
-          WriteLog(("Ecliptic latitude: ") & MoonLatitude & (" degrees."))
-          WriteLog(("Ecliptic longitude: ") & MoonLongitude & (" degrees."))
-          IF MoonIsLeapYear THEN WriteLog(("This is a leap year."))
+          IF bServer THEN
+            WriteLog(("Moon phase is ") & MoonPhase & ".")
+            WriteLog(("Moon is in ") & MoonZodiac & ".")
+            WriteLog(("Age from new ") & MoonAge & (" days."))
+            WriteLog(("Distance ") & MoonDistance & (" Earth radii."))
+            WriteLog(("Ecliptic latitude: ") & MoonLatitude & (" degrees."))
+            WriteLog(("Ecliptic longitude: ") & MoonLongitude & (" degrees."))
+            IF MoonIsLeapYear THEN WriteLog(("This is a leap year."))
+          ENDIF
 
           ' calculate season
           sSeasons = Split(sAstroSeasons, ",")
@@ -3775,7 +4154,7 @@ PRIVATE SUB SetGlobalVars()
           ELSE
             SetGlobalVar("Season", sSeasons[3])
           END IF
-          WriteLog("Season is " & GlobalVar["Season"] & ".")
+          IF bServer THEN WriteLog("Season is " & GlobalVar["Season"] & ".")
           ' new month
           IF (iPrev_Month <> GlobalVar["Month"]) THEN
             bNew_Month = 1
@@ -3906,7 +4285,7 @@ PUBLIC SUB SetGlobalVar(sVar AS String, vValue AS Variant)
 
   IF Events.CheckCondition(Main.GlobalVar[sVar], "<>", vValue, TRUE) THEN
     Events.CheckGlobalVarEvents(sVar, vValue)
-    Main.BroadcastEvent("[GlobalVar]" & sVar & "|" & vValue)
+    BroadcastEvent("[GlobalVar]" & sVar & "|" & vValue)
   ENDIF
 
 END
@@ -4050,13 +4429,24 @@ PUBLIC SUB Broadcast_Error()
 
   SELECT CASE hBroadcast.Status
     CASE Net.CannotBindSocket
-      Main.WriteDebugLog(("[WOL] Unable to Bind to that port"))
+      Main.WriteDebugLog(("[WOL] Unable to bind to that port."))
     CASE Net.CannotCreateSocket
-      Main.WriteDebugLog(("[WOL] System does not allow to create a socket"))
+      Main.WriteDebugLog(("[WOL] The system does not allow to create a socket."))
     CASE Net.CannotRead
-      Main.WriteDebugLog(("[WOL] Error Sending Data"))
+      Main.WriteDebugLog(("[WOL] Error receiving data."))
     CASE Net.CannotWrite
-      Main.WriteDebugLog(("[WOL] Error Receiving Data"))
+      Main.WriteDebugLog(("[WOL] Error sending data."))
+  END SELECT
+
+END
+
+PUBLIC SUB DisplayBool(bSwitch AS Boolean) AS String
+
+  SELECT bSwitch
+    CASE TRUE
+        RETURN ("True")
+    CASE ELSE
+        RETURN ("False")
   END SELECT
 
 END
@@ -4071,6 +4461,17 @@ PUBLIC FUNCTION IsTime(sString AS String) AS Boolean
   ELSE
     RETURN FALSE
   END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' simple check for boolean string
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION IsBool(sStr AS String) AS Boolean
+
+  IF sStr == "True" THEN RETURN TRUE
+  IF sStr == "False" THEN RETURN TRUE
+  RETURN FALSE
 
 END
 
@@ -4187,22 +4588,11 @@ PUBLIC SUB BroadcastUDP_Error()
     CASE Net.CannotBindSocket
       Main.WriteDebugLog(("[BroadcastUDP] Unable to bind to that port."))
     CASE Net.CannotCreateSocket
-      Main.WriteDebugLog(("[BroadcastUDP] System does not allow to create a socket."))
+      Main.WriteDebugLog(("[BroadcastUDP] The system does not allow to create a socket."))
     CASE Net.CannotRead
       Main.WriteDebugLog(("[BroadcastUDP] Error receiving data."))
     CASE Net.CannotWrite
       Main.WriteDebugLog(("[BroadcastUDP] Error sending data."))
-  END SELECT
-
-END
-
-PUBLIC SUB DisplayBool(bSwitch AS Boolean) AS String
-
-  SELECT bSwitch
-    CASE TRUE
-        RETURN ("True")
-    CASE ELSE
-        RETURN ("False")
   END SELECT
 
 END
@@ -4227,7 +4617,7 @@ PRIVATE SUB CheckDatabaseVersion()
     ' convert 0.1.180 to 01180
     iDBVersion = Val(Replace(sDBVersion, ".", ""))
     IF iDBVersion < iPrgVersion THEN
-      Main.WriteLog(("The version of your database is ") & sDBVersion & (" but the version of the program is ") & sPrgVersion & ("!"))
+      WriteLog(("The version of your database is ") & sDBVersion & (" but the version of the program is ") & sPrgVersion & ("!"))
       REPEAT
         IF bAllowAutoUpgrade THEN
           IF Main.ProgramExist("mysql") THEN
@@ -4236,7 +4626,7 @@ PRIVATE SUB CheckDatabaseVersion()
             IF Exist(sBaseDir &/ sDumpFile) THEN
               hMysql = SHELL "mysql --host=" & sSQLHost & " --user=" & sSQLUser & " --password=" & sSQLPass & " --execute='SOURCE " & sBaseDir &/ sDumpFile & "'" WAIT
               IF hMysql.Value THEN ' mysql returned an error
-                Main.WriteLog(("Mysql command returned an error! The database is now at version ") & sDBVersion)
+                WriteLog(("Mysql command returned an error! The database is now at version ") & sDBVersion)
                 QUIT
               ELSE
                 ' check if we are there yet
@@ -4248,17 +4638,17 @@ PRIVATE SUB CheckDatabaseVersion()
                 END IF
               END IF
             ELSE
-              Main.WriteLog(("Couldn't find upgrade file ") & sDumpFile & ("! The Database is now at version ") & sDBVersion)
+              WriteLog(("Couldn't find upgrade file ") & sDumpFile & ("! The Database is now at version ") & sDBVersion)
               QUIT
             END IF
-            Main.WriteLog(("Database has been upgraded to version ") & sDBVersion)
+            WriteLog(("Database has been upgraded to version ") & sDBVersion)
             IF iPrgVersion = iDBVersion THEN RETURN
           ELSE
-            Main.WriteLog(("Couldn't find mysql program!"))
+            WriteLog(("Couldn't find mysql program!"))
             QUIT
           END IF
         ELSE
-          Main.WriteLog(("You can run " & Application.Name & " with the -a parameter to allow automatic upgrade!"))
+          WriteLog(("You can run " & Application.Name & " with the -a parameter to allow automatic upgrade!"))
           QUIT
         END IF
       UNTIL iPrgVersion = iDBVersion

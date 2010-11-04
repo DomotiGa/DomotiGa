@@ -14,7 +14,7 @@
 
 ' trigger database table
 ' description        | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
-' time now           |   1  | hour     | minute
+' time now           |   1  | crontab
 ' globalvar change   |   2  | variable | operand | value
 ' device change      |   3  | id       | fieldno | operand | value
 ' ir remote received |   4  | remote   | button  | repeat
@@ -22,7 +22,7 @@
 
 ' condition database table
 ' description        | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
-' time now           |   1  | hour     | minute
+' time now           |   1  | crontab
 ' globalvar value    |   2  | variable | operand | value
 ' device value       |   3  | id       | fieldno | operand | value
 
@@ -30,10 +30,10 @@
 PUBLIC SUB CheckTimeNowEvents()
 
   DIM rResult AS Result
-  DIM sSql AS String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 1 AND events.enabled AND triggers.param1 = &1 AND triggers.param2 = &2"
+  DIM sSql AS String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 1 AND events.enabled"
 
-  IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 1a. Running TimeNow query '") & Subst(sSql, Format(Main.GlobalVar["Hour"], "00"), Format(Main.GlobalVar["Minute"], "00")) & "'")
-  rResult = Main.hDB.Exec(sSql, Format(Main.GlobalVar["Hour"], "00"), Format(Main.GlobalVar["Minute"], "00"))
+  IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 1a. Running TimeNow query '") & sSql & "'")
+  rResult = Main.hDB.Exec(sSql)
   IF rResult THEN
     IF rResult.Count THEN
       DoEvent(rResult)
@@ -151,7 +151,8 @@ PRIVATE SUB DoEvent(rResult AS Result, OPTIONAL sValue AS Variant)
       SELECT rResult["triggers.type"]
         CASE 1
           ' timenow trigger
-          IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 2c. TimeNow trigger on event id ") & rResult!id & (" named '") & rResult!name & ("' with trigger condition 'Hour = ") & rResult["triggers.param1"] & " and Minute = " & rResult["triggers.param2"] & "'")
+          IF NOT Main.Time_Cron(rResult["triggers.param1"]) THEN CONTINUE
+          IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 2c. TimeNow trigger on event id ") & rResult!id & (" named '") & rResult!name & ("' with trigger condition '") & rResult["triggers.param1"] & "'")
         CASE 2
           ' check globalvar change trigger
           IF NOT CheckCondition(sValue, rResult["triggers.param2"], rResult["triggers.param3"]) THEN CONTINUE
@@ -174,7 +175,7 @@ PRIVATE SUB DoEvent(rResult AS Result, OPTIONAL sValue AS Variant)
       IF CheckConditions(rResult!condition1, rResult!condition2, rResult!operand) = TRUE THEN
         ' run action(s)
         IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 2f. Event id " & rResult!id & " named '") & rResult["events.name"] & ("' is validated, running action(s)."))
-        RunActions(rResult!id, rResult!action1, rResult!action2, rResult!action3)
+        RunActions(rResult!id)
       ELSE
         IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 2f. Event id " & rResult!id & " named '") & rResult["events.name"] & ("' has has failed CheckConditions, discarding."))
       ENDIF
@@ -211,37 +212,70 @@ CATCH
 
 END
 
+PRIVATE SUB AddVariablesToContext(cContext AS Collection)
+
+  DIM vValue AS Variant
+
+  FOR EACH vValue IN Main.GlobalVar
+    cContext["Var_" & Main.GlobalVar.Key] = vValue
+  NEXT
+
+END
+
+PRIVATE SUB AddDevicesToContext(cContext AS Collection)
+
+  DIM iCount AS Integer
+  DIM rResult AS Result
+  DIM sSql AS String
+
+  sSql = "SELECT * FROM devices WHERE enabled IS TRUE ORDER BY name"
+  rResult = Main.hDB.Exec(sSql)
+
+  FOR iCount = 0 TO rResult.Max
+    cContext["Dev_" & rResult!id & "_Value"] = rResult!value
+    cContext["Dev_" & rResult!id & "_Value2"] = rResult!value2
+    cContext["Dev_" & rResult!id & "_Value3"] = rResult!value3
+    cContext["Dev_" & rResult!id & "_Value4"] = rResult!value4
+    cContext["Dev_" & rResult!id & "_LastChanged"] = rResult!lastchanged
+    rResult.MoveNext
+  NEXT
+
+END
+
+PUBLIC FUNCTION EvalFormula(sFormula AS String) AS String
+
+  DIM sToEval, sResult AS String 
+  DIM cContext AS NEW Collection
+  DIM vResult AS Variant
+
+  sToEval = Replace(sFormula, "\n", " ")
+  ' here we replace variables & devices by their values
+  AddVariablesToContext(cContext)
+  AddDevicesToContext(cContext)
+  ' here the formula is evaluated
+  TRY vResult = Eval(sToEval, cContext)
+  IF ERROR THEN
+    sResult = ("Error: ") & Error.Text
+  ELSE IF IsBoolean(vResult) THEN
+    sResult = Main.DisplayBool(vResult)
+  ELSE
+    sResult = vResult
+  ENDIF
+  RETURN sResult
+
+CATCH
+  RETURN Error.Text
+
+END
+
 PRIVATE SUB CheckSingleCondition(iCondition AS Integer) AS Boolean
 
   DIM bResult AS Boolean
-  DIM sValue AS String
   DIM rResultCondition AS Result
 
   rResultCondition = Main.hDB.Exec("SELECT * FROM conditions WHERE id = " & iCondition)
   IF rResultCondition THEN
-    bResult = TRUE
-
-    SELECT rResultCondition!type
-      CASE 1 ' time
-        ' not supported as condition
-      CASE 2 ' variable
-        bResult = CheckCondition(Main.GlobalVar[rResultCondition!param1], rResultCondition!param2, rResultCondition!param3)
-      CASE 3  ' device Status
-        IF Comp(rResultCondition!param2, "Value") = 0 THEN
-          sValue = Devices.GetCurrentValueForDevice(rResultCondition!param1)
-        ELSE IF Comp(rResultCondition!param2, "Value2") = 0 THEN
-          sValue = Devices.GetCurrentValue2ForDevice(rResultCondition!param1)
-        ELSE IF Comp(rResultCondition!param2, "Value3") = 0 THEN
-          sValue = Devices.GetCurrentValue3ForDevice(rResultCondition!param1)
-        ELSE IF Comp(rResultCondition!param2, "Value4") = 0 THEN
-          sValue = Devices.GetCurrentValue4ForDevice(rResultCondition!param1)
-        ELSE
-          sValue = Devices.GetCurrentValueForDevice(rResultCondition!param1)
-        ENDIF
-        bResult = CheckCondition(sValue, rResultCondition!param3, rResultCondition!param4)
-      CASE ELSE
-        IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Event unsupported condition type found!"))
-    END SELECT
+    IF EvalFormula(rResultCondition!formula) THEN bResult = TRUE
   ELSE
     bResult = FALSE
   ENDIF
@@ -282,20 +316,19 @@ PRIVATE SUB CheckConditions(iCondition1 AS Integer, iCondition2 AS Integer, sOpe
 END
 
 ' run all configured actions
-PRIVATE SUB RunActions(iEventId AS Integer, iAction1 AS Integer, iAction2 AS Integer, iAction3 AS Integer)
+PRIVATE SUB RunActions(iEventId AS Integer)
+
+  DIM rActions AS Result
 
   UpdateEvent(iEventId)
-  IF iAction1 THEN
-    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3a. Running action with id ") & iAction1 & (" for Event with id ") & iEventId)
-    RunAction(iAction1)
-  ENDIF
-  IF iAction2 THEN
-    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3a. Running action with id ") & iAction2 & (" for Event with id ") & iEventId)
-    RunAction(iAction2)
-  ENDIF
-  IF iAction3 THEN
-    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3a. Running action with id ") & iAction3 & (" for Event with id ") & iEventId)
-    RunAction(iAction3)
+
+  rActions = Main.hDB.Exec("SELECT * FROM events_actions WHERE event = " & iEventId & " ORDER BY events_actions.order")
+  IF rActions THEN
+    FOR EACH rActions
+      IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3a. Running action with id ") & rActions!action & (" for Event with id ") & iEventId)
+      RunAction(rActions!action)
+      ' WAIT rActions!delay / 1000
+    NEXT
   ENDIF
 
 END
@@ -466,14 +499,17 @@ PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
       CASE ELSE
         bOk = FALSE
     END SELECT
-  ENDIF
 
-  IF bOk THEN
-    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' executed!"))
-    RETURN TRUE
+
+    IF bOk THEN
+      IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' executed!"))
+      RETURN TRUE
+    ELSE
+      IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' failed to execute!"))
+      RETURN FALSE
+    ENDIF
   ELSE
-    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' failed to execute!"))
-    RETURN FALSE
+    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3b. Action with id ") & iAction & (" not found!"))
   ENDIF
 
 END
