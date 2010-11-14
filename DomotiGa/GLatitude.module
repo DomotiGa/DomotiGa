@@ -1,0 +1,192 @@
+' Gambas module file
+
+PUBLIC tLatitude AS Timer
+PUBLIC hLatitudeBadge AS HttpClient
+PUBLIC hLatitudeGeo AS HttpClient
+
+PUBLIC SUB Run()
+
+  tLatitude = NEW Timer AS "tLatitude"
+  tLatitude.Delay = Main.iGLatitudePollTime * 1000 ' multiply for seconds
+  tLatitude.Start
+
+  FindBadges()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tLatitude_Timer()
+
+  FindBadges()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find latitude devices and look up their locations
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB FindBadges()
+
+  DIM sUrl AS String
+  DIM rResult AS Result
+
+  rResult = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE", Devices.FindInterface("Google Latitude"))
+  IF rResult.Available THEN
+    IF rResult.Count THEN
+      FOR EACH rResult
+        IF Main.bGLatitudeDebug THEN Main.WriteDebugLog("[GLatitude] " & rResult.Count & " Google Latitude badge ID(s) found")
+        sUrl = "http://www.google.com/latitude/apps/badge/api?user=" & rResult!address & "&type=json"
+        hLatitudeBadge = NEW HttpClient AS "hLatitudeBadge"
+        hLatitudeBadge.URL = sUrl
+        hLatitudeBadge.TimeOut = 8
+        hLatitudeBadge.Tag = rResult!address
+        hLatitudeBadge.Async = TRUE
+        hLatitudeBadge.Get()
+        IF Main.bGLatitudeDebug THEN Main.WriteDebugLog("[GLatitude] Fetching badgeid " & rResult!address & " with " & sUrl)
+      NEXT
+    ELSE
+      Main.WriteDebugLog("[GLatitude] No Latitude devices found.")
+    ENDIF
+  ELSE
+    Main.WriteDebugLog("[GLatitude] No Latitude devices found.")
+  ENDIF
+
+CATCH
+  Main.WriteDebugLog("[GLatitude] Error fetching Google Latitude data " & ERROR.Text & " at " & ERROR.Where)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' latitude data fetched
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB hLatitudeBadge_Finished()
+
+  DIM sBuffer, sMarker, sAddress, sLongitude, sLatitude AS String
+  DIM cGLat AS Collection
+  DIM dDate AS Date
+
+  SELECT hLatitudeBadge.Code
+    CASE 200
+      IF Lof(hLatitudeBadge) THEN READ #hLatitudeBadge, sBuffer, Lof(hLatitudeBadge)
+      cGLat = JSON.Decode(sBuffer)
+      IF cGLat.Count = 2 THEN
+        sLongitude = cGLat["features"][0]["geometry"]["coordinates"][0]
+        sLatitude = cGLat["features"][0]["geometry"]["coordinates"][1]
+        dDate = DateAdd(Date(1970, 1, 1, 0, 0, 0), gb.Second, CInt(cGLat["features"][0]["properties"]["timeStamp"]))
+        dDate = DateAdd(dDate, gb.Hour, 1)
+        IF Main.bGLatitudeDebug THEN
+          Main.WriteDebugLog("[GLatitude] BadgeID: " & hLatitudeBadge.Tag)
+          Main.WriteDebugLog("[GLatitude] Position Lng: " & sLongitude)
+          Main.WriteDebugLog("[GLatitude] Position Lat: " & sLatitude)
+          Main.WriteDebugLog("[GLatitude] Updated at: " & dDate)
+          ' PRINT "PhotoUrl: " & cGLat["features"][0]["properties"]["photoUrl"]
+          ' PRINT "PlaceCardUrl: " & cGLat["features"][0]["properties"]["placardUrl"]
+        ENDIF
+        sMarker = FindMarker(sLatitude, sLongitude, Main.iGLatitudeRange)
+        IF Len(sMarker) THEN
+          IF Main.bGLatitudeDebug THEN Main.WriteDebugLog("[GLatitude] Found Marker: " & sMarker)
+          UpdateUser(hLatitudeBadge.Tag, sMarker, sLatitude, sLongitude, dDate)
+        ELSE
+          ReverseGeo(hLatitudeBadge.Tag, sLatitude, sLongitude, dDate)
+        ENDIF
+      ENDIF
+    CASE ELSE
+      Main.WriteLog(("Unknown error occured while trying to get Google Latitude data!"))
+  END SELECT
+  hLatitudeBadge.Close
+
+CATCH
+  Main.WriteDebugLog("[GLatitude] Error parsing Google Latitude data " & ERROR.Text & " at " & ERROR.Where)
+
+END
+
+PUBLIC SUB hLatitudeBadge_Error()
+
+  Main.WriteDebugLog(("[GLatitude] Error fetching latitude data: ") & hLatitudeBadge.Status)
+  hLatitudeBadge.Close
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find address for a given location
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB ReverseGeo(sBadgeID AS String, sLatitude AS String, sLongitude AS String, dUpdate AS Date)
+
+  DIM sUrl AS String = "http://maps.google.com/maps/geo?q=" & sLatitude & "," & sLongitude & "&output=json"
+
+  hLatitudeGeo = NEW HttpClient AS "hLatitudeGeo"
+  hLatitudeGeo.URL = sUrl
+  hLatitudeGeo.TimeOut = 8
+  hLatitudeGeo.Tag = sBadgeID & "|" & sLatitude & "|" & sLongitude & "|" & dUpdate
+  hLatitudeGeo.Async = TRUE
+  hLatitudeGeo.Get()
+  IF Main.bGLatitudeDebug THEN Main.WriteDebugLog("[GLatitude] Fetching reverse Geo data with " & sUrl)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' fetched address data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB hLatitudeGeo_Finished()
+
+  DIM sBuffer, sAddress AS String
+  DIM cGMap AS Collection
+  DIM sSplit AS String[]
+
+  SELECT hLatitudeGeo.Code
+    CASE 200
+      IF Lof(hLatitudeGeo) THEN READ #hLatitudeGeo, sBuffer, Lof(hLatitudeGeo)
+      cGMap = JSON.Decode(sBuffer)
+      TRY sAddress = cGMap["Placemark"][0]["address"]
+      IF NOT ERROR THEN
+        IF Len(sAddress) THEN
+          IF Main.bGLatitudeDebug THEN Main.WriteDebugLog("[GLatitude] Found Address: " & sAddress)
+        ELSE
+          IF Main.bGLatitudeDebug THEN Main.WriteDebugLog("[GLatitude] Didn't find Address")
+          sAddress = "Unknown Address"
+        ENDIF
+      ENDIF
+      sSplit = Split(hLatitudeGeo.Tag, "|")
+      IF sSplit.Count = 4 THEN UpdateUser(sSplit[0], sAddress, sSplit[1], sSplit[2], sSplit[3])
+    CASE ELSE
+      Main.WriteLog(("Unknown error occured while trying to get Google reverse Geo data!"))
+  END SELECT
+  hLatitudeGeo.Close
+
+END
+
+PUBLIC SUB hLatitudeGeo_Error()
+
+  Main.WriteDebugLog(("[GLatitude] Error fetching geo data: ") & hLatitudeGeo.Status)
+  hLatitudeGeo.Close
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' search database for nearest marker
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB FindMarker(fLat AS String, fLong AS String, iDist AS Integer) AS String
+
+  DIM iCalc AS Integer = IIf(Main.iGLatitudeRangeType, 6371, 3959) ' km's or miles
+  DIM rResult AS Result
+  DIM sSql AS String
+
+  ' find the closest location that is within a radius of iDist km/miles to the lat/long coordinate
+  sSql = "SELECT id,name, ( &1 * acos( cos( radians(&2) ) * cos( radians( lat ) ) * cos( radians( lng ) - radians(&3) ) + sin( radians(&4) ) * sin( radians( lat ) ) ) ) AS distance FROM markers HAVING distance < &5 ORDER BY distance LIMIT 1"
+  rResult = Main.hDB.Exec(sSql, iCalc, fLat, fLong, fLat, iDist)
+  IF rResult.Count THEN RETURN rResult!name
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' update latitude devices
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB UpdateUser(sBadgeID AS String, sLocation AS String, sLatitude AS String, sLongitude AS String, dUpdated AS Date)
+
+  DIM iDeviceId AS Integer
+
+  iDeviceId = Devices.Find(sBadgeID, Devices.FindInterface("Google Latitude"), "Google Latitude")
+  IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sLocation, sLatitude, sLongitude, dUpdated)
+
+END
