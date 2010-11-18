@@ -12,6 +12,9 @@
 
 ' Read file called COPYING for license details.
 
+PRIVATE oDelayTimers AS NEW Object[]
+PUBLIC tDelayTimer AS CTimer
+
 ' trigger database table
 ' description        | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
 ' time now           |   1  | crontab
@@ -321,18 +324,17 @@ PRIVATE SUB CheckConditions(iCondition1 AS Integer, iCondition2 AS Integer, sOpe
 END
 
 ' run all configured actions
-PRIVATE SUB RunActions(iEventId AS Integer)
+PRIVATE SUB RunActions(iEventId AS Integer, OPTIONAL iFrom AS Integer)
 
   DIM rActions AS Result
 
   UpdateEvent(iEventId)
-
-  rActions = Main.hDB.Exec("SELECT * FROM events_actions WHERE event = " & iEventId & " ORDER BY events_actions.order")
+  rActions = Main.hDB.Exec("SELECT * FROM events_actions WHERE event = &1 ORDER BY events_actions.order", iEventId)
   IF rActions THEN
     FOR EACH rActions
+      IF rActions!order < iFrom THEN CONTINUE
       IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3a. Running action with id ") & rActions!action & (" for event with id ") & iEventId)
-      RunAction(rActions!action)
-      ' WAIT rActions!delay / 1000
+      IF RunAction(rActions!action, rActions!order, iEventId) THEN BREAK
     NEXT
   ENDIF
 
@@ -363,8 +365,9 @@ END
 ' write log entry   | 10                 | log text
 ' display led msg   | 11                 | message to display        | display id           | color                | speed
 ' av control        | 12                 | model                     | command              | value                | address
+' timer delay       | 13                 | delay in secs or rnd min  | random max seconds   | mode fixed or random
 
-PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
+PRIVATE SUB RunAction(iAction AS Integer, iOrder AS Integer, iEventId AS Integer) AS Boolean
 
   DIM rResultAction AS Result
   DIM bOk AS Boolean
@@ -379,15 +382,14 @@ PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
           sDeviceName = Devices.FindNameForDevice(rResultAction!param1)
           IF Len(sDeviceName) THEN
             IF Comp(rResultAction!param2, "Value1") = 0 THEN
-              Devices.SetDevice(sDeviceName, ParseText(rResultAction!param3))
+              bOk = Devices.SetDevice(sDeviceName, ParseText(rResultAction!param3))
             ELSE IF Comp(rResultAction!param2, "Value2") = 0 THEN
-              Devices.ValueUpdate(rResultAction!param1, "", ParseText(rResultAction!param3), "", "")
+              bOk = Devices.ValueUpdate(rResultAction!param1, "", ParseText(rResultAction!param3), "", "")
             ELSE IF Comp(rResultAction!param2, "Value3") = 0 THEN
-              Devices.ValueUpdate(rResultAction!param1, "", "", ParseText(rResultAction!param3), "")
+              bOk = Devices.ValueUpdate(rResultAction!param1, "", "", ParseText(rResultAction!param3), "")
             ELSE IF Comp(rResultAction!param2, "Value4") = 0 THEN
-              Devices.ValueUpdate(rResultAction!param1, "", "", "", ParseText(rResultAction!param3))
+              bOk = Devices.ValueUpdate(rResultAction!param1, "", "", "", ParseText(rResultAction!param3))
             ENDIF
-            bOk = TRUE
           ELSE
             Main.WriteDebugLog(("[Events] 3b. Device with id ") & rResultAction!param1 & (" doesn't exists!"))
             bOk = FALSE
@@ -501,14 +503,17 @@ PRIVATE SUB RunAction(iAction AS Integer) AS Boolean
         ELSE
           bOk = TRUE
         ENDIF
+      CASE 13 ' timer delay
+        IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' is a delay timer!"))
+        StartDelayTimer(iEventId, iOrder + 1, rResultAction!param1, rResultAction!param2, rResultAction!param3)
+        RETURN TRUE
       CASE ELSE
         bOk = FALSE
     END SELECT
 
-
     IF bOk THEN
       IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' executed!"))
-      RETURN TRUE
+      RETURN FALSE
     ELSE
       IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' failed to execute!"))
       RETURN FALSE
@@ -672,5 +677,59 @@ PUBLIC FUNCTION TimeCron(sTimeDate AS String) AS Boolean
   NEXT
   IF Main.bEventsDebug THEN Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | return True")
   RETURN TRUE
+
+END
+
+' start delay timer for iEventId and iOrder with param1-3
+PRIVATE SUB StartDelayTimer(iEventId AS Integer, iOrder AS Integer, sParam1 AS String, sParam2 AS String, sParam3 AS String)
+
+  DIM iDelay AS Integer
+
+  ' sParam3 contains timer mode
+  ' "fixed" sParam1 is timer delay in seconds
+  ' "random" sParam1 is min value, sParam2 is max value for rnd
+  IF LCase(sParam3) = "random" THEN
+    iDelay = Rnd(Val(sParam1), Val(sParam2))
+  ELSE
+    iDelay = Val(sParam1)
+  ENDIF
+
+  IF NOT FindTimer(iEventId, iOrder, iDelay) THEN
+    tDelayTimer = NEW CTimer AS "tDelayTimer"
+    oDelayTimers.Add(tDelayTimer)
+    tDelayTimer.Delay = iDelay * 1000
+    tDelayTimer.EventId = iEventId
+    tDelayTimer.Order = iOrder
+    tDelayTimer.Started = Now()
+    tDelayTimer.Start
+    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3c. Started delay timer for event id ") & iEventId & (", delay for ") & iDelay & (" second(s)"))
+  ENDIF
+
+END
+
+' looks if there is a timer running for iEventId and iOrder
+PRIVATE SUB FindTimer(iEventId AS Integer, iOrder AS Integer, iDelay AS Integer) AS Boolean
+
+  DIM oObject AS Object
+
+  FOR EACH oObject IN oDelayTimers
+    IF oObject.EventId = iEventId AND IF oObject.Order = iOrder THEN
+      IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3c. Delay timer for event id ") & iEventId & (" and order# ") & iOrder & (" with delay of ") & iDelay & (" second(s) already runs, skipping"))
+      RETURN TRUE
+    ELSE
+      RETURN FALSE
+    ENDIF
+  NEXT
+  RETURN FALSE
+
+END
+
+' timer is finished, run remaining action(s)
+PUBLIC SUB tDelayTimer_Timer()
+
+  IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] 3d. Delay timer finished for event id ") & tDelayTimer.EventId & (", continue running it's actions from order# ") & tDelayTimer.Order)
+  RunActions(tDelayTimer.EventId, tDelayTimer.Order)
+  tDelayTimer.Stop
+  oDelayTimers.Remove(oDelayTimers.Find(LAST))
 
 END
