@@ -66,6 +66,9 @@ PUBLIC SUB EIB_Ready()
   Main.WriteLog(("KNX/EIB TCP socket connected."))
   TX(bCommand)
 
+  ' request status of all devices
+  EIB_GroupRead()
+
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -74,6 +77,21 @@ END
 PUBLIC SUB EIB_Closed()
 
   Main.WriteLog(("KNX/EIB Error: TCP socket closed."))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Initialize KNX/EIB devicelist
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB EIB_GroupRead()
+
+  DIM rEIBDevices AS Result
+
+  ' get a list of KNX devices
+  rEIBDevices = Devices.FindDevicesForInterface(Devices.FindInterface("KNX/EIB Interface"))
+  FOR EACH rEIBDevices
+    SendGroup(rEIBDevices!address)
+  NEXT
 
 END
 
@@ -200,7 +218,7 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PRIVATE SUB LookupEIS(sAddress AS String, sReceived AS String[])
 
-  DIM iDeviceId AS Integer = Devices.Find("%" & sAddress & "%", Devices.FindInterface("KNX/EIB Interface"))
+  DIM iDeviceId AS Integer = Devices.FindRegExp(sAddress, Devices.FindInterface("KNX/EIB Interface"))
 
   IF iDeviceId THEN
     SELECT CASE Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(iDeviceId))
@@ -215,12 +233,6 @@ PRIVATE SUB LookupEIS(sAddress AS String, sReceived AS String[])
       CASE "EIS 5" ' Values
         EIS5(iDeviceId, sReceived)
       CASE ELSE
-        ' IF NOT bEIBDebug THEN RETURN
-        ' Main.WriteDebugLog("[KNX/EIB] <", TRUE)
-        ' FOR iCnt = 0 TO bMyBuf[1] + 2
-        '   Main.WriteRFXDebugLog(" " & Hex(bMyBuf[iCnt], 2), TRUE)
-        ' NEXT
-        ' Main.WriteRFXDebugLog("\n", TRUE)
         Main.WriteDebugLog("[KNX/EIB] EIS Unknown for address '" & sAddress & "' and data '" & sReceived & "'")
     END SELECT
   ENDIF
@@ -234,10 +246,10 @@ END
 PRIVATE SUB EIS1(iDeviceId AS Integer, sReceived AS String[])
 
   SELECT CASE sReceived[0]
-    CASE 80
+    CASE 40, 80
       Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
       IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS1: " & Devices.FindNameForDevice(iDeviceId) & " Off")
-    CASE 81
+    CASE 41, 81
       Devices.ValueUpdate(iDeviceId, "On", "", "", "")
       IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS1: " & Devices.FindNameForDevice(iDeviceId) & " On")
   END SELECT
@@ -258,6 +270,24 @@ PRIVATE SUB EIS2(iDeviceId AS Integer, sReceived AS String[])
   sAddress = Devices.FindAddressForDevice(sDeviceName)
 
   SELECT CASE sReceived[0]
+    CASE 40
+      Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
+      iPercentage = Val("&H" & sReceived[1]) / 255 * 100
+      IF iPercentage = 0 THEN 
+        Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
+      ELSE IF iPercentage = 100 THEN
+        Devices.ValueUpdate(iDeviceId, "On", "", "", "")
+      ELSE 
+        Devices.ValueUpdate(iDeviceId, "Dim " & CStr(iPercentage), "", "", "")
+      ENDIF 
+    CASE 41
+      IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " On")
+        Devices.ValueUpdate(iDeviceId, "On", "", "", "")
+        iPercentage = Val("&H" & sReceived[1]) / 255 * 100
+        IF iPercentage <> "0" AND iPercentage <> "100" THEN
+          IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " Dim")
+          Devices.ValueUpdate(iDeviceId, "Dim " & CStr(iPercentage), "", "", "")
+      ENDIF
     CASE 80
       IF sReceived[1] <> "00" THEN
         iPercentage = Val("&H" & sReceived[1]) / 255 * 100
@@ -271,21 +301,13 @@ PRIVATE SUB EIS2(iDeviceId AS Integer, sReceived AS String[])
         IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " Dim " & iPercentage & "%")
       ELSE
         IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " Off")
+        Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
       ENDIF
     CASE 81
       IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " On")
       Devices.ValueUpdate(iDeviceId, "On", "", "", "")
     CASE 89
       IF bEIBDebug THEN Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " Dim")
-    CASE 40
-      iPercentage = Val("&H" & sReceived[1]) / 255 * 100
-      IF iPercentage = 0 THEN
-        Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
-      ELSE IF iPercentage = 100 THEN
-        Devices.ValueUpdate(iDeviceId, "On", "", "", "")
-      ELSE
-        Devices.ValueUpdate(iDeviceId, "Dim " & CStr(iPercentage), "", "", "")
-      ENDIF
   END SELECT
 
 END
@@ -441,6 +463,41 @@ PUBLIC SUB DecodeEIS5(sValue AS String) AS Float
   ENDIF
 
   RETURN fReturn / 100
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' prepare a command for sending status request to KNX/EIB interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB SendGroup(sAddress AS String)
+
+  DIM sAddressSplit AS String[]
+  DIM bCommand AS Byte[5]
+
+  IF Main.bEIBDebug THEN Main.WriteDebugLog(("[KNX/EIB] Requesting status packet for device with address '") & sAddress & "'")
+  sAddressSplit = Split(sAddress, "/")
+  IF sAddressSplit.Count = 3 THEN
+    sAddress = Str2Addr(sAddressSplit[0], sAddressSplit[1], sAddressSplit[2])
+    bCommand[0] = &H00
+    bCommand[1] = &H27
+    bCommand[2] = Val("&H" & Left(sAddress, 2))
+    bCommand[3] = Val("&H" & Right(sAddress, 2))
+    bCommand[4] = &H00
+    bCommand.Add(&H00)
+    TX(bCommand)
+  ELSE
+    sAddressSplit = Split(sAddress, "|" "/")
+    IF sAddressSplit.Count = 9 THEN
+      sAddress = Str2Addr(sAddressSplit[3], sAddressSplit[4], sAddressSplit[5])
+      bCommand[0] = &H00
+      bCommand[1] = &H27
+      bCommand[2] = Val("&H" & Left(sAddress, 2))
+      bCommand[3] = Val("&H" & Right(sAddress, 2))
+      bCommand[4] = &H00
+      bCommand.Add(&H00)
+      TX(bCommand)
+    ENDIF
+  ENDIF
 
 END
 
