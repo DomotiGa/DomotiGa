@@ -2439,7 +2439,7 @@ CREATE TABLE `settings_rfxcomrx` (
 
 LOCK TABLES `settings_rfxcomrx` WRITE;
 /*!40000 ALTER TABLE `settings_rfxcomrx` DISABLE KEYS */;
-INSERT INTO `settings_rfxcomrx` VALUES (0,0,'192.168.100.7',10001,'tcp','/dev/ttyUSB3','4800',0,0,10001,0),(1,0,'192.168.100.7',10001,'serial','/dev/ttyUSB0','4800',0,-1,10001,0);
+INSERT INTO `settings_rfxcomrx` VALUES (0,0,'192.168.100.7',10001,'tcp','/dev/ttyUSB3','4800',0,0,10011,0),(1,0,'192.168.100.7',10001,'serial','/dev/ttyUSB0','4800',0,-1,10011,0);
 /*!40000 ALTER TABLE `settings_rfxcomrx` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2479,7 +2479,7 @@ CREATE TABLE `settings_rfxcomtx` (
 
 LOCK TABLES `settings_rfxcomtx` WRITE;
 /*!40000 ALTER TABLE `settings_rfxcomtx` DISABLE KEYS */;
-INSERT INTO `settings_rfxcomtx` VALUES (0,0,'192.168.100.7',10002,'serial','/dev/ttyUSB7','4800',0,1,10002,1,0,0,0,'01','01',0,0),(1,0,'192.168.100.7',10003,'serial','/dev/ttyUSBD8','4800',0,1,10002,0,0,0,0,'00','00',0,1);
+INSERT INTO `settings_rfxcomtx` VALUES (0,0,'192.168.100.7',10002,'serial','/dev/ttyUSB7','4800',0,1,10012,1,0,0,0,'01','01',0,0),(1,0,'192.168.100.7',10002,'serial','/dev/ttyUSBD8','4800',0,1,10012,0,0,0,0,'00','00',0,1);
 /*!40000 ALTER TABLE `settings_rfxcomtx` ENABLE KEYS */;
 UNLOCK TABLES;
 
