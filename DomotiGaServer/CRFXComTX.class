@@ -84,34 +84,48 @@ PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String)
     RETURN
   END IF
 
-  SELECT sType
-    CASE "ARC", "X10", "KAKU" ' X10, KAKU with CodeWheel, NEXA, DomiaLite
-      IF sType = "X10" AND IF Main.bRFXComTXDisableX10 THEN
-        Main.WriteDebugLog(("[RFXComTX] You have disabled the X10 protocol, unable to control device!"))
+  IF NOT bRFXmitter THEN
+    SELECT sType
+      CASE "ARC", "X10", "KAKU" ' X10, KAKU with CodeWheel, NEXA, DomiaLite
+        IF sType = "X10" AND IF Main.bRFXComTXDisableX10 THEN
+          Main.WriteDebugLog(("[RFXComTX] You have disabled the X10 protocol, unable to control device!"))
+          RETURN
+        END IF
+        IF sType = "ARC" OR sType = "KAKU" AND IF NOT Main.bRFXComTXEnableARC THEN
+          Main.WriteDebugLog(("[RFXComTX] You have not enabled the KAKU/ARC protocol, unable to control device!"))
+          RETURN
+        END IF
+        IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+          ARC(sAddress, sCmd, iDeviceId)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid X10, ARC or KAKU address '") & sAddress & ("' given!"))
+        END IF
+      CASE "AC", "HE" ' AC protocol, KAKU without CodeWheel, HomeEasy UK, Chacon.
+        IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+          AC(sAddress, Main.sRFXComTXACAddress1, Main.sRFXComTXACAddress2, sCmd, iDeviceId)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid AC address '") & sAddress & ("' given!"))
+        END IF
+      CASE "HEEU" ' HE EU protocol, you need an xmitter and closed source for this.
+        Main.WriteDebugLog(("[RFXComTX] HomeEasy EU protocol is not supported!"))
         RETURN
-      END IF
-      IF sType = "ARC" OR sType = "KAKU" AND IF NOT Main.bRFXComTXEnableARC THEN
-        Main.WriteDebugLog(("[RFXComTX] You have not enabled the KAKU/ARC protocol, unable to control device!"))
+      DEFAULT
+        Main.WriteDebugLog(("[RFXComTX] " & sType & " protocol is not supported by RFXtransmitter code!"))
         RETURN
-      END IF
-      IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
-        ARC(sAddress, sCmd, iDeviceId)
-      ELSE
-        Main.WriteDebugLog(("[RFXComTX] Invalid X10, ARC or KAKU address '") & sAddress & ("' given!"))
-      END IF
-    CASE "AC", "HE" ' AC protocol, KAKU without CodeWheel, HomeEasy UK, Chacon.
-      IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
-        AC(sAddress, Main.sRFXComTXACAddress1, Main.sRFXComTXACAddress2, sCmd, iDeviceId)
-      ELSE
-        Main.WriteDebugLog(("[RFXComTX] Invalid AC address '") & sAddress & ("' given!"))
-      END IF
-    CASE "HEEU" ' HE EU protocol, you need an xmitter and closed source for this.
-      Main.WriteDebugLog(("[RFXComTX] HomeEasy EU protocol is not supported!"))
-      RETURN
-    DEFAULT
-      Main.WriteDebugLog(("[RFXComTX] " & sType & " protocol is not supported!"))
-      RETURN
-  END SELECT
+    END SELECT
+  ELSE
+    SELECT sType
+      CASE "ARC", "KAKU" ' X10, KAKU with CodeWheel, NEXA, DomiaLite
+        IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+          KAKU(sAddress, sCmd, iDeviceId)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid ARC or KAKU address '") & sAddress & ("' given!"))
+        END IF
+      DEFAULT
+        Main.WriteDebugLog(("[RFXComTX] " & sType & " protocol is not supported by RFXmitter code!"))
+        RETURN
+    END SELECT
+  ENDIF
 
 END
 
@@ -320,6 +334,16 @@ PUBLIC SUB RFXComTX_Ready()
 
   Main.WriteLog(("RFXCom transmitter TCP socket connected."))
 
+  SetInitMode() ' set 48 bits
+  GetVersion()  ' get transmitter version and enable X10
+
+  IF NOT bRFXmitter THEN
+    IF bDisableX10 THEN DisableX10TX()
+    IF bEnableARC THEN EnableARCTX()
+    IF bEnableHarrison THEN EnableHarrisonTX()
+    IF bEnableKoppla THEN EnableKopplaTX()
+  ENDIF
+
 END
 
 PUBLIC FUNCTION StartRelay() AS Boolean
@@ -351,16 +375,6 @@ PUBLIC FUNCTION ConnectTCP() AS Boolean
   ' get a new one
   hRFXComTX = NEW Socket AS "RFXComTX"
   hRFXComTX.Connect(sTCPHost, iTCPPort)
-
-  SetInitMode() ' set 48 bits
-  GetVersion()  ' get transmitter version and enable X10
-
-  IF NOT bRFXmitter THEN
-    IF bDisableX10 THEN DisableX10TX()
-    IF bEnableARC THEN EnableARCTX()
-    IF bEnableHarrison THEN EnableHarrisonTX()
-    IF bEnableKoppla THEN EnableKopplaTX()
-  ENDIF
 
   ' all ok
   RETURN TRUE
@@ -606,6 +620,41 @@ PUBLIC FUNCTION GetHouse(sHouse AS String, iUnit AS Integer) AS Byte
     bTemp = bTemp OR &H4
   END IF
   RETURN bTemp
+
+END
+
+' ARC / KAKU
+PUBLIC SUB KAKU(sAddress AS String, sCmd AS String, OPTIONAL iDeviceId AS Integer)
+
+  DIM bHeLength AS Byte[] = [CByte(&H20)]
+  DIM bHeBuf AS Byte[4]
+  DIM iDevice, iUnit AS Integer
+
+  iUnit = Asc(Left$(sAddress, 1), Right$(sAddress, 2)) - &H41
+  iDevice = Right$(sAddress, 2) - 1
+
+  bHeBuf[0] = 24
+
+  SELECT UCase(sCmd)
+    CASE "ON"
+      bHeBuf[1] = &H54
+    CASE "OFF"
+      bHeBuf[1] = &H14
+    DEFAULT
+      Main.WriteDebugLog(("[RFXComTX] Unknown command '") & UCase(sCmd) & ("' given!"))
+      RETURN
+  END SELECT
+
+  bHeBuf[2] = Lsl((iDevice AND &H8), 3) OR Lsl((iDevice AND &H4), 2) OR Lsl((iDevice AND &H2), 1) OR (iDevice AND &H1)
+  bHeBuf[3] = Lsl((iUnit AND &H8), 3) OR Lsl((iUnit AND &H4), 2) OR Lsl((iUnit AND &H2), 1) OR (iUnit AND &H1)
+
+  WriteMessage(bHeLength, bHeBuf)
+
+  bHeBuf[1] = &H55
+  bHeBuf[2] = &H80 OR Lsl((iDevice AND &H8), 3) OR Lsl((iDevice AND &H4), 2) OR &H7
+  bHeBuf[3] = Lsl((iUnit AND &H8), 3) OR Lsl((iUnit AND &H4), 2) OR Lsl((iUnit AND &H2), 1) OR (iUnit AND &H1)
+
+  WriteMessage(bHeLength, bHeBuf)
 
 END
 
