@@ -397,7 +397,7 @@ void DomoZWave_Destroy()
 	//cout << "Destroyed xmlrpc" << endl;
 	Manager::Get()->Destroy();
 	//cout << "Destroyed manager" << endl;
-	//Options::Get()->Destroy();
+	Options::Get()->Destroy();
 	//cout << "Destroyed options" << endl;
 
 	pthread_mutex_unlock( &g_criticalSection );
