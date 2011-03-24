@@ -8,6 +8,7 @@
 
 // open-zwave
 #include "Options.h"
+#include "Log.h"
 #include "Manager.h"
 #include "Node.h"
 #include "Group.h"
