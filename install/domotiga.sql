@@ -3444,6 +3444,16 @@ LOCK TABLES `thermostat_schedule` WRITE;
 /*!40000 ALTER TABLE `thermostat_schedule` DISABLE KEYS */;
 /*!40000 ALTER TABLE `thermostat_schedule` ENABLE KEYS */;
 UNLOCK TABLES;
+
+CREATE TABLE IF NOT EXISTS `thermostat_schedule_entry` (
+  `scenario` bigint(20) unsigned NOT NULL ,
+  `heating` bigint(20) unsigned NOT NULL ,
+  `day` int unsigned NULL ,
+  `time` TIME NULL ,
+  `constant` bigint(20) NOT NULL ,
+  PRIMARY KEY (`scenario`, `heating`, `day`, `time`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
