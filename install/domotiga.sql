@@ -47,7 +47,7 @@ CREATE TABLE `actions` (
 
 LOCK TABLES `actions` WRITE;
 /*!40000 ALTER TABLE `actions` DISABLE KEYS */;
-INSERT INTO `actions` VALUES (1,'Switch Porch Light On',1,'','1','Value1','On','',''),(2,'Switch Porch Light Off',1,'','1','Value1','Off','',''),(3,'Switch Kitchen Light On',1,'','4','Value1','On','',''),(6,'Set Ventilation to High Speed',1,NULL,'29','Value1','3','',''),(5,'Switch Kitchen Light Off',1,'','4','Value1','Off','',''),(7,'Set Ventilation to Normal Speed',1,NULL,'29','Value1','1','','');
+INSERT INTO `actions` VALUES (1,'Switch Porch Light On',1,'','1','1','On','',''),(2,'Switch Porch Light Off',1,'','1','1','Off','',''),(3,'Switch Kitchen Light On',1,'','4','1','On','',''),(6,'Set Ventilation to High Speed',1,NULL,'29','1','3','',''),(5,'Switch Kitchen Light Off',1,'','4','1','Off','',''),(7,'Set Ventilation to Normal Speed',1,NULL,'29','1','1','','');
 /*!40000 ALTER TABLE `actions` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2468,6 +2468,7 @@ CREATE TABLE `settings_rrdtool` (
   `polltime` int(11) DEFAULT NULL,
   `enabled` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
+  `rra` varchar(256),
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2478,7 +2479,7 @@ CREATE TABLE `settings_rrdtool` (
 
 LOCK TABLES `settings_rrdtool` WRITE;
 /*!40000 ALTER TABLE `settings_rrdtool` DISABLE KEYS */;
-INSERT INTO `settings_rrdtool` VALUES (0,600,0,0),(1,300,0,0);
+INSERT INTO `settings_rrdtool` VALUES (0,600,0,0,"RRA:AVERAGE:0.5:1:600 RRA:AVERAGE:0.5:2:600 RRA:AVERAGE:0.5:7:600 RRA:AVERAGE:0.5:30:600 RRA:AVERAGE:0.5:365:600"),(1,300,0,0,"RRA:AVERAGE:0.5:1:600 RRA:AVERAGE:0.5:2:600 RRA:AVERAGE:0.5:7:600 RRA:AVERAGE:0.5:30:600 RRA:AVERAGE:0.5:365:600");
 /*!40000 ALTER TABLE `settings_rrdtool` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3051,7 +3052,7 @@ CREATE TABLE `triggers` (
 
 LOCK TABLES `triggers` WRITE;
 /*!40000 ALTER TABLE `triggers` DISABLE KEYS */;
-INSERT INTO `triggers` VALUES (1,'Time is SunSet',1,'Test description.','14 15 * * *','','','',''),(2,'Time is SunRise',1,'','50 05 * * *','','','',''),(3,'Bathroom is Humid',3,NULL,'9','Value2','>','60',''),(4,'Movement in Kitchen is Detected',3,'','18','Value','=','Motion',''),(5,'No Movement in Kitchen is Detected',3,'','18','Value','=','No Motion',''),(6,'Bathroom Humidity is Normal',3,NULL,'9','Value3','=','Normal',''),(7,'Movement Outside Detected',3,NULL,'38','Value','=','Motion',''),(8,'Outside No Movement Detected',3,NULL,'38','Value','=','No Motion',''),(9,'Test Time trigger',1,'','15 08 * * *','','','','');
+INSERT INTO `triggers` VALUES (1,'Time is SunSet',1,'Test description.','14 15 * * *','','','',''),(2,'Time is SunRise',1,'','50 05 * * *','','','',''),(3,'Bathroom is Humid',3,NULL,'9','2','>','60',''),(4,'Movement in Kitchen is Detected',3,'','18','1','=','Motion',''),(5,'No Movement in Kitchen is Detected',3,'','18','1','=','No Motion',''),(6,'Bathroom Humidity is Normal',3,NULL,'9','3','=','Normal',''),(7,'Movement Outside Detected',3,NULL,'38','1','=','Motion',''),(8,'Outside No Movement Detected',3,NULL,'38','1','=','No Motion',''),(9,'Test Time trigger',1,'','15 08 * * *','','','','');
 /*!40000 ALTER TABLE `triggers` ENABLE KEYS */;
 UNLOCK TABLES;
 
