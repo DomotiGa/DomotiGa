@@ -60,7 +60,7 @@ UPDATE actions SET Param2 = REPLACE(Param2, "Value","") WHERE type = 1;
 
 UPDATE triggers SET Param2 = REPLACE(Param2, "Value2","2") WHERE type = 3;
 UPDATE triggers SET Param2 = REPLACE(Param2, "Value3","3") WHERE type = 3;
-UPDATE triggers SET Param2 = REPLACE(Param2, "Value4","4") WHERE type = 3:
+UPDATE triggers SET Param2 = REPLACE(Param2, "Value4","4") WHERE type = 3;
 UPDATE triggers SET Param2 = REPLACE(Param2, "LastSeen","5") WHERE type = 3;
 UPDATE triggers SET Param2 = REPLACE(Param2, "Value","1") WHERE type = 3;
 
