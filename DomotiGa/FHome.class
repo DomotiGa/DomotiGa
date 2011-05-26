@@ -15,10 +15,16 @@
 PRIVATE tRefresh AS NEW Timer
 PUBLIC iOutsideTemp AS Variant
 PUBLIC iOutsideHumid AS Variant
+PUBLIC iInsideTemp AS Variant
+PUBLIC iInsideHumid AS Variant
 PRIVATE bPowerSensor AS Boolean
 PRIVATE bWeatherSensor AS Boolean
+PRIVATE bInsideSensor AS Boolean
 PUBLIC hDownloadOutsideImage AS HttpClient
+PUBLIC hDownloadInsideImage AS HttpClient
 PUBLIC hDownloadUsageImage AS HttpClient
+PUBLIC hDownloadCurrentWeather AS HttpClient
+PRIVATE bCmbSCenarioLoading AS Boolean
 
 PUBLIC SUB Form_Open()
 
@@ -35,9 +41,135 @@ END
 
 PUBLIC SUB DisplayPage()
 
+  DIM rResult AS Result
+  DIM aPanel AS String[]
+  DIM sItem AS String
+
+  rResult = Main.GetSettingTable("main", FALSE) 
+  IF rResult.Count THEN
+    aPanel = Split(rResult!hometoppanel, "|")
+    FOR EACH sItem IN aPanel
+      DisplayFrame(sItem, VBoxTop)
+    NEXT
+
+    HBoxBottom.Reparent(VBoxTop)
+
+    aPanel = Split(rResult!homeleftpanel, "|")
+    FOR EACH sItem IN aPanel
+      DisplayFrame(sItem, VBoxLeft)
+    NEXT
+
+    aPanel = Split(rResult!homerightpanel, "|")
+    FOR EACH sItem IN aPanel
+      DisplayFrame(sItem, VBoxRight)
+    NEXT
+
+    aPanel = Split(rResult!homebottompanel, "|")
+    FOR EACH sItem IN aPanel
+      DisplayFrame(sItem, VBoxTop)
+    NEXT
+  ENDIF
+
+CATCH
+
+END
+
+PUBLIC SUB DisplayFrame(sFrame AS String, oCont AS VBox)
+
+  SELECT CASE sFrame
+   CASE "TagLine"
+    frameTagline.Reparent(oCont)
+    DisplayTagline
+   CASE "Power Usage"
+    framePowerUsage.Reparent(oCont)
+    DisplayUsageDial
+   CASE "House Mode"
+    frameHouseMode.Reparent(oCont)
+    DisplayHouseMode
+   CASE "Outside"
+    frameOutside.Reparent(oCont)
+    DisplayOutsideTempHumid
+   CASE "Weather Comment"
+    frameWeatherComment.Reparent(oCont)
+    DisplayWeatherComment
+   CASE "Weather"
+    frameWeather.Reparent(oCont)
+    DisplayWeather
+   CASE "Thermostat"
+    frameThermostat.Reparent(oCont)
+    DisplayThermostat
+   CASE "Inside"
+    frameInside.Reparent(oCont)
+    DisplayInsideTemp
+   CASE "Main log"
+    FrameMainLog.Reparent(oCont)
+    DisplayMainLog
+  END SELECT
+
+END
+
+PUBLIC SUB VBoxTop_Arrange()
+
+  txtTagline.Width = frameTagline.Width - 14
+  txtWeatherTemp.Width = frameWeather.Width - 14
+  txtWeatherHumid.Width = frameWeather.Width - 14
+  txtMainLog.Width = frameMainLog.Width - 14
+
+END
+
+PUBLIC SUB DisplayMainLog()
+
+  DIM sTemp AS String
+  DIM aTemp AS String[]
+
+  txtMainLog.Clear
+
+  sTemp = FLogfiles.txtMainLog.Text
+  aTemp = Split(sTemp, "\n")
+  IF aTemp.Count > 5 THEN
+    txtMainLog.Insert(aTemp[aTemp.Count - 6] & "\n")
+  ENDIF
+  IF aTemp.Count > 4 THEN
+    txtMainLog.Insert(aTemp[aTemp.Count - 5] & "\n")
+  ENDIF
+  IF aTemp.Count > 3 THEN
+    txtMainLog.Insert(aTemp[aTemp.Count - 4] & "\n")
+  ENDIF
+  IF aTemp.Count > 2 THEN
+    txtMainLog.Insert(aTemp[aTemp.Count - 3] & "\n")
+  ENDIF
+  IF aTemp.Count > 1 THEN
+    txtMainLog.Insert(aTemp[aTemp.Count - 2])
+  ENDIF
+
+END
+
+PUBLIC SUB DisplayThermostat()
+
+  DIM rResultScenarii AS Result
+
+  bCmbSCenarioLoading = TRUE
+  TRY rResultScenarii = Main.hDB.Exec("SELECT * FROM thermostat_scenarii")
+  cmbScenario.Clear
+  cmbScenario.Add("")
+  cmbScenario.Text = ""
+  IF rResultScenarii THEN
+    IF (rResultScenarii.Count >= 1) THEN
+      FOR EACH rResultScenarii
+        cmbScenario.Add(rResultScenarii!name)
+        IF rResultScenarii!name = Main.GlobalVar["Thermostat_Mode"] THEN
+          cmbScenario.Text = rResultScenarii!name
+        END IF
+      NEXT
+    ENDIF
+  ENDIF
+  bCmbSCenarioLoading = FALSE 
+
+END
+
+PUBLIC SUB DisplayHouseMode()
+
   btnMode.Text = Main.Caps(Main.GlobalVar["House_Mode"])
-  DisplayOutsideTempHumid()
-  DisplayUsageDial()
 
 END
 
@@ -46,7 +178,7 @@ PUBLIC SUB DisplayWeatherComment()
   DIM iTemp, iHumid AS Integer
 
   IF NOT bWeatherSensor THEN
-    frameWeather.Hide
+   ' frameWeather.Hide
     RETURN
   ENDIF
 
@@ -65,7 +197,7 @@ PUBLIC SUB DisplayWeatherComment()
       txtWeatherHumid.Text = Main.Random_Text("remarks_humid")
     ENDIF
   ENDIF
-  IF NOT txtWeatherTemp.Text AND NOT txtWeatherHumid.Text THEN frameWeather.Delete
+  ' IF NOT txtWeatherTemp.Text AND NOT txtWeatherHumid.Text THEN frameWeather.Delete
 
 END
 
@@ -112,6 +244,71 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' get values from device where group contains Outside, Temperature and Humidity
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB DisplayInsideTemp()
+
+  DIM rDevice AS Result
+  DIM sUrl AS String
+
+  bInsideSensor = FALSE
+  frameInside.Hide
+
+  TRY rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE")
+  IF NOT ERROR THEN
+    IF rDevice.Available THEN
+      FOR EACH rDevice
+        IF InStr(rDevice!groups, "HVAC") AND IF InStr(rDevice!groups, "Climate") AND IF InStr(rDevice!groups, "Temperature") THEN
+          bInsideSensor = TRUE
+          frameInside.Show
+          IF Main.bMainDebug THEN Main.WriteDebugLog(("[FHome] Device with address ") & rDevice!address & (" name ") & rDevice!name & (" looks like the main inside temp sensor."))
+          iInsideTemp = rDevice!value
+          iInsideHumid = rDevice!value2
+          txtTemperatureIn.Text = iInsideTemp & Main.sTemperature
+          IF iInsideHumid THEN txtHumidIn.Text = iInsideHumid & ("% Humidity")
+          sUrl = Subst("http://chart.apis.google.com/chart?chs=200x105&cht=gom&chco=0000ff99,ffffff99,ff000099&chd=t:&1&chl=&2", CFloat(Replace(rDevice!value, ",", ".", gb.String)) * 3, Str(rDevice!value) & rDevice!label)
+          hDownloadInsideImage = NEW HttpClient AS "hDownloadInsideImage"
+          hDownloadInsideImage.URL = sUrl
+          hDownloadInsideImage.Async = TRUE
+          hDownloadInsideImage.TimeOut = 5
+          hDownloadInsideImage.Get()
+          RETURN
+        ENDIF
+      NEXT
+    ENDIF
+  ENDIF
+
+CATCH
+  Main.WriteDebugLog(("ERROR: Parsing Inside Temp and Humid: ") & Error.Text & " at " & Error.Where)
+
+END
+
+
+PUBLIC SUB hDownloadInsideImage_Finished()
+
+  DIM sDownload AS String
+  DIM sTempFile AS String = Temp() & ".jpg"
+
+  SELECT hDownloadInsideImage.Code
+    CASE 200
+      ' read the data
+      IF Lof(hDownloadInsideImage) THEN READ #hDownloadInsideImage, sDownload, Lof(hDownloadInsideImage)
+      File.Save(sTempFile, sDownload)
+      IF Main.bMainDebug THEN Main.WriteDebugLog(("[Climate] Downloaded inside graph image ") & hDownloadInsideImage.URL)
+      TRY pbInsideTemp.Picture = Picture.Load(sTempFile)
+      IF Exist(sTempFile) THEN KILL sTempFile
+    CASE ELSE
+      IF Main.bMainDebug THEN Main.WriteDebugLog(("[Climate] Error downloading inside graph image ") & hDownloadInsideImage.URL)
+  END SELECT
+  TRY hDownloadInsideImage.Close
+
+END
+
+PUBLIC SUB hDownloadInsideImage_Error()
+
+  IF Main.bMainDebug THEN Main.WriteDebugLog(("[Climate] Error downloading inside graph image ") & hDownloadInsideImage.URL)
+  TRY hDownloadInsideImage.Close
+
+END
+
 PUBLIC SUB DisplayOutsideTempHumid()
 
   DIM rDevice AS Result
@@ -132,7 +329,7 @@ PUBLIC SUB DisplayOutsideTempHumid()
           iOutsideHumid = rDevice!value2
           txtTemperature.Text = iOutsideTemp & Main.sTemperature
           IF iOutsideHumid THEN txtHumid.Text = iOutsideHumid & ("% Humidity")
-          sUrl = Subst("http://chart.apis.google.com/chart?chs=200x100&cht=gom&chco=0000ff99,ffffff99,ff000099&chd=t:&1&chl=&2", CFloat(Replace(rDevice!value, ",", ".", gb.String)) * 3, Str(rDevice!value) & rDevice!label)
+          sUrl = Subst("http://chart.apis.google.com/chart?chs=200x105&cht=gom&chco=0000ff99,ffffff99,ff000099&chd=t:&1&chl=&2", CFloat(Replace(rDevice!value, ",", ".", gb.String)) * 3, Str(rDevice!value) & rDevice!label)
           hDownloadOutsideImage = NEW HttpClient AS "hDownloadOutsideImage"
           hDownloadOutsideImage.URL = sUrl
           hDownloadOutsideImage.Async = TRUE
@@ -187,8 +384,9 @@ END
 
 PRIVATE SUB DisplayUsageDial()
 
-  DIM sUrl AS String
+  DIM sUrl, sValue, sValue2 AS String
   DIM rResult AS Result
+  DIM vtemp AS Variant
 
   TRY rResult = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE")
   IF NOT ERROR THEN
@@ -198,7 +396,15 @@ PRIVATE SUB DisplayUsageDial()
           IF Len(rResult!value2) THEN
             bPowerSensor = TRUE
             framePowerUsage.Show
-            sUrl = Subst("http://chart.apis.google.com/chart?chs=200x100&cht=gom&chco=00ff0099,ffff0099,ff000099&chd=t:&1&chl=&2", CFloat(Replace(rResult!value2, ",", ".", gb.String)) / 10, Val(rResult!value2) & rResult!label2)
+            IF rResult!value THEN
+              sValue = (rResult!value / rResult!divider) + rResult!calibration
+            txtPower1.text = sValue & " " & rResult!label
+            ENDIF
+            IF rResult!value2 THEN
+              sValue2 = (rResult!value2 / rResult!divider2) + rResult!calibration2
+            txtPower2.text = sValue2 & " " & rResult!label2
+            ENDIF
+            sUrl = Subst("http://chart.apis.google.com/chart?chs=200x105&cht=gom&chco=00ff0099,ffff0099,ff000099&chd=t:&1&chl=&2", CFloat(Replace(rResult!value2, ",", ".", gb.String)) / 10, Val(rResult!value2) & rResult!label2)
             hDownloadUsageImage = NEW HttpClient AS "DownloadUsageImage"
             hDownloadUsageImage.URL = sUrl
             hDownloadUsageImage.Async = TRUE
@@ -245,6 +451,55 @@ PUBLIC SUB hDownloadUsageImage_Error()
 
 END
 
+PRIVATE SUB DisplayWeather()
+
+  DIM StrFile, StrLine, StrPic, StrCondition AS String
+  DIM fFile AS File
+  DIM IntI AS Integer
+
+  StrFile = XMLParser.ParseXML("http://api.wxbug.net/getForecastRSS.aspx?ACode=" & Trim(Main.sWeatherBugID) & "&citycode=" & Main.sWeatherBugCityCode & "&unittype=1&outputtype=1")
+  IF Len(StrFile) > 0 THEN
+    fFile = OPEN StrFile FOR INPUT
+    WHILE NOT Eof(fFile)
+      LINE INPUT #fFile, StrLine
+      ' --- put names of days onto frames ---
+       IF Left(StrLine, 61) = "aws:weather|aws:forecasts|aws:forecast|aws:title|aws:title|=|" THEN
+         INC IntI
+         Main.SetTextProperty("lblDay" & CStr(IntI), (Right(StrLine, Len(StrLine) - 61)), ME)
+       END IF
+      ' --- put condition pictures in frames ---
+      IF Left(StrLine, 52) = "aws:weatheraws:forecastsaws:forecastaws:imageicon|=|" THEN
+        StrCondition = Main.ParseTag(Right(StrLine, 7), 1, ".")
+        SELECT CASE IntI
+          CASE 1
+            pbWeather1.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://img.weather.weatherbug.com/forecast/icons/localized/55x46/en/trans/cond" & StrCondition & ".png"))
+          CASE 2
+            pbWeather2.Picture = Picture.Load(XMLParser.GetFileFromInternet("http://img.weather.weatherbug.com/forecast/icons/localized/55x46/en/trans/cond" & StrCondition & ".png"))
+        END SELECT
+      END IF
+      ' --- put global forecast onto labels ---
+      ' IF Left(StrLine, 83) = "aws:weather|aws:forecasts|aws:forecast|aws:short-prediction|aws:short-prediction|=|" THEN
+      '   Main.SetTextProperty("LblForeCast" & CStr(IntI), Main.TranslateViaInternet(Right(StrLine, Len(StrLine) - 83), Main.sAppLanguage), ME)
+      ' END IF
+      ' --- put high and low temperature onto labels ---
+       IF Left(StrLine, 59) = "aws:weather|aws:forecasts|aws:forecast|aws:high|aws:high|=|" THEN
+         Main.SetTextProperty("LblTempHigh" & CStr(IntI), Main.Translate("High:") & " " & Right(StrLine, Len(StrLine) - 59) & " °C", ME)
+       END IF
+       IF Left(StrLine, 57) = "aws:weather|aws:forecasts|aws:forecast|aws:low|aws:low|=|" THEN
+         Main.SetTextProperty("LblTempLow" & CStr(IntI), Main.Translate("Low:") & " " & Right(StrLine, Len(StrLine) - 57) & " °C", ME)
+       END IF
+      ' --- put large forecast into textareas ---
+      ' IF Left(StrLine, 71) = "aws:weather|aws:forecasts|aws:forecast|aws:prediction|aws:prediction|=|" THEN
+      '   Main.SetTextProperty("TxtPrediction" & CStr(IntI), Main.TranslateViaInternet(Right(StrLine, Len(StrLine) - 71), Main.sAppLanguage), ME)
+      ' END IF
+    WEND
+    fFile.Close
+    fFile = NULL
+    KILL strfile
+  ENDIF
+
+END
+
 PUBLIC SUB frameOutside_MouseUp()
 
   FMain.OpenPage(FClimate)
@@ -278,5 +533,21 @@ END
 PUBLIC SUB framePowerUsage_MouseUp()
 
   FMain.OpenPage(FEnergy)
+
+END
+
+PUBLIC SUB cmbScenario_Change()
+
+  IF NOT bCmbSCenarioLoading THEN
+    Main.GlobalVar["Thermostat_Mode"] = cmbScenario.Text
+    Thermostat.DeleteAllDerogateHeating()
+  ENDIF
+
+END
+
+PUBLIC SUB Form_Resize()
+
+  VBoxTop.Width = ME.ClientWidth - 15
+  VBoxTop.Height = ME.ClientHeight - 15
 
 END
