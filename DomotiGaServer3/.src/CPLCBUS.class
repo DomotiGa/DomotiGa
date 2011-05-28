@@ -5,10 +5,10 @@
 ' Support for PLCBUS interface
 
 ' Development Status:
-' Just a framework, does nothing yet.
+' Basic support for lights dim/bright and on/off, appliances on/off.
 
 ' DomotiGa - an open source home automation program.
-' Copyright(C) 2008-2010 Ron Klinkien
+' Copyright(C) 2008-2011 Ron Klinkien
 
 ' Read file called COPYING for license details.
 
@@ -36,10 +36,13 @@ Private Const ETX As Byte = &H03
 
 Private aHomeAddr As New String[] ' holds all home addresses for polling
 Private bFirstByte As Boolean = True
-Private RecBuf[16] As Byte
+' [GB2:ARRD] Private RecBuf As Byte[16]
+Private RecBuf As New Byte[16]
 Private iByteCount As Integer = 0
 Private cQueue As New Collection
 Private bControllerBusy As Boolean
+Private iUnitsFound As Integer
+Private iUnitsStat As Integer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open serial port
@@ -169,14 +172,14 @@ Public Sub tPLCBUS_Timer()
   'IF bControllerBusy THEN RETURN
 
   Main.ControlLed("PLCBUS", "On")
-  If Main.bStandalone Then tPLCBUSLed.Start
+  If Main.bServer Then tPLCBUSLed.Start
 
   ' sent poll command only if queue is empty
   If cQueue.Count Then
     DoQueue()
   Else
     SendPollCommand()
-  End If
+  Endif
 
 End
 
@@ -230,7 +233,7 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
 
   If bPLCBUSDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2) & " ", 1)
   Main.ControlLed("PLCBUS", "On")
-  If Main.bStandalone Then tPLCBUSLed.Start
+  If Main.bServer Then tPLCBUSLed.Start
 
   RecBuf[iByteCount] = bTemp
   Inc iByteCount
@@ -281,9 +284,8 @@ Public Sub DoQueue()
   Dim aPacket As Byte[] = Null
 
   For Each aPacket In cQueue
-    WriteCommand(aPacket)
-    cQueue.Remove(cQueue.Key)
-    'SLEEP 0.1
+    WriteCommand(aPacket, cQueue.Key)
+    'cQueue.Remove(cQueue.Key)
   Next
 
 End
@@ -295,15 +297,14 @@ Private Sub ProcessPLCBUS()
 
   Dim bCommand As Byte
   Dim sAddress, sCommand, sValue As String
-  Dim iDeviceId As Integer
-  Dim iUnitsFound, iUnitsOn As Long
+  Dim iDeviceId, iUnit As Integer
 
   bFirstByte = True
 
   '--- check if valid frame ---
-  If RecBuf[0] = STX And If RecBuf[1] = &H6 And If RecBuf[8] = ETX Then
+  If RecBuf[0] = STX And If RecBuf[1] = &H6 And If (RecBuf[8] = ETX Or (RecBuf[0] + RecBuf[1] + RecBuf[2] + RecBuf[3] + RecBuf[4] + RecBuf[5] + RecBuf[6] + RecBuf[7] + RecBuf[8]) = 0) Then
     '--- check rx_tx bit 5 or 6 if set, packets contains valid data ---
-    If BTst(RecBuf[7], 5) Or If BTst(RecBuf[7], 6) Then
+    If BTst(RecBuf[7], 5) Or If BTst(RecBuf[7], 6) Or If BTst(RecBuf[7], 2) Then
       If RecBuf[3] <> 255 Then
         bCommand = RecBuf[4] And &H1F
         sAddress = PLCBUStoAddress(RecBuf[3])
@@ -313,34 +314,36 @@ Private Sub ProcessPLCBUS()
           Main.WriteRFXDebugLog("Addr: " & sAddress, True)
           Main.WriteRFXDebugLog(" Cmd: " & sCommand, True)
           Main.WriteRFXDebugLog(" Data1: " & Hex(RecBuf[5], 2), True)
-          Main.WriteRFXDebugLog(" Data2: " & Hex(RecBuf[6], 2), True)
+          Main.WriteRFXDebugLog(" Data2: " & Hex(RecBuf[6], 2) & "\n", True)
         End If
 
         Select Case bCommand
           '--- get all id pulse response ---
           Case &H1C
-            If bPLCBUSDebug Then
-              Main.WriteRFXDebugLog(" GET ALL ID PULSE UNITS: ", 1)
-              Main.WriteRFXDebugLog(Bin(RecBuf[5], 8), 1)
-              Main.WriteRFXDebugLog(" " & Bin(RecBuf[6], 8) & "\n", 1)
-            End If
-            iUnitsFound = RecBuf[5] & RecBuf[6]
+            iUnitsFound = (RecBuf[5] * 256) + RecBuf[6]
+            If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] GET ALL ID PULSE UNITS: " & Bin(iUnitsFound, 16) & "\n", True)
             PLCBUSTXCommand(sAddress, "GET_ONLY_ON_ID_PULSE")
           '--- get only on id pulse response ---
           Case &H1D
-            If bPLCBUSDebug Then
-              Main.WriteRFXDebugLog(" GET ONLY ON ID PULSE UNITS ON: ", 1)
-              Main.WriteRFXDebugLog(Bin(RecBuf[5], 8), 1)
-              Main.WriteRFXDebugLog(" " & Bin(RecBuf[6], 8), 1)
-            End If
-            iUnitsOn = RecBuf[5] & RecBuf[6]
+            iUnitsStat = (RecBuf[5] * 256) + RecBuf[6]
+            If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] GET ONLY ON ID PULSE UNITS ON: " & Bin(iUnitsStat, 16) & "\n", True)
+
+            For iUnit = 0 To 15
+              If BTst(iUnitsFound, iUnit) Then
+                If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] Device with address '" & Left(sAddress, 1) & Format(iUnit + 1, "00") & "' is " & IIf(BTst(iUnitsStat, iUnit), "On", "Off"))
+                ' find device id
+                iDeviceId = Devices.Find(Left(sAddress, 1) & Format(iUnit + 1, "00"), Devices.FindInterface("PLCBUS Interface"), "PLCBUS Module")
+                ' update value
+                If iDeviceId Then Devices.ValueUpdate(iDeviceId, IIf(BTst(iUnitsStat, iUnit), "On", "Off"), " ", " ", " ")
+              Endif
+            Next
           '--- on/off response ---
           Case &H02, &H03
             If bPLCBUSDebug Then Main.WriteRFXDebugLog(" ON/OFF", 1)
             If RecBuf[5] = &H64 Then sValue = "On"
             If RecBuf[5] = &H00 Then sValue = "Off"
             ' find device id
-            iDeviceId = Devices.Find(sAddress, Devices.FindInterface("PLCBUS Interface"), "PLCBUS Lamp/Appl. Module")
+            iDeviceId = Devices.Find(sAddress, Devices.FindInterface("PLCBUS Interface"), "PLCBUS Module")
             ' update value
             If iDeviceId Then Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
           '--- dim/bright/presetdim response ---
@@ -354,7 +357,7 @@ Private Sub ProcessPLCBUS()
               sValue = "Dim " & Val("&H" & RecBuf[5])
             End If
             ' find device id
-            iDeviceId = Devices.Find(sAddress, Devices.FindInterface("PLCBUS Interface"), "PLCBUS Lamp Module")
+            iDeviceId = Devices.Find(sAddress, Devices.FindInterface("PLCBUS Interface"), "PLCBUS Module")
             ' update value
             If iDeviceId Then Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
           Case &H18
@@ -501,7 +504,8 @@ Private Function PLCBUStoAddress(bAddress As Byte) As String
 
   Dim sHome, sUnit As String
 
-  sHome = Chr((bAddress And &HF0) + 65)
+  ' sHome = Chr((bAddress AND &HF0) + 65)
+  sHome = Chr((bAddress And &HF0) / 16 + 65)
   sUnit = (bAddress And &H0F) + 1
 
   Return sHome & Format(sUnit, "00")
@@ -556,7 +560,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send packet to PLCBUS interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub WriteCommand(bBuffer As Byte[])
+Public Sub WriteCommand(bBuffer As Byte[], Optional sKey As String)
 
   Dim bByte As Byte
   Dim iCnt, iLoop As Integer
@@ -567,7 +571,7 @@ Public Sub WriteCommand(bBuffer As Byte[])
   If Not bPLCBUSDebug Then
     bBuffer.Write(hPLCBUS, 0, bBuffer.Length)
     ' --- wait 12.5mS ---
-    ' SLEEP 0.0125
+    Sleep 0.0125
     bBuffer.Write(hPLCBUS, 0, bBuffer.Length)
   Else
     '--- send all packets strings twice ---
@@ -587,6 +591,7 @@ Public Sub WriteCommand(bBuffer As Byte[])
       ' SLEEP 0.0125
     Until iLoop = 2
   End If
+  cQueue.Remove(sKey)
 
 End
 

@@ -1,0 +1,289 @@
+' Gambas class file
+
+' Description:
+' PwrCtrl.class
+' Provide support for Anel PwrCtrl.
+
+' Development Status:
+' Just started developing this one.
+
+' Links:
+' http://www.anel-elektronik.de/index.html
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2010 Ron Klinkien.
+
+' This is written by and Copyright(C) 2010 Daniel Keller.
+
+' Read file called COPYING for license details.
+
+Property UDPPortRead As String
+Property UDPPortSend As String
+Property PwrCtrlUserPw As String
+Property PwrCtrlDebug As Boolean
+
+Private iUDPPortRead As String
+Private iUDPPortSend As String
+Private bPwrCtrlDebug As Boolean
+Private sPwrCtrlUserPw As String
+
+Public hPwrCtrlClient As Udpsocket
+Public hBroadcastEvent As UdpSocket
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Connect() As Boolean
+
+  ' try to close the connection
+  Try hPwrCtrlClient.Close
+
+  hPwrCtrlClient = New UdpSocket As "PwrCtrlClient"
+  Try hPwrCtrlClient.Bind(iUDPPortRead)
+
+' test
+'ParseLine("NET-PwrCtrl:NET-CONTROL    :192.168.1.6:255.255.255.0:192.168.1.1:0.4.163.10.4.36:Nr. 1,0:Nr. 2,1:Nr. 3,0:Nr. 4,0:Nr. 5,0:Nr. 6,0:Nr. 7,0:Nr. 8,0:248:80")
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("PwrCtrl Error: " & ERROR.Text))
+  Return False
+
+End
+
+Public Sub PwrCtrlClient_Ready()
+
+  Main.WriteLog(("PwrCtrl UDP socket listening."))
+
+End
+
+Public Sub PwrCtrlClient_Closed()
+
+  Main.WriteLog(("PwrCtrl Error: UDP socket closed."))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hPwrCtrlClient.Close
+  Try hBroadcastEvent.Close
+  Main.WriteLog(("PwrCtrl UDP socket unbind."))
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("PwrCtrl Error: ") & ERROR.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got broadcasted udp message from server
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PwrCtrlClient_Read()
+
+  Dim sString As String
+
+  Read #hPwrCtrlClient, sString, Lof(hPwrCtrlClient)
+  ' string from Anel PwrCtrl is always the same, doesn't matter which model
+  ' NET-PwrCtrl:NET-CONTROL    :192.168.1.6:255.255.255.0:192.168.1.1:0.4.163.10.4.36:Nr. 1,0:Nr. 2,1:Nr. 3,0:Nr. 4,0:Nr. 5,0:Nr. 6,0:Nr. 7,0:Nr. 8,0:248:80
+  ParseLine(sString)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received udp message from server
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ParseLine(sData As String)
+
+  Dim sScan As String[]
+  Dim sDevice, sAddress As String
+  Dim iDeviceId, iCnt As Integer
+
+  sScan = Split(sData, ":")
+  If Trim(sScan[0]) = "NET-PwrCtrl"
+    sDevice = sScan[2]
+    For iCnt = 1 To 8
+      If Main.bPwrCtrlDebug Then Main.WriteDebugLog(Subst("[PwrCtrl] Device &1 1:&2 2:&3 3:&4 4:&5 5:&6 6:&7 7:&8 8:&9", sDevice, OnOff(sScan[6]), OnOff(sScan[7]), OnOff(sScan[8]), OnOff(sScan[9]), OnOff(sScan[10]), OnOff(sScan[11]), OnOff(sScan[12]), OnOff(sScan[13])))
+      sAddress = sDevice & "|" & iCnt
+      iDeviceId = Devices.Find(sAddress, Devices.FindInterface("PwrCtrl Interface"))
+      ' if found then update it's value
+      If iDeviceId Then Devices.ValueUpdate(iDeviceId, OnOff(sScan[5 + iCnt]), "", "", "")
+    Next
+  Else
+    If Main.bPwrCtrlDebug Then Main.WriteDebugLog(("[PwrCtrl] Received other data: ") & sData)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' translate on/off
+' sState = "Nr. 1,0", return On or Off
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function OnOff(sState As String) As String
+
+  If Split(sState, ",")[1] = "0" Then
+    Return "Off"
+  Endif
+  If Split(sState, ",")[1] = "1" Then
+    Return "On"
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get the state of all devices in the network
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetAllState()
+
+  Dim sMessage As String = "wer da?" & Chr(10)
+  Dim sIp As String
+
+  hBroadcastEvent = New UdpSocket As "BroadcastUDP"
+  hBroadcastEvent.Broadcast = True
+  ' [GB2:BIND] hBroadcastEvent.Bind(0)
+  hBroadcastEvent.Port = 0
+  hBroadcastEvent.Bind()
+  hBroadcastEvent.TargetPort = iUDPPortSend
+
+  For Each sIp In Main.aBroadcastAddrs
+    hBroadcastEvent.TargetHost = sIp
+    Try Write #hBroadcastEvent, sMessage, Len(sMessage)
+    If Not Error Then
+      If Main.bPwrCtrlDebug Then Main.WriteDebugLog(("[PwrCtrl] Sent broadcast packet for GetAllState."))
+    Else
+      If Main.bPwrCtrlDebug Then Main.WriteDebugLog(("[PwrCtrl] Error sending broadcast packet for GetAllState."))
+    End If
+  Next
+  Try Close hBroadcastEvent
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' switch device
+' sHost is ip of device, sDevice is number 1-8, sValue = on/off
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sValue As String)
+
+  Dim sMessage As String
+  Dim aScan As String[]
+
+  aScan = Scan(sAddress, "*|*")
+  If aScan.Count = 2 Then
+    sMessage = "Sw_" & LCase(sValue) & aScan[1] & sPwrCtrlUserPw ' Sw_off2user1user
+
+    hBroadcastEvent = New UdpSocket As "BroadcastUDP"
+    hBroadcastEvent.Broadcast = True
+    ' [GB2:BIND] hBroadcastEvent.Bind(0)
+    hBroadcastEvent.Port = 0
+    hBroadcastEvent.Bind()
+    hBroadcastEvent.TargetPort = iUDPPortSend
+    hBroadcastEvent.TargetHost = aScan[0]
+
+    If Main.bPwrCtrlDebug Then Main.WriteDebugLog(("[PwrCtrl] Sending '") & sMessage & ("' to device with address ") & aScan[0])
+
+    Try Write #hBroadcastEvent, sMessage, Len(sMessage)
+    If Not Error Then
+     If Main.bPwrCtrlDebug Then Main.WriteDebugLog(("[PwrCtrl] Sent command to device."))
+    Else
+      If Main.bPwrCtrlDebug Then Main.WriteDebugLog(("[PwrCtrl] Error while sending command."))
+    Endif
+    Try Close hBroadcastEvent
+  Else
+    Main.WriteDebugLog(("[PwrCtrl] Invalid address given: ") & sAddress)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' catch errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub BroadcastUDP_Error()
+
+  Select Case hBroadcastEvent.Status
+    Case Net.CannotBindSocket
+      Main.WriteDebugLog(("[PwrCtrl] Unable to Bind to that port."))
+    Case Net.CannotCreateSocket
+      Main.WriteDebugLog(("[PwrCtrl] The system does not allow to create a socket"))
+    Case Net.CannotRead
+      Main.WriteDebugLog(("[PwrCtrl] Error reading data."))
+    Case Net.CannotWrite
+      Main.WriteDebugLog(("[PwrCtrl] Error writing data."))
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' catch errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PwrCtrlClient_Error()
+
+  ' handle error
+  Select Case hPwrCtrlClient.Status
+    Case Net.CannotBindSocket
+      Main.WriteDebugLog(("[PwrCtrl] Unable to Bind to that port"))
+    Case Net.CannotCreateSocket
+      Main.WriteDebugLog(("[PwrCtrl] The system does not allow to create a socket."))
+    Case Net.CannotRead
+      Main.WriteDebugLog(("[PwrCtrl] Error reading data."))
+    Case Net.CannotWrite
+      Main.WriteDebugLog(("[PwrCtrl] Error writing data."))
+  End Select
+
+End
+
+' implement properties
+Private Function UDPPortRead_Read() As String
+
+  Return iUDPPortRead
+
+End
+
+Private Sub UDPPortRead_Write(Value As String)
+
+  iUDPPortRead = Value
+
+End
+
+Private Function UDPPortSend_Read() As String
+
+  Return iUDPPortSend
+
+End
+
+Private Sub UDPPortSend_Write(Value As String)
+
+  iUDPPortSend = Value
+
+End
+
+Private Function PwrCtrlUserPw_Read() As String
+
+  Return sPwrCtrlUserPw
+
+End
+
+Private Sub PwrCtrlUserPw_Write(Value As String)
+
+  sPwrCtrlUserPw = Value
+
+End
+
+Private Function PwrCtrlDebug_Read() As Boolean
+
+  Return bPwrCtrlDebug
+
+End
+
+Private Sub PwrCtrlDebug_Write(Value As Boolean)
+
+  bPwrCtrlDebug = Value
+
+End

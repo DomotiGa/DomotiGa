@@ -1,0 +1,236 @@
+' Gambas class file
+
+' Description:
+' OWFS.module
+' Support for OWFS devices.
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2010 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+Property PollTime As Integer
+Property Cached As Boolean
+Property BaseDir As String
+Property OWFSDebug As Boolean
+
+Private iPollTime As Integer
+Private bCached As Boolean
+Private sBaseDir As String
+Private bOWFSDebug As Boolean
+
+Public tOWFS As Timer
+Private hOWFS As Process
+Private cOutput As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Run()
+
+  ' start poll timer for OWFS
+  tOWFS = New Timer As "tOWFS"
+  tOWFS.Delay = iPollTime * 1000 ' multiply for seconds
+  tOWFS.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tOWFS_Timer()
+
+  CheckOWFS()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find all devices with type OWFS and get their values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckOWFS()
+
+  Dim rResult As Result
+  Dim iInterface As Integer
+  Dim sAddress As String
+
+  ' get all devices with this devicetype
+  rResult = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE", Devices.FindInterface("OWFS Interface"))
+  If rResult.Available Then
+    If rResult.Count >= 1 Then
+      For Each rResult
+        If bOWFSDebug Then Main.WriteDebugLog(("[OWFS] Checking device '") & rResult!name & ("' with address '") & rResult!address & "'.")
+        sAddress = rResult!address
+        ' if address contains no "." add it.
+        If InStr(sAddress, ".") = 0 Then sAddress = Left(sAddress, 2) & "." & Right(sAddress, Len(sAddress) - 2)
+        ' choose cached/uncached
+        sAddress = sBaseDir &/ IIf(bCached, "/", "/uncached") &/ sAddress
+        ' if address contains a "/" already don't add anything
+        If InStr(rResult!address, "/") = 0 Then
+          Select Case Left(rResult!address, 2)
+            Case "05" ' DS2405 - addressable switch
+              sAddress &= "/PIO"
+            Case "10" ' DS18S20 - temperature sensor
+              sAddress &= "/temperature"
+            Case "1D" ' DS2423 - dual counter
+              sAddress &= "/counters.ALL"
+            Case Else
+              If bOWFSDebug Then Main.WriteDebugLog(("[OWFS] Unsupported 1-Wire family '") & Left(rResult!address, 2) & "'")
+          End Select
+        End If
+        GetOWFS(rResult!id, sAddress)
+      Next
+    Else
+      Main.WriteLog(("OWFS: No 1-Wire devices found in device table!"))
+    End If
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' to switch unit with device control
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sValue As String)
+
+  Select Case LCase(sValue)
+    Case "on"
+      SetOWFS(sAddress, "1")
+    Case "off"
+      SetOWFS(sAddress, "0")
+    Case Else
+      If Main.bLGTVDebug Then Main.WriteDebugLog(("[OWFS] Unsupported command received: ") & sValue)
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' try to set value of Device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub SetOWFS(sAddress As String, sValue As String)
+
+  Dim sDevice As String
+
+  If InStr(sAddress, ".") = 0 Then sAddress = Left(sAddress, 2) & "." & Right(sAddress, Len(sAddress) - 2)
+  sDevice = sBaseDir &/ sAddress
+  ' if address contains a "/" already don't add anything
+  If InStr(sAddress, "/") = 0 Then
+    Select Case Left(sAddress, 2)
+      Case "05" ' DS2405 - addressable switch
+        sDevice &= "/PIO"
+      Case Else
+        If bOWFSDebug Then Main.WriteDebugLog(("[OWFS] Unsupported 1-Wire family '") & Left(sAddress, 2) & "' for switching.")
+    End Select
+  Endif
+  If bOWFSDebug Then Main.WriteDebugLog(("[OWFS] Settings contents of '") & sDevice & "' to '" & sValue & "'")
+  Shell "echo \"" & sValue & "\" > " & sDevice
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' try to get value of Device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub GetOWFS(iId As Integer, sAddress As String)
+
+  If bOWFSDebug Then Main.WriteDebugLog(("[OWFS] Checking contents of '") & sAddress & "'")
+  hOWFS = Exec ["cat", sAddress] For Read As "OWFS"
+  hOWFS.Tag = iId
+  cOutput.Add("", iId)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read OWFS output and store it in collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub OWFS_Read()
+
+  Dim sBuffer As String
+  Dim iId As Integer
+
+  Read #Last, sBuffer, -256
+  iId = Last.Tag
+
+  If cOutput.Exist(iId) Then cOutput[iId] &= sBuffer
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get id and return value, 0 means ok, anything else is not found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub OWFS_Kill()
+
+  Dim iId, iRc As Integer
+  Dim sStatus, sOutput, sRTT As String
+
+  iId = Last.Tag
+  iRc = Last.Value
+
+  ' save ping output
+  sOutput = Replace(cOutput[iId], " ", "")
+  cOutput.Remove(iId)
+
+  Select Case iRc
+    Case 0
+      ' debug output
+      If bOWFSDebug Then Main.WriteDebugLog(("[OWFS] Device with id '") & iId & ("' has value '") & sOutput & "'.")
+      ' find and update device
+      Devices.CheckFirstSeen(iId)
+      Devices.ValueUpdate(iId, sOutput, "", "", "")
+    Case Else
+      ' debug output
+      If bOWFSDebug Then Main.WriteDebugLog(("[OWFS] Cannot open OWFS file for device with id '") & iId & "'.")
+  End Select
+
+Catch
+  Main.WriteDebugLog(("ERROR: Parsing OWFS Result: ") & Error.Text & " at " & Error.Where)
+
+End
+
+Private Function Cached_Read() As Boolean
+
+  Return bCached
+
+End
+
+Private Sub Cached_Write(Value As Boolean)
+
+  bCached = Value
+
+End
+
+Private Function BaseDir_Read() As String
+
+  Return sBaseDir
+
+End
+
+Private Sub BaseDir_Write(Value As String)
+
+  sBaseDir = Value
+
+End
+
+Private Function PollTime_Read() As Integer
+
+  Return iPollTime
+
+End
+
+Private Sub PollTime_Write(Value As Integer)
+
+  iPollTime = Value
+
+End
+
+Private Function OWFSDebug_Read() As Boolean
+
+  Return bOWFSDebug
+
+End
+
+Private Sub OWFSDebug_Write(Value As Boolean)
+
+  bOWFSDebug = Value
+
+End

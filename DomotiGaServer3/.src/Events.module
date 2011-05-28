@@ -2,271 +2,800 @@
 
 ' Description:
 ' Events.module
-' This module provides support for events, triggers and actions.
+' This module provides support for events, triggers, actions and conditions.
 
 ' Development Status:
-'   Rewritten by Geert-Jan van den Hurk
+' Works 99.99% ok now. Partly rewritten by Geert-Jan van den Hurk.
 
 ' DomotiGa - an open source home automation program.
-' Copyright(C) 2008-2010 Ron Klinkien
+' Copyright(C) 2008-2011 Ron Klinkien
 
 ' Read file called COPYING for license details.
 
-PUBLIC SUB getCondition(rResult AS Result, sCondition AS String) AS Result
+Private oDelayTimers As New Object[]
+Public tDelayTimer As CTimer
 
-  DIM rResultCondition AS Result
+' trigger database table
+' description        | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
+' time now           |   1  | crontab
+' globalvar change   |   2  | variable | operand | value
+' device change      |   3  | id       | fieldno | operand | value
+' ir remote received |   4  | remote   | button  | repeat
+' iviewer remote     |   5  | remote   | join    | value
 
-  rResultCondition = Main.hDB.Exec("SELECT * FROM conditions WHERE id = " & rResult[sCondition])
+' condition database table
+' description        | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
+' time now           |   1  | crontab
+' globalvar value    |   2  | variable | operand | value
+' device value       |   3  | id       | fieldno | operand | value
 
-  RETURN rResultCondition
+' called every new minute from EventLoop.Run()
+Public Sub CheckTimeNowEvents()
 
-END
+  Dim rResult As Result
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 1 AND events.enabled"
+  Dim aCron As String[]
 
-PRIVATE SUB CheckCondition(sValue AS Variant, sOperand AS String, sCond AS Variant) AS Boolean
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running TimeNow query '") & sSql & "'")
+  rResult = Main.hDB.Exec(sSql)
+  If rResult Then
+    If rResult.Count Then
+      DoEvent(rResult)
+    Else
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
+    End If
+  Else
+    Main.WriteDebugLog(("[Events] Error while running CheckTimeNowEvents query!"))
+    Return
+  Endif
 
-  DIM bReturn AS Boolean
+  sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 6 AND events.enabled AND triggers.param1 REGEXP '[[:<:]]TimeCron(.*)[[:>:]]'"
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running TimeNow query '") & sSql & "'")
+  rResult = Main.hDB.Exec(sSql)
+  If rResult Then
+    If rResult.Count Then
+      For Each rResult ' search for cron events
+        aCron = Scan(rResult["triggers.param1"], "*(*)*")
+        If aCron.Count = 3 Then
+          If TimeCron(aCron[1]) = True Then DoEvent(rResult)
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] TimeCron multi-trigger has invalid format '") & rResult["triggers.param1"] & "'")
+        Endif
+      Next
+    Else
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
+    Endif
+  Else
+    Main.WriteDebugLog(("[Events] Error while running CheckTimeNowEvents query!"))
+    Return
+  Endif
 
-  IF IsBoolean(sCond) THEN sCond = CBool(sValue)
+End
 
-  bReturn = FALSE
+' called when a value of a device is set, and is different from last one from EventLoop.DeviceChanged()
+' iID = id of device, sField = the field that has changed, sValue = the new value it's set to
+Public Sub CheckDeviceChangeEvents(iId As Integer, sField As String, sValue As String)
 
-  SELECT sOperand
-    CASE "="
-      IF Comp(sValue, sCond) = 0 THEN bReturn = TRUE
-    CASE "<>"
-      IF sValue <> sCond THEN bReturn = TRUE
-    CASE ">"
-      sValue = "" & sValue ' Be sure it are strings
-      sCond = "" & sCond
-      IF IsDigit(sValue) AND IsDigit(sCond) THEN
-        IF Val(sValue) > Val(sCond) THEN bReturn = TRUE
-      ENDIF
-    CASE "<"
-      sValue = "" & sValue ' Be sure it are strings
-      sCond = "" & sCond
-      IF IsDigit(sValue) AND IsDigit(sCond) THEN
-        IF Val(sValue) < Val(sCond) THEN bReturn = TRUE
-      ENDIF
-    CASE ELSE
-      IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Unsupported operand found!"))
-  END SELECT
-    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Check condition ") & sCond & " " & sOperand & " " & sValue & " = " & Main.DisplayBool(bReturn))
-  RETURN bReturn
+  Dim rResult As Result
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 3 AND events.enabled AND triggers.param1 = &1 AND triggers.param2 = &2"
+  Dim aFieldNo As String[] = ["", "Value", "Value2", "Value3", "Value4", "LastSeen"]
 
-END
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running DeviceChange query '") & Subst(sSql, iId, aFieldNo[sField]) & "'")
+  rResult = Main.hDB.Exec(sSql, iId, sField)
+  If rResult Then
+    If rResult.Count Then
+      DoEvent(rResult, sValue)
+    Else
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
+    End If
+  Else
+    Main.WriteDebugLog(("[Events] Error while running CheckDeviceChangeEvents query!"))
+    Return
+  Endif
 
-PUBLIC SUB CheckSingleCondition(rResultCondition AS Result) AS Boolean
+  sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 6 AND events.enabled AND triggers.param1 REGEXP '[[:<:]]Dev_" & iId & "_" & aFieldNo[sField] & "[[:>:]]'"
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running DeviceChange query '") & sSql & "'")
+  rResult = Main.hDB.Exec(sSql, iId, sField)
+  If rResult Then
+    If rResult.Count Then
+      DoEvent(rResult, sValue)
+    Else
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
+    End If
+  Else
+    Main.WriteDebugLog(("[Events] Error while running CheckDeviceChangeEvents query!"))
+    Return
+  Endif
 
-  DIM bResult AS Boolean
-  DIM sValue AS String
 
-  bResult = TRUE
+End
 
-  SELECT rResultCondition!type
-    CASE 1 ' Time
-      ' Not supported as condition
-    CASE 2 ' Variable
-      bResult = CheckCondition(Main.GlobalVar[rResultCondition!param1], rResultCondition!param2, rResultCondition!param3)
-    CASE 3  ' Device Status
-      IF Comp(rResultCondition!param2, "Value") = 0 THEN
-        sValue = Devices.GetCurrentValueForDevice(rResultCondition!param1)
-      ELSE IF Comp(rResultCondition!param2, "Value2") = 0 THEN
-        sValue = Devices.GetCurrentValue2ForDevice(rResultCondition!param1)
-      ELSE IF Comp(rResultCondition!param2, "Value3") = 0 THEN
-        sValue = Devices.GetCurrentValue3ForDevice(rResultCondition!param1)
-      ELSE IF Comp(rResultCondition!param2, "Value4") = 0 THEN
-        sValue = Devices.GetCurrentValue4ForDevice(rResultCondition!param1)
-      ELSE
-        sValue = Devices.GetCurrentValueForDevice(rResultCondition!param1)
-      END IF
-      bResult = CheckCondition(sValue, rResultCondition!param3, rResultCondition!param4)
-  END SELECT
+' called when a IR signal is received from CLIRC.ParseLine(), CIRMan.ParseLine() or CIRTrans.ParseLine()
+Public Sub CheckIRRemoteEvents(sRemote As String, sButton As String)
 
-  RETURN bResult
+  Dim rResult As Result
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 4 AND events.enabled AND triggers.param1 = &1 AND triggers.param2 = &2"
 
-END
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running IRRemote query '") & Subst(sSql, sRemote, sButton) & "'")
+  rResult = Main.hDB.Exec(sSql, sRemote, sButton)
+  If rResult Then
+    If rResult.Count Then
+      DoEvent(rResult)
+     Else
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
+     Endif
+  Else
+    Main.WriteDebugLog(("[Events] Error while running CheckIRRemoteEvents query!"))
+    Return
+  Endif
 
-PUBLIC SUB CheckConditions(rResult AS Result) AS Boolean
+End
 
-  DIM bCondition, bCondition1, bCondition2 AS Boolean
-  DIM rResultCondition AS Result
+' called when a iViewer string is received from CIViewer.ParseLine()
+Public Sub CheckIViewerRemoteEvents(sRemote As String, sJoin As String, sValue As String)
 
-  ' Assume that all conditions are met
-  bCondition = TRUE
+  Dim rResult As Result
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 5 AND events.enabled AND triggers.param2 = &1 AND triggers.param3 = &2"
 
-  IF rResult["events.condition1"] THEN
-    rResultCondition = getCondition(rResult, "events.condition1")
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running IViewerRemote query '") & Subst(sSql, sJoin, sValue) & "'")
+  rResult = Main.hDB.Exec(sSql, sJoin, sValue)
+  If rResult Then
+    If rResult.Count Then
+      DoEvent(rResult)
+     Else
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
+     Endif
+  Else
+    Main.WriteDebugLog(("[Events] Error while running CheckIViewerRemoteEvents query!"))
+    Return
+  Endif
 
-    IF rResultCondition THEN
-      bCondition1 = CheckSingleCondition(rResultCondition)
-      IF rResult["events.condition2"] THEN
-        rResultCondition = getCondition(rResult, "events.condition2")
-        bCondition2 = CheckSingleCondition(rResultCondition)
-      ELSE
-        bCondition2 = bCondition1
-      END IF
-      ' Check the OR and AND clause
-      IF bCondition1 = FALSE AND bCondition2 = FALSE THEN
-        bCondition = FALSE
-      ELSE IF rResult["events.operand"] == "AND" THEN
-        IF bCondition1 = FALSE OR bCondition2 = FALSE THEN
-          bCondition = FALSE
-        END IF
-      END IF
-    END IF
-  END IF
-  RETURN bCondition
+End
 
-END
+' called when a globalvar value has changed from Main.SetGlobalVar()
+Public Sub CheckGlobalVarEvents(sVar As String, vValue As Variant)
 
-PUBLIC SUB RunSingleAction(rResult AS Result, action AS String)
+  Dim rResult As Result
+  Dim sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 2 AND events.enabled AND triggers.param1 = &1"
 
-  DIM rResultAction AS Result
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running GlobalVar query '") & Subst(sSql, sVar) & "'")
+  rResult = Main.hDB.Exec(sSql, sVar)
+  If rResult Then
+    If rResult.Count Then
+      DoEvent(rResult, vValue)
+    Else
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
+    Endif
+  Else
+    Main.WriteDebugLog(("[Events] Error while running CheckGlobalVarEvents query!"))
+    Return
+  Endif
 
-  IF rResult[action] THEN
-    rResultAction = Main.hDB.Exec("SELECT * FROM actions WHERE id = &1 ", rResult[action])
-    IF rResultAction THEN
-      IF RunAction(rResult[action]) = TRUE THEN UpdateEvent(rResult["events.id"]) 
-    END IF
-  END IF
+  sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 6 AND events.enabled AND triggers.param1 REGEXP '[[:<:]]Var_" & sVar & "[[:>:]]'"
 
-END
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running GlobalVar query '") & sSql & "'")
+  rResult = Main.hDB.Exec(sSql, sVar)
+  If rResult Then
+    If rResult.Count Then
+      DoEvent(rResult, vValue)
+    Else
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
+    Endif
+  Else
+    Main.WriteDebugLog(("[Events] Error while running CheckGlobalVarEvents query!"))
+    Return
+  Endif
 
-PUBLIC SUB RunActions(rResult AS Result)
+End
 
-  IF rResult.Count THEN
-    FOR EACH rResult
-      IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Event '") & rResult["events.name"] & ("' is triggered."))
-      RunSingleAction(rResult, "events.action1")
-      RunSingleAction(rResult, "events.action2")
-      RunSingleAction(rResult, "events.action3")
-    NEXT
-  END IF
+Private Sub DoEvent(rResult As Result, Optional sValue As Variant)
 
-END
+  If rResult.Count Then
+    If Main.bEventsDebug Then main.WriteDebugLog(("[Events] 1b. Got ") & rResult.Count & (" result(s)."))
+    For Each rResult
+      ' check if event is allowed to get triggered again
+      ' [GB2:ISTY] If rResult!rerunenabled = True And If IsDate(rResult!lastrun) Then
+      If rResult!rerunenabled = True And If TypeOf(rResult!lastrun) = gb.Date  Then
+        If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2a. ReRun condition set for event id ") & rResult!id & (" named '") & rResult!name & "'")
+        If Not CheckReRunCondition(rResult!lastrun, rResult!reruntype, rResult!rerunvalue) Then
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2b. Event id ") & rResult!id & (" named '") & rResult!name & ("' already ran in the last ") & rResult!rerunvalue & " " & rResult!reruntype & (" so discarding!"))
+          Continue
+        Endif
+      Endif
 
-PRIVATE SUB doEvent(rResult AS Result)
+      Select rResult["triggers.type"]
+        Case 1
+          ' timenow trigger
+          If TimeCron(rResult["triggers.param1"]) = False Then
+            If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. TimeNow trigger check TimeCron() for event id ") & rResult!id & (" and trigger condition '") & rResult["triggers.param1"] & ("' returned False"))
+            Continue
+          Else
+            If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. TimeNow trigger check TimeCron() for event id ") & rResult!id & (" and trigger condition '") & rResult["triggers.param1"] & ("' returned True"))
+          Endif
+        Case 2
+          ' check globalvar change trigger
+          If Not CheckCondition(sValue, rResult["triggers.param2"], rResult["triggers.param3"]) Then Continue
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. GlobalVar Change trigger on event id ") & rResult!id & (" named '") & rResult!name & ("' with trigger condition '") & rResult["triggers.param1"] & " " & rResult["triggers.param2"] & " " & rResult["triggers.param3"] & "'")
+        Case 3
+          ' check device change trigger
+          If Not CheckCondition(sValue, rResult["triggers.param3"], rResult["triggers.param4"]) Then Continue
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. Device Change trigger on event id ") & rResult!id & (" named '") & rResult!name & ("' with trigger condition '") & rResult["triggers.param2"] & "' " & sValue & " " & rResult["triggers.param3"] & " " & rResult["triggers.param4"])
+        Case 4
+          ' irremote trigger
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. IRRemote trigger on event id ") & rResult!id & (" named '") & rResult!name & ("' with Remote name '") & rResult["triggers.param1"] & "' and Button '" & rResult["triggers.param2"] & "'")
+        Case 5
+          ' iviewer trigger
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. IViewerRemote trigger on event id ") & rResult!id & (" named '") & rResult!name & ("' with Remote name '") & rResult["triggers.param1"] & "' with Join '" & rResult["triggers.param2"] & " and Value " & rResult["triggers.param3"] & "'")
+        Case Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. Event with id ") & rResult!id & (" named '") & rResult!name & ("' has unknown trigger type ") & rResult["triggers.type"])
+      End Select
 
-  DIM bReRunOK AS Boolean
+      ' check optional conditions
+      If CheckConditions(rResult!condition1, rResult!condition2, rResult!operand) = True Then
+        ' run action(s)
+        If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2f. Event id " & rResult!id & " named '") & rResult["events.name"] & ("' is validated, running action(s)."))
+        RunActions(rResult!id)
+      Else
+        If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2f. Event id " & rResult!id & " named '") & rResult["events.name"] & ("' has failed CheckConditions, discarding."))
+      Endif
+    Next
+  Endif
 
-  IF rResult.Count THEN 
-    FOR EACH rResult
+End
 
-      bReRunOK = TRUE
-      IF rResult!rerunenabled = TRUE AND IsDate(rResult!lastrun) THEN
-        bReRunOK = CheckReRunCondition(rResult!lastrun, rResult!reruntype, rResult!rerunvalue)
-      END IF
-      IF bReRunOK = TRUE AND CheckConditions(rResult) = TRUE THEN
-        RunActions(rResult)
-      END IF
-    NEXT
-  END IF
+Public Sub CheckCondition(sValue As Variant, sOperand As String, sCond As Variant, Optional bMute As Boolean) As Boolean
 
-END
+  Dim bReturn As Boolean
 
-PUBLIC SUB CheckTimeNowEvents()
+  ' [GB2:ISTY] If IsBoolean(sValue) Then sValue = Main.DisplayBool(sValue)
+  If TypeOf(sValue) = gb.Boolean  Then sValue = Main.DisplayBool(sValue)
+  ' [GB2:ISTY] If IsBoolean(sCond) Then sCond = Main.DisplayBool(sCond)
+  If TypeOf(sCond) = gb.Boolean  Then sCond = Main.DisplayBool(sCond)
 
-  DIM rResult AS Result
+  Select sOperand
+    Case "="
+      If Comp(sValue, sCond) = 0 Then bReturn = True
+    Case "<>"
+      If sValue <> sCond Then bReturn = True
+    Case ">"
+      If CFloat(Replace(sValue, ",", ".", gb.String)) > CFloat(Replace(sCond, ",", ".", gb.String)) Then bReturn = True
+    Case "<"
+      If CFloat(Replace(sValue, ",", ".", gb.String)) < CFloat(Replace(sCond, ",", ".", gb.String)) Then bReturn = True
+    Case Else
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. Unsupported operand '" & sOperand & "' found!"))
+  End Select
+  If Main.bEventsDebug And If Not bMute Then Main.WriteDebugLog(("[Events] 2c. Check condition '") & sValue & " " & sOperand & " " & sCond & "' = " & Main.DisplayBool(bReturn))
+  Return bReturn
 
-  rResult = Main.hDB.Exec("SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 1 AND events.enabled AND triggers.param1 = &1 AND triggers.param2 = &2", Format(Main.GlobalVar["Hour"], "00"), Format(Main.GlobalVar["Minute"], "00"))
-  IF rResult THEN
-    doEvent(rResult)
-  END IF
+Catch
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2c. Invalid comparison in CheckCondition() routine!"))
+  Return False
 
-END
+End
 
-PUBLIC SUB CheckDeviceChangeEvents(iId AS Integer, sField AS String, sValue AS String)
+Private Sub AddVariablesToContext(cContext As Collection)
 
-  DIM rResult AS Result
+  Dim vValue As Variant
 
-  rResult = Main.hDB.Exec("SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 3 AND events.enabled AND triggers.param1 = &1", iId)
-  IF rResult THEN
-    doEvent(rResult)
-  END IF
+  For Each vValue In Main.GlobalVar
+    cContext["Var_" & Main.GlobalVar.Key] = vValue
+  Next
 
-END
+End
 
-PRIVATE SUB CheckReRunCondition(dDate AS Date, sPeriod AS String, iValue AS Integer) AS Boolean
+Private Sub AddDevicesToContext(cContext As Collection)
 
-  IF DateDiff(dDate, Now(), Eval(sPeriod)) > iValue THEN
-    RETURN TRUE
-  ELSE
-    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Event Rerun condition ") & iValue & " " & sPeriod & (" is false."))
-    RETURN FALSE
-  END IF
+  Dim iCount As Integer
+  Dim rResult As Result
+  Dim sSql As String
 
-END
+  sSql = "SELECT * FROM devices WHERE enabled IS TRUE ORDER BY name"
+  rResult = Main.hDB.Exec(sSql)
 
-PUBLIC SUB RunAction(iAction AS Integer) AS Boolean
+  For iCount = 0 To rResult.Max
+    cContext["Dev_" & rResult!id & "_Value"] = rResult!value
+    cContext["Dev_" & rResult!id & "_Value2"] = rResult!value2
+    cContext["Dev_" & rResult!id & "_Value3"] = rResult!value3
+    cContext["Dev_" & rResult!id & "_Value4"] = rResult!value4
+    cContext["Dev_" & rResult!id & "_LastChanged"] = rResult!lastchanged
+    cContext["Dev_" & rResult!id & "_LastSeen"] = rResult!lastseen
+    cContext["Dev_" & rResult!id & "_BatteryStatus"] = rResult!batterystatus
+    rResult.MoveNext
+  Next
 
-  DIM rResultAction AS Result
-  DIM bOk AS Boolean
+End
+
+Public Function EvalFormula(sFormula As String) As String
+
+  Dim sToEval, sResult As String
+  Dim cContext As New Collection
+  Dim vResult As Variant
+
+  sToEval = Replace(sFormula, "\n", " ")
+  ' here we replace variables & devices by their values
+  AddVariablesToContext(cContext)
+  AddDevicesToContext(cContext)
+  ' here the formula is evaluated
+  Try vResult = Eval(sToEval, cContext)
+  If Error Then
+    sResult = ("Error: ") & Error.Text
+  ' [GB2:ISTY] Else If IsBoolean(vResult) Then
+  Else If TypeOf(vResult) = gb.Boolean  Then
+    sResult = Main.DisplayBool(vResult)
+  Else
+    sResult = vResult
+  Endif
+  Return sResult
+
+Catch
+  Return Error.Text
+
+End
+
+Private Sub CheckSingleCondition(iCondition As Integer) As Boolean
+
+  Dim bResult As Boolean
+  Dim rResultCondition As Result
+
+  rResultCondition = Main.hDB.Exec("SELECT * FROM conditions WHERE id = " & iCondition)
+  If rResultCondition Then
+    If EvalFormula(rResultCondition!formula) = "True" Then bResult = True
+  Endif
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2d. Condition with id ") & iCondition & (" and formula '") & rResultCondition!formula & ("' returned ") & Main.DisplayBool(bResult))
+  Return bResult
+
+End
+
+' check the optional conditions 1 and 2
+Private Sub CheckConditions(iCondition1 As Integer, iCondition2 As Integer, sOperand As String) As Boolean
+
+  Dim bCondition1, bCondition2 As Boolean
+
+  If iCondition1 Then
+      bCondition1 = CheckSingleCondition(iCondition1)
+      If iCondition2 Then
+        bCondition2 = CheckSingleCondition(iCondition2)
+      Else
+        sOperand = ""
+      Endif
+
+      ' check the OR and AND clause
+      Select Case UCase(sOperand)
+        Case ""
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2e. CheckConditions checking only iCondition1 with id ") & iCondition1)
+          If bCondition1 Then Return True
+        Case "OR"
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2e. CheckConditions checking iCondition1 with id ") & iCondition1 & (" OR iCondition2 with id ") & iCondition2)
+          If bCondition1 Or If bCondition2 Then Return True
+        Case "AND"
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 2e. CheckConditions checking iCondition1 with id ") & iCondition1 & (" AND iCondition2 with id ") & iCondition2)
+          If bCondition1 And If bCondition2 Then Return True
+        Case Else
+      End Select
+
+  Else ' no conditions defined so return true
+    Return True
+  Endif
+  Return False
+
+End
+
+' run all configured actions
+Public Sub RunActions(iEventId As Integer, Optional iFrom As Integer)
+
+  Dim rActions As Result
+
+  UpdateEvent(iEventId)
+  rActions = Main.hDB.Exec("SELECT * FROM events_actions WHERE event = &1 ORDER BY events_actions.order", iEventId)
+  If rActions Then
+    For Each rActions
+      If rActions!order < iFrom Then Continue
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3a. Running action with id ") & rActions!action & (" for event with id ") & iEventId)
+      If RunAction(rActions!action, rActions!order, iEventId) Then Break
+    Next
+  Endif
+
+End
+
+Private Sub CheckReRunCondition(dDate As Date, sPeriod As String, iValue As Integer) As Boolean
+
+  If DateDiff(dDate, Now(), Eval(sPeriod)) > iValue Then
+    Return True
+  Else
+    If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] Event Rerun condition ") & iValue & " " & sPeriod & (" is false."))
+    Return False
+  Endif
+
+End
+
+' action database table
+' description       | rResultAction!type | rResultAction!param1      | rResultAction!param2 | rResultAction!param3 | rResultAction!param4 | rResultAction!param5
+' set device value  | 1                  | deviceid                  | value fieldname      | value
+' set globalvar     | 2                  | globalvar name            | value
+' send e-mail       | 3                  | to address                | subject              | body
+' speak text        | 4                  | voice or 'female', 'male' | text
+' execute command   | 5                  | shell command to run
+' send tweet        | 6                  | tweet message to send
+' send SMS message  | 7                  | to SMS number             | message
+' send IRTrans IR   | 8                  | command string
+' play sound        | 9                  | sound file                | volume
+' write log entry   | 10                 | log text
+' display led msg   | 11                 | message to display        | display id           | color                | speed
+' av control        | 12                 | model                     | command              | value                | address
+' timer delay       | 13                 | delay in secs or rnd min  | random max seconds   | mode fixed or random
+' notify-send       | 14                 | title                     | text
+
+Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer) As Boolean
+
+  Dim rResultAction As Result
+  Dim bOk As Boolean
+  Dim sDeviceName As String
 
   rResultAction = Main.hDB.Exec("SELECT * FROM actions WHERE id = &1 ", iAction)
-  IF rResultAction.Available THEN
-    SELECT rResultAction!type
-      CASE 1 ' device change
-        IF rResultAction!param1 AND IF rResultAction!param2 AND IF rResultAction!param3 THEN
-          Devices.SetDevice(Devices.FindNameForDevice(rResultAction!param1), rResultAction!param3)
-          bOk = TRUE
-        END IF
-      CASE 5 ' execute command
-        SHELL rResultAction!param5
-        bOk = TRUE
-      CASE ELSE
-        bOk = FALSE
-    END SELECT
-  END IF
+  If rResultAction.Available Then
+    Select rResultAction!type
+      Case 1 ' set device value
+        ' only changing field Value will trigger interface code, and Value2-Value4 will only set field value
+        If rResultAction!param1 And If rResultAction!param2 And If rResultAction!param3 Then
+          sDeviceName = Devices.FindNameForDevice(rResultAction!param1)
+          If Len(sDeviceName) Then
+            Select Case rResultAction!param2
+              Case 1
+                bOk = Devices.SetDevice(sDeviceName, ParseText(rResultAction!param3))
+              Case 2
+                bOk = Devices.ValueUpdate(rResultAction!param1, "", ParseText(rResultAction!param3), "", "")
+              Case 3
+                bOk = Devices.ValueUpdate(rResultAction!param1, "", "", ParseText(rResultAction!param3), "")
+              Case 4
+                bOk = Devices.ValueUpdate(rResultAction!param1, "", "", "", ParseText(rResultAction!param3))
+              Case Else
+                Main.WriteDebugLog(("[Events] 3b. Invalid value field given ") & rResultAction!param2 & "!")
+                bOk = False
+            End Select
+          Else
+            Main.WriteDebugLog(("[Events] 3b. Device with id ") & rResultAction!param1 & (" doesn't exists!"))
+            bOk = False
+          Endif
+        Endif
+      Case 2 ' set globalvar value
+        ' if globalvar doesn't exist it will be created
+        If rResultAction!param1 And If rResultAction!param2 Then
+          Try Main.GlobalVar[rResultAction!param1] = ParseText(rResultAction!param2)
+          If Error Then
+            bOk = False
+          Else
+            bOk = True
+          Endif
+        Endif
+      Case 3 ' send e-mail
+        If Main.bEmailEnabled Then
+          Try Mail.SendMail(ParseText(rResultAction!param2), ParseText(rResultAction!param3), rResultAction!param1)
+          If Error Then
+            bOk = False
+          Else
+            bOk = True
+          Endif
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. e-mail support is disabled!"))
+        Endif
+      Case 4 ' speak text
+        If Main.bVoiceTextEnabled Then
+          Try VoiceText.Speak(ParseText(rResultAction!param2), rResultAction!param1)
+          If Error Then
+            bOk = False
+          Else
+            bOk = True
+          Endif
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. VoiceText support is disabled!"))
+        Endif
+      Case 5 ' execute command
+        Try Shell rResultAction!param1
+        If Error Then
+          bOk = False
+        Else
+          bOk = True
+        Endif
+      Case 6 ' send tweet
+        If Main.bTwitterEnabled Then
+          Try Twitter.PostTweet(ParseText(rResultAction!param1))
+          If Error Then
+            bOk = False
+          Else
+            bOk = True
+          Endif
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Twitter support is disabled!"))
+        Endif
+      Case 7 ' send SMS message
+        If Main.bSMSEnabled Then
+          Try Main.hSMS.SendSMS(ParseText(rResultAction!param2), rResultAction!param1)
+          If Error Then
+            bOk = False
+          Else
+            bOk = True
+          Endif
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. SMS support is disabled!"))
+        Endif
+      Case 8 ' send IRTrans IR
+        If Main.bIRTransEnabled Then
+          Try Main.hIRTrans.SendIRCommand(rResultAction!param1)
+          If Error Then
+            bOk = False
+          Else
+            bOk = True
+          Endif
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. IRTrans support is disabled!"))
+        Endif
+      Case 9 ' play sound
+        If Main.bSoundEnabled Then
+          Try Sounds.PlaySnd(rResultAction!param1, rResultAction!param2)
+          If Error Then
+            bOk = False
+          Else
+            bOk = True
+          Endif
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Sound support is disabled!"))
+        Endif
+      Case 10 ' write log entry
+        Try Main.WriteLog(ParseText(rResultAction!param1))
+        If Error Then
+          bOk = False
+        Else
+          bOk = True
+        Endif
+      Case 11 ' display message on led matrix display
+        If Main.bLEDMatrixEnabled Then
+          Try Main.hLEDMatrix.DisplayMessage(rResultAction!param2, ParseText(rResultAction!param1), rResultAction!param3, rResultAction!param4)
+          If Error Then
+            bOk = False
+          Else
+            bOk = True
+          Endif
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. LED Matrix support is disabled!"))
+        Endif
+      Case 12 ' av control command
+        Try AVControl.Set(rResultAction!param1, rResultAction!param2, rResultAction!param3, rResultAction!param4)
+        If Error Then
+          bOk = False
+        Else
+          bOk = True
+        Endif
+      Case 13 ' timer delay
+        If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' is a delay timer!"))
+        StartDelayTimer(iEventId, iOrder + 1, rResultAction!param1, rResultAction!param2, rResultAction!param3)
+        Return True
+      Case 14 ' notify-send
+        Main.NotifySend(ParseText(rResultAction!param1), ParseText(rResultAction!param2))
+        bOk = True
+      Case Else
+        bOk = False
+    End Select
 
-  IF bOk THEN
-    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Action '") & rResultAction!name & ("' executed!"))
-    RETURN TRUE
-  ELSE
-    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Action '") & rResultAction!name & ("' failed to execute!"))
-    RETURN FALSE
-  END IF
+    If bOk Then
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' executed!"))
+      Return False
+    Else
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' failed to execute!"))
+      Return False
+    Endif
+  Else
+    If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & iAction & (" not found!"))
+  Endif
 
-END
+End
 
-PUBLIC SUB UpdateEvent(iId AS Integer)
+' update event timestamps
+Private Sub UpdateEvent(iId As Integer)
 
-  DIM rResult AS Result
+  Dim rResult As Result
 
   rResult = Main.hDB.Exec("SELECT * FROM events where id = &1", iId)
-  IF rResult.Available THEN
-    IF rResult.Count = 1 THEN
-      IF rResult!firstrun = "00:00:00" OR rResult!firstrun = "" THEN
+  If rResult.Available Then
+    If rResult.Count = 1 Then
+      If rResult!firstrun = "00:00:00" Or rResult!firstrun = "" Then
         rResult = Main.hDB.Exec("UPDATE events SET firstrun = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), iId)
-      END IF
-    END IF
+      Endif
+    Endif
     rResult = Main.hDB.Exec("UPDATE events SET lastrun = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), iId)
-  END IF
+  Endif
 
-END
+End
 
-PRIVATE SUB CheckTrigger(sValue AS Variant, sOperand AS String, sCond AS Variant) AS Boolean
+' replace <%global var%> and <#device values|1#> fields in text
+Private Sub ParseText(sText As String) As String
 
-  DIM bReturn AS Boolean
+  Dim iPos1, iPos2, iPos3 As Integer
+  Dim sTag, sResult As String
 
-  IF IsBoolean(sCond) THEN sCond = CBool(sValue)
+  If InStr(stext, "<") And If InStr(stext, ">") Then
+    iPos1 = InStr(sText, "<")
+    Do While iPos1 > 0
+      iPos2 = InStr(sText, ">", iPos1 + 1)
+      If iPos2 > 0 Then ' tags found
+        sTag = Mid(sText, iPos1 + 1, iPos2 - iPos1 - 1)
+        If Left(sTag, 1) = "%" And If Right(sTag, 1) = "%" Then ' globalvar tag
+          sText = Replace(sText, "<" & sTag & ">", InsertGlobalVar(sTag))
+        Endif
+        If Left(sTag, 1) = "#" And If Right(sTag, 1) = "#" Then ' deviceval tag
+          sText = Replace(SText, "<" & sTag & ">", InsertDeviceValue(sTag))
+        Endif
+      Endif
+      iPos3 = InStr(sText, "<")
+      If iPos3 <= iPos1 Then
+        Break
+      Else
+        iPos1 = iPos3
+      Endif
+    Loop
+  Endif
+  Return sText
 
-  SELECT sOperand
-    CASE "="
-      IF Comp(sValue, sCond) = 0 THEN bReturn = TRUE
-    CASE "<>"
-      IF sValue <> sCond THEN bReturn = TRUE
-    CASE ">"
-      IF IsDigit(sValue) AND IF IsDigit(sCond) = FALSE THEN
-        IF Val(sValue) > Val(sCond) THEN bReturn = TRUE
-      END IF
-    CASE "<"
-      IF IsDigit(sValue) AND IF IsDigit(sCond) = FALSE THEN
-        IF Val(sValue) < Val(sCond) THEN bReturn = TRUE
-      END IF
-    CASE ELSE
-      IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Unsupported operand found!"))
-  END SELECT
-    IF Main.bEventsDebug THEN Main.WriteDebugLog(("[Events] Check trigger ") & sCond & " " & sOperand & " " & sValue & " = " & Main.DisplayBool(bReturn))
-  RETURN bReturn
+End
 
-END
+' return value of %global var%
+Private Sub InsertGlobalVar(sTag As String) As String
+
+  Try Return Main.GlobalVar[Mid(sTag, 2, Len(sTag) - 2)]
+  If Error Then Return ("ERROR!")
+
+End
+
+' return value of <#device name|field#>
+Private Sub InsertDeviceValue(sTag As String) As String
+
+  Dim aScan As String[]
+  Dim sValue As String
+
+  If InStr(sTag, "|") Then
+    aScan = Scan(sTag, "#*|*#")
+    If aScan.Count = 2 Then
+      Select Case aScan[1]
+        Case "1", "2", "3", "4"
+          sValue = Devices.GetValueForDevice(aScan[0], aScan[1])
+        Case Else
+          sValue = Devices.GetValueForDevice(aScan[0])
+      End Select
+    Endif
+  Else
+    sValue = Devices.GetValueForDevice(Mid(sTag, 2, Len(sTag) - 2))
+  Endif
+  Return sValue
+
+Catch
+  ' RETURN ERROR.Text & " at " & Error.Where
+  Return ("ERROR!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse cron function
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function TimeCron(sTimeDate As String) As Boolean
+
+  Dim aCron, aMore, aCron_Now, LowHigh As String[]
+  Dim sField As String
+  Dim iField As Integer
+  Dim sTag As Boolean
+
+  ' * * * * *
+  ' - - - - -
+  ' | | | | |
+  ' | | | | +----- day of week (0 - 6) (Sunday=0)
+  ' | | | +------- month (1 - 12)
+  ' | | +--------- day of month (1 - 31)
+  ' | +----------- hour (0 - 23)
+  ' +------------- min(0 - 59)
+
+  aCron = Split(sTimeDate, " ")
+
+  If aCron.Count <> 5 Then
+    Main.WriteDebugLog(("[Cron] Bad TimeCron() format (needs 5 fields): ") & sTimeDate)
+    Return False
+  End If
+
+  aCron_Now = [Str(Main.GlobalVar["Minute"]), Str(Main.GlobalVar["Hour"]), Str(Main.GlobalVar["Day"]), Str(Main.GlobalVar["Month"]), Str(Main.GlobalVar["Weekday"])]
+  For iField = 0 To 4
+    ' wildcard used
+    sTag = False
+    If aCron[iField] = "*" Then
+      If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & ("' | * so Continue"))
+      Continue
+    ' normal value
+    Else If aCron[iField] = aCron_Now[iField] Then
+      If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | aCron[" & iField & "] " & aCron[iField] & " = aCron_Now[" & iField & "] " & aCron_Now[iField] & " so Continue")
+      Continue
+    ' more values given
+    Else If InStr(aCron[iField], ",") Then
+      aMore = Split(aCron[iField], ",")
+      For Each sField In aMore
+          If sField = aCron_Now[iField] Then
+            If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | sField " & sField & " = aCron_Now[" & iField & "] " & aCron_Now[iField] & (" so tag=True"))
+            sTag = True
+          Else
+            If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | sField " & sField & " <> aCron_Now[" & iField & "] " & aCron_Now[iField])
+          End If
+      Next
+      If sTag Then
+        Continue
+      Else
+        If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & ("' | none of , sFields match so return False"))
+        Return False
+      End If
+    ' range given
+    Else If InStr(aCron[iField], "-") Then
+      LowHigh = Scan(aCron[iField], "*-*")
+      If aCron_Now[iField] >= LowHigh[0] And aCron_Now[iField] <= LowHigh[1] Then
+        If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | within range so Continue")
+        Continue
+      Else
+        If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | not within range so return False")
+        Return False
+      End If
+    End If
+    If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | aCron[" & iField & "] " & aCron[iField] & " <> aCron_Now[" & iField & "] " & aCron_Now[iField] & (" so return False"))
+    Return False ' not all of the entries qualified
+    sTag = False
+  Next
+  If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | return True")
+  Return True
+
+End
+
+' start delay timer for iEventId and iOrder with param1-3
+Private Sub StartDelayTimer(iEventId As Integer, iOrder As Integer, sParam1 As String, sParam2 As String, sParam3 As String)
+
+  Dim iDelay As Integer
+
+  ' sParam3 contains timer mode
+  ' "fixed" sParam1 is timer delay in seconds
+  ' "random" sParam1 is min value, sParam2 is max value for rnd
+  If LCase(sParam3) = "random" Then
+    iDelay = Rnd(Val(sParam1), Val(sParam2))
+  Else
+    iDelay = Val(sParam1)
+  Endif
+
+  If Not FindTimer(iEventId, iOrder, iDelay) Then
+    tDelayTimer = New CTimer As "tDelayTimer"
+    oDelayTimers.Add(tDelayTimer)
+    tDelayTimer.Delay = iDelay * 1000
+    tDelayTimer.EventId = iEventId
+    tDelayTimer.Order = iOrder
+    tDelayTimer.Started = Now()
+    tDelayTimer.Start
+    If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3c. Started delay timer for event id ") & iEventId & (", delay for ") & iDelay & (" second(s)"))
+  Endif
+
+End
+
+' looks if there is a timer running for iEventId and iOrder
+Private Sub FindTimer(iEventId As Integer, iOrder As Integer, iDelay As Integer) As Boolean
+
+  Dim oObject As Object
+
+  For Each oObject In oDelayTimers
+    If oObject.EventId = iEventId And If oObject.Order = iOrder Then
+      If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3c. Delay timer for event id ") & iEventId & (" and order# ") & iOrder & (" with delay of ") & iDelay & (" second(s) already runs, skipping"))
+      Return True
+    Else
+      Return False
+    Endif
+  Next
+  Return False
+
+End
+
+' timer is finished, run remaining action(s)
+Public Sub tDelayTimer_Timer()
+
+  If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3d. Delay timer finished for event id ") & tDelayTimer.EventId & (", continue running it's actions from order# ") & tDelayTimer.Order)
+  RunActions(tDelayTimer.EventId, tDelayTimer.Order)
+  tDelayTimer.Stop
+  oDelayTimers.Remove(oDelayTimers.Find(Last))
+
+End
