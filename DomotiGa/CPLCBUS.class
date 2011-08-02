@@ -71,7 +71,7 @@ PUBLIC FUNCTION Connect() AS Boolean
 
   ' define timer for PLCBUS controller busy
   tPLCBUSBusy = NEW Timer AS "tPLCBUSBusy"
-  tPLCBUSBusy.Delay = 40
+  tPLCBUSBusy.Delay = IIf(bThreePhase, 840, 420) ' wait 420 mS on 1-phase and 840mS on 3-phase installs
   tPLCBUSBusy.Stop
 
   ' all ok
@@ -124,11 +124,11 @@ PUBLIC SUB Run()
         Main.WriteRFXDebugLog(sAddress & " ", TRUE)
       NEXT
       Main.WriteRFXDebugLog("\n", TRUE)
-    END IF
+    ENDIF
   ELSE
     tPLCBUS.Stop
     IF bPLCBUSDebug THEN Main.WriteDebugLog(("[PLCBUS] Didn't find any enabled devices of type PLCBUS, polling is disabled."))
-  END IF
+  ENDIF
 
 END
 
@@ -155,10 +155,10 @@ PUBLIC SUB GetHomeAddresses() AS Boolean
           CONTINUE
         ELSE
           aHomeAddr.Add(sHome, Asc(sHome))
-        END IF
+        ENDIF
       NEXT
-    END IF
-  END IF
+    ENDIF
+  ENDIF
 
 END
 
@@ -167,18 +167,7 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB tPLCBUS_Timer()
 
-  ' just send a command, so controller doesn't listen for 400mS
-  'IF bControllerBusy THEN RETURN
-
-  Main.ControlLed("PLCBUS", "On")
-  IF Main.bServer THEN tPLCBUSLed.Start
-
-  ' sent poll command only if queue is empty
-  IF cQueue.Count THEN
-    DoQueue()
-  ELSE
-    SendPollCommand()
-  ENDIF
+  SendPollCommand()
 
 END
 
@@ -189,6 +178,11 @@ PUBLIC SUB tPLCBUSBusy_Timer()
 
   bControllerBusy = FALSE
   tPLCBUSBusy.Stop
+
+  IF cQueue.Count THEN ' if there are more commands left in queue, send next one
+    IF bPLCBUSDebug THEN Main.WriteDebugLog(("[PLCBUS] Sending next command from Queue (count = " & cQueue.Count & ")"))
+    DoQueue()
+  ENDIF
 
 END
 
@@ -204,7 +198,7 @@ PUBLIC SUB SendPollCommand()
       PLCBUSTXCommand(sHomeAddr & "01", "REPORT_ALL_ID_PULSE")
     ELSE
       PLCBUSTXCommand(sHomeAddr & "01", "GET_ALL_ID_PULSE")
-    END IF
+    ENDIF
   NEXT
 
 END
@@ -218,7 +212,7 @@ PUBLIC SUB PLCBUS_Read()
     ProcessReceivedChar(sData)
   ELSE
     Main.WriteDebugLog(("[PLCBUS] Error reading data from the serial port! ->") & ERROR.Text)
-  END IF
+  ENDIF
 
 END
 
@@ -228,7 +222,7 @@ PRIVATE SUB ProcessReceivedChar(bTemp AS Byte)
     bFirstByte = FALSE
     iByteCount = 0
     IF bPLCBUSDebug THEN Main.WriteRFXDebugLog("[PLCBUS] < ", 0)
-  END IF
+  ENDIF
 
   IF bPLCBUSDebug THEN Main.WriteRFXDebugLog(Hex(bTemp, 2) & " ", 1)
   Main.ControlLed("PLCBUS", "On")
@@ -258,10 +252,10 @@ PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String)
       PLCBUSTXCommand(sAddress, "PRESETDIM " & iBrightness & " 1", TRUE) ' fixed dim rate of 1
     ELSE
       Main.WriteDebugLog(("[PLCBUS] Invalid PRESETDIM value of ") & iBrightness & "!")
-    END IF
+    ENDIF
   ELSE
     Main.WriteDebugLog(("[PLCBUS] Only DIM and ON/OFF commands are supported!"))
-  END IF
+  ENDIF
 
 END
 
@@ -270,8 +264,11 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB QueueCommand(aPacket AS Byte[])
 
+  ' add command to queue
   cQueue.Add(aPacket, Now())
-  DoQueue()
+
+  ' if controller is not busy process it
+  IF bControllerBusy = FALSE THEN DoQueue()
 
 END
 
@@ -284,8 +281,14 @@ PUBLIC SUB DoQueue()
 
   FOR EACH aPacket IN cQueue
     WriteCommand(aPacket, cQueue.Key)
-    'cQueue.Remove(cQueue.Key)
+    BREAK ' only do first one
   NEXT
+
+  ' if no timer running, start one
+  IF bControllerBusy = FALSE THEN
+    bControllerBusy = TRUE
+    tPLCBUSBusy.Start
+  ENDIF
 
 END
 
@@ -372,11 +375,11 @@ PRIVATE SUB ProcessPLCBUS()
         END SELECT
       ELSE
         IF bPLCBUSDebug THEN Main.WriteRFXDebugLog(("Invalid Home and Unit values!"), 1)
-      END IF
-    END IF
+      ENDIF
+    ENDIF
   ELSE
     IF bPLCBUSDebug THEN Main.WriteRFXDebugLog(("Frame not valid!"), 1)
-  END IF
+  ENDIF
 
   IF bPLCBUSDebug THEN Main.WriteRFXDebugLog("\n", TRUE)
 
@@ -544,7 +547,7 @@ PUBLIC SUB PLCBUSTXCommand(sAddress AS String, sCmd AS String, OPTIONAL bAck AS 
         bData1 = Val(aParams[1])
         bData2 = Hex(aParams[2])
     END SELECT
-  END IF
+  ENDIF
 
   '--- three phase installation ---
   IF bThreePhase THEN bCommand = bCommand OR &H40
@@ -564,8 +567,8 @@ PUBLIC SUB WriteCommand(bBuffer AS Byte[], OPTIONAL sKey AS String)
   DIM bByte AS Byte
   DIM iCnt, iLoop AS Integer
 
-  ' bControllerBusy = TRUE
-  ' tPLCBUSBusy.Start
+  Main.ControlLed("PLCBUS", "On")
+  IF Main.bServer THEN tPLCBUSLed.Start
 
   IF NOT bPLCBUSDebug THEN
     bBuffer.Write(hPLCBUS, 0, bBuffer.Length)
@@ -587,10 +590,14 @@ PUBLIC SUB WriteCommand(bBuffer AS Byte[], OPTIONAL sKey AS String)
       Main.WriteRFXDebugLog("\n", TRUE)
       INC iLoop
       '--- wait 12.5mS ---
-      ' SLEEP 0.0125
+      SLEEP 0.0125
     UNTIL iLoop = 2
   END IF
+
+  ' remove sent command from queue
   cQueue.Remove(sKey)
+  ' if command(s) left in queue, start timer
+  IF cQueue.Count THEN tPLCBUSBusy.Start
 
 END
 
