@@ -18,6 +18,7 @@ Property PollTime As Integer
 Property PLCBUSDebug As Boolean
 Property UserCode As String
 Property ThreePhase As Boolean
+Property HouseCodes As String
 
 Private sPort As String
 Private sBaud As String
@@ -25,6 +26,7 @@ Private sUserCode As String
 Private iPollTime As Integer
 Private bPLCBUSDebug As Boolean
 Private bThreePhase As Boolean
+Private sHouseCodes As String
 
 Public hPLCBUS As New SerialPort
 Public tPLCBUS As Timer
@@ -40,8 +42,10 @@ Private bFirstByte As Boolean = True
 Private RecBuf As New Byte[16]
 Private iByteCount As Integer = 0
 Private cQueue As New Collection
+Private cDelay As New Collection
 Private bControllerBusy As Boolean
-Private iUnitsFound As Integer
+' [GB2:ARRD] Private iUnitsFound As Integer[16]
+Private iUnitsFound As New Integer[16]
 Private iUnitsStat As Integer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -72,7 +76,6 @@ Public Function Connect() As Boolean
 
   ' define timer for PLCBUS controller busy
   tPLCBUSBusy = New Timer As "tPLCBUSBusy"
-  tPLCBUSBusy.Delay = 40
   tPLCBUSBusy.Stop
 
   ' all ok
@@ -115,31 +118,43 @@ Public Sub Run()
   tPLCBUS = New Timer As "tPLCBUS"
   tPLCBUS.Delay = iPollTime * 1000
 
-  '--- get all plcbus home addresses for polling ---
-  GetHomeAddresses()
-  If aHomeAddr.Length Then
-    If iPollTime Then tPLCBUS.Start
-    If bPLCBUSDebug Then
-      Main.WriteRFXDebugLog(("[PLCBUS] Found PLCBUS device(s) with home address(es): "), False)
-      For Each sAddress In aHomeAddr
-        Main.WriteRFXDebugLog(sAddress & " ", True)
-      Next
-      Main.WriteRFXDebugLog("\n", True)
-    End If
+  '--- get all plcbus house codes for polling ---
+  If Len(sHouseCodes) Then
+    Try aHomeAddr = Split(sHouseCodes, ",")
+    If Error Then
+      tPLCBUS.Stop
+      If bPLCBUSDebug Then Main.WriteRFXDebugLog(("[PLCBUS] Error parsing House Codes setting!"))
+    Else
+      If aHomeAddr.Length Then
+        If bPLCBUSDebug Then
+          Main.WriteRFXDebugLog(("[PLCBUS] Defined House Codes to poll are "), False)
+          For Each sAddress In aHomeAddr
+            Main.WriteRFXDebugLog(sAddress & " ", True)
+          Next
+          Main.WriteRFXDebugLog("\n", True)
+        Endif
+        If iPollTime Then
+          GetKnownModules()
+          tPLCBUS.Start
+        Else
+          If bPLCBUSDebug Then Main.WriteDebugLog(("[PLCBUS] No Poll Time defined, polling is disabled."))
+        Endif
+      Endif
+    Endif
   Else
     tPLCBUS.Stop
-    If bPLCBUSDebug Then Main.WriteDebugLog(("[PLCBUS] Didn't find any enabled devices of type PLCBUS, polling is disabled."))
-  End If
+    If bPLCBUSDebug Then Main.WriteDebugLog(("[PLCBUS] No House Codes defined, polling is disabled."))
+  Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' plcbus poll routine
+' fill iUnitsFound with known plcbus modules from database
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetHomeAddresses() As Boolean
+Public Sub GetKnownModules() As Boolean
 
   Dim rResult As Result
-  Dim sAddress, sHome As String
+  Dim sAddress, sHouseCode As String
 
   '--- get all enabled devices of type plcbus ---
   rResult = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE", Devices.FindInterface("PLCBUS Interface"))
@@ -150,16 +165,12 @@ Public Sub GetHomeAddresses() As Boolean
         sAddress = rResult!address
         '--- check if it contains a valid address ---
         If Not (sAddress Like "[A-K][0-1][0-9]*") Then Continue
-        sHome = Left$(sAddress, 1)
-        '--- we have this address already, skip ---
-        If aHomeAddr.Exist(sHome) Then
-          Continue
-        Else
-          aHomeAddr.Add(sHome, Asc(sHome))
-        End If
+        sHouseCode = Left$(sAddress, 1)
+        Try iUnitsFound[Asc(sHouseCode) - 65] = BSet(iUnitsFound[Asc(sHouseCode) - 65], Val("&H" & Right$(sAddress, 2)) - 1)
+        If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] Devices found with House Code " & sHouseCode & " are " & Bin(iUnitsFound[Asc(sHouseCode) - 65], 16) & "\n", True)
       Next
-    End If
-  End If
+    Endif
+  Endif
 
 End
 
@@ -168,18 +179,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tPLCBUS_Timer()
 
-  ' just send a command, so controller doesn't listen for 400mS
-  'IF bControllerBusy THEN RETURN
-
-  Main.ControlLed("PLCBUS", "On")
-  If Main.bServer Then tPLCBUSLed.Start
-
-  ' sent poll command only if queue is empty
-  If cQueue.Count Then
-    DoQueue()
-  Else
-    SendPollCommand()
-  Endif
+  SendPollOnlyOnCommand()
 
 End
 
@@ -191,21 +191,22 @@ Public Sub tPLCBUSBusy_Timer()
   bControllerBusy = False
   tPLCBUSBusy.Stop
 
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If bPLCBUSDebug Then Main.WriteDebugLog(("[PLCBUS] Sending next command from Queue (count = " & cQueue.Count & ")"))
+    DoQueue()
+  Endif
+
 End
 
-Public Sub SendPollCommand()
+' poll all modules for on/off status
+Public Sub SendPollOnlyOnCommand()
 
   Dim sHomeAddr As String
 
   If hPLCBUS.Status <> Net.Active Then Return
 
   For Each sHomeAddr In aHomeAddr
-    If bThreePhase Then
-      ' not tested yet
-      PLCBUSTXCommand(sHomeAddr & "01", "REPORT_ALL_ID_PULSE")
-    Else
-      PLCBUSTXCommand(sHomeAddr & "01", "GET_ALL_ID_PULSE")
-    End If
+    PLCBUSTXCommand(sHomeAddr & "01", "GET_ONLY_ON_ID_PULSE")
   Next
 
 End
@@ -219,7 +220,7 @@ Public Sub PLCBUS_Read()
     ProcessReceivedChar(sData)
   Else
     Main.WriteDebugLog(("[PLCBUS] Error reading data from the serial port! ->") & ERROR.Text)
-  End If
+  Endif
 
 End
 
@@ -229,7 +230,7 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
     bFirstByte = False
     iByteCount = 0
     If bPLCBUSDebug Then Main.WriteRFXDebugLog("[PLCBUS] < ", 0)
-  End If
+  Endif
 
   If bPLCBUSDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2) & " ", 1)
   Main.ControlLed("PLCBUS", "On")
@@ -259,10 +260,10 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
       PLCBUSTXCommand(sAddress, "PRESETDIM " & iBrightness & " 1", True) ' fixed dim rate of 1
     Else
       Main.WriteDebugLog(("[PLCBUS] Invalid PRESETDIM value of ") & iBrightness & "!")
-    End If
+    Endif
   Else
     Main.WriteDebugLog(("[PLCBUS] Only DIM and ON/OFF commands are supported!"))
-  End If
+  Endif
 
 End
 
@@ -271,8 +272,11 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub QueueCommand(aPacket As Byte[])
 
+  ' add command to queue
   cQueue.Add(aPacket, Now())
-  DoQueue()
+
+  ' if controller is not busy process it
+  If bControllerBusy = False Then DoQueue()
 
 End
 
@@ -285,7 +289,7 @@ Public Sub DoQueue()
 
   For Each aPacket In cQueue
     WriteCommand(aPacket, cQueue.Key)
-    'cQueue.Remove(cQueue.Key)
+    Break ' only do first one
   Next
 
 End
@@ -295,8 +299,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessPLCBUS()
 
-  Dim bCommand As Byte
-  Dim sAddress, sCommand, sValue As String
+  Dim bCommand, bRXTX As Byte
+  Dim sAddress, sCommand, sValue, sHouseCode As String
   Dim iDeviceId, iUnit As Integer
 
   bFirstByte = True
@@ -317,26 +321,32 @@ Private Sub ProcessPLCBUS()
           Main.WriteRFXDebugLog(" Data2: " & Hex(RecBuf[6], 2) & "\n", True)
         End If
 
+        sHouseCode = Left(sAddress, 1)
         Select Case bCommand
           '--- get all id pulse response ---
           Case &H1C
-            iUnitsFound = (RecBuf[5] * 256) + RecBuf[6]
-            If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] GET ALL ID PULSE UNITS: " & Bin(iUnitsFound, 16) & "\n", True)
-            PLCBUSTXCommand(sAddress, "GET_ONLY_ON_ID_PULSE")
+            If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] GET ALL ID PULSE UNITS: " & Bin(iUnitsFound[Asc(sHouseCode) - 65], 16) & "\n", True)
+            'PLCBUSTXCommand(sAddress, "GET_ONLY_ON_ID_PULSE")
           '--- get only on id pulse response ---
           Case &H1D
             iUnitsStat = (RecBuf[5] * 256) + RecBuf[6]
-            If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] GET ONLY ON ID PULSE UNITS ON: " & Bin(iUnitsStat, 16) & "\n", True)
+            bRXTX = RecBuf[7]
 
-            For iUnit = 0 To 15
-              If BTst(iUnitsFound, iUnit) Then
-                If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] Device with address '" & Left(sAddress, 1) & Format(iUnit + 1, "00") & "' is " & IIf(BTst(iUnitsStat, iUnit), "On", "Off"))
-                ' find device id
-                iDeviceId = Devices.Find(Left(sAddress, 1) & Format(iUnit + 1, "00"), Devices.FindInterface("PLCBUS Interface"), "PLCBUS Module")
-                ' update value
-                If iDeviceId Then Devices.ValueUpdate(iDeviceId, IIf(BTst(iUnitsStat, iUnit), "On", "Off"), " ", " ", " ")
+            If BTst(bRXTX, 6) Then ' finisched receiving the id feedback signal
+              If bPLCBUSDebug Then
+                Main.WriteDebugLog("[PLCBUS] GET ONLY ON ID PULSE UNITS ON: " & Bin(iUnitsStat, 16) & "\n", True)
+                Main.WriteDebugLog("[PLCBUS] RX_TX Register: (" & Hex(bRXTX, 2) & ") " & Bin(bRXTX, 8) & "\n", True)
               Endif
-            Next
+              For iUnit = 0 To 15
+                If BTst(iUnitsFound[Asc(sHouseCode) - 65], iUnit) Then
+                  If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] Device with address '" & Left(sAddress, 1) & Format(iUnit + 1, "00") & "' is " & IIf(BTst(iUnitsStat, iUnit), "On", "Off"))
+                  ' find device id
+                  iDeviceId = Devices.Find(Left(sAddress, 1) & Format(iUnit + 1, "00"), Devices.FindInterface("PLCBUS Interface"), "PLCBUS Module")
+                  ' update value
+                  If iDeviceId Then Devices.ValueUpdate(iDeviceId, IIf(BTst(iUnitsStat, iUnit), "On", "Off"), " ", " ", " ")
+                Endif
+              Next
+            Endif
           '--- on/off response ---
           Case &H02, &H03
             If bPLCBUSDebug Then Main.WriteRFXDebugLog(" ON/OFF", 1)
@@ -360,6 +370,12 @@ Private Sub ProcessPLCBUS()
             iDeviceId = Devices.Find(sAddress, Devices.FindInterface("PLCBUS Interface"), "PLCBUS Module")
             ' update value
             If iDeviceId Then Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
+          Case &H12
+            If bPLCBUSDebug Then Main.WriteRFXDebugLog(" SCENE ADDR SETUP", 1)
+          Case &H13
+            If bPLCBUSDebug Then Main.WriteRFXDebugLog(" SCENE ADDR ERASE", 1)
+          Case &H14
+            If bPLCBUSDebug Then Main.WriteRFXDebugLog(" ALL SCENE ADDR ERASE", 1)
           Case &H18
             If bPLCBUSDebug Then Main.WriteRFXDebugLog(" GET SIGNAL STRENGTH", 1)
           Case &H19
@@ -373,11 +389,11 @@ Private Sub ProcessPLCBUS()
         End Select
       Else
         If bPLCBUSDebug Then Main.WriteRFXDebugLog(("Invalid Home and Unit values!"), 1)
-      End If
-    End If
+      Endif
+    Endif
   Else
     If bPLCBUSDebug Then Main.WriteRFXDebugLog(("Frame not valid!"), 1)
-  End If
+  Endif
 
   If bPLCBUSDebug Then Main.WriteRFXDebugLog("\n", True)
 
@@ -390,6 +406,39 @@ Public Sub tPLCBUSLED_Timer()
 
   Main.ControlLed("PLCBUS", "Off")
   tPLCBUSLED.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get timer delay for specific command
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub PLCBUSDelay(bCode As Byte) As Integer
+
+  Dim iDelay As Integer
+
+  '--- three phase installation ---
+  If bThreePhase Then bCode = bCode And &H40
+
+  Select bCode
+    ' "ALL_UNITS_OFF" "ALL_LIGHTS_ON" "ON" "OFF" "DIM" "BRIGHT" "ALL_LIGHTS_OFF" "PRESETDIM"
+    Case &H00, &H01, &H02, &H03, &H04, &H05, &H06, &H0C, &H20, &H21, &H22, &H23, &H24, &H25, &H26, &H2C
+      iDelay = 500
+    ' "STATUS_ON" "STATUS_OFF" "ALL_STATUS"
+    Case &H0D, &H0E, &H1E
+      iDelay = 1000
+    ' "GET_ALL_ID_PULSE" "GET_ONLY_ON_ID_PULSE" "SCENE_ADDR_SETUP" "SCENE_ADDR_ERASE" "ALL_SCENE_ADDR_ERASE"
+    Case &H1C, &H1D, &H12, &H13, &H14
+      iDelay = 700
+    Case Else
+      If bPLCBUSDebug Then Main.WriteDebugLog(("[PLCBUS] No delay defined for this command '" & PLCBUStoStatus(bCode) & "' specified, using default."))
+      iDelay = 500
+  End Select
+
+  If bThreePhase Then
+    Return iDelay * 3
+  Else
+    Return iDelay
+  Endif
 
 End
 
@@ -423,6 +472,12 @@ Private Sub PLCBUStoStatus(bCode As Byte) As String
       Return "GET_ONLY_ON_ID_PULSE"
     Case &H1E
       Return "ALL_STATUS"
+    Case &H12
+      Return "SCENE_ADDR_SETUP"
+    Case &H13
+      Return "SCENE_ADDR_ERASE"
+    Case &H14
+      Return "ALL_SCENE_ADDR_ERASE"
   End Select
 
   Return "??"
@@ -475,6 +530,12 @@ Private Sub CommandtoPLCBUS(sCommand As String) As Byte
       Return &H1E
     Case "REPORT_ONLY_ON_PULSE"
       Return &H1F
+    Case "SCENE_ADDR_SETUP"
+      Return &H12
+    Case "SCENE_ADDR_ERASE"
+      Return &H13
+    Case "ALL_SCENE_ADDR_ERASE"
+      Return &H14
   End Select
 
   Return &HFF
@@ -504,7 +565,6 @@ Private Function PLCBUStoAddress(bAddress As Byte) As String
 
   Dim sHome, sUnit As String
 
-  ' sHome = Chr((bAddress AND &HF0) + 65)
   sHome = Chr((bAddress And &HF0) / 16 + 65)
   sUnit = (bAddress And &H0F) + 1
 
@@ -515,7 +575,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' prepare packet to send to PLCBUS
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PLCBUSTXCommand(sAddress As String, sCmd As String, Optional bAck As Boolean)
+Public Sub PLCBUSTXCommand(sAddress As String, sCmd As String, Optional bAck As Boolean, Optional bData As Byte)
 
   Dim bUserCode, bHomeUnit, bCommand, bData1, bData2 As Byte
   Dim aPacket As Byte[]
@@ -531,7 +591,12 @@ Public Sub PLCBUSTXCommand(sAddress As String, sCmd As String, Optional bAck As 
   '--- for example ON, OFF, GET SIGNAL/NOISE LEVEL ---
   If aParams.Count = 1 Then
     bCommand = CommandtoPLCBUS(aParams[0])
-    If bCommand = &HFF Then Return
+    Select Case bCommand
+    Case &H12  ' SCENE_ADDR_SETUP
+      bData1 = bdata
+    Case &HFF  ' invalid
+      Return
+    End Select
   '--- for example DIM 1 or PRESETDIM 50 1 ---
   Else If aParams.Count = 2 Or If aParams.Count = 3 Then
     bCommand = CommandtoPLCBUS(aParams[0])
@@ -545,7 +610,7 @@ Public Sub PLCBUSTXCommand(sAddress As String, sCmd As String, Optional bAck As 
         bData1 = Val(aParams[1])
         bData2 = Hex(aParams[2])
     End Select
-  End If
+  Endif
 
   '--- three phase installation ---
   If bThreePhase Then bCommand = bCommand Or &H40
@@ -563,10 +628,10 @@ End
 Public Sub WriteCommand(bBuffer As Byte[], Optional sKey As String)
 
   Dim bByte As Byte
-  Dim iCnt, iLoop As Integer
+  Dim iCnt, iLoop, iDelay As Integer
 
-  ' bControllerBusy = TRUE
-  ' tPLCBUSBusy.Start
+  Main.ControlLed("PLCBUS", "On")
+  If Main.bServer Then tPLCBUSLed.Start
 
   If Not bPLCBUSDebug Then
     bBuffer.Write(hPLCBUS, 0, bBuffer.Length)
@@ -588,10 +653,18 @@ Public Sub WriteCommand(bBuffer As Byte[], Optional sKey As String)
       Main.WriteRFXDebugLog("\n", True)
       Inc iLoop
       '--- wait 12.5mS ---
-      ' SLEEP 0.0125
+      Sleep 0.0125
     Until iLoop = 2
   End If
+
+  ' remove sent command from queue
   cQueue.Remove(sKey)
+
+  iDelay = PLCBUSDelay(bBuffer[4])
+  tPLCBUSBusy.Delay = iDelay
+  tPLCBUSBusy.Start
+  If bControllerBusy = False Then bControllerBusy = True
+  If bPLCBUSDebug Then Main.WriteDebugLog(("[PLCBUS] Inserted a delay of " & iDelay & " mS"))
 
 End
 
@@ -665,5 +738,17 @@ End
 Private Sub ThreePhase_Write(Value As Boolean)
 
   bThreePhase = Value
+
+End
+
+Private Function HouseCodes_Read() As String
+
+  Return sHouseCodes
+
+End
+
+Private Sub HouseCodes_Write(Value As String)
+
+  sHouseCodes = Value
 
 End
