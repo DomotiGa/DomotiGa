@@ -29,23 +29,22 @@ Private bThreePhase As Boolean
 Private sHouseCodes As String
 
 Public hPLCBUS As New SerialPort
-Public tPLCBUS As Timer
+Public tPLCBUSPoll As Timer
 Public tPLCBUSLed As Timer
 Public tPLCBUSBusy As Timer
 
-Private Const STX As Byte = &H02
-Private Const ETX As Byte = &H03
+Private Const STX As Byte = &H02  ' start byte
+Private Const ETX As Byte = &H03  ' end byte
 
-Private aHomeAddr As New String[] ' holds all home addresses for polling
+Private aHomeAddr As New String[]   ' holds all house codes to poll
 Private bFirstByte As Boolean = True
 ' [GB2:ARRD] Private RecBuf As Byte[16]
 Private RecBuf As New Byte[16]
 Private iByteCount As Integer = 0
-Private cQueue As New Collection
-Private cDelay As New Collection
-Private bControllerBusy As Boolean
-' [GB2:ARRD] Private iUnitsFound As Integer[16]
-Private iUnitsFound As New Integer[16]
+Private cQueue As New Collection    ' command buffer
+Private bControllerBusy As Boolean  ' waiting for delay timer to finish
+' [GB2:ARRD] Private iUnitsFound As Integer[16]  ' holds all device addresses to update
+Private iUnitsFound As New Integer[16]  ' holds all device addresses to update
 Private iUnitsStat As Integer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -93,8 +92,10 @@ End
 Public Function Disconnect() As Boolean
 
   ' try stop running timers
-  Try tPLCBUS.Stop
+  Try tPLCBUSPoll.Stop
   Try tPLCBUSBusy.Stop
+  Try tPLCBUSLed.Stop
+
   ' try to close the connection
   Try hPLCBUS.Close
   Main.WriteLog(("PLCBUS serial port close."))
@@ -115,14 +116,14 @@ Public Sub Run()
 
   Dim sAddress As String
 
-  tPLCBUS = New Timer As "tPLCBUS"
-  tPLCBUS.Delay = iPollTime * 1000
+  tPLCBUSPoll = New Timer As "tPLCBUSPoll"
+  tPLCBUSPoll.Delay = iPollTime * 1000
 
   '--- get all plcbus house codes for polling ---
   If Len(sHouseCodes) Then
     Try aHomeAddr = Split(sHouseCodes, ",")
     If Error Then
-      tPLCBUS.Stop
+      tPLCBUSPoll.Stop
       If bPLCBUSDebug Then Main.WriteRFXDebugLog(("[PLCBUS] Error parsing House Codes setting!"))
     Else
       If aHomeAddr.Length Then
@@ -134,15 +135,15 @@ Public Sub Run()
           Main.WriteRFXDebugLog("\n", True)
         Endif
         If iPollTime Then
-          GetKnownModules()
-          tPLCBUS.Start
+          GetKnownModules() ' find out which plcbus modules are defined in database
+          tPLCBUSPoll.Start ' start poll timer
         Else
           If bPLCBUSDebug Then Main.WriteDebugLog(("[PLCBUS] No Poll Time defined, polling is disabled."))
         Endif
       Endif
     Endif
   Else
-    tPLCBUS.Stop
+    tPLCBUSPoll.Stop
     If bPLCBUSDebug Then Main.WriteDebugLog(("[PLCBUS] No House Codes defined, polling is disabled."))
   Endif
 
@@ -155,6 +156,7 @@ Public Sub GetKnownModules() As Boolean
 
   Dim rResult As Result
   Dim sAddress, sHouseCode As String
+  Dim iCode, iBit As Integer
 
   '--- get all enabled devices of type plcbus ---
   rResult = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE", Devices.FindInterface("PLCBUS Interface"))
@@ -164,11 +166,21 @@ Public Sub GetKnownModules() As Boolean
       For Each rResult
         sAddress = rResult!address
         '--- check if it contains a valid address ---
-        If Not (sAddress Like "[A-K][0-1][0-9]*") Then Continue
+        If Not (sAddress Like "[A-P][0-1][0-9]*") Then Continue
         sHouseCode = Left$(sAddress, 1)
-        Try iUnitsFound[Asc(sHouseCode) - 65] = BSet(iUnitsFound[Asc(sHouseCode) - 65], Val("&H" & Right$(sAddress, 2)) - 1)
-        If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] Devices found with House Code " & sHouseCode & " are " & Bin(iUnitsFound[Asc(sHouseCode) - 65], 16) & "\n", True)
+        Try iUnitsFound[Asc(sHouseCode) - 65] = BSet(iUnitsFound[Asc(sHouseCode) - 65], Right$(sAddress, 2) - 1)
       Next
+      If bPLCBUSDebug Then
+        For iCode = 0 To 15
+          If iUnitsFound[iCode] Then
+            Main.WriteRFXDebugLog(("[PLCBUS] Devices found for house code " & Chr(iCode + 65) & " are "))
+            For iBit = 0 To 15
+              If BTst(iUnitsFound[iCode], iBit) Then Main.WriteRFXDebugLog(Chr(iCode + 65) & (iBit + 1) & " ", True)
+            Next
+            Main.WriteRFXDebugLog("\n", True)
+          Endif
+        Next
+      Endif
     Endif
   Endif
 
@@ -177,7 +189,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' plcbus poll routine
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tPLCBUS_Timer()
+Public Sub tPLCBUSPoll_Timer()
 
   SendPollOnlyOnCommand()
 
@@ -582,7 +594,7 @@ Public Sub PLCBUSTXCommand(sAddress As String, sCmd As String, Optional bAck As 
   Dim aParams As String[]
 
   '--- check if it contains a valid address ---
-  If Not (sAddress Like "[A-K][0-1][0-9]*") Then Return
+  If Not (sAddress Like "[A-P][0-1][0-9]*") Then Return
 
   bUserCode = Val(sUserCode)
   bHomeUnit = AddresstoPLCBUS(sAddress)
@@ -625,7 +637,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send packet to PLCBUS interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub WriteCommand(bBuffer As Byte[], Optional sKey As String)
+Public Sub WriteCommand(bBuffer As Byte[], sKey As String)
 
   Dim bByte As Byte
   Dim iCnt, iLoop, iDelay As Integer
