@@ -11,7 +11,7 @@
 ' http://libk8055.sourceforge.net/
 
 ' DomotiGa - an open source home automation program.
-' Copyright(C) 2008-2010 Ron Klinkien
+' Copyright(C) 2008-2011 Ron Klinkien
 
 ' Read file called COPYING for license details.
 
@@ -21,11 +21,14 @@ PROPERTY AddressBoard AS Integer
 PROPERTY DebounceTime1 AS Integer
 PROPERTY DebounceTime2 AS Integer
 
+PUBLIC tK8055 AS Timer
+
 PRIVATE bK8055Debug AS Boolean
 PRIVATE iPollTime AS Integer
 PRIVATE iAddressBoard AS Integer
 PRIVATE iDebounceTime1 AS Integer
 PRIVATE iDebounceTime2 AS Integer
+PRIVATE bK8055FirstRun AS Boolean
 
 ' variables to store current states
 PRIVATE bDO[8] AS Boolean      ' Digital Out
@@ -35,32 +38,62 @@ PRIVATE byAI[2] AS Byte        ' Analog In
 PRIVATE iCounter[2] AS Integer ' Counters
 
 PRIVATE bResetCounter[2] AS Boolean
-'PRIVATE hK8055Command AS Process
-
-PRIVATE bK8055Executing AS Boolean
-PRIVATE bK8055FirstRun AS Boolean
-
-PUBLIC tK8055 AS Timer
-
 PRIVATE bAODim[2] AS Boolean
 PRIVATE bAOBright[2] AS Boolean
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' external library calls to Velleman K8055 routines based on libk8055
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+LIBRARY "libk8055"
+PRIVATE EXTERN OpenDevice(BoardAddress AS Long) AS Integer
+PRIVATE EXTERN CloseDevice() AS Integer
+PRIVATE EXTERN ReadAnalogChannel(Channel AS Long) AS Long
+PRIVATE EXTERN OutputAnalogChannel(Channel AS Long, Data AS Long) AS Integer
+PRIVATE EXTERN ReadAllDigital() AS Long
+PRIVATE EXTERN WriteAllDigital(Data AS Long) AS Integer
+PRIVATE EXTERN ReadCounter(Counter AS Long) AS Long
+PRIVATE EXTERN ResetCounter(Counter AS Long) AS Integer
+PRIVATE EXTERN SetCounterDebounceTime(Counter AS Long, DebounceTime AS Long) AS Integer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open connection to K8055 board
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC FUNCTION Connect() AS Boolean
 
+  DIM OpenDeviceResult AS Integer
   DIM sOutput AS String
 
-  EXEC ["k8055", "-p:" & iAddressBoard, "-dbt1:" & Str(iDebounceTime1), "-dbt2:" & Str(iDebounceTime2)] TO sOutput
+  ' test if K8055 board is connected
+  TRY OpenDeviceResult = OpenDevice(CLong(iAddressBoard))
+  IF OpenDeviceResult = iAddressBoard THEN
+    ' set counter debounce timers
 
-  IF InStr(sOutput, ";") = 0 THEN
-    Main.WriteLog(("Velleman K8055 Error: ") & sOutput)
-    RETURN FALSE
+    ' WORKAROUND: Set debouncetimers by using the K8055 program as setting counters by using
+    ' the direct functions result in strange behaviour of the counters
+    EXEC ["k8055", "-p:" & iAddressBoard, "-dbt1:" & Str(iDebounceTime1), "-dbt2:" & Str(iDebounceTime2)] TO sOutput
+    IF InStr(sOutput, ";") = 0 THEN
+      Main.WriteLog("Velleman K8055 Error: " & sOutput)
+    ELSE
+      Main.WriteLog("Velleman K8055 configured with debounce timers of " & CStr(iDebounceTime1) & " mS, " & CStr(iDebounceTime2) & " mS")
+      RETURN TRUE
+    ENDIF
+
+    ' NON WORKING CODE:
+    ' IF SetCounterDebounceTime(1, iDebounceTime1) <> 0 THEN
+    '   Main.WriteLog("Velleman K8055 Error: Failed to set debounce timer for counter 1")
+    '   RETURN FALSE
+    ' ENDIF
+    ' IF SetCounterDebounceTime(2, iDebounceTime2) <> 0 THEN
+    '   Main.WriteLog("Velleman K8055 Error: Failed to set debounce timer for counter 2")
+    '   RETURN FALSE
+    ' ENDIF
   ELSE
-    bK8055FirstRun = TRUE
-    RETURN TRUE
-  END IF
+    RETURN FALSE
+  ENDIF
+
+  CATCH ' some errors
+    Main.WriteLog(("Velleman K8055 Error: ") & ERROR.Text & " at " & ERROR.Where)
+    RETURN FALSE
 
 END
 
@@ -70,7 +103,6 @@ PUBLIC SUB Run()
   tK8055 = NEW Timer AS "tK8055"
   tK8055.Delay = iPollTime * 1000 ' multiply for seconds
   tK8055.Start
-  CheckPorts()
 
 END
 
@@ -80,213 +112,224 @@ PUBLIC SUB tK8055_Timer()
 
 END
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' check for changed port status on K8055 board
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB CheckPorts()
 
   DIM rResult AS Result
-  DIM iCount, iPortNumber, iTotalCounter1, iTotalCounter2 AS Integer
+  DIM iCount, iPortNumber, iTotalCounter AS Integer
+  DIM DigitalOutValue AS Byte
 
   TRY rResult = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE AND interface = &1", Devices.FindInterface("Velleman K8055"))
   IF rResult.Count THEN
-    ' set output port(s) into the last know state
-    IF bK8055FirstRun THEN
-      FOR EACH rResult
-        IF Len(rResult!address) = 3 THEN
-          SELECT UCase(Mid(rResult!address, 1, 2))
-            CASE "DO"
-              IF UCase(rResult!value) = "ON" THEN
-                bDO[CInt(Mid(rResult!address, 3, 1)) - 1] = TRUE
-              ENDIF
-            CASE "AO"
-              byAO[CInt(Mid(rResult!address, 3, 1)) - 1] = CByte(rResult!value2)
-          END SELECT
-        ELSE
-          Main.WriteLog(("Invalid Velleman K8055 port '") & rResult!address & ("'"))
-        ENDIF
-      NEXT
-      bK8055FirstRun = FALSE
+    ' get current state of all digital port only once to speed up this routine for all digital input ports
+    IF NOT (Read_DI_Ports()) THEN
+      IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: failed to get current state of all digital input ports!")
     ENDIF
-
-    ' if counter reset, store current counter value for later use
-    IF bResetCounter[0] OR bResetCounter[1] THEN 
-      FOR EACH rResult
-        IF Len(rResult!address) = 3 THEN
-          IF UCase(Mid(rResult!address, 1, 2)) = "DI" THEN
-            IF CInt(Mid(rResult!address, 3, 1)) < 3 THEN
-              IF rResult!value3 <> "" THEN
-                IF CInt(Mid(rResult!address, 3, 1)) = 1 THEN iTotalCounter1 = CInt(rResult!value2)
-                IF CInt(Mid(rResult!address, 3, 1)) = 2 THEN iTotalCounter2 = CInt(rResult!value2)
-              ENDIF
-            ENDIF
-          ENDIF
-        ENDIF
-      NEXT
-    ENDIF
-
-    ' set new output values and retreive new input values
-    K8055_Write()
 
     FOR EACH rResult
-      IF Main.bK8055Debug THEN Main.WriteDebugLog(("[K8055] Checking state of device '") & rResult!name & ("' connected at port: ") & rResult!address)
-      ' rResult!address =
-      ' Digital In:   DI1, DI2, DI3, DI4, DI5
-      ' Digital Out:  DO1, DO2, DO3, DO4, DO5, DO6, DO7, DO8
-      ' Analog In:    AI1, AI2
-      ' Analog Out:   AO1, AO2
+      ' IF Main.bK8055Debug THEN Main.WriteDebugLog(("[K8055] Checking state of device '") & rResult!name & ("' connected at port: ") & rResult!address)
       IF Len(rResult!address) = 3 THEN
         iPortNumber = CInt(Mid(rResult!address, 3, 1))
         SELECT UCase(Mid(rResult!address, 1, 2))
           CASE "DI"
-            IF (iPortNumber < 3) THEN
-              ' digital input ports with debounce counters, so save counter values too
-              IF bResetCounter[iPortNumber - 1] THEN
-                bResetCounter[iPortNumber - 1] = FALSE
-                IF iPortNumber = 1 THEN Devices.ValueUpdate(rResult!id, IIf(bDI[iPortNumber - 1], "On", "Off"), Str(iTotalCounter1 + iCounter[iPortNumber - 1]), "0", "")
-                IF iPortNumber = 2 THEN Devices.ValueUpdate(rResult!id, IIf(bDI[iPortNumber - 1], "On", "Off"), Str(iTotalCounter2 + iCounter[iPortNumber - 1]), "0", "")
+            IF iPortNumber = 1 OR IF iPortNumber = 2 THEN
+              ' digital input port with counter so save the counter values too
+              ' and reset counter if reset was triggered before
+              IF bResetCounter[iPortnumber - 1] THEN 
+                IF Read_Counter_Port(iPortnumber, TRUE) THEN
+                  ' reset of counter is triggered, so reset counter of device
+                  ' and add current counter value to last known value of value4
+                  iTotalCounter = IIf(rResult!value3 = "", CInt(iCounter[iPortNumber - 1]), CInt(iCounter[iPortNumber - 1] + CInt(rResult!value3)))
+                  Devices.ValueUpdate(rResult!id, IIf(bDI[iPortNumber - 1], "On", "Off"), 0, iTotalCounter, "")
+                  IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] " & rResult!name & " (" & rResult!address & ") = " & IIf(bDI[iPortNumber - 1], " On ", " Off ") & ", reset of counter = " & Str(iCounter[iPortNumber - 1]))
+                ELSE
+                  IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: failed to reset counter of digital input port: " & Str(iPortNumber))
+                ENDIF
               ELSE
-                Devices.ValueUpdate(rResult!id, IIf(bDI[iPortNumber - 1], "On", "Off"), "", Str(iCounter[iPortNumber - 1]), "")
+                ' no reset of counter, so update only current counter value
+                IF Read_Counter_Port(iPortnumber, FALSE) THEN
+                  Devices.ValueUpdate(rResult!id, IIf(bDI[iPortNumber - 1], "On", "Off"), iCounter[iPortNumber - 1], "", "")
+                  IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] " & rResult!name & " '" & rResult!address & "' = " & IIf(bDI[iPortNumber - 1], " On ", " Off ") & ", counter = " & Str(iCounter[iPortNumber - 1]))
+                ELSE
+                  IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: failed to reset counter of digital input port: " & Str(iPortNumber))
+                ENDIF
               ENDIF
             ELSE
-              Devices.ValueUpdate(rResult!id, IIf(bDI[iPortNumber - 1], "On", "Off"), "", "", "")
+              ' digital input port without counter so only update value
+              IF iPortNumber >= 3 AND IF iPortNumber <= 5 THEN
+                IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] " & rResult!name & " '" & rResult!address & "' = " & IIf(bDI[iPortNumber - 1], " On ", " Off "))
+                Devices.ValueUpdate(rResult!id, IIf(bDI[iPortNumber - 1], "On", "Off"), "", "", "")
+              ELSE
+                IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Invalid port '" & rResult!address & "' configured for device '" & rResult!name & "'")
+              ENDIF
             ENDIF
           CASE "AI"
-            Devices.ValueUpdate(rResult!id, IIf(byAI[iPortNumber - 1] > 127, "On", "Off"), Str(byAI[iPortNumber - 1]), "", "")
+            IF iPortNumber = 1 OR IF iPortNumber = 2 THEN
+              IF Read_AI_Port(iPortNumber) THEN
+                Devices.ValueUpdate(rResult!id, IIf(byAI[iPortNumber - 1] > 127, "On", "Off"), CStr(byAI[iPortNumber - 1]), "", "")
+                IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] " & rResult!name & " '" & rResult!address & "' = " & Str(byAI[iPortNumber - 1]))
+              ELSE
+                IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: failed to update analog input port: " & iPortNumber.Text)
+              ENDIF
+            ELSE
+              IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Invalid port '" & rResult!address & "' configured for device '" & rResult!name & "'")
+            ENDIF
           CASE "DO"
-              Devices.ValueUpdate(rResult!id, IIf(bDO[iPortNumber - 1], "On", "Off"), "", "", "")
+            IF iPortNumber >= 1 AND IF iPortNumber <= 8 THEN
+              IF bK8055FirstRun THEN
+                ' set state of output port to last known state
+                IF UCase(rResult!value) = "ON" THEN
+                  bDO[CInt(Mid(rResult!address, 3, 1)) - 1] = TRUE
+                ENDIF
+              ENDIF
+              ' write new output state
+              IF (Write_DO_Ports()) THEN
+                Devices.ValueUpdate(rResult!id, IIf(bDO[iPortNumber - 1], "On", "Off"), "", "", "")
+                IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] " & rResult!name & " (" & rResult!address & ") = " & IIf(bDO[iPortNumber - 1], "On", "Off"))
+              ELSE
+                IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: failed to write new value to digital output ports")
+              ENDIF
+            ELSE
+              IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Invalid port (" & rResult!address & ") configured for device '" & rResult!name & "'")
+            ENDIF
           CASE "AO"
-            Devices.ValueUpdate(rResult!id, IIf(byAO[iPortNumber - 1] > 127, "On", "Off"), Str(byAO[iPortNumber - 1]), "", "")
+            IF iPortNumber = 1 OR IF iPortNumber = 2 THEN
+              IF bK8055FirstRun THEN
+                byAO[CInt(Mid(rResult!address, 3, 1)) - 1] = CByte(rResult!value2)
+              ENDIF
+              ' change state of analog ports if currently be dimmed brighted
+              IF bAODim[iPortNumber - 1] THEN
+                IF byAO[iPortNumber - 1] >= 10 THEN byAO[iPortNumber - 1] = byAO[iPortNumber - 1] - 10
+              ENDIF
+              ' change state of analog ports if currently be brighted
+              IF bAOBright[iPortNumber - 1] THEN
+                IF byAO[iPortNumber - 1] <= 245 THEN byAO[iPortNumber - 1] = byAO[iPortNumber - 1] + 10
+              ENDIF
+              ' write new output value
+              IF (Write_AO_Port(iPortNumber)) THEN
+                Devices.ValueUpdate(rResult!id, IIf(byAO[iPortNumber - 1] > 127, "On", "Off"), Str(byAO[iPortNumber - 1]), "", "")
+                IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] " & rResult!name & " '" & rResult!address & "' = " & CStr(byAO[iPortNumber - 1]))
+              ELSE
+                IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: failed to set analog output port " & CStr(iPortNumber))
+              ENDIF
+            ELSE
+              IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Invalid port '" & rResult!address & "' configured for device '" & rResult!name & "'")
+            ENDIF
           CASE ELSE
-            Main.WriteDebugLog(("[K8055] Invalid port '") & rResult!address & ("'"))
+            IF Main.bK8055Debug THEN
+              Main.WriteDebugLog("[K8055] Invalid port '" & rResult!address & "', valid ports are:")
+              Main.WriteDebugLog("[K8055]   Digital In : DI1, DI2, DI3, DI4, DI5")
+              Main.WriteDebugLog("[K8055]   Digital Out: DO1, DO2, DO3, DO4, DO5, DO6, DO7, DO8")
+              Main.WriteDebugLog("[K8055]   Analog In  : AI1, AI2")
+              Main.WriteDebugLog("[K8055]   Analog Out : AO1, AO2")
+            ENDIF
         END SELECT
       ELSE
-        Main.WriteLog(("Invalid Velleman K8055 port '") & rResult!address & ("'"))
+        IF Main.bK8055Debug THEN Main.WriteDebugLog("[K8055] Invalid port '" & rResult!address & "' configured for device '" & rResult!name & "'")
       ENDIF
     NEXT
+    bK8055FirstRun = FALSE
   ENDIF
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Write current states to K8055 board
+' read current state of all digital input ports
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PRIVATE SUB K8055_Write()
+PRIVATE FUNCTION Read_DI_Ports() AS Boolean
 
+  DIM DigitalValue AS Long
   DIM iCount AS Integer
-  DIM sResetCommand AS String
+
+  DigitalValue = ReadAllDigital()
+  IF DigitalValue >= 0 THEN
+    FOR iCount = 0 TO 4
+      bDI[iCount] = BTst(DigitalValue, iCount)
+    NEXT
+    RETURN TRUE
+  ELSE
+    RETURN FALSE
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read current state of an analog input port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE FUNCTION Read_AI_Port(PortNumber AS Integer) AS Boolean
+
+  DIM AnalogValue AS Long
+
+  AnalogValue = ReadAnalogChannel(PortNumber)
+  IF AnalogValue >= 0 THEN
+    byAI[PortNumber - 1] = CByte(AnalogValue)
+    RETURN TRUE
+  ELSE
+    RETURN FALSE
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read counters
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE FUNCTION Read_Counter_Port(PortNumber AS Integer, bReset AS Boolean) AS Boolean
+
+  DIM CounterValue, ResetValue AS Integer
+
+  IF bReset THEN
+    IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Resetting counter of Digital input '" & Str(PortNumber) & "'")
+    CounterValue = ReadCounter(CLong(PortNumber))
+    ResetValue = ResetCounter(CLong(PortNumber))
+    IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Reset counter of Digital input '" & Str(PortNumber) & "' executed, last countervalue=" & Str(CounterValue))
+    bResetCounter[PortNumber - 1] = FALSE
+  ELSE
+    CounterValue = ReadCounter(CLong(PortNumber))
+  ENDIF
+
+  IF CounterValue >= 0 THEN
+    iCounter[PortNumber - 1] = CInt(CounterValue)
+    RETURN TRUE
+  ELSE
+    RETURN FALSE
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' write new state to all digital output ports
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE FUNCTION Write_DO_Ports() AS Boolean
+
   DIM DigitalOutValue AS Byte
 
   DigitalOutValue = IIf(bDO[0], 1, 0) + IIf(bDO[1], 2, 0) + IIf(bDO[2], 4, 0) + IIf(bDO[3], 8, 0) + IIf(bDO[4], 16, 0) + IIf(bDO[5], 32, 0) + IIf(bDO[6], 64, 0) + IIf(bDO[7], 128, 0)
-  IF bAODim[0] THEN
-    IF byAO[0] >= 10 THEN byAO[0] = byAO[0] - 10
-  END IF
-  IF bAODim[1] THEN
-    IF byAO[1] >= 10 THEN byAO[1] = byAO[1] - 10
-  END IF
-  IF bAOBright[0] THEN
-    IF byAO[0] <= 245 THEN byAO[0] = byAO[0] + 10
-  END IF
-  IF bAOBright[1] THEN
-    IF byAO[1] <= 245 THEN byAO[1] = byAO[1] + 10
-  END IF
-
-  IF bK8055Debug THEN
-    Main.WriteDebugLog("[K8055] Set new 'digital out' value: " & Str(DigitalOutValue))
-    Main.WriteDebugLog("[K8055] Set new 'analog out 1' value: " & Str(byAO[0]))
-    Main.WriteDebugLog("[K8055] Set new 'analog out 2' value: " & Str(byAO[1]))
-    Main.WriteDebugLog("[K8055] Reset counter digital input 1: " & Str(bResetCounter[0]))
-    Main.WriteDebugLog("[K8055] Reset counter digital input 2: " & Str(bResetCounter[1]))
-  END IF
-
-  ' check if not currently another k8055 request is executed, if so wait for 1 second.
-  ' do a timeout after 10 seconds
-  FOR iCount = 0 TO 10
-    IF NOT bK8055Executing THEN BREAK
-    SLEEP 1
-  NEXT
-
-  bK8055Executing = TRUE
-  IF bResetCounter[0] THEN
-    IF bResetCounter[1] THEN
-      ' reset both counters
-      IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Executing: k8055 -p:" & iAddressBoard & " -d:" & Str(DigitalOutValue) & " -a1:" & Str(byAO[0]) & " -a2:" & Str(byAO[1]) & " -reset1 -reset2")
-      EXEC ["k8055", "-p:" & iAddressBoard, "-d:" & Str(DigitalOutValue), "-a1:" & Str(byAO[0]), "-a2:" & Str(byAO[1]), "-reset1", "-reset2"] FOR READ AS "K8055"
-    ELSE
-      ' reset only counter 1
-      IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Executing: k8055 -p:" & iAddressBoard & " -d:" & Str(DigitalOutValue) & " -a1:" & Str(byAO[0]) & " -a2:" & Str(byAO[1]) & " -reset1")
-      EXEC ["k8055", "-p:" & iAddressBoard, "-d:" & Str(DigitalOutValue), "-a1:" & Str(byAO[0]), "-a2:" & Str(byAO[1]), "-reset1"] FOR READ AS "K8055"
-    END IF
+  IF (WriteAllDigital(CLong(DigitalOutValue)) <> 0) THEN
+    RETURN FALSE
   ELSE
-    IF bResetCounter[1] THEN
-      ' reset only counter 2
-      IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Executing: k8055 -p:" & iAddressBoard & " -d:" & Str(DigitalOutValue) & " -a1:" & Str(byAO[0]) & " -a2:" & Str(byAO[1]) & " -reset2")
-      EXEC ["k8055", "-p:" & iAddressBoard, "-d:" & Str(DigitalOutValue), "-a1:" & Str(byAO[0]), "-a2:" & Str(byAO[1]), "-reset2"] FOR READ AS "K8055"
-    ELSE
-      ' no reset of counters
-      IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Executing: k8055 -p:" & iAddressBoard & " -d:" & Str(DigitalOutValue) & " -a1:" & Str(byAO[0]) & " -a2:" & Str(byAO[1]))
-      EXEC ["k8055", "-p:" & iAddressBoard, "-d:" & Str(DigitalOutValue), "-a1:" & Str(byAO[0]), "-a2:" & Str(byAO[1])] FOR READ AS "K8055"
-    ENDIF
+    RETURN TRUE
   ENDIF
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Read current states of k8055 board
+' write new state to analog output port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC SUB K8055_Read()
+PRIVATE FUNCTION Write_AO_Port(PortNumber AS Integer) AS Boolean
 
-  DIM sOutput AS String
-  DIM SplitOutput AS String[]
-  DIM DigValue AS Byte
-  DIM iCount AS Integer
-
-  READ #LAST, sOutput, -256
-
-  ' example of expected output: 499;16;128;230;9;8
-  ' 499 : Measurement done 499 msec after program start
-  ' 16  : Digital input value is 10000 (I5=1, all other are 0)
-  ' 128 : Analog 1 input value is 128
-  ' 230 : Analog 2 input value is 230
-  ' 9   : Counter 1 value is 9
-  ' 8   : Counter 2 value is 8
-
-  IF bK8055Debug THEN Main.WriteDebugLog("[K8055] received output: " & sOutput)
-
-  IF InStr(sOutput, ";") = 0 THEN
-    Main.WriteLog(("Velleman K8055 Error: ") & sOutput)
+  IF (OutputAnalogChannel(PortNumber, CLong(byAO[PortNumber - 1])) <> 0) THEN
+    RETURN FALSE
   ELSE
-    SplitOutput = Split(Trim(sOutput), ";")
-    IF bK8055Debug THEN 
-      Main.WriteDebugLog(("[K8055] measurement delay: " & Str(SplitOutput[0])))
-      Main.WriteDebugLog(("[K8055] digital input: " & Str(SplitOutput[1])))
-      Main.WriteDebugLog(("[K8055] analog input 1: " & Str(SplitOutput[2])))
-      Main.WriteDebugLog(("[K8055] analog input 2: " & Str(SplitOutput[3])))
-      Main.WriteDebugLog(("[K8055] counter 1: " & Str(SplitOutput[4])))
-      Main.WriteDebugLog(("[K8055] counter 2: " & Str(SplitOutput[5])))
-    ENDIF
-
-    ' digital In
-    DigValue = CByte(SplitOutput[1])
-    FOR iCount = 0 TO 4
-      bDI[iCount] = BTst(DigValue, iCount)
-      'IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Digital Input " & Str(iCount + 1) & ": " & Str(bDI[iCount]))
-    NEXT
-
-    ' analog In
-    FOR iCount = 0 TO 1
-      byAI[iCount] = CByte(SplitOutput[iCount + 2])
-      'IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Analog Input " & Str(iCount + 1) & ": " & Str(byAI[iCount]))
-    NEXT
-
-    ' counters (value2 of digital input 1 & 2)
-    FOR iCount = 0 TO 1
-      iCounter[iCount] = CInt(SplitOutput[iCount + 4])
-      'IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Counter " & Str(iCount + 1) & ": " & Str(iCounter[iCount]))
-    NEXT
-
+    RETURN TRUE
   ENDIF
-  bK8055Executing = FALSE
 
 END
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' execute commands send to K8055 interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB SendCommand(sAddress AS String, sValue AS String)
 
   DIM PortAddress AS Integer
@@ -299,12 +342,12 @@ PUBLIC SUB SendCommand(sAddress AS String, sValue AS String)
           SELECT UCase(sValue)
             CASE "BRIGHT"
               IF byAO[PortAddress] < 255 THEN
-                byAO[PortAddress] = byAO[PortAddress] + 1
+                INC byAO[PortAddress]
               ENDIF
               bAOBright[PortAddress] = TRUE
             CASE "DIM"
               IF byAO[PortAddress] > 1 THEN
-                byAO[PortAddress] = byAO[PortAddress] - 1
+                DEC byAO[PortAddress]
               ENDIF
               bAODim[PortAddress] = TRUE
             CASE "STOP"
@@ -312,37 +355,49 @@ PUBLIC SUB SendCommand(sAddress AS String, sValue AS String)
               bAOBright[PortAddress] = FALSE
             CASE "ON"
               byAO[PortAddress] = CByte(255)
+              IF NOT (Write_AO_Port(PortAddress + 1)) THEN
+                IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: failed to write value '" & Str(byAO[PortAddress]) & "' to analog output port " & Str(PortAddress + 1))
+              END IF
             CASE "OFF"
               byAO[PortAddress] = 0
+              IF NOT (Write_AO_Port(PortAddress + 1)) THEN
+                IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: failed to write value '" & Str(byAO[PortAddress]) & "' to analog output port " & Str(PortAddress + 1))
+              END IF
             CASE ELSE
               IF sValue > "" THEN
                 IF (CInt(sValue) >= 0) AND (CInt(sValue) <= 255) THEN
                   byAO[PortAddress] = CInt(sValue)
+                  IF NOT (Write_AO_Port(PortAddress + 1)) THEN
+                    IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: failed to write value '" & Str(byAO[PortAddress]) & "' to analog output port " & Str(PortAddress + 1))
+                  END IF
                 ELSE
-                  Main.WriteLog("K8055 error: Invalid value [" & sValue & "] for analog port " & Str(PortAddress + 1))
+                  IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: invalid value '" & sValue & "' for analog port '" & Str(PortAddress + 1) & "'")
                 ENDIF
               ELSE
-                Main.WriteLog("K8055 error: Invalid value [" & sValue & "] for analog port " & Str(PortAddress + 1))
+                IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Error: invalid value '" & sValue & "' for analog port '" & Str(PortAddress + 1) & "'")
               ENDIF
           END SELECT
         ELSE
-          Main.WriteLog("K8055 error: Invalid value [" & sValue & "] for analog port " & Str(PortAddress))
+          IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Invalid value '" & sValue & "' for analog port '" & Str(PortAddress + 1) & "'")
         ENDIF
       CASE "DO"
         IF (PortAddress >= 0) AND (PortAddress <= 7) THEN
           bDO[PortAddress] = IIf(UCase(sValue) = "ON", TRUE, FALSE)
+          IF NOT (Write_DO_Ports()) THEN
+            IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Failed to write new value to digital output ports")
+          ENDIF
         ELSE
-          Main.WriteLog("K8055 error: Invalid value [" & sValue & "] for digital port " & Str(PortAddress))
+          IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Invalid value '" & sValue & "' for digital port '" & Str(PortAddress) & "'")
         ENDIF
       CASE "DI"
-        'Digital input port, so only reset is possible for port 1 and 2
+        ' digital input port, so only reset of counter is possible for port 1 and 2
         IF (PortAddress >= 0) AND (PortAddress <= 1) AND (UCase(sValue) = "RESET") THEN
           bResetCounter[PortAddress] = TRUE
+          IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Resetting counter of Digital input '" & Str(PortAddress + 1) & "' at next poll.")
         ENDIF
     END SELECT
-    K8055_Write()
   ELSE
-    Main.WriteLog("K8055 error: Invalid address [" & sAddress & "] or value [" & sValue & "]")
+    IF bK8055Debug THEN Main.WriteDebugLog("[K8055] Invalid address '" & sAddress & "' or value '" & sValue & "'")
   ENDIF
 
 END
@@ -352,8 +407,12 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC FUNCTION Disconnect() AS Boolean
 
-  ' try to close the connection
-  Main.WriteLog("Velleman K8055 close.")
+  ' stop timer
+  tK8055.Stop
+
+  ' close the connection
+  CloseDevice()
+  Main.WriteLog("Velleman K8055 connection closed.")
 
   ' all ok
   RETURN TRUE
