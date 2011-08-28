@@ -63,7 +63,7 @@ CREATE TABLE `settings_cul` (
 
 LOCK TABLES `settings_cul` WRITE;
 /*!40000 ALTER TABLE `settings_cul` DISABLE KEYS */;
-INSERT INTO `settings_cul` VALUES (0,0,'192.168.178.18','2323','tcp','/dev/ACM0','38400',1,0),(1,-1,'ernst.dyndns.biz','2323','tcp','/dev/ACM0','38400',3,-1);
+INSERT INTO `settings_cul` VALUES (0,0,'192.168.178.18','2323','tcp','/dev/ACM0','38400',1,0),(1,-1,'192.168.178.11','2323','tcp','/dev/ACM0','38400',3,-1);
 /*!40000 ALTER TABLE `settings_cul` ENABLE KEYS */;
 UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
