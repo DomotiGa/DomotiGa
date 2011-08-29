@@ -253,7 +253,7 @@ END
 PRIVATE SUB Display_Message()
 
   DIM iDeviceId, iCnt, iCmd, iDur, iI, iJ, iSignal AS Integer
-  DIM sHouseCode, sAddress, sValue, sCmd, sEMType, sEMCumulValue, sEMPeakValue, sMsgCounter, sCde, sVal, sId, sSval, sFv AS String
+  DIM sHouseCode, sAddress, sValue, sValue2, sCmd, sEMType, sEMCumulValue, sEMPeakValue, sMsgCounter, sBatt, sVal, sId, sSval, sFv AS String
   DIM aEMType AS String[] = ["", "EM1000-S", "EM1000-EM", "EM1000-GZ"]
   DIM aFHTc2m AS String[] = ["auto", "manual", "holiday", "holiday-short"]
 
@@ -306,7 +306,7 @@ PRIVATE SUB Display_Message()
       ' test if cmd value is known
       TRY sValue = sFS20Values[iCmd]
       IF NOT ERROR THEN
-        IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FS20 message received with address '") & sHouseCode & sAddress & "' ELV (" & Hex2Four(sHouseCode & sAddress) & ") and command '" & sValue & "'" & IIf(iDur, " duration: " & iDur, "") & IIf(iSignal, " signal: " & isignal, ""))
+        IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FS20 message received with address '") & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and command '" & sValue & "'" & IIf(iDur, " duration: " & iDur, "") & IIf(iSignal, " signal: " & isignal, ""))
         ' find device id
         iDeviceId = Devices.Find(sHouseCode & sAddress, Devices.FindInterface("CUL Interface"), "FS20")
         IF iCmd < 17 THEN
@@ -317,11 +317,12 @@ PRIVATE SUB Display_Message()
           IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "", sValue, "", "")
         ENDIF
       ELSE
-        IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FS20 message received with address '") & sHouseCode & sAddress & "' and unknown/invalid command '" & Hex(iCmd) & "'")
+        IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FS20 message received with address '") & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and unknown/invalid command '" & Hex(iCmd) & "'")
       ENDIF
 
     CASE "T" ' FHT message
       ' T <Hex>
+      ' <Hex> is a hex string with the following format:
       ' ThhhhNNNNNN
 
       ' check for valid packet size
@@ -331,8 +332,44 @@ PRIVATE SUB Display_Message()
       ENDIF
 
       sAddress = Chr(RecBuf[1]) & Chr(RecBuf[2]) & Chr(RecBuf[3]) & Chr(RecBuf[4]) & Chr(RecBuf[5]) & Chr(RecBuf[6])
-      sCde = Chr(RecBuf[7]) & Chr(RecBuf[8])
-      sCmd = FHTCode(sCde)
+      iCmd = Val("&H" & Chr(RecBuf[7]) & Chr(RecBuf[8]))
+
+      IF iByteCount = 11 THEN ' must be FHT FTK sensor
+        ' T <Hex>
+        ' <Hex> is a hex string with the following format:
+        ' ccccccxx
+        ' where cccccc being the id of the sensor in hex
+        ' xx being the current status like 'open,close,sync,test,battlow'
+        SELECT CASE iCmd
+          CASE &H02, &H82
+            sValue = "Closed"
+            sBatt = "Ok"
+          CASE &H01, &H81
+            sValue = "Open"
+            sBatt = "Ok"
+          CASE &H11, &H91
+            sValue = "Open"
+            sBatt = "Low"
+          CASE &H12, &H92
+            sValue = "Closed"
+            sBatt = "Low"
+          CASE &H0C
+            sValue2 = "Sync:Syncing"
+          CASE &H0F
+            sValue2 = "Test:Success"
+        END SELECT
+
+        IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FHT TFK message received with address '") & sHouseCode & sAddress & "', status '" & IIf(Len(sValue2), sValue2, sValue) & "' and battery level '" & sBatt & "'")
+        ' find device id
+        iDeviceId = Devices.Find(sHouseCode & sAddress, Devices.FindInterface("CUL Interface"))
+        IF iDeviceId THEN
+          ' update values
+          Devices.ValueUpdate(iDeviceId, sValue, sValue2, "", "")
+          ' store battery status
+          IF (Len(sBatt) > 1) THEN Devices.Battery(iDeviceId, sBatt)
+        ENDIF
+      ELSE
+      sCmd = FHTCode(iCmd)
 
       IF iByteCount > 9 THEN
         sVal = Chr(RecBuf[9]) & Chr(RecBuf[10])
@@ -404,16 +441,16 @@ PRINT sFv
           '     }
           '   }
           ' }
-        ELSE IF sCmd = "TFK"
-          sVal = Chr(RecBuf[7]) & Chr(RecBuf[8])
-          sVal = FHTTKCode(sVal)
-          IF iByteCount > 9 THEN
-            'signal
-          ENDIF
+        ' ELSE IF sCmd = "TFK"
+        '   sVal = Chr(RecBuf[7]) & Chr(RecBuf[8])
+        '   sVal = FHTTKCode(sVal)
+        '   IF iByteCount > 9 THEN
+        '     'signal
+        '   ENDIF
       ENDIF
 
       IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FHT message received with address: ") & sAddress & (" command: ") & sCmd & " " & sVal)
-
+  ENDIF
     CASE "E"
       ' E <Hex>
       ' EM message. <Hex> is a hex string with the following format:
@@ -589,32 +626,9 @@ PRIVATE SUB FHTCode(sCode AS String) AS String
       RETURN "lowtemp-offset"
     CASE "8A"
       RETURN "windowopen-temp"
-    CASE "B9"
-      RETURN "TFK"
     CASE ELSE
       RETURN "unknown"
     END SELECT
-
-END
-
-PRIVATE SUB FHTTKCode(bCode AS Byte) AS String
-
-  SELECT CASE bCode
-    CASE &H01, &H82
-      RETURN "Window:Closed"
-    CASE &H02, &H81
-      RETURN "Window:Open"
-    CASE &H11, &H91
-      RETURN "Window:Open, Low Batt"
-    CASE &H12
-      RETURN "Window:Closed, Low Batt"
-    CASE &H0C
-      RETURN "Sync:Syncing"
-    CASE &H0F
-      RETURN "Test:Success"
-    CASE ELSE
-      RETURN "unknown"
-  END SELECT
 
 END
 
