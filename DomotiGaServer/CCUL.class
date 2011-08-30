@@ -177,10 +177,25 @@ PUBLIC FUNCTION Init()
 
   SendCommand("X21\r\n")
   IF bCULDebug THEN Main.WriteRFXDebugLog("[CUL] > X21\n")
-  ' '   SendCommand("X\r\n")
-  ' ' IF bCULDebug THEN Main.WriteRFXDebugLog("[CUL] > X\n")
-
   GetVersion()
+
+  ParseDump()
+
+END
+
+' just here for development/debugging
+PUBLIC SUB ParseDump()
+
+  DIM hFile AS File
+  DIM sLine AS String
+
+  TRY hFile = OPEN "/home/ron/FHT.txt" FOR INPUT
+  IF ERROR THEN RETURN
+
+  WHILE NOT Eof(hFile)
+    LINE INPUT #hFile, sLine
+    IF Len(sLine) > 5 THEN Simulate(sLine)
+  WEND
 
 END
 
@@ -256,9 +271,9 @@ PRIVATE SUB Display_Message()
 
   DIM iDeviceId, iCnt, iCmd, iDur, iI, iJ, iRSSI AS Integer
   DIM sHouseCode, sAddress, sValue, sValue2, sCmd, sEMType, sEMCumulValue, sEMPeakValue, sMsgCounter, sBatt, sVal, sId, sSval, sFv AS String
+  DIM sWarn, sLowTemp, sSensor, sWindow AS String
   DIM aEMType AS String[] = ["", "EM1000-S", "EM1000-EM", "EM1000-GZ"]
   DIM aFHTc2m AS String[] = ["auto", "manual", "holiday", "holiday-short"]
-
   DIM bConfirm AS Boolean
 
   bMessage = FALSE
@@ -321,11 +336,7 @@ PRIVATE SUB Display_Message()
       ELSE
         IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FS20 message received with address '") & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and unknown/invalid command '" & Hex(iCmd) & "'")
       ENDIF
-    CASE "T" ' FHT message
-      ' T <Hex>
-      ' <Hex> is a hex string with the following format:
-      ' ThhhhNNNNNN
-
+    CASE "T" ' FHT messages
       ' check for valid packet size
       IF iByteCount < 9 OR IF iByteCount > 13 THEN
         IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FHT message received with invalid length of " & iByteCount & " bytes!"))
@@ -369,89 +380,139 @@ PRIVATE SUB Display_Message()
           ' store battery status
           IF (Len(sBatt) > 1) THEN Devices.Battery(iDeviceId, sBatt)
         ENDIF
-      ELSE
-      sCmd = FHTCode(iCmd)
+      ELSE ' FHT80 message
+        ' T15157D671216
+        ' T15177E7712FA
+        ' T5A334369001A
+        ' T <Hex>
+        ' <Hex> is a hex string with the following format:
+        ' Thhhhccnnvvxx
+        ' hhhh = address
+        ' cc = command
+        ' nn = report value / id
+        ' vv = value
+        ' xx = rssi
+        sAddress = Chr(RecBuf[1]) & Chr(RecBuf[2]) & Chr(RecBuf[3]) & Chr(RecBuf[4])
+        iCmd = Val("&H" & Chr(RecBuf[5]) & Chr(RecBuf[6]))
+        sCmd = FHTCode(iCmd)
 
-      IF iByteCount > 9 THEN
-        sVal = Chr(RecBuf[9]) & Chr(RecBuf[10])
-      ELSE IF iByteCount < 9 THEN
-        sCmd = "FHT short message"
-      ELSE IF iByteCount > 11 THEN
-        ' signal
+        IF iByteCount > 9 THEN
+          sVal = Val("&H" & (Chr(RecBuf[7]) & Chr(RecBuf[8])))
+        ELSE IF iByteCount < 9 THEN
+          sCmd = "FHT short message"
+          sVal = ""
+        ENDIF
+
+        IF iByteCount > 11 THEN
+          ' rssi
+          iRSSI = Val("&H" & Chr(RecBuf[11]) & Chr(RecBuf[12]))
+        ENDIF
+
+        IF NOT Len(sVal) OR IF sCmd = "report1" OR IF sCmd = "report2" THEN
+          sVal = Val("&H" & (Chr(RecBuf[7]) & Chr(RecBuf[8])))
+          bConfirm = TRUE
+        ENDIF
+
+        IF InStr(sCmd, "-from") OR IF InStr(sCmd, "-to") THEN ' time format
+          sVal = Format(Val(sVal) / 6, "0#") & ":" & Format((Val(sVal) MOD 6) * 10, "0#")
+        ELSE IF sCmd = "mode" ' auto, manual, holiday, holiday-short
+          sVal = aFHTc2m[sVal]
+        ELSE IF InStr(sCmd, "-temp")
+          sVal = sVal / 2
+          IF sCmd = "desired-temp" THEN PRINT "desired-temp" & sVal
+          'sVal = sVal / 10
+          sVal = Format(sVal, "#.0")
+          ' $val = sprintf("%.1f", $val);
+        ELSE IF sCmd = "lowtemp-offset"
+          sVal = sVal / 10
+          sVal = Format(sVal, "#.0")
+          ' $val = sprintf("%d.0", $val);
+        ELSE IF InStr(sCmd, "actuator")
+          sSval = Chr(RecBuf[9]) & Chr(RecBuf[10])
+          sFv = (100 * Val(sVal) / 255 + 0.5) & "%"
+          sId = Chr(RecBuf[8])
+          IF sSval = "A0" OR IF sSval = "B0" THEN
+            sVal = sFv ' sync in the summer
+          ELSE IF Right(sSval, 1) = "0" THEN
+            sVal = "syncnow"
+          ELSE IF Right(sSval, 1) = "1" THEN
+            sVal = "99%" ' FHT set to 30.5, FHT80B="ON"
+          ELSE IF Right(sSval, 1) = "2" THEN
+            sVal = "0%" ' FHT set to 5.5
+          ELSE IF Right(sSval, 1) = "6" THEN
+            sVal = sFv
+          ELSE IF Right(sSval, 1) = "8" THEN
+            sVal = "offset: " & sFv
+          ELSE IF sSval = "2A" OR IF sSval = "3A" THEN
+            sVal = "lime-protection"
+          ELSE IF sSval = "AA" OR IF sSval = "BA" THEN
+            sVal = sFv ' lime protection bug
+          ELSE IF Right(sSval, 1) = "C" THEN
+            sVal = "synctime: " & (Val(sVal) / 2) - 1
+          ELSE IF Right(sSval, 1) = "E" THEN
+            sVal = "test"
+          ELSE IF Right(sSval, 1) = "F" THEN
+            sVal = "pair"
+          ELSE
+            sVal = "unknown"
+          ENDIF
+
+          IF InStr(sVal, "%") AND IF sId = 0 THEN
+            IF bCULDebug THEN Main.WriteDebugLog(("[CUL] Position " & sId & " " & sVal))
+          ENDIF
+        ELSE IF sCmd = "measured-low"
+          IF bCULDebug THEN Main.WriteDebugLog(("[CUL] Measured Low " & sVal))
+'           GOTO fhtlog;
+
+        ELSE IF sCmd = "measured-high"
+          sVal = sVal * 256
+          sVal = sVal / 10
+          sVal = Format(sVal, "#.0")
+'          / / If(defined($varids[ 'Low']['val'])) {
+'         $low = $varids[ 'Low']['val'];
+'           $off = 0;
+'           $val = $val * 256 + $low;
+'           $val /= 10;
+'           SetValue($varids[ 'Temperatur']['id'],$val);
+'         $val = sprintf("%.1f (Celsius)", $val + $off);
+'           $cmd = "measured-temp";
+          'sCmd = "measured-temp"
+        ELSE IF sCmd = "warnings"
+          IF (sVal AND 1) THEN
+            sWarn = "Battery low"
+            sBatt = "Low"
+          ENDIF
+          IF (sVal AND 2) THEN
+            IF sWarn THEN sWarn &= "; "
+            sWarn &= "Temp too low"
+            sLowTemp = "Warn"
+          ENDIF
+          IF (sVal AND 32) THEN
+            IF sWarn THEN sWarn &= "; "
+            sWarn &= "Window open"
+            sWindow = "Open"
+          ENDIF
+          IF (sVal AND 16) THEN
+            IF sWarn THEN sWarn &= "; "
+            sWarn &= "Window sensor fault"
+            sSensor = "Fault"
+          ENDIF
+          ' default value if not set
+          IF NOT Len(sBatt) THEN sBatt = "Ok"
+          IF NOT Len(sLowTemp) THEN sLowTemp = "Ok"
+          IF NOT Len(sWindow) THEN sWindow = "Closed"
+          IF NOT Len(sSensor) THEN sSensor = "Ok"
+          IF NOT Len(sWarn) THEN sWarn = "None"
       ENDIF
-
-      IF NOT Len(sVal) OR IF sCmd = "report1" OR IF sCmd = "report2" THEN bConfirm = TRUE
-
-      sVal = Val("&H" & sVal)
-
-      IF InStr(sCmd, "-from") OR IF InStr(sCmd, "-to") THEN
-        sVal = Format(Val(sVal) / 6, "0#") & ":" & Format((Val(sVal) MOD 6) * 10, "0#")
-      ELSE IF sCmd = "mode"
-        sVal = aFHTc2m[sVal]
-      ELSE IF InStr(sCmd, "actuator")
-
-        sId = Chr(RecBuf[6])
-        sSval = Chr(RecBuf[7]) & Chr(RecBuf[8])
-        sFv = 100 * Val(sVal) / 255 + 0.5
-PRINT sId
-PRINT sSval
-PRINT sFv
-  IF sSval = "A0" OR IF sSval = "B0" THEN
-    sVal = sSval ' sync in the summer
-  ELSE IF Right(sSval, 1) = "0" THEN
-    sVal = "syncnow"
-  ELSE IF Right(sSval, 1) = "1" THEN
-    sVal = "99%" ' FHT set to 30.5, FHT80B=="ON"
-  ELSE IF Right(sSval, 1) = "2" THEN
-    sVal = "0%" ' FHT set to 5.5
-  ELSE IF Right(sSval, 1) = "6" THEN
-    sVal = sFv
-  ELSE IF Right(sSval, 1) = "8" THEN
-    sVal = "offset: " & sFv
-  ELSE IF Right(sSval, 1) = "A" THEN
-    sVal = "lime-protection"
-  ELSE IF Right(sSval, 1) = "C" THEN
-    sVal = "synctime: " & (Val(sVal) / 2) - 1
-  ELSE IF Right(sSval, 1) = "E" THEN
-    sVal = "test"
-  ELSE IF Right(sSval, 1) = "F" THEN
-    sVal = "pair"
-  ELSE
-    sVal = "unknown"
-  ENDIF
-          '  If(preg_match("/[AB]0/i", $sval)){ $val  = $fv; }   # 
-          ' elseif(preg_match("/.0/", $sval)){ $val  = "syncnow"; }
-          ' elseif(preg_match("/.1/", $sval)){ $val  = "99%"; } # FHT set to 30.5, FHT80B=="ON"
-          ' elseif(preg_match("/.2/", $sval)){ $val  = "0%"; }  # FHT set to  5.5
-          ' elseif(preg_match("/.6/", $sval)){ $val  = "$fv"; }
-          ' elseif(preg_match("/.8/", $sval)){ $val  = "offset: $fv"; }
-          ' elseif(preg_match("/.A/", $sval)){ $val  = "lime-protection"; }
-          ' elseif(preg_match("/.C/", $sval)){ $val  = sprintf("synctime: %d", int($val/2)-1); }
-          ' elseif(preg_match("/.E/", $sval)){ $val  = "test"; }
-          ' elseif(preg_match("/.F/", $sval)){ $val  = "pair"; }
-          ' ELSE { $val  = "unknown_$sval: $fv"; }
-          ' 
-          ' $pos = strpos($val, "%");
-          ' IF (!($pos == = FALSE)){
-          ' IF ($id == "0"){
-          '      SetValue($varids[ 'Position']['id'],$val);
-          '      } ELSE {
-          '         $pid == getVid( 'Position'.$id,IPS_GetParent($varids['ID']['id']));
-          '     IF (!$pid == FALSE){
-          '        SetValue($pid, $val);
-          '     }
-          '   }
-          ' }
-        ' ELSE IF sCmd = "TFK"
-        '   sVal = Chr(RecBuf[7]) & Chr(RecBuf[8])
-        '   sVal = FHTTKCode(sVal)
-        '   IF iByteCount > 9 THEN
-        '     'signal
-        '   ENDIF
+      IF bCULDebug THEN
+        Main.WriteDebugLog(("[CUL] FHT message received with address '") & sAddress & "' command '" & sCmd & "' (" & Hex(iCmd) & ") sval '" & sVal & "'" & IIf(iRSSI, " rssi: " & iRSSI, ""))
+        IF Len(sWarn) THEN Main.WriteDebugLog(("[CUL] Warnings ") & sWarn)
+        IF Len(sBatt) THEN Main.WriteDebugLog(("[CUL] Battery ") & sBatt)
+        IF Len(sLowTemp) THEN Main.WriteDebugLog(("[CUL] LowTemp ") & sLowTemp)
+        IF Len(sSensor) THEN Main.WriteDebugLog(("[CUL] Sensor ") & sSensor)
+        IF Len(sWindow) THEN Main.WriteDebugLog(("[CUL] Window ") & sWindow)
       ENDIF
-
-      IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FHT message received with address: ") & sAddress & (" command: ") & sCmd & " " & sVal)
-  ENDIF
+      ENDIF
     CASE "E"
       ' E <Hex>
       ' EM message. <Hex> is a hex string with the following format:
@@ -469,7 +530,7 @@ PRINT sFv
       TRY sValue = Chr(RecBuf[11]) & Chr(RecBuf[12]) & Chr(RecBuf[13]) & Chr(RecBuf[14])
       TRY sEMPeakValue = Chr(RecBuf[15]) & Chr(RecBuf[16]) & Chr(RecBuf[17]) & Chr(RecBuf[18])
 
-      IF bCULDebug THEN Main.WriteDebugLog(("[CUL] EM message received for sensor type: ") & aEMType[Val(sEMType)] & " (" & sEMType & ")" & (" address: ") & sAddress & (" cumulated value: ") & sEMCumulValue & (" last value: ") & sValue & (" top value: ") & sEMPeakValue & (" msg counter: ") & Val("&H" & sMsgCounter))
+      IF bCULDebug THEN Main.WriteDebugLog(("[CUL] EM message received sensor '") & aEMType[Val(sEMType)] & "' [" & sEMType & "]" & " with address '" & sAddress & "' cumulated value: " & sEMCumulValue & (" last: ") & sValue & (" top: ") & sEMPeakValue & (" msg count: ") & Val("&H" & sMsgCounter))
 
       iDeviceId = Devices.Find(sAddress, Devices.FindInterface("CUL Interface"), "EM1000")
       ' update value
@@ -500,132 +561,132 @@ PRIVATE SUB Hex2Four(sHex AS String) AS String
 
 END
 
-PRIVATE SUB FHTCode(sCode AS String) AS String
+PRIVATE SUB FHTCode(iCode AS Byte) AS String
 
-  SELECT CASE sCode
-    CASE "00"
+  SELECT CASE iCode
+    CASE &H00
       RETURN "actuator"
-    CASE "01"
+    CASE &H01
       RETURN "actuator1"
-    CASE "02"
+    CASE &H02
       RETURN "actuator2"
-    CASE "03"
+    CASE &H03
       RETURN "actuator3"
-    CASE "04"
+    CASE &H04
       RETURN "actuator4"
-    CASE "05"
+    CASE &H05
       RETURN "actuator5"
-    CASE "06"
+    CASE &H06
       RETURN "actuator6"
-    CASE "07"
+    CASE &H07
       RETURN "actuator7"
-    CASE "08"
+    CASE &H08
       RETURN "actuator8"
-    CASE "14"
+    CASE &H14
       RETURN "mon-from1"
-    CASE "15"
+    CASE &H15
       RETURN "mon-to1"
-    CASE "16"
+    CASE &H16
       RETURN "mon-from2"
-    CASE "17"
+    CASE &H17
       RETURN "mon-to2"
-    CASE "18"
+    CASE &H18
       RETURN "tue-from1"
-    CASE "19"
+    CASE &H19
       RETURN "tue-to1"
-    CASE "1A"
+    CASE &H1A
       RETURN "tue-from2"
-    CASE "1B"
+    CASE &H1B
       RETURN "tue-to2"
-    CASE "1C"
+    CASE &H1C
       RETURN "wed-from1"
-    CASE "1D"
+    CASE &H1D
       RETURN "wed-to1"
-    CASE "1E"
+    CASE &H1E
       RETURN "wed-from2"
-    CASE "1F"
+    CASE &H1F
       RETURN "wed-to2"
-    CASE "20"
+    CASE &H20
       RETURN "thu-from1"
-    CASE "21"
+    CASE &H21
       RETURN "thu-to1"
-    CASE "22"
+    CASE &H22
       RETURN "thu-from2"
-    CASE "23"
+    CASE &H23
       RETURN "thu-to2"
-    CASE "24"
+    CASE &H24
       RETURN "fri-from1"
-    CASE "25"
+    CASE &H25
       RETURN "fri-to1"
-    CASE "26"
+    CASE &H26
       RETURN "fri-from2"
-    CASE "27"
+    CASE &H27
       RETURN "fri-to2"
-    CASE "28"
+    CASE &H28
       RETURN "sat-from1"
-    CASE "29"
+    CASE &H29
       RETURN "sat-to1"
-    CASE "2A"
+    CASE &H2A
       RETURN "sat-from2"
-    CASE "2B"
+    CASE &H2B
       RETURN "sat-to2"
-    CASE "2C"
+    CASE &H2C
       RETURN "sun-from1"
-    CASE "2D"
+    CASE &H2D
       RETURN "sun-to1"
-    CASE "2E"
+    CASE &H2E
       RETURN "sun-from2"
-    CASE "2F"
+    CASE &H2F
       RETURN "sun-to2"
-    CASE "3E"
+    CASE &H3E
       RETURN "mode"
-    CASE "3F"
+    CASE &H3F
       RETURN "holiday1"
-    CASE "40"
+    CASE &H40
       RETURN "holiday2"
-    CASE "41"
+    CASE &H41
       RETURN "desired-temp"
-    CASE "42"
+    CASE &H42
       RETURN "measured-low"
-    CASE "43"
+    CASE &H43
       RETURN "measured-high"
-    CASE "44"
+    CASE &H44
       RETURN "warnings"
-    CASE "45"
+    CASE &H45
       RETURN "manu-temp"
-    CASE "4B"
+    CASE &H4B
       RETURN "ack"
-    CASE "53"
+    CASE &H53
       RETURN "can-xmit"
-    CASE "54"
+    CASE &H54
       RETURN "can-rcv"
-    CASE "60"
+    CASE &H60
       RETURN "year"
-    CASE "61"
+    CASE &H61
       RETURN "month"
-    CASE "62"
+    CASE &H62
       RETURN "day"
-    CASE "63"
+    CASE &H63
       RETURN "hour"
-    CASE "64"
+    CASE &H64
       RETURN "minute"
-    CASE "65"
+    CASE &H65
       RETURN "report1"
-    CASE "66"
+    CASE &H66
       RETURN "report2"
-    CASE "69"
+    CASE &H69
       RETURN "ack2"
-    CASE "7D"
+    CASE &H7D
       RETURN "start-xmit"
-    CASE "7E"
+    CASE &H7E
       RETURN "end-xmit"
-    CASE "82"
+    CASE &H82
       RETURN "day-temp"
-    CASE "84"
+    CASE &H84
       RETURN "night-temp"
-    CASE "85"
+    CASE &H85
       RETURN "lowtemp-offset"
-    CASE "8A"
+    CASE &H8A
       RETURN "windowopen-temp"
     CASE ELSE
       RETURN "unknown"
