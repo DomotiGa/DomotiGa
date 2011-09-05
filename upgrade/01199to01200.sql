@@ -50,6 +50,7 @@ INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.1
 -- Table structure for table `interfaces`
 --
 
+LOCK TABLES `interfaces` WRITE;
 UPDATE interfaces SET type='FS20 EM1000 FHT80TFK FHT80' WHERE id=32;
 
 UNLOCK TABLES
