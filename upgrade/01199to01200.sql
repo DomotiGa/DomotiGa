@@ -1,4 +1,3 @@
-
 -- MySQL dump 10.13  Distrib 5.1.54, for debian-linux-gnu (x86_64)
 --
 -- Host: localhost    Database: domotiga
@@ -53,7 +52,8 @@ INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.1
 LOCK TABLES `interfaces` WRITE;
 UPDATE interfaces SET type='FS20 EM1000 FHT80TFK FHT80' WHERE id=32;
 
-UNLOCK TABLES
+UNLOCK TABLES;
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
