@@ -158,7 +158,7 @@ if ($_SESSION['view']=="main") {
    foreach($data AS $item) {
       echo "<div class='$thisrow'>\n";
       echo "<div class='imgcol' style='width:20px;' id='i".$item['id']."deviceicon'>&nbsp;".$item['deviceicon']."</div>\n";
-      echo "<div class='datacol' style='width:170px;' id='i".$item['id']."devicename'>&nbsp;".$item['devicename']."</div>\n";
+      echo "<div class='datacol' style='width:170px;' id='i".$item['id']."devicename'>&nbsp;<a class='submodal-200-100' href='switch.php?id=".urlencode($item['devicename'])."'>".$item['devicename']."</a></div>\n";
       echo "<div class='datacol' style='width:110px;' id='i".$item['id']."devicelocation'>&nbsp;".$item['devicelocation']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue'>&nbsp;".$item['devicevalue']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue2'>&nbsp;".$item['devicevalue2']."</div>\n";

@@ -78,6 +78,25 @@ function get_status() {
    return $retarr;
 }
 
+// Get version
+function get_version() {
+    return do_xmlrpc("system.program_version");
+}
+
+// Set device <param1> with value <param2>
+function set_device($devname, $devvalue) {
+   $request = xmlrpc_encode_request("device.setdevice", array ($devname, $devvalue));
+   $response = do_xmlrpc($request);
+
+   if (is_array($response) && xmlrpc_is_fault($response)) {
+       trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");
+   } else {
+   echo "device switched?";
+   }
+    
+    return true;
+}
+
 // Function to sort second key in array (ascending)
 function sort_matches_asc($left,$right) {
    global $sortkey;
