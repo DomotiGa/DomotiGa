@@ -12,109 +12,139 @@
 
 ' Read file called COPYING for license details.
 
-PROPERTY TCPHost AS String
-PROPERTY TCPPort AS Integer
-PROPERTY Interface AS String
-PROPERTY SerPort AS String
-PROPERTY Baud AS String
-PROPERTY CULDebug AS Boolean
-PROPERTY Model AS Integer
+Property TCPHost As String
+Property TCPPort As Integer
+Property Interface As String
+Property SerPort As String
+Property Baud As String
+Property CULDebug As Boolean
+Property Model As Integer
+Property FHTid As String
+Property AutoCreate As Boolean
 
-PRIVATE sTCPHost AS String
-PRIVATE iTCPPort AS Integer
-PRIVATE sInterface AS String
-PRIVATE sSerPort AS String
-PRIVATE sBaud AS String
-PRIVATE bCULDebug AS Boolean
-PRIVATE iModel AS Integer
+Private sTCPHost As String
+Private iTCPPort As Integer
+Private sInterface As String
+Private sSerPort As String
+Private sBaud As String
+Private bCULDebug As Boolean
+Private iModel As Integer
+Private sFHTid As String
+Private bAutoCreate As Boolean
 
-PUBLIC hCUL AS NEW Socket
-PUBLIC hCULSer AS NEW SerialPort
-PUBLIC bSimulate AS Boolean = FALSE
+Public hCUL As New Socket
+Public hCULSer As New SerialPort
+Public bSimulate As Boolean = False
+Public tCULBusy As Timer
+Public tCULLed As Timer
+Public tCULConnect As Timer
+Public tCULPoll As Timer
 
-PRIVATE bFirstByte AS Boolean = TRUE
-PRIVATE RecBuf AS Byte[255]
-PRIVATE bMessage AS Boolean = FALSE
-PRIVATE iByteCount AS Integer = 0
+Private bFirstByte As Boolean = True
+' [GB2:ARRD] Private RecBuf As Byte[255]
+Private RecBuf As New Byte[255]
+Private bMessage As Boolean = False
+Private iByteCount As Integer = 0
+Private cQueue As New Collection  ' command buffer
+Private bCULBusy As Boolean  ' waiting for delay timer to finish
+Private iConnectRetry As Integer = 0 ' retries
+Private iConnectDelay As Integer = 60000 ' 1 minute
+Private cLowTemps As New Collection ' to store FHT low temp byte
 
-CONST FS20_OFF AS Byte = &H00
-CONST FS20_DIM1 AS Byte = &H01
-CONST FS20_DIM2 AS Byte = &H02
-CONST FS20_DIM3 AS Byte = &H03
-CONST FS20_DIM4 AS Byte = &H04
-CONST FS20_DIM5 AS Byte = &H05
-CONST FS20_DIM6 AS Byte = &H06
-CONST FS20_DIM7 AS Byte = &H07
-CONST FS20_DIM8 AS Byte = &H08
-CONST FS20_DIM9 AS Byte = &H09
-CONST FS20_DIM10 AS Byte = &H0A
-CONST FS20_DIM11 AS Byte = &H0B
-CONST FS20_DIM12 AS Byte = &H0C
-CONST FS20_DIM13 AS Byte = &H0D
-CONST FS20_DIM14 AS Byte = &H0E
-CONST FS20_DIM15 AS Byte = &H0F
-CONST FS20_DIM16 AS Byte = &H10
-CONST FS20_ON AS Byte = &H11
-CONST FS20_TOGGLE AS Byte = &H12
-CONST FS20_DIMUP AS Byte = &H13
-CONST FS20_DIMDOWN AS Byte = &H14
-CONST FS20_DIMSWITCH AS Byte = &H15
-CONST FS20_TIMER AS Byte = &H16
-CONST FS20_SENDSTATE AS Byte = &H17
-CONST FS20_OFFFORTIMER AS Byte = &H18
-CONST FS20_ONFORTIMER AS Byte = &H19
-CONST FS20_ONOLDFORTIMER AS Byte = &H1A
-CONST FS20_RESET AS Byte = &H1B
-CONST FS20_RAMPONTIME AS Byte = &H1C
-CONST FS20_RAMPOFFTIME AS Byte = &H1D
+' FS20
+Private sFS20Values As String[] = ["Off", "Dim 6", "Dim 12", "Dim 18", "Dim 25", "Dim 31", "Dim 37", "Dim 43", "Dim 50", "Dim 56", "Dim 62", "Dim 68", "Dim 75", "Dim 81", "Dim 87", "Dim 93", "Dim 100", "On", "Toggle", "DimUp", "DimDown", "DimUpDown", "Timer", "SendState", "Off-For-Timer", "On-For-Timer", "On-Old-For-Timer", "Reset", "Ramp-On-Time", "Ramp-Of-Time", "On-Old-For-Timer-Prev", "On-100-For-Timer-Prev"]
 
-CONST FHT_SYNCTIME AS Byte = &H2C
-CONST FHT_MODE AS Byte = &H3D
-CONST FHT_DESIREDTEMP AS Byte = &H41
-CONST FHT_STATUS AS Byte = &H44
-CONST FHT_DAYTEMP AS Byte = &H82
-CONST FHT_NIGHTTEMP AS Byte = &H84
-CONST FHT_WINDOWOPENTEMP AS Byte = &H8A
+' FHT not used yet
+' CONST FHT_SYNCTIME AS Byte = &H2C
+' CONST FHT_MODE AS Byte = &H3D
+' CONST FHT_DESIREDTEMP AS Byte = &H41
+' CONST FHT_STATUS AS Byte = &H44
+' CONST FHT_DAYTEMP AS Byte = &H82
+' CONST FHT_NIGHTTEMP AS Byte = &H84
+' CONST FHT_WINDOWOPENTEMP AS Byte = &H8A
 
-PUBLIC SUB CUL_Ready()
+Public Sub CUL_Ready()
 
   Main.WriteLog(("CUL TCP socket connected."))
   Init()
+  tCULPoll.Start
 
-END
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' temp poll routine to see if CUL socket stays active
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tCULPoll_Timer()
+
+ ' get version
+  QueueCommand("V")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tCULConnect_Timer()
+
+  If Not ConnectTCP() Then
+    Inc iConnectRetry
+    iConnectDelay *= iConnectRetry
+    tCULConnect.Delay = iConnectDelay
+  Endif
+
+End
+
+Public Sub CUL_Closed()
+
+  Main.WriteDebugLog(("[CUL] ERROR: TCP socket closed by peer."))
+  If iConnectRetry < 6 Then
+    Main.WriteDebugLog(("[CUL] Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", ".")))
+    tCULConnect.Start
+  Endif
+
+End
+
+Public Sub CUL_Found()
+
+  Main.WriteLog(("CUL IP address resolved."))
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC FUNCTION ConnectTCP() AS Boolean
+Public Function ConnectTCP() As Boolean
 
   ' try to close the connection
-  TRY hCUL.Close
+  Try hCUL.Close
 
   ' get a new one
-  hCUL = NEW Socket AS "CUL"
+  hCUL = New Socket As "CUL"
   hCUL.Connect(sTCPHost, iTCPPort)
 
+  tCULPoll = New Timer As "tCULPoll"
+  tCULPoll.Delay = 60 * 1000
+
   ' all ok
-  RETURN TRUE
+  Return True
 
-CATCH ' some errors
+Catch ' some errors
   Main.WriteLog(("CUL Error: ") & ERROR.Text)
-  RETURN FALSE
+  Return False
 
-END
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC FUNCTION ConnectSerial() AS Boolean
+Public Function ConnectSerial() As Boolean
 
   ' try to close the connection
-  TRY hCULSer.Close
+  Try hCULSer.Close
 
   ' get a new one
-  hCULSer = NEW Serialport AS "CULSer"
-  WITH hCULSer
+  hCULSer = New Serialport As "CULSer"
+  With hCULSer
     .PortName = sSerPort
     .Speed = sBaud
     .Parity = 0
@@ -122,300 +152,631 @@ PUBLIC FUNCTION ConnectSerial() AS Boolean
     .StopBits = 1
     .FlowControl = 0
     .Open()
-  END WITH
+  End With
 
   Init()
 
   ' all ok
-  RETURN TRUE
+  Return True
 
-CATCH ' some errors
+Catch ' some errors
   Main.WriteLog(("CUL Error: ") & ERROR.Text)
-  RETURN FALSE
+  Return False
 
-END
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC FUNCTION Disconnect() AS Boolean
+Public Function Disconnect() As Boolean
 
   ' try to close the connection
-  TRY hCUL.Close
-  TRY hCULSer.Close
-  IF InStr(sInterface, "tcp") THEN
+  Try tCULBusy.Stop
+  Try tCULLed.Stop
+  Try tCULPoll.Stop
+  Try tCULConnect.Stop
+  Try hCUL.Close
+  Try hCULSer.Close
+
+  If InStr(sInterface, "tcp") Then
     Main.WriteLog(("CUL TCP socket close."))
-  ELSE
+  Else
     Main.WriteLog(("CUL serial port close."))
-  END IF
+  End If
   ' all ok
-  RETURN TRUE
+  Return True
 
-CATCH ' some errors
+Catch ' some errors
   Main.WriteLog(("CUL Error: ") & ERROR.Text)
-  RETURN FALSE
+  Return False
 
-END
+End
 
-PUBLIC SUB CUL_Error()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reset led status in main status bar
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tCULLED_Timer()
 
-  DIM sString AS String = "CUL: "
+  Main.ControlLed("CUL", "Off")
+  tCULLED.Stop
+
+End
+
+Public Sub CUL_Error()
+
+  Dim sString As String = "CUL: "
 
   ' handle error
-  SELECT CASE hCUL.Status
-    CASE Net.CannotCreateSocket
+  Select Case hCUL.Status
+    Case Net.CannotCreateSocket
       Main.WriteLog(sString & ("The system does not allow to create a socket."))
-    CASE Net.HostNotFound
+    Case Net.HostNotFound
       Main.WriteLog(sString & ("Host '") & sTCPHost & ("' not found."))
-    CASE Net.ConnectionRefused
+    Case Net.ConnectionRefused
       Main.WriteLog(sString & ("Unable to connect. Connection refused."))
-    CASE Net.CannotRead
+    Case Net.CannotRead
       Main.WriteLog(sString & ("Error reading data."))
-    CASE Net.CannotWrite
+    Case Net.CannotWrite
       Main.WriteLog(sString & ("Error writing data."))
-  END SELECT
+  End Select
 
-END
+End
 
-PUBLIC SUB CUL_Read()
+Public Sub CUL_Read()
 
-  DIM bData AS Byte
+  Dim bData As Byte
 
-  TRY READ #hCUL, bData
-  IF ERROR THEN Main.WriteDebugLog(("[CUL] Error reading data from the TCP port! -> ") & Error.Text)
+  Try Read #hCUL, bData
+  If Error Then Main.WriteDebugLog(("[CUL] Error reading data from the TCP port! -> ") & Error.Text)
   ProcessReceivedChar(bData)
 
-END
+End
 
-PUBLIC SUB CULSer_Read()
+Public Sub CULSer_Read()
 
-  DIM bData AS Byte
+  Dim bData As Byte
 
-  TRY READ #hCULSer, bData
-  IF ERROR THEN Main.WriteDebugLog(("[CUL] Error reading data from the serial port! -> ") & Error.Text)
+  Try Read #hCULSer, bData
+  If Error Then Main.WriteDebugLog(("[CUL] Error reading data from the serial port! -> ") & Error.Text)
   ProcessReceivedChar(bData)
 
-END
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' control devices
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim iDeviceId As Integer
+  Dim sType As String
+
+  ' find out what kind of device we are dealing with
+  iDeviceId = Devices.Find(sAddress, Devices.FindInterface("CUL Interface"))
+  If iDeviceId Then
+    sType = Devices.FindTypeForDevice(iDeviceId)
+  Else
+    Return
+  Endif
+
+  ' select which routine to use
+  Select sType
+    Case "FS20"
+      PrepareFS20Command(sAddress, sCmd)
+    Default
+      Main.WriteDebugLog(("[CUL] Controlling '" & sType & "' devices is not supported in this version!"))
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' prepare packet to send to FS20 device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PrepareFS20Command(sAddress As String, sCmd As String)
+
+  Dim sPacket, sCommand As String
+  Dim aParams As String[]
+
+  ' F <Hex>
+  ' <Hex> is a Hex String of the following form:
+  ' hhhhaacc or hhhhaaccee, where
+  ' hhhh is the FS20 housecode,
+  ' aa is the FS20 device address,
+  ' cc is the FS20 command
+  ' ee is the FS20 timespec. Note that cc must have the extension bit set.
+  ' Example: F12340111
+
+  ' check if address has 3 bytes
+  If (Len(sAddress) <> 6) Then
+    Main.WriteDebugLog(("[CUL] FS20 address has invalid format '" & sAddress & "' we need 3 bytes!"))
+    Return
+  Endif
+
+  aParams = Split(sCmd, " ")
+  '--- for example ON, OFF
+  If aParams.Count = 1 Then
+    sCommand = CommandtoFS20(aParams[0])
+    If Len(sCommand) = 0 Then
+      Main.WriteDebugLog(("[CUL] Only ON, OFF and DIM are supported in this version!"))
+      Return
+    Endif
+  '--- for example DIM 1
+  Else If aParams.Count = 2 Then
+    If UCase(aParams[0]) = "DIM" Then
+      sCommand = ConvertFS20Dim(aParams[1])
+    Else
+      Main.WriteDebugLog(("[CUL] Invalid command format!"))
+      Return
+    Endif
+  Endif
+
+  ' --- set extended bit ---
+  ' IF bAck THEN bCommand = bCommand OR &H20
+
+  sPacket = "F" & sAddress & sCommand
+  QueueCommand(sPacket)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(sPacket As String)
+
+  ' add command to queue
+  cQueue.Add(sPacket & "\r\n", Rnd)
+
+  ' if interface is not busy process it
+  If bCULBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
+
+  Dim sPacket As String
+
+  For Each sPacket In cQueue
+    WriteCommand(sPacket, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' initialize interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC FUNCTION Init()
+Public Function Init()
 
-  SendCommand("X21")
-  IF bCULDebug THEN Main.WriteRFXDebugLog("[CUL] > X21\n")
+  ' define timer for CUL interface busy
+  tCULBusy = New Timer As "tCULBusy"
+  tCULBusy.Stop
 
-END
+  ' define timer for CUL status LED
+  tCULLed = New Timer As "tCULLED"
+  tCULLed.Delay = 500
+  tCULLed.Stop
+
+  ' define timer for CUL reconnect
+  tCULConnect = New Timer As "tCULConnect"
+  tCULConnect.Delay = iConnectRetry
+  tCULConnect.Stop
+
+  ' init CUL
+  QueueCommand("X21")
+
+  ' set FHTid
+  If Len(sFHTid) And If sFHTid <> "0000" Then
+    QueueCommand("T01" & sFHTid)
+    If bCULDebug Then
+      Main.WriteRFXDebugLog("[CUL] Setting FHTid to '" & sFHTid & "' (" & HexToDec(sFHTid) & ")\n")
+    Endif
+  Else
+    If bCULDebug Then Main.WriteRFXDebugLog("[CUL] No FHTid set, value '" & sFHTid & "' is not valid!\n")
+  Endif
+
+  ' get version
+  QueueCommand("V")
+
+  ParseDump()
+
+End
+
+' just here for development/debugging
+Public Sub ParseDump()
+
+  Dim hFile As File
+  Dim sLine As String
+
+  Try hFile = Open "/home/ron/FHT.txt" For Input
+  If Error Then Return
+
+  While Not Eof(hFile)
+    Line Input #hFile, sLine
+    If Len(sLine) > 5 Then Simulate(sLine)
+  Wend
+
+End
+
+Private Sub ConvertFS20Dim(iLevel As Integer) As String
+
+  Return Hex(CInt((iLevel / 6.5) + 1), 2) ' cut 1-99 down to 16 steps
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' initialize interface
+' send string to CUL interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC FUNCTION GetVersion()
+Public Sub WriteCommand(sBuffer As String, sKey As String)
 
-  SendCommand("V")
-  IF bCULDebug THEN Main.WriteRFXDebugLog("[CUL] > V\n")
+  Dim bByte As Byte
+  Dim iCnt As Integer
 
-END
+  Main.ControlLed("CUL", "On")
+  If Main.bServer Then tCULLed.Start
+
+  If sInterface = "tcp" Then
+    ' send the message to the tcp stream
+    Try Write #hCUL, sBuffer, Len(sBuffer)
+    If Error Then Main.WriteRFXDebugLog(("[CUL] Unable to write to TCP port! -> ") & Error.Text)
+  Else
+    ' send the message to the serial port
+    Try Write #hCULSer, sBuffer, Len(sBuffer)
+    If Error Then Main.WriteRFXDebugLog(("[CUL] Unable to write to serial port! -> ") & Error.Text)
+  Endif
+  If bCULDebug Then Main.WriteRFXDebugLog("[CUL] > " & Mid(sBuffer, 1, Len(sBuffer) - 2) & "\n")
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  tCULBusy.Delay = 100 ' 100mS
+  If bCULBusy = False Then bCULBusy = True
+  tCULBusy.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' cul interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tCULBusy_Timer()
+
+  bCULBusy = False
+  tCULBusy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If bCULDebug Then Main.WriteDebugLog(("[CUL] Sending next command from Queue (count = " & cQueue.Count & ")"))
+    DoQueue()
+  Endif
+
+End
+
+Private Sub CommandtoFS20(sCmd As String) As String
+
+  Select UCase(sCmd)
+    Case "OFF"
+      Return "00"
+    Case "ON"
+      Return "11"
+    Default
+      Return ""
+  End Select
+
+  ' CONST FS20_TOGGLE AS Byte = &H12
+  ' CONST FS20_DIMUP AS Byte = &H13
+  ' CONST FS20_DIMDOWN AS Byte = &H14
+  ' CONST FS20_DIMSWITCH AS Byte = &H15
+  ' CONST FS20_TIMER AS Byte = &H16
+  ' CONST FS20_SENDSTATE AS Byte = &H17
+  ' CONST FS20_OFFFORTIMER AS Byte = &H18
+  ' CONST FS20_ONFORTIMER AS Byte = &H19
+  ' CONST FS20_ONOLDFORTIMER AS Byte = &H1A
+  ' CONST FS20_RESET AS Byte = &H1B
+  ' CONST FS20_RAMPONTIME AS Byte = &H1C
+  ' CONST FS20_RAMPOFFTIME AS Byte = &H1D
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' inject packet into parser.
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC SUB Simulate(sPacket AS String)
+Public Sub Simulate(sPacket As String)
 
-  DIM iCnt AS Integer
+  Dim iCnt As Integer
 
-  bFirstByte = TRUE
-  IF bCULDebug THEN Main.WriteRFXDebugLog(("[CUL] CUL receiver Simulate String: ") & sPacket & "\n")
+  bSimulate = True
+  bFirstByte = True
+  If bCULDebug Then Main.WriteRFXDebugLog(("[CUL] CUL receiver Simulate String: ") & sPacket & "\n")
 
-  FOR iCnt = 1 TO Len(sPacket)
+  For iCnt = 1 To Len(sPacket)
     ProcessReceivedChar(Asc(Mid(sPacket, iCnt, 1)))
-  NEXT
+  Next
+  ProcessReceivedChar(&HD)
   ProcessReceivedChar(&HA)
-  bSimulate = FALSE
+  bSimulate = False
 
-END SUB
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' send a command to the interface
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC FUNCTION SendCommand(sBuffer AS String)
+End Sub
 
-  IF sInterface = "tcp" THEN
-    ' send the message to the tcp stream
-    TRY WRITE #hCUL, sBuffer
-    IF ERROR THEN Main.WriteRFXDebugLog(("[CUL] Unable to write to TCP port! -> ") & Error.Text)
-  ELSE
-    ' send the message to the serial port
-    TRY WRITE #hCULSer, sBuffer
-    IF ERROR THEN Main.WriteRFXDebugLog(("[CUL] Unable to write to serial port! -> ") & Error.Text)
-  ENDIF
+Private Sub ProcessReceivedChar(bTemp As Byte)
 
-END
-
-PRIVATE SUB ProcessReceivedChar(bTemp AS Byte)
-
-  IF bFirstByte = TRUE THEN
-    bFirstByte = FALSE
+  If bFirstByte = True Then
+    bFirstByte = False
     iByteCount = 0
-    IF bCULDebug THEN Main.WriteRFXDebugLog("[CUL] < ", 0)
-  END IF
+    If bCULDebug Then Main.WriteRFXDebugLog("[CUL] < ", 0)
+  Endif
 
-  ' IF bCULDebug THEN Main.WriteRFXDebugLog(Hex(bTemp, 2), 1)
   Main.ControlLed("CUL", "On")
 
-  RecBuf[iByteCount] = bTemp
-  IF bTemp = &HA THEN
-    bMessage = TRUE
-  ELSE
-    IF bCULDebug THEN Main.WriteRFXDebugLog(Chr(bTemp), 1)
-    INC iByteCount
-  ENDIF
+  Try RecBuf[iByteCount] = bTemp
+  If Error Then Return
 
-  IF bMessage THEN
-    Display_Message()
-  END IF
+  If bTemp = &HA Then
+    iByteCount -= 2 ' do not count \r\n
+    bMessage = True
+  Else
+    If bCULDebug And If (bTemp <> &HD) Then Main.WriteRFXDebugLog(Chr(bTemp), 1)
+    Inc iByteCount
+  Endif
 
-END
+  If bMessage Then Display_Message()
 
-PRIVATE SUB Display_Message()
+End
 
-  DIM iDeviceId, iCnt AS Integer
-  DIM sHouseCode, sAddress, sCmd, sValue, sEMType, sEMCumulValue, sEMPeakValue, sMsgCounter, sELVAddress, sCde, sVal, sId, sSval, sFv AS String
-  DIM aEMType AS String[] = ["", "EM1000-S", "EM1000-EM", "EM1000-GZ"]
-  DIM aFHTc2m AS String[] = ["auto", "manual", "holiday", "holiday-short"]
+Private Sub Display_Message()
 
-  DIM bConfirm AS Boolean
+  Dim iDeviceId, iCnt, iCmd, iDur, iI, iJ, iRSSI As Integer
+  Dim sHouseCode, sAddress, sValue, sValue2, sCmd, sEMType, sEMCumulValue, sEMPeakValue, sMsgCounter, sBatt, sVal, sId, sSval, sFv As String
+  Dim sWarn, sLowTemp, sSensor, sWindow As String
+  Dim aEMType As String[] = ["EM1000", "EM1000-S", "EM1000-EM", "EM1000-GZ"]
+  Dim aFHTc2m As String[] = ["Auto", "Manual", "Holiday", "Holiday-Short"]
+  Dim bConfirm As Boolean
 
-  bMessage = FALSE
-  bFirstByte = TRUE
+  bMessage = False
+  bFirstByte = True
 
-  IF bCULDebug THEN Main.WriteRFXDebugLog("\n", 1)
+  If bCULDebug Then Main.WriteRFXDebugLog("\n", 1)
 
-  SELECT CASE Chr(RecBuf[0])
-    CASE "F"
+  Select Case Chr(RecBuf[0])
+    Case "F" ' FS20 message
       ' F <Hex>
-      ' FS20 message. <Hex> is a hex string with the following format:
+      ' <Hex> is a hex string with the following format:
       ' hhhhaacc or hhhhaaccee, where
       ' hhhh is the FS20 housecode
       ' aa is the FS20 device address
       ' cc is the FS20 command
       ' ee is the FS20 timespec. Note that cc must have the extension bit set.
       ' Example: F12340111
-      ' find device id
+
+      ' check for valid packet size
+      If iByteCount < 9 Or If iByteCount > 12 Then
+        If bCULDebug Then Main.WriteDebugLog(("[CUL] FS20 message received with invalid length of " & iByteCount & " bytes!"))
+        Return
+      Endif
+
       sHouseCode = Chr(RecBuf[1]) & Chr(RecBuf[2]) & Chr(RecBuf[3]) & Chr(RecBuf[4])
       sAddress = Chr(RecBuf[5]) & Chr(RecBuf[6])
-      sELVAddress = Hex2Four(sHouseCode & sAddress)
-      sCmd = Chr(RecBuf[7]) & Chr(RecBuf[8])
+      iCmd = Val("&H" & Chr(RecBuf[7]) & Chr(RecBuf[8]))
 
-      SELECT CASE Val(sCmd)
-        CASE FS20_OFF
+      ' signal
+      If iByteCount > 11 Then
+        iRSSI = Val("&H" & Chr(RecBuf[11]) & Chr(RecBuf[12]))
+      Else
+        iRSSI = Val("&H" & Chr(RecBuf[9]) & Chr(RecBuf[10]))
+      Endif
+
+      ' calculate duration if extension bit is set
+      If (iCmd And &H20) Then
+        iDur = Val("&H" & Chr(RecBuf[9]) & Chr(RecBuf[10]))
+        iI = (iDur And &HF0) / 16
+        iJ = (iDur And &HF)
+        iDur = (iI ^ 2) * iJ * 0.25
+
+        ' calculate cmd
+        iCmd = iCmd Xor &H20
+      Endif
+
+      ' test if cmd value is known
+      Try sVal = sFS20Values[iCmd]
+      If Not Error Then
+        If bCULDebug Then Main.WriteDebugLog(("[CUL] FS20 message received with address '") & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and command '" & sVal & "'" & IIf(iDur, " duration " & iDur, "") & IIf(iRSSI, " RSSI: " & iRSSI, ""))
+        ' move some values around if needed
+        If iCmd < 18 Then ' Off, Dim, On
+          sValue = sVal
+          sValue2 = " "
+        Else If iCmd = 24 ' Off-For-Timer
           sValue = "Off"
-        CASE FS20_ON
+          sValue2 = sVal
+        Else If iCmd = 25 ' On-For-Timer
           sValue = "On"
-        CASE FS20_DIM1, FS20_DIM2, FS20_DIM3, FS20_DIM4, FS20_DIM5, FS20_DIM6, FS20_DIM7, FS20_DIM8, FS20_DIM9, FS20_DIM10, FS20_DIM11, FS20_DIM12, FS20_DIM13, FS20_DIM14, FS20_DIM15, FS20_DIM16
-          sValue = "Dim " & Format(100 / Val(sCmd), "#")
-        CASE FS20_DIMUP
-          sValue = "DimUp"
-        CASE FS20_DIMDOWN
-          sValue = "DimDown"
-        CASE ELSE
-          sValue = "??"
-      END SELECT
+          sValue2 = sVal
+        Else
+          sValue = ""
+          sValue2 = sVal
+        Endif
+        ' find device id
+        iDeviceId = Devices.Find(sHouseCode & sAddress, Devices.FindInterface("CUL Interface"), "FS20")
+        If iDeviceId Then Devices.ValueUpdate(iDeviceId, sValue, sValue2, "", "")
+      Else
+        If bCULDebug Then Main.WriteDebugLog(("[CUL] FS20 message received with address '") & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and unknown/invalid command '" & Hex(iCmd) & "'")
+      Endif
+    Case "T" ' FHT messages
+      ' check for valid packet size
+      If iByteCount < 9 Or If iByteCount > 13 Then
+        If bCULDebug Then Main.WriteDebugLog(("[CUL] FHT message received with invalid length of " & iByteCount & " bytes!"))
+        Return
+      Endif
 
-      IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FS20 message received with address: ") & sHouseCode & sAddress & " (" & sELVAddress & (") command: ") & sValue)
-
-      iDeviceId = Devices.Find(sHouseCode & sAddress, Devices.FindInterface("CUL Interface"), "FS20")
-      ' update value
-      IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
-
-    CASE "T"
-      ' T <Hex>
-      ' FHT message.
-      ' ThhhhNNNNNN
       sAddress = Chr(RecBuf[1]) & Chr(RecBuf[2]) & Chr(RecBuf[3]) & Chr(RecBuf[4]) & Chr(RecBuf[5]) & Chr(RecBuf[6])
-      sCde = Chr(RecBuf[7]) & Chr(RecBuf[8])
-      sCmd = FHTCode(sCde)
+      iCmd = Val("&H" & Chr(RecBuf[7]) & Chr(RecBuf[8]))
+      If iByteCount = 10 Then ' must be FHT FTK sensor
+        ' T <Hex>
+        ' <Hex> is a hex string with the following format:
+        ' ccccccxx
+        ' where cccccc being the id of the sensor in hex
+        ' xx being the current status like 'open,close,sync,test,battlow'
+        Select Case iCmd
+          Case &H02, &H82
+            sValue = "Closed"
+            sBatt = "Ok"
+          Case &H01, &H81
+            sValue = "Open"
+            sBatt = "Ok"
+          Case &H11, &H91
+            sValue = "Open"
+            sBatt = "Low"
+          Case &H12, &H92
+            sValue = "Closed"
+            sBatt = "Low"
+          Case &H0C
+            sValue2 = "Sync:Syncing"
+          Case &H0F
+            sValue2 = "Test:Success"
+        End Select
 
-      IF iByteCount > 9 THEN
-        sVal = Chr(RecBuf[9]) & Chr(RecBuf[10])
-      ELSE IF iByteCount < 9 THEN
-        sCmd = "FHT short message"
-      ELSE IF iByteCount > 11 THEN
-        ' signal
-      ENDIF
+        If bCULDebug Then Main.WriteDebugLog(("[CUL] FHT TFK message received with address '") & sHouseCode & sAddress & "', status '" & IIf(Len(sValue2), sValue2, sValue) & "' and battery level '" & sBatt & "'")
+        ' find device id
+        iDeviceId = Devices.Find(sHouseCode & sAddress, Devices.FindInterface("CUL Interface"), "FHTTFK")
+        If iDeviceId Then
+          ' update values
+          Devices.ValueUpdate(iDeviceId, sValue, sValue2, "", "")
+          ' store battery status
+          If (Len(sBatt) > 1) Then Devices.Battery(iDeviceId, sBatt)
+        Endif
+      Else ' FHT80 message
+        ' T15157D671216
+        ' T15177E7712FA
+        ' T5A334369001A
+        ' T <Hex>
+        ' <Hex> is a hex string with the following format:
+        ' Thhhhccnnvvxx
+        ' hhhh = address
+        ' cc = command
+        ' nn = report value / id
+        ' vv = value
+        ' xx = rssi
+        sAddress = Chr(RecBuf[1]) & Chr(RecBuf[2]) & Chr(RecBuf[3]) & Chr(RecBuf[4])
+        iCmd = Val("&H" & Chr(RecBuf[5]) & Chr(RecBuf[6]))
+        sCmd = FHTCode(iCmd)
 
-      IF NOT Len(sVal) OR IF sCmd = "report1" OR IF sCmd = "report2" THEN bConfirm = TRUE
+        If iByteCount > 9 Then
+          sVal = Val("&H" & (Chr(RecBuf[9]) & Chr(RecBuf[10])))
+        Else If iByteCount < 9 Then
+          sCmd = "FHT short message"
+          sVal = ""
+        Endif
 
-      sVal = Val("&H" & sVal)
+        If iByteCount > 11 Then
+          ' rssi
+          iRSSI = Val("&H" & Chr(RecBuf[11]) & Chr(RecBuf[12]))
+        Endif
 
-      IF InStr(sCmd, "-from") OR IF InStr(sCmd, "-to") THEN
-        sVal = Format(Val(sVal) / 6, "0#") & ":" & Format((Val(sVal) MOD 6) * 10, "0#")
-      ELSE IF sCmd = "mode"
-        sVal = aFHTc2m[sVal]
-      ELSE IF InStr(sCmd, "actuator")
+        If sCmd = "Report1" Or If sCmd = "Report2" Then
+          sVal = Val("&H" & (Chr(RecBuf[7]) & Chr(RecBuf[8])))
+          bConfirm = True
+        Endif
 
-        sId = Chr(RecBuf[6])
-        sSval = Chr(RecBuf[7]) & Chr(RecBuf[8])
-        sFv = 100 * Val(sVal) / 255 + 0.5
-PRINT sId
-PRINT sSval
-PRINT sFv
-  IF sSval = "A0" OR IF sSval = "B0" THEN
-    sVal = sSval ' sync in the summer
-  ELSE IF Right(sSval, 1) = "0" THEN
-    sVal = "syncnow"
-  ELSE IF Right(sSval, 1) = "1" THEN
-    sVal = "99%" ' FHT set to 30.5, FHT80B=="ON"
-  ELSE IF Right(sSval, 1) = "2" THEN
-    sVal = "0%" ' FHT set to 5.5
-  ELSE IF Right(sSval, 1) = "6" THEN
-    sVal = sFv
-  ELSE IF Right(sSval, 1) = "8" THEN
-    sVal = "offset: " & sFv
-  ELSE IF Right(sSval, 1) = "A" THEN
-    sVal = "lime-protection"
-  ELSE IF Right(sSval, 1) = "C" THEN
-    sVal = "synctime: " & (Val(sVal) / 2) - 1
-  ELSE IF Right(sSval, 1) = "E" THEN
-    sVal = "test"
-  ELSE IF Right(sSval, 1) = "F" THEN
-    sVal = "pair"
-  ELSE
-    sVal = "unknown"
-  ENDIF
-          '  If(preg_match("/[AB]0/i", $sval)){ $val  = $fv; }   # 
-          ' elseif(preg_match("/.0/", $sval)){ $val  = "syncnow"; }
-          ' elseif(preg_match("/.1/", $sval)){ $val  = "99%"; } # FHT set to 30.5, FHT80B=="ON"
-          ' elseif(preg_match("/.2/", $sval)){ $val  = "0%"; }  # FHT set to  5.5
-          ' elseif(preg_match("/.6/", $sval)){ $val  = "$fv"; }
-          ' elseif(preg_match("/.8/", $sval)){ $val  = "offset: $fv"; }
-          ' elseif(preg_match("/.A/", $sval)){ $val  = "lime-protection"; }
-          ' elseif(preg_match("/.C/", $sval)){ $val  = sprintf("synctime: %d", int($val/2)-1); }
-          ' elseif(preg_match("/.E/", $sval)){ $val  = "test"; }
-          ' elseif(preg_match("/.F/", $sval)){ $val  = "pair"; }
-          ' ELSE { $val  = "unknown_$sval: $fv"; }
-          ' 
-          ' $pos = strpos($val, "%");
-          ' IF (!($pos == = FALSE)){
-          ' IF ($id == "0"){
-          '      SetValue($varids[ 'Position']['id'],$val);
-          '      } ELSE {
-          '         $pid == getVid( 'Position'.$id,IPS_GetParent($varids['ID']['id']));
-          '     IF (!$pid == FALSE){
-          '        SetValue($pid, $val);
-          '     }
-          '   }
-          ' }
-        ELSE IF sCmd = "TFK"
-          sVal = Chr(RecBuf[7]) & Chr(RecBuf[8])
-          sVal = FHTTKCode(sVal)
-          IF iByteCount > 9 THEN
-            'signal
-          ENDIF
-      ENDIF
+        If InStr(sCmd, "-From") Or If InStr(sCmd, "-To") Then ' time format
+          sVal = Format(Val(sVal) / 6, "0#") & ":" & Format((Val(sVal) Mod 6) * 10, "0#")
+        Else If sCmd = "Mode" ' auto, manual, holiday, holiday-short
+          sVal = aFHTc2m[sVal]
+        Else If InStr(sCmd, "-Temp")
+          sVal = sVal / 2
+          sVal = Format(sVal, "#.0")
+        Else If sCmd = "Lowtemp-Offset"
+          sVal = Format(sVal, "#.0")
+        Else If InStr(sCmd, "Actuator")
+          sSval = Chr(RecBuf[7]) & Chr(RecBuf[8])
+          sFv = Format((100 * Val(sVal) / 255), "#")
+          sId = Chr(RecBuf[8])
+          If sSval = "A0" Or If sSval = "B0" Then
+            sVal = sFv ' sync in the summer
+          Else If Right(sSval, 1) = "0" Then
+            sVal = "SyncNow"
+          Else If Right(sSval, 1) = "1" Then
+            sVal = "99%" ' FHT set to 30.5, FHT80B="ON"
+          Else If Right(sSval, 1) = "2" Then
+            sVal = "0%" ' FHT set to 5.5
+          Else If Right(sSval, 1) = "6" Then
+            sVal = sFv
+          Else If Right(sSval, 1) = "8" Then
+            sVal = "Offset: " & sFv
+          Else If sSval = "2A" Or If sSval = "3A" Then
+            sVal = "Lime-Protection"
+          Else If sSval = "AA" Or If sSval = "BA" Then
+            sVal = sFv ' lime protection bug
+          Else If Right(sSval, 1) = "C" Then
+            sVal = Val(sVal) / 2 - 1.5
+            sVal = "SyncTime: " & Str(sVal)
+          Else If Right(sSval, 1) = "E" Then
+            sVal = "Test"
+          Else If Right(sSval, 1) = "F" Then
+            sVal = "Pair"
+          Else
+            sVal = "Unknown"
+          Endif
 
-      IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FHT message received with address: ") & sAddress & (" command: ") & sCmd & " " & sVal)
-
-    CASE "E"
+          If InStr(sVal, "%") And If sId = 0 Then
+            If bCULDebug Then Main.WriteDebugLog(("[CUL] Position " & sId & " " & sVal))
+          Endif
+        Else If sCmd = "Measured-Low"
+          cLowTemps[sAddress] = sVal
+        Else If sCmd = "Measured-High"
+          Try sLowTemp = cLowTemps[sAddress]
+          If Not Error Then
+            sVal = (sVal * 256) + sLowTemp
+            sVal /= 10
+            sCmd = "Measured-Temp"
+          Endif
+        Else If sCmd = "Warnings"
+          If (sVal And 1) Then
+            sWarn = "Battery low"
+            sBatt = "Low"
+          Endif
+          If (sVal And 2) Then
+            If sWarn Then sWarn &= "; "
+            sWarn &= "Temp too low"
+            sLowTemp = "Warn"
+          Endif
+          If (sVal And 32) Then
+            If sWarn Then sWarn &= "; "
+            sWarn &= "Window open"
+            sWindow = "Open"
+          Endif
+          If (sVal And 16) Then
+            If sWarn Then sWarn &= "; "
+            sWarn &= "Window sensor fault"
+            sSensor = "Fault"
+          Endif
+          ' default value if not set
+          If Not Len(sBatt) Then sBatt = "Ok"
+          If Not Len(sLowTemp) Then sLowTemp = "Ok"
+          If Not Len(sWindow) Then sWindow = "Closed"
+          If Not Len(sSensor) Then sSensor = "Ok"
+          If Not Len(sWarn) Then sWarn = "None"
+        Endif
+        If bCULDebug Then
+          Main.WriteDebugLog(("[CUL] FHT message received with address '") & sAddress & "' (" & HexToDec(sAddress) & ") command '" & sCmd & "' (" & Hex(iCmd) & ") value '" & sVal & "'" & IIf(iRSSI, " RSSI: " & iRSSI, ""))
+          If sCmd = "Warnings" Then Main.WriteDebugLog(("[CUL] Warnings: " & sWarn & ", Battery: " & sBatt & " LowTemp: " & sLowTemp & " Sensor: " & sSensor & " Window: " & sWindow))
+        Endif
+        ' find device id
+        iDeviceId = Devices.Find(sAddress, Devices.FindInterface("CUL Interface"), "FHT80")
+        If iDeviceId Then
+          If sCmd = "Measured-Temp" Then
+            ' update values
+            Devices.ValueUpdate(iDeviceId, sVal, "", "", "")
+          Else If sCmd = "Desired-Temp" Then
+            Devices.ValueUpdate(iDeviceId, "", sVal, "", "")
+          Else If InStr(sCmd, "Actuator") Then
+            Devices.ValueUpdate(iDeviceId, "", "", sVal, "")
+          ' ELSE
+          '   Devices.ValueUpdate(iDeviceId, "", "", "", sVal)
+          Endif
+          ' store battery status
+          If (Len(sBatt) > 1) Then Devices.Battery(iDeviceId, sBatt)
+        Endif
+      Endif
+    Case "E"
       ' E <Hex>
       ' EM message. <Hex> is a hex string with the following format:
       ' Ettaacc111122223333
@@ -429,291 +790,296 @@ PRINT sFv
       sAddress = Chr(RecBuf[3]) & Chr(RecBuf[4])
       sEMCumulValue = Chr(RecBuf[7]) & Chr(RecBuf[8]) & Chr(RecBuf[9]) & Chr(RecBuf[10])
       sMsgCounter = Chr(RecBuf[5]) & Chr(RecBuf[6])
-      TRY sValue = Chr(RecBuf[11]) & Chr(RecBuf[12]) & Chr(RecBuf[13]) & Chr(RecBuf[14])
-      TRY sEMPeakValue = Chr(RecBuf[15]) & Chr(RecBuf[16]) & Chr(RecBuf[17]) & Chr(RecBuf[18])
+      Try sValue = Chr(RecBuf[11]) & Chr(RecBuf[12]) & Chr(RecBuf[13]) & Chr(RecBuf[14])
+      Try sEMPeakValue = Chr(RecBuf[15]) & Chr(RecBuf[16]) & Chr(RecBuf[17]) & Chr(RecBuf[18])
 
-      IF bCULDebug THEN Main.WriteDebugLog(("[CUL] EM message received for sensor type: ") & aEMType[Val(sEMType)] & " (" & sEMType & ")" & (" address: ") & sAddress & (" cumulated value: ") & sEMCumulValue & (" last value: ") & sValue & (" top value: ") & sEMPeakValue & (" msg counter: ") & Val("&H" & sMsgCounter))
-
-      iDeviceId = Devices.Find(sAddress, Devices.FindInterface("CUL Interface"), "EM1000")
+      If bCULDebug Then Main.WriteDebugLog(("[CUL] EM message received sensor '") & aEMType[Val(sEMType)] & "' [" & sEMType & "]" & " with address '" & sAddress & "' cumulated value: " & sEMCumulValue & (" last: ") & sValue & (" top: ") & sEMPeakValue & (" msg count: ") & Val("&H" & sMsgCounter))
+      iDeviceId = Devices.Find(sAddress, Devices.FindInterface("CUL Interface"), aEMType[Val(sEMType)])
       ' update value
-      IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sEMCumulValue, sValue, sEMPeakValue, "")
-
-    CASE ELSE
+      If iDeviceId Then Devices.ValueUpdate(iDeviceId, sEMCumulValue, sValue, sEMPeakValue, "")
+    Case "V"
+      If bCULDebug Then Main.WriteDebugLog(("[CUL] Version string received."))
+    Case Else
       Main.WriteDebugLog(("[CUL] Unknown/unsupported message format received!"))
-  END SELECT
+  End Select
   Main.ControlLed("CUL", "Off")
 
-' CATCH
-'   Main.WriteDebugLog(("ERROR: Parsing CUL data packet: ") & DisplayPacket(RecBuf) & " " & Error.Text & " at " & Error.Where)
+Catch
+   Main.WriteDebugLog(("[CUL] ERROR: " & Error.Text & " at " & Error.Where & " Parsing CUL data packet: ") & DisplayPacket(RecBuf))
 
-END
+End
+
+' convert doubles bytes hex to decimal
+Private Sub HexToDec(sHex As String) As String
+
+  Return Val("&H" & Mid(sHex, 1, 2)) & Val("&H" & Mid(sHex, 3, 2))
+
+End
 
 ' converting CUL Hex IDs into ELV-4-Ids
-PRIVATE SUB Hex2Four(sHex AS String) AS String
+Private Sub Hex2Four(sHex As String) As String
 
-  DIM iCnt AS Integer
-  DIM sELV AS String
+  Dim iCnt As Integer
+  Dim sELV As String
 
-  FOR iCnt = 1 TO Len(sHex)
+  For iCnt = 1 To Len(sHex)
     sELV &= Left(Str((Val("&H" & Mid(sHex, iCnt, 1)) / 4) + 1), 1)
-    sELV &= (Val("&H" & Mid(sHex, iCnt, 1)) MOD 4) + 1
-  NEXT
-  RETURN sELV
+    sELV &= (Val("&H" & Mid(sHex, iCnt, 1)) Mod 4) + 1
+  Next
+  Return sELV
 
-END
+End
 
-PRIVATE SUB FHTCode(sCode AS String) AS String
+Private Sub FHTCode(iCode As Byte) As String
 
-  SELECT CASE sCode
-    CASE "00"
-      RETURN "actuator"
-    CASE "01"
-      RETURN "actuator1"
-    CASE "02"
-      RETURN "actuator2"
-    CASE "03"
-      RETURN "actuator3"
-    CASE "04"
-      RETURN "actuator4"
-    CASE "05"
-      RETURN "actuator5"
-    CASE "06"
-      RETURN "actuator6"
-    CASE "07"
-      RETURN "actuator7"
-    CASE "08"
-      RETURN "actuator8"
-    CASE "14"
-      RETURN "mon-from1"
-    CASE "15"
-      RETURN "mon-to1"
-    CASE "16"
-      RETURN "mon-from2"
-    CASE "17"
-      RETURN "mon-to2"
-    CASE "18"
-      RETURN "tue-from1"
-    CASE "19"
-      RETURN "tue-to1"
-    CASE "1A"
-      RETURN "tue-from2"
-    CASE "1B"
-      RETURN "tue-to2"
-    CASE "1C"
-      RETURN "wed-from1"
-    CASE "1D"
-      RETURN "wed-to1"
-    CASE "1E"
-      RETURN "wed-from2"
-    CASE "1F"
-      RETURN "wed-to2"
-    CASE "20"
-      RETURN "thu-from1"
-    CASE "21"
-      RETURN "thu-to1"
-    CASE "22"
-      RETURN "thu-from2"
-    CASE "23"
-      RETURN "thu-to2"
-    CASE "24"
-      RETURN "fri-from1"
-    CASE "25"
-      RETURN "fri-to1"
-    CASE "26"
-      RETURN "fri-from2"
-    CASE "27"
-      RETURN "fri-to2"
-    CASE "28"
-      RETURN "sat-from1"
-    CASE "29"
-      RETURN "sat-to1"
-    CASE "2A"
-      RETURN "sat-from2"
-    CASE "2B"
-      RETURN "sat-to2"
-    CASE "2C"
-      RETURN "sun-from1"
-    CASE "2D"
-      RETURN "sun-to1"
-    CASE "2E"
-      RETURN "sun-from2"
-    CASE "2F"
-      RETURN "sun-to2"
-    CASE "3E"
-      RETURN "mode"
-    CASE "3F"
-      RETURN "holiday1"
-    CASE "40"
-      RETURN "holiday2"
-    CASE "41"
-      RETURN "desired-temp"
-    CASE "42"
-      RETURN "measured-low"
-    CASE "43"
-      RETURN "measured-high"
-    CASE "44"
-      RETURN "warnings"
-    CASE "45"
-      RETURN "manu-temp"
-    CASE "4B"
-      RETURN "ack"
-    CASE "53"
-      RETURN "can-xmit"
-    CASE "54"
-      RETURN "can-rcv"
-    CASE "60"
-      RETURN "year"
-    CASE "61"
-      RETURN "month"
-    CASE "62"
-      RETURN "day"
-    CASE "63"
-      RETURN "hour"
-    CASE "64"
-      RETURN "minute"
-    CASE "65"
-      RETURN "report1"
-    CASE "66"
-      RETURN "report2"
-    CASE "69"
-      RETURN "ack2"
-    CASE "7D"
-      RETURN "start-xmit"
-    CASE "7E"
-      RETURN "end-xmit"
-    CASE "82"
-      RETURN "day-temp"
-    CASE "84"
-      RETURN "night-temp"
-    CASE "85"
-      RETURN "lowtemp-offset"
-    CASE "8A"
-      RETURN "windowopen-temp"
-    CASE "B9"
-      RETURN "TFK"
-    CASE ELSE
-      RETURN "unknown"
-    END SELECT
+  Select Case iCode
+    Case &H00
+      Return "Actuator"
+    Case &H01
+      Return "Actuator1"
+    Case &H02
+      Return "Actuator2"
+    Case &H03
+      Return "Actuator3"
+    Case &H04
+      Return "Actuator4"
+    Case &H05
+      Return "Actuator5"
+    Case &H06
+      Return "Actuator6"
+    Case &H07
+      Return "Actuator7"
+    Case &H08
+      Return "Actuator8"
+    Case &H14
+      Return "Mon-From1"
+    Case &H15
+      Return "Mon-To1"
+    Case &H16
+      Return "Mon-From2"
+    Case &H17
+      Return "Mon-To2"
+    Case &H18
+      Return "Tue-From1"
+    Case &H19
+      Return "Tue-To1"
+    Case &H1A
+      Return "Tue-From2"
+    Case &H1B
+      Return "Tue-To2"
+    Case &H1C
+      Return "Wed-From1"
+    Case &H1D
+      Return "Wed-To1"
+    Case &H1E
+      Return "Wed-From2"
+    Case &H1F
+      Return "Wed-To2"
+    Case &H20
+      Return "Thu-From1"
+    Case &H21
+      Return "Thu-To1"
+    Case &H22
+      Return "Thu-From2"
+    Case &H23
+      Return "Thu-To2"
+    Case &H24
+      Return "Fri-From1"
+    Case &H25
+      Return "Fri-To1"
+    Case &H26
+      Return "Fri-From2"
+    Case &H27
+      Return "Fri-To2"
+    Case &H28
+      Return "Sat-From1"
+    Case &H29
+      Return "Sat-To1"
+    Case &H2A
+      Return "Sat-From2"
+    Case &H2B
+      Return "Sat-To2"
+    Case &H2C
+      Return "Sun-From1"
+    Case &H2D
+      Return "Sun-To1"
+    Case &H2E
+      Return "Sun-From2"
+    Case &H2F
+      Return "Sun-To2"
+    Case &H3E
+      Return "Mode"
+    Case &H3F
+      Return "Holiday1"
+    Case &H40
+      Return "Holiday2"
+    Case &H41
+      Return "Desired-Temp"
+    Case &H42
+      Return "Measured-Low"
+    Case &H43
+      Return "Measured-High"
+    Case &H44
+      Return "Warnings"
+    Case &H45
+      Return "Manu-Temp"
+    Case &H4B
+      Return "Ack"
+    Case &H53
+      Return "Can-Xmit"
+    Case &H54
+      Return "Can-Rcv"
+    Case &H60
+      Return "Year"
+    Case &H61
+      Return "Month"
+    Case &H62
+      Return "Day"
+    Case &H63
+      Return "Hour"
+    Case &H64
+      Return "Minute"
+    Case &H65
+      Return "Report1"
+    Case &H66
+      Return "Report2"
+    Case &H69
+      Return "Ack2"
+    Case &H7D
+      Return "Start-Xmit"
+    Case &H7E
+      Return "End-Xmit"
+    Case &H82
+      Return "Day-Temp"
+    Case &H84
+      Return "Night-Temp"
+    Case &H85
+      Return "Lowtemp-Offset"
+    Case &H8A
+      Return "WindowOpen-Temp"
+    Case Else
+      Return "Unknown"
+    End Select
 
-END
+End
 
-PRIVATE SUB FHTTKCode(bCode AS Byte) AS String
+Private Sub DisplayPacket(bBuf As Byte[]) As String
 
-  SELECT CASE bCode
-    CASE &H01, &H82
-      RETURN "Window:Closed"
-    CASE &H02, &H81
-      RETURN "Window:Open"
-    CASE &H11, &H91
-      RETURN "Window:Open, Low Batt"
-    CASE &H12
-      RETURN "Window:Closed, Low Batt"
-    CASE &H0C
-      RETURN "Sync:Syncing"
-    CASE &H0F
-      RETURN "Test:Success"
-    CASE ELSE
-      RETURN "unknown"
-  END SELECT
+  Dim sMsg As String
+  Dim iCnt As Integer
 
-END
+  For iCnt = 0 To iByteCount
+    sMsg &= Chr(bBuf[iCnt])
+  Next
+  Return sMsg
 
-PRIVATE SUB DisplayPacket(bBuf AS Byte[]) AS String
-
-  DIM sMsg AS String
-  DIM iCnt AS Integer
-
-  FOR iCnt = 0 TO iByteCount
-    sMsg &= Hex(bBuf[iCnt], 2)
-  NEXT
-  RETURN sMsg
-
-' CATCH
-'   Main.WriteDebugLog(("ERROR: Display data packet: ") & Error.Text & " at " & Error.Where)
-
-END
+End
 
 ' implement properties
-PRIVATE FUNCTION TCPHost_Read() AS String
+Private Function TCPHost_Read() As String
 
-  RETURN sTCPHost
+  Return sTCPHost
 
-END
+End
 
-PRIVATE SUB TCPHost_Write(Value AS String)
+Private Sub TCPHost_Write(Value As String)
 
   sTCPHost = Value
 
-END
+End
 
-PRIVATE FUNCTION TCPPort_Read() AS Integer
+Private Function TCPPort_Read() As Integer
 
-  RETURN iTCPPort
+  Return iTCPPort
 
-END
+End
 
-PRIVATE SUB TCPPort_Write(Value AS Integer)
+Private Sub TCPPort_Write(Value As Integer)
 
   iTCPPort = Value
 
-END
+End
 
-PRIVATE FUNCTION Interface_Read() AS String
+Private Function Interface_Read() As String
 
-  RETURN sInterface
+  Return sInterface
 
-END
+End
 
-PRIVATE SUB Interface_Write(Value AS String)
+Private Sub Interface_Write(Value As String)
 
   sInterface = Value
 
-END
+End
 
-PRIVATE FUNCTION Baud_Read() AS String
+Private Function Baud_Read() As String
 
-  RETURN sBaud
+  Return sBaud
 
-END
+End
 
-PRIVATE SUB Baud_Write(Value AS String)
+Private Sub Baud_Write(Value As String)
 
   sBaud = Value
 
-END
+End
 
-PRIVATE FUNCTION SerPort_Read() AS String
+Private Function SerPort_Read() As String
 
-  RETURN sSerPort
+  Return sSerPort
 
-END
+End
 
-PRIVATE SUB SerPort_Write(Value AS String)
+Private Sub SerPort_Write(Value As String)
 
   sSerPort = Value
 
-END
+End
 
-PRIVATE FUNCTION CULDebug_Read() AS Boolean
+Private Function CULDebug_Read() As Boolean
 
-  RETURN bCULDebug
+  Return bCULDebug
 
-END
+End
 
-PRIVATE SUB CULDebug_Write(Value AS Boolean)
+Private Sub CULDebug_Write(Value As Boolean)
 
   bCULDebug = Value
 
-END
+End
 
-PRIVATE FUNCTION Model_Read() AS Integer
+Private Function Model_Read() As Integer
 
-  RETURN iModel
+  Return iModel
 
-END
+End
 
-PRIVATE SUB Model_Write(Value AS Integer)
+Private Sub Model_Write(Value As Integer)
 
   iModel = Value
 
-END
+End
+
+Private Function AutoCreate_Read() As Boolean
+
+  Return bAutoCreate
+
+End
+
+Private Sub AutoCreate_Write(Value As Boolean)
+
+  bAutoCreate = Value
+
+End
+
+Private Function FHTid_Read() As String
+
+  Return sFHTid
+
+End
+
+Private Sub FHTid_Write(Value As String)
+
+  sFHTid = Value
+
+End

@@ -1,5 +1,4 @@
 ' Gambas class file
- ' Gambas class file
 
 ' Description:
 ' CRFXComRX.class
@@ -36,6 +35,9 @@ Public hRFXComRXSer As New SerialPort
 Public hRFXComRXRelay As New ServerSocket
 Public hRelayRXClient As Object[]
 Public hRelayRXSocket As New Socket
+Public tRFXComRXConnect As Timer
+Private iConnectRetry As Integer = 0 ' retries
+Private iConnectDelay As Integer = 60000 ' 1 minute
 
 Const SWVERS As Byte = &H20
 Const MODEHS As Byte = &H21
@@ -79,6 +81,24 @@ Public Sub RFXComRX_Ready()
 
   Main.WriteLog(("RFXCom receiver TCP socket connected."))
   ProtocolSetup("MODEVAR")
+
+  ' define timer for RFXComRX reconnect
+  tRFXComRXConnect = New Timer As "tRFXComRXConnect"
+  tRFXComRXConnect.Delay = iConnectRetry
+  tRFXComRXConnect.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tRFXComRXConnect_Timer()
+
+  If Not ConnectTCP() Then
+    Inc iConnectRetry
+    iConnectDelay *= iConnectRetry
+    tRFXComRXConnect.Delay = iConnectDelay
+  Endif
 
 End
 
@@ -152,20 +172,16 @@ End
 
 Public Sub RFXComRXRelay_Connection(sHost As String)
 
-  Dim sHostName As String
-
   hRelayRXSocket = New Socket As "RelayRXSocket"
   ' accept client
   If hRFXComRXRelay.Status <= Net.Inactive Then Return
-  If Main.bRFXComRXDebug Then Main.WriteDebugLog(("[RFXComRXRelay] Connection request from client: ") & sHost)
+  If Main.bRFXComRXDebug Then Main.WriteDebugLog(("[RFXComRXRelay] Connection request from client ") & sHost)
 
   hRelayRXSocket = hRFXComRXRelay.Accept()
   hRelayRXClient.Add(hRelayRXSocket)
-  If hRelayRXSocket.Status = Net.Connected Then
-    sHostName = DNS.ResolveHost(hRelayRXSocket.RemoteHost)
-    If Not sHostName Then sHostName = hRelayRXSocket.RemoteHost
-    Main.WriteLog(("RFXCom receiver Relay client connection from ") & sHostName & (" accepted."))
-  End If
+  If Main.bRFXComRXDebug Then
+    If hRelayRXSocket.Status = Net.Connected Then Main.WriteLog(("RFXCom receiver Relay client connection from ip address ") & hRelayRXSocket.RemoteHost & " (" & DNS.ResolveHost(hRelayRXSocket.RemoteHost) & (" ) accepted."))
+  Endif
 
 End
 
@@ -276,7 +292,7 @@ Public Function ProtocolSetup(sType As String)
   End Select
 
   Main.hRFXComRX.SendCommand(b)
-  If bRFXComRXDebug Then Main.WriteRFXDebugLog(sText & " => F0" & Hex(b[1]) & "\n")
+  If bRFXComRXDebug Then Main.WriteRFXDebugLog("[RFXComRX] " & sText & " => F0" & Hex(b[1]) & "\n")
 
 End
 
@@ -308,6 +324,7 @@ Public Function Disconnect() As Boolean
   Try hRFXComRX.Close
   Try hRFXComRXSer.Close
   Try hRFXComRXRelay.Close
+  Try tRFXComRXConnect.Stop
   Try hRelayRXClient.Remove
   If InStr(sInterface, "tcp") Then
     Main.WriteLog(("RFXCom receiver TCP socket close."))
@@ -351,6 +368,16 @@ Public Sub Simulate(sPacket As String)
   bSimulate = False
 
 End Sub
+
+Public Sub RFXComRX_Closed()
+
+  Main.WriteDebugLog(("[RFXComRX] ERROR: TCP socket closed by peer."))
+  If iConnectRetry < 6 Then
+    Main.WriteDebugLog(("[RFXComRX] Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", ".")))
+    tRFXComRXConnect.Start
+  Endif
+
+End
 
 Public Sub RFXComRX_Error()
 
@@ -456,6 +483,7 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   If bMessage Then
     Display_Message()
   End If
+  Main.ControlLed("RFXCom", "Off")
 
 End
 
@@ -627,7 +655,7 @@ Private Sub ProcessRFXSensor()
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(("Temp:") & CStr(sMeasuredValue) & "°C | " & CStr((sMeasuredValue) * 1.8 + 32) & "°F", True)
       sTemperature = sMeasuredValue
       ' find device id
-      iDeviceId = Devices.Find("RFXSENSOR[" & (RecBuf[0] * 256 + RecBuf[1]) & sType, Devices.FindInterface("RFXCom Receiver"), "RFXSensor Temp")
+      iDeviceId = Devices.Find("RFXSENSOR[" & (RecBuf[0] * 256 + RecBuf[1]) & sType, Devices.FindInterface("RFXCom Receiver"), "RFXSENSOR TEMP")
       ' update value
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -670,7 +698,7 @@ Private Sub ProcessRFXSensor()
         '
       End If
       ' find device id
-      iDeviceId = Devices.Find("RFXSENSOR[" & (RecBuf[0] * 256 + RecBuf[1]) & sType, Devices.FindInterface("RFXCom Receiver"), "RFXSensor Baro/Humid/Volt")
+      iDeviceId = Devices.Find("RFXSENSOR[" & (RecBuf[0] * 256 + RecBuf[1]) & sType, Devices.FindInterface("RFXCom Receiver"), "RFXSENSOR BARO")
       If iDeviceId Then
         Select Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(iDeviceId))
           Case "Barometric Sensor"
@@ -696,7 +724,7 @@ Private Sub ProcessRFXSensor()
         iSupplyVoltage = Lsr((RecBuf[2] * 256 + RecBuf[3]), 5)
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(("Supply Voltage:") & CStr(iSupplyVoltage / 100), True)
         ' find device id
-        iDeviceId = Devices.Find("RFXSENSOR[" & (RecBuf[0] * 256 + RecBuf[1]) & sType, Devices.FindInterface("RFXCom Receiver"), "RFXSensor Supply Voltage")
+        iDeviceId = Devices.Find("RFXSENSOR[" & (RecBuf[0] * 256 + RecBuf[1]) & sType, Devices.FindInterface("RFXCom Receiver"), "RFXSENSOR SUPPLY")
         ' update value
         If iDeviceId Then
           ' supply voltage
@@ -966,7 +994,7 @@ Private Sub ProcessAti()
   End Select
   If bRFXComRXDebug Then Main.WriteRFXDebugLog(" Command=" & sCommand, 1)
 
-  iDeviceId = Devices.Find("ATI[" & (Lsr(RecBuf[2], 4)) & "]C", Devices.FindInterface("RFXCom Receiver"), "ATI Remote Wonder")
+  iDeviceId = Devices.Find("ATI[" & (Lsr(RecBuf[2], 4)) & "]C", Devices.FindInterface("RFXCom Receiver"), "ATI REMOTE WONDER")
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, Str(sCommand), "", "", "")
 
 End
@@ -1148,7 +1176,7 @@ Private Sub ProcessAtiPlus()
   End Select
   If bRFXComRXDebug Then Main.WriteRFXDebugLog(" Command=" & sCommand, 1)
 
-  iDeviceId = Devices.Find("ATIPLUS[" & (Lsr(RecBuf[2], 4)) & "]C", Devices.FindInterface("RFXCom Receiver"), "ATI Wonder Plus")
+  iDeviceId = Devices.Find("ATIPLUS[" & (Lsr(RecBuf[2], 4)) & "]C", Devices.FindInterface("RFXCom Receiver"), "ATI WONDER PLUS")
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, Str(sCommand), "", "", "")
 
 End
@@ -1168,11 +1196,11 @@ Private Sub ProcessHE()
       Select Case RecBuf[3] And &H30
         Case &H0
           sText = "OFF"
-          iDeviceId = Devices.Find(sDevice & CStr((RecBuf[3] And &HF) + 1), Devices.FindInterface("RFXCom Receiver"), "HE/KAKU")
+          iDeviceId = Devices.Find(sDevice & CStr((RecBuf[3] And &HF) + 1), Devices.FindInterface("RFXCom Receiver"), "HE")
           If iDeviceId Then Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
         Case &H10
           sText = "ON"
-          iDeviceId = Devices.Find(sDevice & CStr((RecBuf[3] And &HF) + 1), Devices.FindInterface("RFXCom Receiver"), "HE/KAKU")
+          iDeviceId = Devices.Find(sDevice & CStr((RecBuf[3] And &HF) + 1), Devices.FindInterface("RFXCom Receiver"), "HE")
           If iDeviceId Then Devices.ValueUpdate(iDeviceId, "On", "", "", "")
         Case &H20
           sText = "GROUP OFF"
@@ -1220,7 +1248,7 @@ Private Sub ProcessRFXMeter()
         Main.WriteRFXDebugLog("; RFXPower: " & Str(sMeasuredValue / 100) & " kWh", True)
         Main.WriteRFXDebugLog("; RFXPower-Module: " & Str(sMeasuredValue / 1000) & " kWh", True)
       End If
-      iDeviceId = Devices.Find("RFXMETER[" & (RecBuf[0] * 256 + RecBuf[1]) & "]M", Devices.FindInterface("RFXCom Receiver"), "RFXMeter/Power")
+      iDeviceId = Devices.Find("RFXMETER[" & (RecBuf[0] * 256 + RecBuf[1]) & "]M", Devices.FindInterface("RFXCom Receiver"), "RFXMETER")
       If iDeviceId Then Devices.ValueUpdate(iDeviceId, CStr(sMeasuredValue), "", "", "")
     Case &H10
       sTemp = ("Interval: ")
@@ -1422,7 +1450,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum8() Then
       ' find device id
-      iDeviceId = Devices.Find("TEMP1[" & CStr((RecBuf[3]) * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp THR128/138,THC138")
+      iDeviceId = Devices.Find("TEMP1[" & CStr((RecBuf[3]) * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "TEMP1")
       ' update value & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1458,7 +1486,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If ChecksumW() Then
       ' find device id
-      iDeviceId = Devices.Find("TEMP2[" & CStr((RecBuf[3]) * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp THC238/268,THN122/132,THWR288,AW129/131")
+      iDeviceId = Devices.Find("TEMP2[" & CStr((RecBuf[3]) * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "TEMP2")
       ' update value & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1492,7 +1520,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If ChecksumW() Then
       ' find device id
-      iDeviceId = Devices.Find("TEMP3[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp THWR800")
+      iDeviceId = Devices.Find("TEMP3[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "TEMP3")
       ' update value & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1526,7 +1554,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If ChecksumW() Then
       ' find device id
-      iDeviceId = Devices.Find("TEMP4[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp RTHN318")
+      iDeviceId = Devices.Find("TEMP4[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "TEMP4")
       ' update value & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1564,7 +1592,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum8() Then
       ' find device id
-      iDeviceId = Devices.Find("TH1[" & CStr(RecBuf[3] * 256 + (Lsr(RecBuf[2], 4) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp/Hum THGN122/123,THGR122/228/238/268")
+      iDeviceId = Devices.Find("TH1[" & CStr(RecBuf[3] * 256 + (Lsr(RecBuf[2], 4) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "TH1")
       ' update values & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1602,7 +1630,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum8() Then
       ' find device id
-      iDeviceId = Devices.Find("TH2[" & CStr(RecBuf[3] * 256 + (Lsr(RecBuf[2], 4))) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp/Hum THGR810")
+      iDeviceId = Devices.Find("TH2[" & CStr(RecBuf[3] * 256 + (Lsr(RecBuf[2], 4))) & "]", Devices.FindInterface("RFXCom Receiver"), "TH2")
       ' update values & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1641,7 +1669,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum8() Then
       ' find device id
-      iDeviceId = Devices.Find("TH3[" & CStr(RecBuf[3] * 256 + (Lsr(RecBuf[2], 4))) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp/Hum RTGR328N")
+      iDeviceId = Devices.Find("TH3[" & CStr(RecBuf[3] * 256 + (Lsr(RecBuf[2], 4))) & "]", Devices.FindInterface("RFXCom Receiver"), "TH3")
       ' update values & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1680,7 +1708,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum8() Then
       ' find device id
-      iDeviceId = Devices.Find("TH4[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp/Hum THGR328")
+      iDeviceId = Devices.Find("TH4[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "TH4")
       ' update values & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1717,7 +1745,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = WrBattery()
     If Checksum8() Then
       ' find device id
-      iDeviceId = Devices.Find("TH5[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp/Hum WTGR800")
+      iDeviceId = Devices.Find("TH5[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "TH5")
       ' update values & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1755,7 +1783,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = WrBattery()
     If Checksum8() Then
       ' find device id
-      iDeviceId = Devices.Find("TH6[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp/Hum THGR918/228")
+      iDeviceId = Devices.Find("TH6[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "TH6")
       ' update values & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1795,7 +1823,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum10() Then
       ' find device id
-      iDeviceId = Devices.Find("THB1[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp/Hum/Baro BTHR918")
+      iDeviceId = Devices.Find("THB1[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "THB1")
       ' update values & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1836,7 +1864,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum10() Then
       ' find device id
-      iDeviceId = Devices.Find("THB2[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Temp/Hum/Baro BTHR918N,BTHR968")
+      iDeviceId = Devices.Find("THB2[" & CStr(RecBuf[3] * 256 + ((Lsr(RecBuf[2], 4)) And &H7)) & "]", Devices.FindInterface("RFXCom Receiver"), "THB2")
       ' update values & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1871,7 +1899,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum2() Then
       ' find device id
-      iDeviceId = Devices.Find("RAIN1[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Rain RGR126/682/918")
+      iDeviceId = Devices.Find("RAIN1[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "RAIN1")
       ' update values & battery status
       If iDeviceId Then
         ' rain rate mm/hr, total rain mm, flip count
@@ -1898,7 +1926,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If ChecksumR() Then
       ' find device id
-      iDeviceId = Devices.Find("RAIN2[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Rain PCR800")
+      iDeviceId = Devices.Find("RAIN2[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "RAIN2")
       ' update values & battery status
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -1933,7 +1961,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum9() Then
       ' find device id
-      iDeviceId = Devices.Find("WIND1[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Wind WTGR800")
+      iDeviceId = Devices.Find("WIND1[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "WIND1")
       ' update values & battery status
       If iDeviceId Then
         ' direction °, direction text, speed m/s, avg speed m/s
@@ -1963,7 +1991,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum9() Then
       ' find device id
-      iDeviceId = Devices.Find("WIND2[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Wind WGR800")
+      iDeviceId = Devices.Find("WIND2[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "WIND2")
       ' update values & battery status
       If iDeviceId Then
         ' direction °, direction text, speed m/s, avg speed m/s
@@ -1993,7 +2021,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = WrBattery()
     If Checksum9() Then
       ' find device id
-      iDeviceId = Devices.Find("WIND3[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Wind STR918,WGR918")
+      iDeviceId = Devices.Find("WIND3[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "WIND3")
       ' update values & battery status
       If iDeviceId Then
         ' direction °, direction text, speed m/s, avg speed m/s
@@ -2027,7 +2055,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If ChecksumW() Then
       ' find device id
-      iDeviceId = Devices.Find("UV1[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon UV UVN128,UV138")
+      iDeviceId = Devices.Find("UV1[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "UV1")
       ' update values & battery status
       If iDeviceId Then
         ' uv level, uv text
@@ -2061,7 +2089,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sBatt = BatteryIndication()
     If Checksum7() Then
       ' find device id
-      iDeviceId = Devices.Find("UV2[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon UV UVN800")
+      iDeviceId = Devices.Find("UV2[" & CStr(RecBuf[3] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "UV2")
       ' update values & battery status
       If iDeviceId Then
         ' uv level, uv text
@@ -2112,7 +2140,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sYy = CSingle(RecBuf[10] And &HF) * 10 + CSingle(Lsr(RecBuf[9], 4)) + 2000
     If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sDd & "-" & sMm & "-" & sYy, True)
     If Checksum11() Then
-      iDeviceId = Devices.Find("DT1[" & CStr(RecBuf[3] * 256 + (Lsr(RecBuf[2], 4))) & "]", Devices.FindInterface(" RFXCom Receiver "), " Oregon Date & Time RTGR328 ")
+      iDeviceId = Devices.Find("DT1[" & CStr(RecBuf[3] * 256 + (Lsr(RecBuf[2], 4))) & "]", Devices.FindInterface(" RFXCom Receiver "), "DT1")
       If iDeviceId Then
         ' hour:min:sec, date, weekday
         Devices.ValueUpdate(iDeviceId, CStr(Hr) & ":" & CStr(Mn) & ":" & CStr(Sc), sDd & "-" & sMm & "-" & sYy, sDay, "")
@@ -2139,7 +2167,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
           If bRFXComRXDebug Then Main.WriteRFXDebugLog(" Checksum error", True)
         Else If Lsr(RecBuf[1], 4)
           ' find device id
-          iDeviceId = Devices.Find("WEIGHT1[" & CStr(Lsr(RecBuf[1], 4)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Weight BRW101,BRW102")
+          iDeviceId = Devices.Find("WEIGHT1[" & CStr(Lsr(RecBuf[1], 4)) & "]", Devices.FindInterface("RFXCom Receiver"), "WEIGHT1")
           ' update values
           If iDeviceId Then
             If Main.sTemperature = "°C" Then
@@ -2168,7 +2196,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     sWeight = ((RecBuf[4] And &HF) * 4096) + (RecBuf[3] * 16) + (Lsr(RecBuf[2], 4))
     If bRFXComRXDebug Then Main.WriteRFXDebugLog(" Weight: " & CStr(sWeight) & " = " & Format(CStr(sWeight / 400.8), "#0.#") & " kg", True)
     ' find device id
-    iDeviceId = Devices.Find("WEIGHT2[" & CStr(Lsr(RecBuf[1], 4)) & "]", Devices.FindInterface("RFXCom Receiver"), "Oregon Weight GR101")
+    iDeviceId = Devices.Find("WEIGHT2[" & CStr(Lsr(RecBuf[1], 4)) & "]", Devices.FindInterface("RFXCom Receiver"), "WEIGHT2")
     ' update values
     If iDeviceId Then
       If Main.sTemperature = "°C" Then
@@ -2212,7 +2240,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     End If
     If ChecksumE() Then
       ' find device id
-      iDeviceId = Devices.Find("ELEC1[" & CStr(RecBuf[2] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "Cent-a-Meter")
+      iDeviceId = Devices.Find("ELEC1[" & CStr(RecBuf[2] * 256) & "]", Devices.FindInterface("RFXCom Receiver"), "ELEC1")
       ' update values & battery status
       If iDeviceId Then
         ' ct1 amp, ct2 amp, ct3 amp
@@ -2263,7 +2291,7 @@ Private Function ProcessOregon(RecBits As Byte) As Boolean
     End If
     If Checksum12() Then
       ' find device id
-      iDeviceId = Devices.Find("ELEC2[" & iAddr & "]", Devices.FindInterface("RFXCom Receiver"), "OWL CM119")
+      iDeviceId = Devices.Find("ELEC2[" & iAddr & "]", Devices.FindInterface("RFXCom Receiver"), "ELEC2")
       ' update values & battery status
       If iDeviceId Then
         ' power usage total in kWh and now in Watt
@@ -2679,7 +2707,7 @@ End
 
 Private Function ProcessX(RecBits As Byte) As Boolean
 
-  Dim sAddr, sAddr2, sValue, sValue2, sType, sName As String
+  Dim sAddr, sAddr2, sValue, sValue2, sType As String
   Dim iHsAddr, iDeviceId As Integer
   Dim bLowBatt, bUnknown As Boolean
 
@@ -2694,71 +2722,59 @@ Private Function ProcessX(RecBits As Byte) As Boolean
   Else If (RecBuf[0] = ((RecBuf[1] And &HF0) + (&HF - (RecBuf[1] And &HF)))) And ((RecBuf[2] Xor RecBuf[3]) = &HFF) Then
     ProcessX10Security()
   Else If ((RecBuf[2] Xor RecBuf[3]) = &HFF) Then
-    sAddr = Hex(RecBuf[0], 2) & Hex(RecBuf[1], 2) & Hex(RecBuf[4], 2) & "]S"
+    sAddr = "[" & Hex(RecBuf[0], 2) & Hex(RecBuf[1], 2) & Hex(RecBuf[4], 2) & "]S"
     sAddr2 = sAddr & " / " & (RecBuf[0] * 256 + RecBuf[1])
-    sType = "DWS["
+    sType = "DWS"
     Select Case RecBuf[2]
       Case &H44
-        sName = "Door/Window Sensor"
         sValue = "Open"
         sValue2 = "Tamper"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic door sensor Alert + Tamper"), True)
       Case &HC4
-        sName = "Door/Window Sensor"
         sValue = "Closed"
         sValue2 = "Tamper"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic door sensor Normal + Tamper)"), True)
       Case &H4
-        sName = "Door/Window Sensor"
         sValue = "Open"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic door sensor Alert"), True)
       Case &H5
         bLowBatt = True
-        sName = "Door/Window Sensor"
         sValue = "Open"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic door sensor Alert (battery low)"), True)
       Case &H84
-        sName = "Door/Window Sensor"
         sValue = "Closed"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic door sensor Normal"), True)
       Case &H85
         bLowBatt = True
-        sName = "Door/Window Sensor"
         sValue = "Closed"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic door sensor Normal (battery low)"), True)
       Case &H4C
-        sName = "Motion Sensor"
         sValue = "Motion"
         sValue2 = "Tamper"
-        sType = "MOTION["
+        sType = "MOTION"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic motion sensor Alert + Tamper"), True)
       Case &HCC
-        sName = "Motion Sensor"
         sValue = "No Motion"
         sValue2 = "Tamper"
-        sType = "MOTION["
+        sType = "MOTION"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic motion sensor Normal + Tamper)"), True)
       Case &HC
-        sName = "Motion Sensor"
         sValue = "Motion"
-        sType = "MOTION["
+        sType = "MOTION"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic motion sensor Alert"), True)
       Case &HD
         bLowBatt = True
-        sName = "Motion Sensor"
         sValue = "Motion"
-        sType = "MOTION["
+        sType = "MOTION"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic motion sensor Alert (battery low)"), True)
       Case &H8C
-        sName = "Motion Sensor"
         sValue = "No Motion"
-        sType = "MOTION["
+        sType = "MOTION"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic motion sensor Normal"), True)
       Case &H8D
         bLowBatt = True
-        sName = "Motion Sensor"
         sValue = "No Motion"
-        sType = "MOTION["
+        sType = "MOTION"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic motion sensor Normal (battery low)"), True)
       Case &HE0
         If RecBuf[0] = &HFF Then
@@ -2779,28 +2795,23 @@ Private Function ProcessX(RecBits As Byte) As Boolean
           bUnknown = True
         End If
       Case &H2
-        sType = "REMOTE["
-        sName = "Keyfob"
+        sType = "REMOTE"
         sValue = "Arm Away"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic keyfob ARM Away (max)"), True)
       Case &HE
-        sType = "REMOTE["
-        sName = "Keyfob"
+        sType = "REMOTE"
         sValue = "Arm Home"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic keyfob ARM Home (min)"), True)
       Case &H22
-        sType = "REMOTE["
-        sName = "Keyfob"
+        sType = "REMOTE"
         sValue = "Panic"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic keyfob Panic"), True)
       Case &H42
-        sType = "REMOTE["
-        sName = "Keyfob"
+        sType = "REMOTE"
         sValue = "Lights On"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic keyfob Lights On"), True)
       Case &H82
-        sType = "REMOTE["
-        sName = "Keyfob"
+        sType = "REMOTE"
         sValue = "Disarm"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic keyfob Disarm"), True)
       Case Else
@@ -2824,7 +2835,7 @@ Private Function ProcessX(RecBits As Byte) As Boolean
 
     If Not bUnknown Then
       If Not sValue2 Then sValue2 = "Secure"
-      iDeviceId = Devices.Find(sType & sAddr, Devices.FindInterface("RFXCom Receiver"), "Visonic " & sName)
+      iDeviceId = Devices.Find(sType & sAddr, Devices.FindInterface("RFXCom Receiver"), sType)
       If iDeviceId Then
         Devices.ValueUpdate(iDeviceId, sValue, sValue2, "", "")
         If bLowBatt Then
@@ -3013,72 +3024,61 @@ Private Sub ProcessX10Security()
   Dim sValue, sValue2, sType, sAddr, sAddr2 As String
   Dim bLowBatt As Boolean
 
-  sAddr = Hex(RecBuf[0], 2) & Hex(RecBuf[1], 2) & Hex(RecBuf[4], 2) & "]S"
+  sAddr = "[" & Hex(RecBuf[0], 2) & Hex(RecBuf[1], 2) & Hex(RecBuf[4], 2) & "]S"
   sAddr2 = sAddr & " / " & CStr(RecBuf[0] * 256 + RecBuf[1])
+  sType = "DWS"
   Select Case RecBuf[2]
     Case &H0
       sValue = "Open"
-      sType = "DWS["
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" DS10/90 Alert (max delay)"), True)
     Case &H1
       sValue = "Open"
-      sType = "DWS["
       bLowBatt = True
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" DS10/90 Alert (max delay, batt low)"), True)
     Case &H40
       sValue = "Open"
-      sType = "DWS["
       sValue2 = "Tamper"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" DS90 Alert + Tamper (max delay)"), True)
     Case &H44
       sValue = "Open"
-      sType = "DWS["
       sValue2 = "Tamper"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or DS90 Alert + Tamper"), True)
     Case &HC0
       sValue = "Closed"
-      sType = "DWS["
       sValue2 = "Tamper"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" DS90 Normal + Tamper (max delay)"), True)
     Case &HC4
       sValue = "Closed"
-      sType = "DWS["
       sValue2 = "Tamper"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or DS90 Normal + Tamper)"), True)
     Case &H4
       sValue = "Open"
-      sType = "DWS["
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or DS10/90 Alert "), True)
     Case &H5
       sValue = "Open"
-      sType = "DWS["
       bLowBatt = True
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or DS10/90 Alert (battery low)"), True)
     Case &H80
       sValue = "Closed"
-      sType = "DWS["
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" DS10/90 Normal (max delay)"), True)
     Case &H81
       sValue = "Closed"
-      sType = "DWS["
       bLowBatt = True
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" DS10/90 Normal (max delay, batt low)"), True)
     Case &H84
       sValue = "Closed"
-      sType = "DWS["
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or DS10/90 Normal"), True)
     Case &H85
       sValue = "Closed"
-      sType = "DWS["
       bLowBatt = True
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or DS10/90 Normal (battery low)"), True)
     Case &HC
       sValue = "Motion"
-      sType = "MOTION["
+      sType = "MOTION"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or MS10/20/90 Alert "), True)
     Case &H8C
       sValue = "No Motion"
-      sType = "MOTION["
+      sType = "MOTION"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or MS10/20/90 Normal"), True)
     Case &H20
       If bRFXComRXDebug Then Main.WriteRFXDebugLog((" MS20 Dark sensor"), True)
@@ -3086,21 +3086,21 @@ Private Sub ProcessX10Security()
     Case &H4C
       sValue = "Motion"
       sValue2 = "Tamper"
-      sType = "MOTION["
+      sType = "MOTION"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or MS90 Alert + Tamper"), True)
     Case &HCC
       sValue = "No Motion"
       sValue2 = "Tamper"
-      sType = "MOTION["
+      sType = "MOTION"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or MS90 Normal + Tamper"), True)
     Case &HD
       sValue = "Motion"
-      sType = "MOTION["
+      sType = "MOTION"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or MS90 Alert (battery low)"), True)
       bLowBatt = True
     Case &H8D
       sValue = "No Motion"
-      sType = "MOTION["
+      sType = "MOTION"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr2 & (" Visonic or MS90 Normal (battery low)"), True)
       bLowBatt = True
     Case &HE0
@@ -3110,13 +3110,13 @@ Private Sub ProcessX10Security()
         If bRFXComRXDebug Then Main.WriteRFXDebugLog((" Slave receiver jamming detected"), True)
       Else
         sValue = "Motion"
-        sType = "DM10["
+        sType = "DM10"
         sAddr = CStr(RecBuf[0] * 256 + RecBuf[1]) & "]GF"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" DM10 Motion"), True)
       End If
     Case &HF0
       sValue = "Dark"
-      sType = "DM10["
+      sType = "DM10"
       sAddr = CStr(RecBuf[0] * 256 + RecBuf[1]) & "]GF"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" DM10 Darkness detected"), True)
     Case &HF8
@@ -3126,64 +3126,64 @@ Private Sub ProcessX10Security()
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" Slave receiver end jamming detected", True)
       Else
         sValue = "Light"
-        sType = "DM10["
+        sType = "DM10"
         sAddr = CStr(RecBuf[0] * 256 + RecBuf[1]) & "]GF"
         If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" DM10 Light detected"), True)
       End If
     Case &H6
       sValue = "Arm Away"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" KR10/SH624 ARM Away (min)"), True)
     Case &H26
       sValue = "Panic"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" Visonic or KR10/Smoke Panic"), True)
     Case &H46
       sValue = "Lights On"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" KR10 Lights On"), True)
     Case &H86
       sValue = "Disarm"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" KR10 Disarm"), True)
     Case &HC6
       sValue = "Lights Off"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" KR10 Lights Off"), True)
     Case &H2
       sValue = "Arm Away"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" Visonic or SH624 ARM Away (max)"), True)
     Case &H3
       sValue = "Panic"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" SH624 Panic"), True)
     Case &HA
       sValue = "Arm Home"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" SH624 ARM Home (max)"), True)
     Case &HE
       sValue = "Arm Home"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" Visonic or SH624 ARM Home (min)"), True)
     Case &H22
       sValue = "Panic"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" SH624 Panic "), True)
     Case &H42
       sValue = "Lights On"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" Visonic or SH624 Lights On"), True)
     Case &H82
       sValue = "Disarm"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" Visonic or SH624 Disarm"), True)
     Case &HC2
       sValue = "Lights Off"
-      sType = "REMOTE["
+      sType = "REMOTE"
       If bRFXComRXDebug Then Main.WriteRFXDebugLog(" " & sType & sAddr & (" SH624 Lights Off"), True)
     Case Else
-      If bRFXComRXDebug Then Main.WriteRFXDebugLog(" Secur ??????", True)
+      If bRFXComRXDebug Then Main.WriteRFXDebugLog(" X10Security ?", True)
   End Select
 
   If bRFXComRXDebug Then
@@ -3202,7 +3202,7 @@ Private Sub ProcessX10Security()
 
   If Not sValue2 And sValue <> "Panic" Then sValue2 = "Secure"
 
-  iDeviceId = Devices.Find(sType & sAddr, Devices.FindInterface("RFXCom Receiver"), "X10 Security")
+  iDeviceId = Devices.Find(sType & sAddr, Devices.FindInterface("RFXCom Receiver"), sType)
   If iDeviceId Then
     Devices.ValueUpdate(iDeviceId, sValue, sValue2, "", "")
     If bLowBatt Then
@@ -3274,7 +3274,7 @@ Private Sub ProcessDigimax()
   Endif
 
   If Not bParityError Then
-    iDeviceId = Devices.Find("DIGIMAX[" & iAddr & "]", Devices.FindInterface("RFXCom Receiver"), "Digimax")
+    iDeviceId = Devices.Find("DIGIMAX[" & iAddr & "]", Devices.FindInterface("RFXCom Receiver"), "DIGIMAX")
     If iDeviceId Then
       If Main.sTemperature = "°C" Then
         ' temp °C, set temp °C, status

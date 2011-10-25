@@ -42,14 +42,14 @@ PUBLIC SUB SetDevice(sDeviceName AS String, sValue AS String) AS Boolean
       END IF
     CASE 3, 4, 5, 6, 8
       Main.WriteDebugLog(("[Devices] Error, read-only interface used for switching!"))
-    CASE 7 ' Heyu X10
-      IF Main.bDevicesDebug THEN Main.WriteDebugLog("[Devices] Heyu X10: " & sAddress & " " & sValue)
-      IF Main.bHeyuEnabled THEN
-        Heyu.SendCommand(sAddress, sValue)
+    CASE 7 ' X10Cmd
+      IF Main.bDevicesDebug THEN Main.WriteDebugLog("[Devices] X10Cmd: " & sAddress & " " & sValue)
+      IF Main.bX10CmdEnabled THEN
+        X10Cmd.SendCommand(sAddress, sValue)
         Devices.ValueUpdate(Find(sAddress, iInterface), sValue, "", "", "")
         sText = ("Switched ") & sDeviceName & " " & sValue
       ELSE
-        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because Heyu is disabled!"))
+        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because X10Cmd is disabled!"))
       END IF
     CASE 9 ' Weeder WTSSR
       IF Main.bDevicesDebug THEN Main.WriteDebugLog("[Devices] Weeder WTSSR: " & sAddress & " " & sValue)
@@ -210,6 +210,15 @@ PUBLIC SUB SetDevice(sDeviceName AS String, sValue AS String) AS Boolean
       ELSE
         Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because CUL interface is disabled!"))
       END IF
+    CASE 33 ' RFXCom xPL
+      IF Main.bDevicesDebug THEN Main.WriteDebugLog("[Devices] RFXCom xPL Interface: " & sAddress & " " & sValue)
+      IF Main.hRFXComxPL THEN
+        Main.hRFXComxPL.SendCommand(sAddress, sValue)
+        Devices.ValueUpdate(Find(sAddress, iInterface), sValue, "", "", "")
+        sText = ("Switched ") & sDeviceName & " " & sValue
+      ELSE
+        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because RFXCom xPL interface is disabled!"))
+      END IF
     CASE -1
       Main.WriteDebugLog(("[Devices] Interface for device '") & sDeviceName & ("' does not support Write!"))
       RETURN FALSE
@@ -223,6 +232,49 @@ PUBLIC SUB SetDevice(sDeviceName AS String, sValue AS String) AS Boolean
     IF iDeviceId AND IF FindLogSpeakForDevice(iDeviceId) THEN VoiceText.Speak(sText)
   END IF
   RETURN TRUE
+
+END
+
+PRIVATE SUB AddDeviceToContext(cContext AS Collection, rResult AS Result)
+
+  DIM rResultDev AS Result
+  DIM iCount AS Integer
+
+  cContext["Value"] = rResult!value
+  cContext["Value2"] = rResult!value2
+  cContext["Value3"] = rResult!value3
+  cContext["Value4"] = rResult!value4
+
+  rResultDev = Main.hDB.Exec("SELECT * FROM devices WHERE enabled IS TRUE ORDER BY name")
+
+  FOR iCount = 0 TO rResultDev.Max
+    cContext["Dev_" & rResultDev!id & "_Value"] = rResultDev!value
+    cContext["Dev_" & rResultDev!id & "_Value2"] = rResultDev!value2
+    cContext["Dev_" & rResultDev!id & "_Value3"] = rResultDev!value3
+    cContext["Dev_" & rResultDev!id & "_Value4"] = rResultDev!value4
+    rResultDev.MoveNext
+  NEXT
+
+END
+
+PUBLIC FUNCTION CorrectValue(sValue AS String, sFormula AS String, rResult AS Result) AS String
+
+  DIM sResult AS String
+  DIM cContext AS NEW Collection
+
+  IF Len(sFormula) > 1 THEN
+    ' insert devices values
+    AddDeviceToContext(cContext, rResult)
+    ' evaluate the formula
+    TRY sResult = Eval(Replace(sFormula, "\n", " "), cContext)
+    IF ERROR THEN sResult = ("Error: ") & Error.Text
+    RETURN sResult
+  ELSE
+    RETURN sValue
+  ENDIF
+
+CATCH
+  RETURN Error.Text
 
 END
 
@@ -677,6 +729,8 @@ PUBLIC SUB FindDevice(rDevice AS Result, sAddress AS String, iInterface AS Integ
 
   DIM rResult AS Result
 
+  IF NOT sDevice THEN sDevice = "Unknown"
+
   IF rDevice.Count > 1 THEN
     Main.WriteDebugLog(("[Devices] The following devices have the same address:"))
     FOR EACH rDevice
@@ -703,7 +757,11 @@ PUBLIC SUB FindDevice(rDevice AS Result, sAddress AS String, iInterface AS Integ
       ELSE
         Main.WriteDebugLog(("[Devices] Device with address '") & sAddress & ("' and interface '") & FindNameForInterface(iInterface) & ("' not found!"))
       END IF
-      RETURN 0
+      IF Main.bAutoDeviceCreate THEN
+        RETURN AutoCreateDevice(sAddress, iInterface, sDevice)
+      ELSE
+        RETURN 0
+      ENDIF
     ELSE
       IF Main.bDevicesDebug THEN
         IF sDevice THEN
@@ -909,5 +967,186 @@ END
 PUBLIC SUB EraseLog(iId AS Integer)
 
   TRY Main.hDB.Exec("DELETE FROM devices_log WHERE deviceid = &1", iId)
+
+END
+
+PRIVATE SUB FindUniqueName(sName AS String) AS String
+
+  DIM rResult AS Result
+  DIM iNo AS Integer
+
+  FOR iNo = 1 TO 50
+    TRY rResult = Main.hDB.Exec("SELECT * FROM devices WHERE name = &1", sName & iNo)
+    IF rResult.Count THEN
+      CONTINUE
+    ELSE
+      RETURN sName & iNo
+    ENDIF
+  NEXT
+
+END
+
+PUBLIC SUB AutoCreateDevice(sAddress AS String, iInterface AS Integer, sType AS String) AS Integer
+
+  DIM rResult AS Result
+  DIM sName AS String = FindUniqueName(sType & " device #")
+  DIM iType AS Integer
+
+  ' try to select correct device type
+  SELECT sType
+    CASE "DS18S20"
+      iType = 15
+    CASE "DS2423"
+      iType = 58
+    CASE "DS2438"
+      iType = 65
+    CASE "DS18B20"
+      iType = 213
+    CASE "X10"
+      iType = 36
+    CASE "X10SECURITY"
+      iType = 1
+    CASE "AC"
+      iType = 60
+    CASE "FS20"
+      iType = 210
+    CASE "FHTTFK"
+      iType = 156
+    CASE "FHT80"
+      iType = 157
+    CASE "EM1000", "EM1000-S", "EM1000-EM"
+      iType = 166
+    CASE "EM1000-GZ"
+      iType = 167
+    CASE "HDDTEMP"
+      iType = 11
+    CASE "DSC DWS"
+      iType = 41
+    CASE "DSC PIR"
+      iType = 40
+    CASE "DSC SMOKE"
+      iType = 42
+    CASE "PLCBUS"
+      iType = 117
+    CASE "JEELABS NODE"
+      iType = 142
+    CASE "PWRCTRL"
+      iType = 135
+    CASE "RFXSENSOR TEMP"
+      iType = 100
+    CASE "RFXSENSOR BARO"
+      iType = 139
+    CASE "RFXSENSOR SUPPLY"
+      iType = 102
+    CASE "ARC"
+      iType = 59
+    CASE "ATI REMOTE WONDER"
+      iType = 113
+    CASE "ATI WONDER PLUS"
+      iType = 114
+    CASE "HE"
+      iType = 43
+    CASE "RFXMETER"
+      iType = 9
+    CASE "TEMP1"
+      iType = 214
+    CASE "TEMP2"
+      iType = 81
+    CASE "TEMP3"
+      iType = 84
+    CASE "TEMP4"
+      iType = 85
+    CASE "TH1"
+      iType = 7
+    CASE "TH2"
+      iType = 26
+    CASE "TH3"
+      iType = 39
+    CASE "TH4"
+      iType = 215
+    CASE "TH5"
+      iType = 74
+    CASE "TH6"
+      iType = 93
+    CASE "THB1"
+      iType = 32
+    CASE "THB2"
+      iType = 33
+    CASE "RAIN1"
+      iType = 95
+    CASE "RAIN2"
+      iType = 38
+    CASE "WIND1"
+      iType = 74
+    CASE "WIND2"
+      iType = 97
+    CASE "WIND3"
+      iType = 37
+    CASE "UV1"
+      iType = 8
+    CASE "UV2"
+      iType = 99
+    CASE "DT1"
+      iType = 39
+    CASE "WEIGHT1"
+      iType = 22
+    CASE "WEIGHT2"
+      iType = 23
+    CASE "ELEC1", "ELEC1_1", "ELEC1_2", "ELEC1_3"
+      iType = 66
+    CASE "ELEC2"
+      iType = 78
+    CASE "DWS"
+      iType = 1
+    CASE "MOTION"
+      iType = 69
+    CASE "REMOTE"
+      iType = 71
+    CASE "DM10"
+      iType = 179
+    CASE "DIGIMAX"
+      iType = 180
+    CASE "SMOKE"
+      iType = 174
+    CASE "IO0", "IO1", "IO2", "IO3", "IO4", "IO5", "IO6", "IO7"
+      iType = 192
+    CASE "UPS"
+      iType = 14
+    CASE "ZWAVE"
+      iType = 61
+    CASE "BLUETOOTH"
+      iType = 18
+    CASE ELSE
+      iType = 216
+  END SELECT
+
+  Main.WriteDebugLog(("[Devices] Auto created device '" & sName & "' with address '" & sAddress & "' of type " & iType & " with interface " & iInterface))
+
+  ' create device
+  Main.hDB.Begin()
+  rResult = Main.hDB.Create("devices")
+  rResult!name = sName
+  rResult!module = iType
+  rResult!interface = iInterface
+  rResult!address = sAddress
+  rResult!enabled = TRUE
+  rResult!onicon = "new.png"
+  rResult!officon = "new.png"
+  rResult!hide = FALSE
+  rResult!log = FALSE
+  rResult!logdisplay = FALSE
+  rResult!logspeak = FALSE
+  rResult!dimable = FALSE
+  rResult!switchable = FALSE
+  rResult.Update()
+  Main.hDB.Commit()
+
+  ' try to get id of created device
+  TRY rResult = Main.hDB.Exec("SELECT MAX(id) AS lastid FROM devices")
+  IF NOT ERROR THEN
+    RETURN rResult!lastid
+  ELSE
+    RETURN 0
+  ENDIF
 
 END

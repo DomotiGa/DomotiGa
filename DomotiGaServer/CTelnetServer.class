@@ -1,0 +1,273 @@
+' Gambas class file
+
+' Description:
+' CTelnetServer.class
+' Built-in telnet server support for MisterHouse's mhsend for example.
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2011 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PROPERTY TelnetPort AS String
+PROPERTY TelnetServerDebug AS Boolean
+
+PRIVATE sTelnetPort AS String
+PRIVATE bTelnetServerDebug AS Boolean
+
+PUBLIC hTelnetServer AS ServerSocket
+
+PRIVATE oClients AS NEW Object[]
+PRIVATE DIGITS AS String[] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"]
+
+PUBLIC FUNCTION Connect() AS Boolean
+
+  hTelnetServer = NEW ServerSocket AS "TelnetServer"
+  hTelnetServer.Type = Net.Internet
+  hTelnetServer.Port = sTelnetPort
+  hTelnetServer.Listen(0)
+
+  IF hTelnetServer.Status = Net.Active THEN
+    RETURN TRUE
+  END IF
+  RETURN FALSE
+
+END
+
+' shutdown our web server
+PUBLIC SUB Disconnect()
+
+  hTelnetServer.Close()
+
+END
+
+PUBLIC SUB TelnetServer_Connection(RemoteHostIP AS String)
+
+  DIM hSocket AS Socket
+
+  IF hTelnetServer.Status <= Net.Active THEN RETURN
+  hSocket = hTelnetServer.Accept()
+  oClients.Add(hSocket)
+  IF bTelnetServerDebug THEN Main.WriteDebugLog(("[TelnetServer] Connect from client with ip address ") & RemoteHostIP & " (" & DNS.ResolveHost(RemoteHostIP) & ") ")
+
+END
+
+PUBLIC SUB TelnetServer_Error()
+
+  Main.WriteLog(("Telnet Error: Unable to bind socket."))
+
+END
+
+PUBLIC SUB Socket_Read()
+
+  DIM sBuffer, sLine, sCommand, sArgument, sResponse, sText, sAuth AS String
+  DIM aPacket, aCommand, aAuth, aLogin AS String[]
+  DIM iCnt AS Integer
+  DIM bAuthorized AS Boolean = FALSE
+
+  IF LAST.Status <> Net.Connected THEN RETURN
+  TRY READ #LAST, sBuffer, Lof(LAST)
+  IF ERROR THEN Main.WriteDebugLog(("[TelnetServer] Cannot read from socket stream!"))
+
+  IF bTelnetServerDebug THEN Main.WriteDebugLog(("[TelnetServer] < " & sBuffer))
+
+  aPacket = Split(sBuffer, "\n")
+  aCommand = Split(aPacket[0], " ")
+  IF aCommand.Count = 1 THEN
+    sCommand = aCommand[0]
+  ELSE IF aCommand.Count = 2 THEN
+    sCommand = aCommand[0]
+    sArgument = aCommand[1]
+  ENDIF
+  IF bTelnetServerDebug THEN Main.WriteDebugLog(("[TelnetServer] Command: " & sCommand))
+
+  FOR iCnt = 1 TO aPacket.Count - 1
+    IF InStr(aPacket[iCnt], "Authorization: Basic") THEN
+      aLogin = Scan(aPacket[iCnt], "Authorization: Basic *")
+      IF aLogin.Count = 1 THEN
+        aAuth = Split(UnpackU(aLogin[0]), ":")
+        IF aAuth.Count = 2 THEN
+          IF bTelnetServerDebug THEN
+            Main.WriteDebugLog(("[TelnetServer] User: " & aAuth[0]))
+            Main.WriteDebugLog(("[TelnetServer] Password: " & aAuth[1]))
+          ENDIF
+          IF CheckAuth(aAuth[0], aAuth[1]) THEN
+            IF bTelnetServerDebug THEN
+              Main.WriteDebugLog(("[TelnetServer] Authentication ok!"))
+            ENDIF
+            bAuthorized = TRUE
+          ELSE
+            IF bTelnetServerDebug THEN
+              Main.WriteDebugLog(("[TelnetServer] Authentication failed!"))
+            ENDIF
+            bAuthorized = FALSE
+          ENDIF
+        ELSE
+          IF bTelnetServerDebug THEN
+            Main.WriteDebugLog(("[TelnetServer] User: " & aAuth[0]))
+            Main.WriteDebugLog(("[TelnetServer] No password specified."))
+          ENDIF
+          IF CheckAuth(aAuth[0], "") THEN
+            IF bTelnetServerDebug THEN Main.WriteDebugLog(("[TelnetServer] Authentication ok!"))
+            bAuthorized = TRUE
+          ELSE
+            IF bTelnetServerDebug THEN Main.WriteDebugLog(("[TelnetServer] Authentication failed!"))
+          ENDIF
+          RETURN
+        ENDIF
+     ENDIF
+    ENDIF
+    sText = aPacket[iCnt]
+  NEXT
+
+  IF bAuthorized THEN
+    SELECT sCommand
+      CASE "speak"
+        VoiceText.Speak(sText)
+        sResponse = "Data was spoken"
+      CASE "display", "log"
+        Main.WriteLog(sText)
+        sResponse = "Data was logged"
+      CASE "display"
+        Main.WriteLog(sText)
+        sResponse = "Data was displayed"
+      CASE "log"
+        Main.WriteLog(sText)
+        sResponse = "Data was logged"
+      CASE "run"
+
+      CASE "file"
+
+    END SELECT
+  ELSE
+    sResponse = "Action is not authorized: " & sCommand & " " & sText
+  ENDIF
+
+  ' send result
+  TRY WRITE #LAST, sResponse, Len(sResponse)
+  IF ERROR THEN Main.WriteDebugLog(("[TelnetServer] Cannot write to socket stream!"))
+
+END
+
+PRIVATE FUNCTION UnpackU(sCodedStr AS String) AS String
+
+  DIM iIdx, iIdy, iPtr AS Integer
+  DIM iLengthUU, iAscAChar, iAscMin32 AS Integer
+  DIM sBinFour, sResult AS String
+
+  ' first character's ascii code - 32 is the length
+  iAscAChar = Asc(Left$(sCodedStr, 1))
+  iAscMin32 = iAscAChar - 32
+  iLengthUU = iAscMin32
+  iPtr = 0
+  ' step through the uuencoded string character by character starting at the 2nd character(1st is the length)
+  FOR iIdx = 2 TO Len(sCodedStr)
+    iAscAChar = Asc(Mid$(sCodedStr, iIdx, 1))
+    ' only include what is not whitespace
+    IF iAscAChar > 31 AND iAscAChar < 97 THEN
+      ' subtract 32 from the ascii code of the character
+      iAscMin32 = iAscAChar - 32
+      ' assemble a block of four 6-bit values
+      sBinFour &= Right$("000000" & IntToBase(iAscMin32, 2), 6)
+      ' once we have 4 binary 6-bit 'characters' in our string
+      IF Len(sBinFour) = 24 THEN
+        ' treat the 4-6bit characters as 3-8bit characters
+        FOR iIdy = 1 TO 3
+          IF iPtr < iLengthUU
+            ' converts each block of 8 bits to its decimal value and assigns to the output byte array
+            sResult &= Chr(ToInt(Mid$(sBinFour, 1 + ((iIdy - 1) * 8), 8), 2))
+            INC iPtr
+          ENDIF
+        NEXT
+        sBinFour = ""
+      ENDIF
+    ENDIF
+  NEXT
+  RETURN sResult
+
+END
+
+PRIVATE SUB CheckAuth(sUser AS String, sPasswd AS String) AS Boolean
+
+  DIM rResult AS Result
+
+  TRY rResult = Main.hDB.Exec("SELECT * FROM users WHERE username = &1", sUser)
+  IF rResult.Count = 1 THEN
+    IF rResult!password = sPasswd THEN 
+      RETURN TRUE
+    ENDIF
+  ENDIF
+  RETURN FALSE
+
+END
+
+PRIVATE FUNCTION ConvertBase(sNumberIn AS String, iFromBase AS Integer, iToBase AS Integer) AS String
+
+  DIM iValue AS Integer = ToInt(sNumberIn, iFromBase)
+
+  RETURN IntToBase(iValue, iToBase)
+
+END
+
+PRIVATE FUNCTION IntToBase(iNumberIn AS Integer, iBase AS Integer) AS String
+
+  DIM iRemain, iNumToDivide AS Integer
+  DIM sResult AS String = ""
+
+  iNumToDivide = iNumberIn
+  DO WHILE iNumToDivide / iBase > 0
+    iRemain = iNumToDivide MOD iBase
+    iNumToDivide = (Int)(iNumToDivide / iBase)
+    sResult = DIGITS[iRemain] & sResult
+  LOOP
+  RETURN sResult
+
+END
+
+PRIVATE FUNCTION ToInt(sInputStr AS String, iBase AS Integer) AS Integer
+
+  DIM iIdx, iMult, iResult, iValue AS Integer
+
+  iMult = 1
+  FOR iIdx = Len(sInputStr) TO 1 STEP -1
+    ' if we're in a base with digits bigger than 9 we need the find to return 10 for A, 11 for B, 12 for C etc.
+    iValue = DIGITS.Find(UCase(Mid$(sInputStr, iIdx, 1))) * iMult
+    iResult += iValue
+    iMult *= iBase
+  NEXT
+  RETURN iResult
+
+END
+
+PUBLIC SUB Socket_Closed()
+
+  oClients.Remove(oClients.Find(LAST))
+
+END
+
+PRIVATE FUNCTION TelnetPort_Read() AS String
+
+  RETURN sTelnetPort
+
+END
+
+PRIVATE SUB TelnetPort_Write(Value AS String)
+
+  sTelnetPort = Value
+
+END
+
+PRIVATE FUNCTION TelnetServerDebug_Read() AS Boolean
+
+  RETURN bTelnetServerDebug
+
+END
+
+PRIVATE SUB TelnetServerDebug_Write(Value AS Boolean)
+
+  bTelnetServerDebug = Value
+
+END

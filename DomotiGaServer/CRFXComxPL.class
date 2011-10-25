@@ -1,0 +1,578 @@
+' Gambas class file
+
+' Description:
+' CRFXComxPL.class
+' Connect to RFXCom xPL interface via xPL protocol.
+
+' Development Status:
+' Works, needs some more testing.
+
+' Credits:
+' Thanks to Bert Weijenberg of RFXCOM for all the support.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2011 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PROPERTY RXAddress AS String
+PROPERTY TXAddress AS String
+PROPERTY GlobalX10 AS Boolean
+PROPERTY OldAddrFmt AS Boolean
+PROPERTY RFXComDebug AS Boolean
+
+PRIVATE sRXAddress AS String
+PRIVATE sTXAddress AS String
+PRIVATE bGlobalX10 AS Boolean
+PRIVATE bOldAddrFmt AS Boolean
+PRIVATE bRFXComDebug AS Boolean
+
+PRIVATE CONST VENDOR AS String = "domotiga-xpl"
+
+PUBLIC SUB ProcessxPLMsg(oxPLMsg AS Object)
+
+  DIM sDevice, sDeviceType, sType, sAddressType, sAddress, sValue, sValue2, sValue3, sValue4, sBattery, sCurrent, sLog, sMsgType AS String
+  DIM iDeviceId AS Integer
+  DIM aAddress AS String[]
+
+  Main.ControlLed("RFXCom", "On")
+  SELECT oxPLMsg.Schema
+    CASE "hbeat.app", "hbeat.basic"
+      IF bRFXComDebug THEN Main.WriteDebugLog("[RFXComxPL] Got heartbeat msg of type '" & oxPLMsg.Schema & " from '" & oxPLMsg.Source & "'")
+      sValue = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "info")
+      IF Len(sValue) THEN Main.WriteDebugLog("[RFXComxPL] Got heartbeat msg from RFXCom xPL interface with info '" & sValue & "'")
+    CASE "log.basic"
+      sLog = "LOG: " & Main.hxPL.GetBodyValueFromKey(oxPLMsg, "type") & " [" & Main.hxPL.GetBodyValueFromKey(oxPLMsg, "text") & "]" & Main.hxPL.GetBodyValueFromKey(oxPLMsg, "code")
+    CASE "datetime.basic"
+      sValue = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "time")
+      sValue2 = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "date")
+      sValue3 = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "datetime")
+      sType = "DT1"
+    CASE "ac.basic"
+      sAddress = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "address") & " " & Main.hxPL.GetBodyValueFromKey(oxPLMsg, "unit")
+      sValue = Main.Caps(Main.hxPL.GetBodyValueFromKey(oxPLMsg, "command"))
+      sType = "AC"
+    CASE "x10.basic"
+      sAddress = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "device")
+      sValue = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "command")
+      sType = "X10"
+    CASE "x10.security"
+      sDevice = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "device")
+      sAddress = ConvertAddress("secure " & sDevice, TRUE)
+      sValue = Main.Caps(Main.hxPL.GetBodyValueFromKey(oxPLMsg, "command"))
+      sValue3 = Main.Caps(Main.hxPL.GetBodyValueFromKey(oxPLMsg, "delay"))
+      sAddressType = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "type")
+      ' cn is a Chacon, Avidsen, NEXA smoke detector
+      ' mct and mcw are Visonic PowerCode sensors other types are X10
+      SELECT CASE sAddressType
+        CASE "cn", "sd18,c018" ' smoke alarm
+          sAddress = ConvertAddress("smoke " & sDevice, TRUE)
+          sType = "SMOKE"
+        CASE "ms10,ms20,ms90,mcw", "mcw", "ms10,mcw", "ms20", "ms90,mcw", "dm10" ' motion sensor
+          sAddress = ConvertAddress("motion " & sDevice, TRUE)
+          SELECT CASE sValue
+            CASE "Normal"
+              sValue = "No Motion"
+            CASE "Alert"
+              sValue = "Motion"
+          END SELECT
+          sType = "MOTION"
+        CASE "ds10,ds90", "ds10,ds90,sd90,mct302,mct550", "ds90", "ds90,mct302,mct550" ' door/window sensor OR sd90 smoke alarm, OR mct550 water sensor
+          sAddress = ConvertAddress("dws " & sDevice, TRUE)
+          iDeviceId = Devices.Find(sAddress, Devices.FindInterface("RFXCom xPL"), "X10SECURITY")
+          IF iDeviceId THEN
+            SELECT Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(iDeviceId))
+              CASE "Smoke Detector", "Water Sensor" ' sd90, mct550
+              CASE ELSE ' real door/window sensor
+                SELECT CASE sValue
+                  CASE "Normal"
+                    sValue = "Closed"
+                    sType = "DWS"
+                  CASE "Alert"
+                    sValue = "Open"
+                    sType = "DWS"
+                END SELECT
+            END SELECT
+          ENDIF
+          sType = "DWS"
+        CASE "sh624,mct234", "sh624", "kr10", "kr10,sd90,mct234", "hp564" ' remote control/keyfob
+          sAddress = ConvertAddress("remote " & sDevice, TRUE)
+          sType = "REMOTE"
+      END SELECT
+
+      IF sValue3 = "" THEN sValue3 = "Min"
+      IF Main.hxPL.GetBodyValueFromKey(oxPLMsg, "tamper") = "true" THEN
+        sValue2 = "Tamper"
+      ELSE
+        sValue2 = "Secure"
+      ENDIF
+      sBattery = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "low-battery")
+      IF sBattery = "true" THEN
+        sBattery = "Low"
+      ELSE
+        sBattery = "OK"
+      ENDIF
+    CASE "remote.basic"
+      sDevice = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "device")
+      sAddress = ConvertAddress(sDevice)
+      sValue = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "keys")
+      sType = "REMOTE"
+    CASE "sensor.basic"
+      sDevice = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "device")
+      sAddress = ConvertAddress(sDevice)
+      aAddress = Split(sDevice, " ")
+      IF aAddress.Count = 2 THEN
+        sDeviceType = UCase(aAddress[0])
+      ELSE
+        sDeviceType = UCase(sDevice)
+      ENDIF
+      sCurrent = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "current")
+      sMsgType = Main.hxPL.GetBodyValueFromKey(oxPLMsg, "type")
+      sType = sDeviceType
+      SELECT sDeviceType
+        CASE "TH1", "TH2", "TH3", "TH4", "TH5", "TH6", "THB1", "THB2"
+          IF sMsgType = "temp" THEN sValue = sCurrent
+          IF sMsgType = "humidity" THEN
+            sValue2 = sCurrent
+            sValue3 = Main.Caps(Main.hxPL.GetBodyValueFromKey(oxPLMsg, "description"))
+          ENDIF
+          IF sMsgType = "status" THEN sValue3 = sCurrent
+          IF sMsgType = "pressure" THEN
+            sValue4 = sCurrent
+            sValue3 = Main.Caps(Main.hxPL.GetBodyValueFromKey(oxPLMsg, "forecast")) ' to check
+          ENDIF
+          IF sMsgType = "battery" THEN sBattery = sCurrent
+        CASE "UV1", "UV2"
+          IF sMsgType = "uv" THEN sValue = sCurrent
+          IF sMsgType = "battery" THEN sBattery = sCurrent
+        CASE "RAIN1", "RAIN2"
+          IF sMsgType = "rainrate" THEN sValue = sCurrent
+          IF sMsgType = "raintotal" THEN sValue2 = sCurrent
+          IF sMsgType = "battery" THEN sBattery = sCurrent
+        CASE "TEMP1", "TEMP2", "TEMP3", "TEMP4"
+          IF sMsgType = "temp" THEN sValue = sCurrent
+          IF sMsgType = "battery" THEN sBattery = sCurrent
+        CASE "WIND1", "WIND2", "WIND3"
+          IF sMsgType = "average speed" THEN sValue = sCurrent
+          IF sMsgType = "gust" THEN sValue2 = sCurrent
+          IF sMsgType = "direction" THEN sValue3 = sCurrent
+          IF sMsgType = "battery" THEN sBattery = sCurrent
+        CASE "RFXMETER"
+          sValue = sCurrent
+        CASE "RFXSENSOR"
+          IF sMsgType = "temp" THEN sValue = sCurrent
+          IF sMsgType = "voltage" THEN sValue2 = sCurrent
+        CASE "WEIGHT1", "WEIGHT2"
+          IF sMsgType = "weight" THEN sValue = sCurrent
+        CASE "ELEC1_1", "ELEC1_2", "ELEC1_3"
+          IF sMsgType = "current" THEN
+            SELECT Right(sDeviceType, 1)
+              CASE "1"
+                sValue = sCurrent
+              CASE "2"
+                sValue2 = sCurrent
+              CASE "3"
+                sValue3 = sCurrent
+            END SELECT
+          ENDIF
+        CASE "ELEC2"
+          IF sMsgType = "power" THEN sValue = sCurrent
+          IF sMsgType = "energy" THEN sValue2 = sCurrent
+        CASE "DIGIMAX"
+          IF sMsgType = "temp" THEN sValue = sCurrent
+          IF sMsgType = "setpoint" THEN sValue2 = sCurrent
+          IF sMsgType = "demand" THEN sValue3 = sCurrent
+        CASE "IO0", "IO1", "IO2", "IO3", "IO4", "IO5", "IO6", "IO7"
+          sAddress = sDevice
+          SELECT sCurrent
+            CASE "low"
+              sValue = "Off"
+            CASE "high"
+              sValue = "On"
+          END SELECT
+        CASE ELSE
+          IF bRFXComDebug THEN Main.WriteDebugLog(("[RFXComxPL] Received unsupported devicetype '" & sDeviceType & "'"))
+    END SELECT
+  CASE ELSE
+    IF bRFXComDebug THEN Main.WriteDebugLog(("[RFXComxPL] Received unsupported message schema '" & oxPLMsg.Schema & "'"))
+  END SELECT
+
+  IF oxPLMsg.Schema = "log.basic" THEN
+    IF bRFXComDebug THEN Main.WriteDebugLog("[RFXComxPL] " & sLog)
+  ELSE IF oxPLMsg.Schema = "hbeat.app" OR IF oxPLMsg.Schema = "hbeat.basic" THEN
+    IF bRFXComDebug THEN Main.WriteDebugLog(("[xPL] Got heartbeat msg of type '" & oxPLMsg.Schema & "' from '" & oxPLMsg.Source & "'"))
+  ELSE
+    ' find device id
+    iDeviceId = Devices.Find(sAddress, Devices.FindInterface("RFXCom xPL"), sType)
+    ' update device
+    IF iDeviceId THEN
+      Devices.ValueUpdate(iDeviceId, sValue, sValue2, sValue3, sValue4)
+      IF sBattery THEN Devices.Battery(iDeviceId, sBattery)
+    ENDIF
+    IF bRFXComDebug THEN Main.WriteDebugLog("[RFXComxPL] Device with address '" & sAddress & "' reported" & IIf(sValue, " value1 = '" & sValue & "'", "") & IIf(sValue2, " value2 = '" & sValue2 & "'", "") & IIf(sValue3, " value3 = '" & sValue3 & "'", "") & IIf(sValue4, " value4 = '" & sValue4 & "'", "") & IIf(sBattery, " battery Level = '" & sBattery & "'", ""))
+  ENDIF
+  Main.ControlLed("RFXCom", "Off")
+  oxPLMsg = NULL
+
+END
+
+PRIVATE SUB ConvertAddress(sAddr AS String, OPTIONAL bNotHex AS Boolean) AS String
+
+  DIM aAddress AS String[]
+
+  IF bOldAddrFmt THEN
+    aAddress = Split(sAddr, " ")
+    IF bNotHex = FALSE THEN
+      TRY RETURN UCase(aAddress[0] & "[" & Val("&H" & Replace(aAddress[1], "0x", "") & "&") & "]")
+      IF ERROR THEN RETURN sAddr
+    ELSE
+      TRY RETURN UCase(aAddress[0] & "[" & Replace(aAddress[1], "0x", "") & "]")
+      IF ERROR THEN RETURN sAddr
+    ENDIF
+  ELSE
+    RETURN sAddr
+  ENDIF
+
+END
+
+PUBLIC SUB SendX10Basic(sTarget AS String, sAddress AS String, sCommand AS String, OPTIONAL sProtocol AS String, OPTIONAL sLevel AS String)
+
+  DIM sCmndMsg AS String = "xpl-cmnd\n{\nhop=1\nsource=" & VENDOR & "." & System.Host & "\ntarget=" & IIf(Len(sTarget), sTarget, "*") & "\n}\n"
+  DIM sX10BasicMsg AS String = "x10.basic\n{\ndevice=" & sAddress & "\ncommand=" & sCommand
+
+  IF sLevel THEN sX10BasicMsg &= "\nlevel=" & sLevel
+  IF sProtocol THEN sX10BasicMsg &= "\nprotocol=" & sProtocol ' default is X10
+  sX10BasicMsg &= "\n}\n"
+
+  ' xpl-cmnd
+  ' {
+  '   hop=1
+  '   source=xpl-prog.house
+  '   target=*
+  ' }
+  ' x10.basic
+  ' {
+  ' device=<house code[device code]>
+  ' command=on|off|dim|bright|all_lights_on|all_lights_off
+  ' [level=(0-100)]
+  ' [protocol=arc|flamingo|koppla|waveman|harrison|he105|rts10]
+  ' }
+
+  Main.hxPL.SendMessage(sCmndMsg & sX10BasicMsg)
+
+END
+
+PUBLIC SUB SendControlBasic(sTarget AS String, sDevice AS String, sType AS String, sCurrent AS String)
+
+  DIM sCmndMsg AS String = "xpl-cmnd\n{\nhop=1\nsource=" & VENDOR & "." & System.Host & "\ntarget=" & IIf(Len(sTarget), sTarget, "*") & "\n}\n"
+  DIM sControlBasicMsg AS String = "control.basic\n{\ndevice=" & sDevice & "\ntype=" & sType & "\ncurrent=" & sCurrent & "\n}\n"
+
+  ' xpl-cmnd
+  ' {
+  '   hop=1
+  '   source=xpl-prog.house
+  '   target=*
+  ' }
+  ' control.basic
+  ' {
+  ' device=(io0-io7)
+  ' type=output
+  ' current=high|low|toggle
+  ' }
+
+  Main.hxPL.SendMessage(sCmndMsg & sControlBasicMsg)
+
+END
+
+PUBLIC SUB SendACBasic(sTarget AS String, sAddress AS String, sUnit AS String, sCommand AS String, bEU AS Boolean, OPTIONAL sLevel AS String)
+
+  DIM sCmndMsg AS String = "xpl-cmnd\n{\nhop=1\nsource=" & VENDOR & "." & System.Host & "\ntarget=" & IIf(Len(sTarget), sTarget, "*") & "\n}\n"
+  DIM sACBasicMsg AS String = "ac.basic\n{\naddress=" & sAddress & "\nunit=" & sUnit & "\ncommand=" & sCommand
+
+  IF bEU THEN sACBasicMsg &= "\neu=true"
+  IF sLevel THEN sACBasicMsg &= "\nlevel=" & sLevel
+
+  sACBasicMsg &= "\n}\n"
+
+  ' xpl-cmnd
+  ' {
+  '   hop=1
+  '   source=xpl-prog.house
+  '   target=*
+  ' }
+  ' ac.basic
+  ' {
+  ' address=(0x1-0x3ffffff)
+  ' unit=(0-15)|group
+  ' command=on|off|preset
+  ' [level=(0-15)]
+  ' }
+
+  Main.hxPL.SendMessage(sCmndMsg & sACBasicMsg)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("RFXCom Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String)
+
+  DIM iDeviceId, iDim AS Integer
+  DIM sType, sCommand, sLevel AS String
+  DIM aAddress AS String[]
+
+  iDeviceId = Devices.Find(sAddress, Devices.FindInterface("RFXCom xPL"))
+  IF iDeviceId THEN
+    sType = Devices.FindTypeForDevice(iDeviceId)
+  ELSE
+    RETURN
+  ENDIF
+
+  IF InStr(sCmd, "DIM") THEN
+    iDim = Val(Replace(sCmd, "DIM ", ""))
+    sCmd = "DIM"
+  ENDIF
+
+  SELECT sType
+    CASE "X10" ' X10
+      IF CheckX10Address(sAddress) THEN
+        SELECT CASE UCase(sCmd)
+          CASE "ON", "OFF", "DIM", "BRIGHT"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, sAddress, LCase(sCmd))
+          CASE "ALL_LIGHTS_ON", "ALL_LIGHTS_OFF"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, Left(sAddress, 1), LCase(sCmd))
+        CASE ELSE
+          Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for X10!"))
+        END SELECT
+      ELSE
+        Main.WriteDebugLog(("[RFXComxPL] Invalid address '") & sAddress & ("' given for a X10 device!"))
+      ENDIF
+      '"HE",
+    CASE "ARC", "KAKU" ' KAKU, Chacon, HomeEasy, NexaIF CheckX10Address(sAddress) THEN
+      IF CheckX10Address(sAddress) THEN
+        SELECT CASE UCase(sCmd)
+          CASE "ON", "OFF", "DIM", "BRIGHT"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, sAddress, LCase(sCmd), "arc")
+          CASE "ALL_LIGHTS_ON", "ALL_LIGHTS_OFF"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, Left(sAddress, 1), LCase(sCmd), "arc")
+        CASE ELSE
+          Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for ARC!"))
+        END SELECT
+      ELSE
+        Main.WriteDebugLog(("[RFXComxPL] Invalid address '") & sAddress & ("' given for a ARC device!"))
+      ENDIF
+    CASE "Flamingo" ' Flamingo
+      IF CheckX10Address(sAddress) THEN
+        SELECT CASE UCase(sCmd)
+          CASE "ON", "OFF"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, sAddress, LCase(sCmd), "flamingo")
+        CASE ELSE
+          Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for Flamingo!"))
+        END SELECT
+      ELSE
+        Main.WriteDebugLog(("[RFXComxPL] Invalid address '") & sAddress & ("' given for a Flamingo device!"))
+      ENDIF
+    CASE "Koppla" ' Koppla
+      IF CheckX10Address(sAddress) THEN
+        SELECT CASE UCase(sCmd)
+          CASE "ON", "OFF", "BRIGHT"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, sAddress, LCase(sCmd), "koppla")
+          CASE "ALL_LIGHTS_ON", "ALL_LIGHTS_OFF"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, Left(sAddress, 1), LCase(sCmd), "koppla")
+          CASE "DIM"
+            sLevel = CInt(iDim / 10)
+            SendX10Basic(Main.hRFXComxPL.TXAddress, sAddress, LCase(sCmd), "koppla", sLevel)
+          CASE ELSE
+            Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for Koppla!"))
+        END SELECT
+      ELSE
+        Main.WriteDebugLog(("[RFXComxPL] Invalid address '") & sAddress & ("' given for a Koppla device!"))
+      ENDIF
+    CASE "Waveman" ' Waveman
+      IF CheckX10Address(sAddress) THEN
+        SELECT CASE UCase(sCmd)
+          CASE "ON", "OFF"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, sAddress, LCase(sCmd), "waveman")
+          CASE "ALL_LIGHTS_ON", "ALL_LIGHTS_OFF"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, Left(sAddress, 1), LCase(sCmd), "waveman")
+        CASE ELSE
+          Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for Waveman!"))
+        END SELECT
+      ELSE
+        Main.WriteDebugLog(("[RFXComxPL] Invalid address '") & sAddress & ("' given for a Waveman device!"))
+      ENDIF
+    CASE "HE105" ' HomeEasy Heating HE105
+      IF CheckX10Address(sAddress, TRUE) THEN
+        SELECT CASE UCase(sCmd)
+          CASE "ON", "OFF"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, sAddress, LCase(sCmd), "he105")
+        CASE ELSE
+          Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for HE105!"))
+        END SELECT
+      ELSE
+        Main.WriteDebugLog(("[RFXComxPL] Invalid address '") & sAddress & ("' given for a HE105 device!"))
+      ENDIF
+    CASE "RTS10" ' Digimax RTS10
+      IF CheckX10Address(sAddress) THEN
+        SELECT CASE UCase(sCmd)
+          CASE "ON", "OFF", "ALL_LIGHTS_ON", "ALL_LIGHTS_OFF"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, sAddress, LCase(sCmd), "rts10")
+        CASE ELSE
+          Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for RTS10!"))
+        END SELECT
+      ELSE
+        Main.WriteDebugLog(("[RFXComxPL] Invalid address '") & sAddress & ("' given for a RTS10 device!"))
+      ENDIF
+    CASE "Harrison" ' Harrison Curtain Control
+      IF CheckX10Address(sAddress) THEN
+        SELECT CASE UCase(sCmd)
+          CASE "ON", "OFF", "DIM", "BRIGHT", "ALL_LIGHTS_ON", "ALL_LIGHTS_OFF"
+            SendX10Basic(Main.hRFXComxPL.TXAddress, sAddress, LCase(sCmd), "harrison")
+          CASE ELSE
+            Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for Harrison!"))
+        END SELECT
+      ELSE
+        Main.WriteDebugLog(("[RFXComxPL] Invalid address '") & sAddress & ("' given for a Harrison device!"))
+      ENDIF
+    CASE "AC", "HE" ' AC protocol, for units with program learn button, Chacon, KAKU, Nexa, Proove, Intertechno, Duwi , HEUK, HEEU
+      aAddress = Split(sAddress, " ")
+      IF aAddress.Count = 2 AND Left(aAddress[0]) = "0x" THEN
+        SELECT CASE UCase(sCmd)
+          CASE "ON", "OFF"
+            SendACBasic(Main.hRFXComxPL.TXAddress, aAddress[0], aAddress[1], LCase(sCmd), FALSE)
+          CASE "DIM"
+            sLevel = CInt(iDim / 10)
+            SendACBasic(Main.hRFXComxPL.TXAddress, aAddress[0], aAddress[1], "preset", FALSE, sLevel)
+          CASE ELSE
+            Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for AC!"))
+        END SELECT
+      ELSE
+        Main.WriteDebugLog(("[RFXComxPL] Invalid address '") & sAddress & ("' given for a AC device!"))
+      ENDIF
+    CASE "HEEU" ' AC protocol, for  HEEU
+      SELECT CASE UCase(sCmd)
+        CASE "ON", "OFF"
+          SendACBasic(Main.hRFXComxPL.TXAddress, sAddress, LCase(sCmd), TRUE)
+        CASE "DIM"
+          sLevel = CInt(iDim / 10)
+          SendACBasic(Main.hRFXComxPL.TXAddress, sAddress, "preset", TRUE, sLevel)
+        CASE ELSE
+          Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for AC!"))
+      END SELECT
+    CASE "RFXLanIO"
+      IF Left$(sAddress, 2) = "io" AND IF Right$(sAddress, 1) LIKE "[0-7]" THEN
+        SELECT UCase(sCmd)
+          CASE "ON"
+            SendControlBasic(Main.hRFXComxPL.TXAddress, sAddress, "output", "high")
+          CASE "OFF"
+            SendControlBasic(Main.hRFXComxPL.TXAddress, sAddress, "output", "low")
+          CASE "TOGGLE"
+            SendControlBasic(Main.hRFXComxPL.TXAddress, sAddress, "output", "toggle")
+          CASE ELSE
+            Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for RFXLanIO!"))
+        END SELECT
+      ELSE
+        Main.WriteDebugLog(("[RFXComxPL] Invalid address '") & sAddress & ("' given for a RFXLanIO device!"))
+      ENDIF
+    CASE "Mertik"
+      SELECT UCase(sCmd)
+        CASE "ON", "OFF", "STEP_UP", "STEP_DOWN", "RUN_UP", "RUN_DOWN", "STOP"
+          SendControlBasic(Main.hRFXComxPL.TXAddress, sAddress, "mertik", LCase(sCmd))
+        CASE ELSE
+          Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for Mertik!"))
+      END SELECT
+    CASE "Ninja"
+      SELECT UCase(sCmd)
+        CASE "LEFT", "RIGHT", "UP", "DOWN", "P1", "PROG_P1", "P2", "PROG_P2", "P3", "PROG_P3", "P4", "PROG_P4", "CENTER", "PROG_CENTER", "SWEEP", "PROG_SWEEP"
+          SendControlBasic(Main.hRFXComxPL.TXAddress, sAddress, "ninja", LCase(sCmd))
+        CASE ELSE
+          Main.WriteDebugLog(("[RFXComxPL] The '" & sCmd & "' command is invalid for X10 Ninja!"))
+      END SELECT
+    DEFAULT
+      Main.WriteDebugLog(("[RFXComxPL] The '" & sType & "' protocol is not supported by RFXCom xPL code!"))
+      RETURN
+  END SELECT
+
+END
+
+PRIVATE SUB CheckX10Address(sAddress AS String, OPTIONAL bAB AS Boolean) AS Boolean
+
+  IF Len(sAddress) = 3 AND IF Left$(sAddress, 1) LIKE IIf(bAB, "[A-B]", "[A-P]") AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+    RETURN TRUE
+  ELSE
+    RETURN FALSE
+  ENDIF
+
+END
+
+' implement properties
+PRIVATE FUNCTION RXAddress_Read() AS String
+
+  RETURN sRXAddress
+
+END
+
+PRIVATE SUB RXAddress_Write(Value AS String)
+
+  sRXAddress = Value
+
+END
+
+PRIVATE FUNCTION TXAddress_Read() AS String
+
+  RETURN sTXAddress
+
+END
+
+PRIVATE SUB TXAddress_Write(Value AS String)
+
+  sTXAddress = Value
+
+END
+
+PRIVATE FUNCTION GlobalX10_Read() AS Boolean
+
+  RETURN bGlobalX10
+
+END
+
+PRIVATE SUB GlobalX10_Write(Value AS Boolean)
+
+  bGlobalX10 = Value
+
+END
+
+PRIVATE FUNCTION OldAddrFmt_Read() AS Boolean
+
+  RETURN bOldAddrFmt
+
+END
+
+PRIVATE SUB OldAddrFmt_Write(Value AS Boolean)
+
+  bOldAddrFmt = Value
+
+END
+
+PRIVATE FUNCTION RFXComDebug_Read() AS Boolean
+
+  RETURN bRFXComDebug
+
+END
+
+PRIVATE SUB RFXComDebug_Write(Value AS Boolean)
+
+  bRFXComDebug = Value
+
+END

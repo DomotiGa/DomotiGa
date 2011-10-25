@@ -22,6 +22,7 @@ Public tDelayTimer As CTimer
 ' device change      |   3  | id       | fieldno | operand | value
 ' ir remote received |   4  | remote   | button  | repeat
 ' iviewer remote     |   5  | remote   | join    | value
+' multi-trigger      |   6  |
 
 ' condition database table
 ' description        | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
@@ -37,16 +38,13 @@ Public Sub CheckTimeNowEvents()
   Dim aCron As String[]
 
   If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1a. Running TimeNow query '") & sSql & "'")
-  rResult = Main.hDB.Exec(sSql)
-  If rResult Then
+  Try rResult = Main.hDB.Exec(sSql)
+  If rResult.Available Then
     If rResult.Count Then
       DoEvent(rResult)
     Else
       If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
     End If
-  Else
-    Main.WriteDebugLog(("[Events] Error while running CheckTimeNowEvents query!"))
-    Return
   Endif
 
   sSql As String = "SELECT * FROM events, triggers WHERE events.trigger1 = triggers.id AND triggers.type = 6 AND events.enabled AND triggers.param1 REGEXP '[[:<:]]TimeCron(.*)[[:>:]]'"
@@ -65,9 +63,6 @@ Public Sub CheckTimeNowEvents()
     Else
       If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 1b. No result."))
     Endif
-  Else
-    Main.WriteDebugLog(("[Events] Error while running CheckTimeNowEvents query!"))
-    Return
   Endif
 
 End
@@ -106,7 +101,6 @@ Public Sub CheckDeviceChangeEvents(iId As Integer, sField As String, sValue As S
     Main.WriteDebugLog(("[Events] Error while running CheckDeviceChangeEvents query!"))
     Return
   Endif
-
 
 End
 
@@ -424,12 +418,13 @@ End
 ' av control        | 12                 | model                     | command              | value                | address
 ' timer delay       | 13                 | delay in secs or rnd min  | random max seconds   | mode fixed or random
 ' notify-send       | 14                 | title                     | text
+' script            | 15                 | script
 
 Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer) As Boolean
 
   Dim rResultAction As Result
   Dim bOk As Boolean
-  Dim sDeviceName As String
+  Dim sDeviceName, sResult As String
 
   rResultAction = Main.hDB.Exec("SELECT * FROM actions WHERE id = &1 ", iAction)
   If rResultAction.Available Then
@@ -476,7 +471,7 @@ Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer)
             bOk = True
           Endif
         Else
-          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. e-mail support is disabled!"))
+          Main.WriteDebugLog(("[Events] 3b. e-mail support is disabled!"))
         Endif
       Case 4 ' speak text
         If Main.bVoiceTextEnabled Then
@@ -487,10 +482,10 @@ Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer)
             bOk = True
           Endif
         Else
-          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. VoiceText support is disabled!"))
+          Main.WriteDebugLog(("[Events] 3b. VoiceText support is disabled!"))
         Endif
       Case 5 ' execute command
-        Try Shell rResultAction!param1
+        Try Shell ParseText(rResultAction!param1)
         If Error Then
           bOk = False
         Else
@@ -505,7 +500,7 @@ Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer)
             bOk = True
           Endif
         Else
-          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Twitter support is disabled!"))
+          Main.WriteDebugLog(("[Events] 3b. Twitter support is disabled!"))
         Endif
       Case 7 ' send SMS message
         If Main.bSMSEnabled Then
@@ -516,7 +511,7 @@ Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer)
             bOk = True
           Endif
         Else
-          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. SMS support is disabled!"))
+          Main.WriteDebugLog(("[Events] 3b. SMS support is disabled!"))
         Endif
       Case 8 ' send IRTrans IR
         If Main.bIRTransEnabled Then
@@ -527,7 +522,7 @@ Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer)
             bOk = True
           Endif
         Else
-          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. IRTrans support is disabled!"))
+          Main.WriteDebugLog(("[Events] 3b. IRTrans support is disabled!"))
         Endif
       Case 9 ' play sound
         If Main.bSoundEnabled Then
@@ -538,7 +533,7 @@ Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer)
             bOk = True
           Endif
         Else
-          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Sound support is disabled!"))
+          Main.WriteDebugLog(("[Events] 3b. Sound support is disabled!"))
         Endif
       Case 10 ' write log entry
         Try Main.WriteLog(ParseText(rResultAction!param1))
@@ -556,7 +551,7 @@ Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer)
             bOk = True
           Endif
         Else
-          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. LED Matrix support is disabled!"))
+          Main.WriteDebugLog(("[Events] 3b. LED Matrix support is disabled!"))
         Endif
       Case 12 ' av control command
         Try AVControl.Set(rResultAction!param1, rResultAction!param2, rResultAction!param3, rResultAction!param4)
@@ -571,6 +566,10 @@ Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer)
         Return True
       Case 14 ' notify-send
         Main.NotifySend(ParseText(rResultAction!param1), ParseText(rResultAction!param2))
+        bOk = True
+      Case 15 ' script
+        sResult = EvalFormula(rResultAction!param1)
+        If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & rResultAction!id & (" named '") & rResultAction!name & ("' returned '") & sResult & "'")
         bOk = True
       Case Else
         bOk = False
@@ -606,7 +605,10 @@ Private Sub UpdateEvent(iId As Integer)
 
 End
 
-' replace <%global var%> and <#device values|1#> fields in text
+' replace templates with their values in text
+' <%global var%> - insert globalvar value
+' <#device name|field#> - insert value field number 'field' from device with name 'device name'
+' <$device id|field$> - insert value field number 'field' from device with 'device id'
 Private Sub ParseText(sText As String) As String
 
   Dim iPos1, iPos2, iPos3 As Integer
@@ -621,8 +623,11 @@ Private Sub ParseText(sText As String) As String
         If Left(sTag, 1) = "%" And If Right(sTag, 1) = "%" Then ' globalvar tag
           sText = Replace(sText, "<" & sTag & ">", InsertGlobalVar(sTag))
         Endif
-        If Left(sTag, 1) = "#" And If Right(sTag, 1) = "#" Then ' deviceval tag
-          sText = Replace(SText, "<" & sTag & ">", InsertDeviceValue(sTag))
+        If Left(sTag, 1) = "#" And If Right(sTag, 1) = "#" Then ' devicename tag
+          sText = Replace(sText, "<" & sTag & ">", InsertDeviceValue(sTag))
+        Endif
+        If Left(sTag, 1) = "$" And If Right(sTag, 1) = "$" Then ' deviceid tag
+          sText = Replace(sText, "<" & sTag & ">", InsertDeviceValue(sTag, True))
         Endif
       Endif
       iPos3 = InStr(sText, "<")
@@ -645,15 +650,20 @@ Private Sub InsertGlobalVar(sTag As String) As String
 
 End
 
-' return value of <#device name|field#>
-Private Sub InsertDeviceValue(sTag As String) As String
+' return value of <#device name|field#> or <$device id|field$>
+Private Sub InsertDeviceValue(sTag As String, Optional bUseId As Boolean) As String
 
   Dim aScan As String[]
   Dim sValue As String
 
   If InStr(sTag, "|") Then
-    aScan = Scan(sTag, "#*|*#")
+    If bUseId Then
+      aScan = Scan(sTag, "$*|*$")
+    Else
+      aScan = Scan(sTag, "#*|*#")
+    Endif
     If aScan.Count = 2 Then
+      If bUseId Then aScan[0] = Devices.FindNameForDevice(aScan[0])
       Select Case aScan[1]
         Case "1", "2", "3", "4"
           sValue = Devices.GetValueForDevice(aScan[0], aScan[1])
@@ -667,7 +677,6 @@ Private Sub InsertDeviceValue(sTag As String) As String
   Return sValue
 
 Catch
-  ' RETURN ERROR.Text & " at " & Error.Where
   Return ("ERROR!")
 
 End
@@ -677,7 +686,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function TimeCron(sTimeDate As String) As Boolean
 
-  Dim aCron, aMore, aCron_Now, LowHigh As String[]
+  Dim aCron, aMore, aCron_Now, aLowHigh, aDivide As String[]
   Dim sField As String
   Dim iField As Integer
   Dim sTag As Boolean
@@ -726,10 +735,36 @@ Public Function TimeCron(sTimeDate As String) As Boolean
         If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & ("' | none of , sFields match so return False"))
         Return False
       End If
+    ' / value given
+    Else If InStr(aCron[iField], "/") Then
+      aDivide = Scan(aCron[iField], "*/*")
+      If aDivide.Count = 2 Then
+        ' 5-30/5
+        If InStr(aDivide[0], "-") Then
+          aLowHigh = Scan(aDivide[0], "*-*")
+          If Val(aCron_Now[iField]) >= Val(aLowHigh[0]) And If Val(aCron_Now[iField]) <= Val(aLowHigh[1]) Then
+            If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | *-*/* within range so Continue")
+          Else
+            If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | *-*/* not within range so return False")
+            Return False
+          End If
+        End If
+        ' */10
+        If Val(aCron_Now[iField]) Mod Val(aDivide[1]) = 0 Then
+          If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | /* has no remainder so Continue")
+          Continue
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | /* has remainder so return False")
+          Return False
+        Endif
+      Else
+        If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | invalid / entry so return False")
+        Return False
+      Endif
     ' range given
     Else If InStr(aCron[iField], "-") Then
-      LowHigh = Scan(aCron[iField], "*-*")
-      If aCron_Now[iField] >= LowHigh[0] And aCron_Now[iField] <= LowHigh[1] Then
+      aLowHigh = Scan(aCron[iField], "*-*")
+      If Val(aCron_Now[iField]) >= Val(aLowHigh[0]) And If Val(aCron_Now[iField]) <= Val(aLowHigh[1]) Then
         If Main.bEventsDebug Then Main.WriteDebugLog("[Cron] '" & sTimeDate & "' | within range so Continue")
         Continue
       Else

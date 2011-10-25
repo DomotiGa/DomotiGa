@@ -19,6 +19,7 @@ Property PLCBUSDebug As Boolean
 Property UserCode As String
 Property ThreePhase As Boolean
 Property HouseCodes As String
+Property Ack As Boolean
 
 Private sPort As String
 Private sBaud As String
@@ -27,6 +28,7 @@ Private iPollTime As Integer
 Private bPLCBUSDebug As Boolean
 Private bThreePhase As Boolean
 Private sHouseCodes As String
+Private bAck As Boolean
 
 Public hPLCBUS As New SerialPort
 Public tPLCBUSPoll As Timer
@@ -218,7 +220,7 @@ Public Sub SendPollOnlyOnCommand()
   If hPLCBUS.Status <> Net.Active Then Return
 
   For Each sHomeAddr In aHomeAddr
-    PLCBUSTXCommand(sHomeAddr & "01", "GET_ONLY_ON_ID_PULSE")
+    PLCBUSTXCommand(sHomeAddr & "01", "GET_ONLY_ON_ID_PULSE", False, 0)
   Next
 
 End
@@ -248,7 +250,8 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   Main.ControlLed("PLCBUS", "On")
   If Main.bServer Then tPLCBUSLed.Start
 
-  RecBuf[iByteCount] = bTemp
+  Try RecBuf[iByteCount] = bTemp
+  If Error Then Main.WriteDebugLog(("[PLCBUS] " & Error.Text & " at " & Error.Where))
   Inc iByteCount
   If iByteCount = 9 And If RecBuf[1] = &H06 Then ProcessPLCBUS()
 
@@ -263,13 +266,13 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
 
   sCmd = UCase(sCmd)
   If sCmd = "ON"
-    PLCBUSTXCommand(sAddress, "ON", True)
+    PLCBUSTXCommand(sAddress, "ON", bAck, 0)
   Else If sCmd = "OFF"
-    PLCBUSTXCommand(sAddress, "OFF", True)
+    PLCBUSTXCommand(sAddress, "OFF", bAck, 0)
   Else If InStr(sCmd, "DIM ") Then ' DIM 0-100
     iBrightness = Val(Replace(sCmd, "DIM ", ""))
     If iBrightness >= 0 And If iBrightness <= 100 Then
-      PLCBUSTXCommand(sAddress, "PRESETDIM " & iBrightness & " 1", True) ' fixed dim rate of 1
+      PLCBUSTXCommand(sAddress, "PRESETDIM " & iBrightness & " 1", bAck, 0) ' fixed dim rate of 1
     Else
       Main.WriteDebugLog(("[PLCBUS] Invalid PRESETDIM value of ") & iBrightness & "!")
     Endif
@@ -285,7 +288,7 @@ End
 Public Sub QueueCommand(aPacket As Byte[])
 
   ' add command to queue
-  cQueue.Add(aPacket, Now())
+  cQueue.Add(aPacket, Rnd)
 
   ' if controller is not busy process it
   If bControllerBusy = False Then DoQueue()
@@ -348,7 +351,7 @@ Private Sub ProcessPLCBUS()
                 If BTst(iUnitsFound[Asc(sHouseCode) - 65], iUnit) Then
                   If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] Device with address '" & Left(sAddress, 1) & Format(iUnit + 1, "00") & "' is " & IIf(BTst(iUnitsStat, iUnit), "On", "Off"))
                   ' find device id
-                  iDeviceId = Devices.Find(Left(sAddress, 1) & Format(iUnit + 1, "00"), Devices.FindInterface("PLCBUS Interface"), "PLCBUS Module")
+                  iDeviceId = Devices.Find(Left(sAddress, 1) & Format(iUnit + 1, "00"), Devices.FindInterface("PLCBUS Interface"), "PLCBUS")
                   ' update value
                   If iDeviceId Then Devices.ValueUpdate(iDeviceId, IIf(BTst(iUnitsStat, iUnit), "On", "Off"), " ", " ", " ")
                 Endif
@@ -359,10 +362,10 @@ Private Sub ProcessPLCBUS()
             If RecBuf[5] = &H00 Then sValue = "Off"
             If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] Module: " & sAddress & " Cmd: " & sValue)
             ' find device id
-            iDeviceId = Devices.Find(sAddress, Devices.FindInterface("PLCBUS Interface"), "PLCBUS Module")
+            iDeviceId = Devices.Find(sAddress, Devices.FindInterface("PLCBUS Interface"), "PLCBUS")
             ' update value
             If iDeviceId Then Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
-          Case &H04, &H05, &H0C ' DIM/BRIGHT/PRESETDIM
+          Case &H04, &H05, &H0C, &H0D, &H0E ' DIM/BRIGHT/PRESETDIM/STATUS_ON/STATUS_OFF
             If RecBuf[5] = &H64 Then
               sValue = "On"
             Else If RecBuf[5] = &H00 Then
@@ -370,9 +373,12 @@ Private Sub ProcessPLCBUS()
             Else
               sValue = "Dim " & Val("&H" & RecBuf[5])
             End If
+            If bCommand = &H0D Or If bCommand = &H0E Then
+              Main.PLCBUSStatus(sAddress & " Status: " & sValue)
+            Endif
             If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] Module: " & sAddress & " Cmd: " & sValue)
             ' find device id
-            iDeviceId = Devices.Find(sAddress, Devices.FindInterface("PLCBUS Interface"), "PLCBUS Module")
+            iDeviceId = Devices.Find(sAddress, Devices.FindInterface("PLCBUS Interface"), "PLCBUS")
             ' update value
             If iDeviceId Then Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
           Case &H12 ' SCENE ADDR SETUP
@@ -382,8 +388,10 @@ Private Sub ProcessPLCBUS()
           Case &H19 ' GET NOISE STRENGTH"
           Case &H1A ' REPORT SIGNAL STRENGTH"
             If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] Module: " & sAddress & " Signal strength: " & RecBuf[5])
+            Main.PLCBUSStatus(sAddress & " Signal Strength: " & RecBuf[5])
           Case &H1B ' REPORT NOISE STRENGTH"
             If bPLCBUSDebug Then Main.WriteDebugLog("[PLCBUS] Module: " & sAddress & " Noise strength: " & RecBuf[5])
+            Main.PLCBUSStatus(sAddress & " Noise Strength: " & RecBuf[5])
         End Select
       Else
         If bPLCBUSDebug Then Main.WriteDebugLog(("[PLCBUS] Invalid Home and Unit values!"), True)
@@ -417,7 +425,7 @@ Private Sub PLCBUSDelay(bCode As Byte) As Integer
 
   Select bCode
     ' "ALL_UNITS_OFF" "ALL_LIGHTS_ON" "ON" "OFF" "DIM" "BRIGHT" "ALL_LIGHTS_OFF" "PRESETDIM"
-    Case &H00, &H01, &H02, &H03, &H04, &H05, &H06, &H0C, &H20, &H21, &H22, &H23, &H24, &H25, &H26, &H2C
+    Case &H00, &H01, &H02, &H03, &H04, &H05, &H06, &H0C, &H20, &H21, &H22, &H23, &H24, &H25, &H26, &H2C, &H40, &H0F, &H2F
       iDelay = 500
     ' "STATUS_ON" "STATUS_OFF" "ALL_STATUS" "GET_SIGNAL_STRENGTH" "GET_NOISE_STRENGTH"
     Case &H0D, &H0E, &H1E, &H18, &H19, &H38, &H39
@@ -571,7 +579,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' prepare packet to send to PLCBUS
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PLCBUSTXCommand(sAddress As String, sCmd As String, Optional bAck As Boolean, Optional bData As Byte)
+Public Sub PLCBUSTXCommand(sAddress As String, sCmd As String, bAck As Boolean, bData As Byte)
 
   Dim bUserCode, bHomeUnit, bCommand, bData1, bData2 As Byte
   Dim aPacket As Byte[]
@@ -746,5 +754,17 @@ End
 Private Sub HouseCodes_Write(Value As String)
 
   sHouseCodes = Value
+
+End
+
+Private Function Ack_Read() As Boolean
+
+  Return bAck
+
+End
+
+Private Sub Ack_Write(Value As Boolean)
+
+  bAck = Value
 
 End

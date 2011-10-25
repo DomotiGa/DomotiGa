@@ -54,6 +54,9 @@ Public hRFXComTXSer As New SerialPort
 Public hRFXComTXRelay As New ServerSocket
 Public hRelayTXClient As Object[]
 Public hRelayTXSocket As New Socket
+Public tRFXComTXConnect As Timer
+Private iConnectRetry As Integer = 0 ' retries
+Private iConnectDelay As Integer = 60000 ' 1 minute
 
 Const GETSW As Byte = &H30
 Const MODERFXCOM As Byte = &H33
@@ -123,6 +126,7 @@ Public Function Disconnect() As Boolean
   ' try to close the connection
   Try hRFXComTX.Close
   Try hRFXComTXSer.Close
+  Try tRFXComTXConnect.Stop
   Try hRFXComTXRelay.Close
   Main.WriteLog(("RFXCom ") & sInterfaceType & (" TCP socket/serial port close."))
 
@@ -132,6 +136,29 @@ Public Function Disconnect() As Boolean
 Catch ' some errors
   Main.WriteLog(("RFXCom Error: ") & ERROR.Text)
   Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tRFXComTXConnect_Timer()
+
+  If Not ConnectTCP() Then
+    Inc iConnectRetry
+    iConnectDelay *= iConnectRetry
+    tRFXComTXConnect.Delay = iConnectDelay
+  Endif
+
+End
+
+Public Sub RFXComTX_Closed()
+
+  Main.WriteDebugLog(("[RFXComTX] ERROR: TCP socket closed by peer."))
+  If iConnectRetry < 6 Then
+    Main.WriteDebugLog(("[RFXComRX] Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", ".")))
+    tRFXComTXConnect.Start
+  Endif
 
 End
 
@@ -159,6 +186,11 @@ Public Sub RFXComTX_Ready()
 
   Main.WriteLog(("RFXCom ") & sInterfaceType & (" TCP socket connected."))
   DoInit()
+
+  ' define timer for RFXComTX reconnect
+  tRFXComTXConnect = New Timer As "tRFXComTXConnect"
+  tRFXComTXConnect.Delay = iConnectRetry
+  tRFXComTXConnect.Stop
 
 End
 
@@ -196,19 +228,15 @@ End
 
 Public Sub RFXComTXRelay_Connection(sHost As String)
 
-  Dim sHostName As String
-
   hRelayTXSocket = New Socket As "RelayTXSocket"
   ' accept client
   If hRFXComTXRelay.Status <= Net.Inactive Then Return
-  If Main.bRFXComTXDebug Then Main.WriteDebugLog(("[RFXComTXSRelay] Connection request from: ") & sHost)
+  If Main.bRFXComTXDebug Then Main.WriteDebugLog(("[RFXComTXSRelay] Connection request from ") & sHost)
 
   hRelayTXSocket = hRFXComTXRelay.Accept()
   hRelayTXClient.Add(hRelayTXSocket)
-  If hRelayTXSocket.Status = Net.Connected Then
-    sHostName = DNS.ResolveHost(hRelayTXSocket.RemoteHost)
-    If Not sHostName Then sHostName = hRelayTXSocket.RemoteHost
-    Main.WriteLog(("RFXCom ") & sInterfaceType & (" Relay connection from ") & sHostName & (" accepted."))
+  If Main.bRFXComTXDebug Then
+    If hRelayTXSocket.Status = Net.Connected Then Main.WriteLog(("RFXCom ") & sInterfaceType & (" Relay client connection from ip address ") & hRelayTXSocket.RemoteHost & " (" & DNS.ResolveHost(hRelayTXSocket.RemoteHost) & (" ) accepted."))
   Endif
 
 End
@@ -258,8 +286,9 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
           Main.WriteDebugLog(("[RFXComTX] You have not enabled the KAKU/ARC protocol, unable to control device!"))
           Return
         Endif
-        If Left$(sAddress, 1) Like "[A-Z]" And Right$(sAddress, 1) Like "[0-9]" Then
-          ARC(sAddress, sCmd, iDeviceId)
+        If Left$(sAddress, 1) Like "[A-Z]" Then
+          ' ARC(sAddress, sCmd, iDeviceId)
+          X10(sAddress, sCmd)
         Else
           Main.WriteDebugLog(("[RFXComTX] Invalid X10, ARC or KAKU address '") & sAddress & ("' given!"))
         Endif
@@ -408,6 +437,7 @@ Private Sub WriteMessage(bBuf As Byte[], Optional bCmd As Boolean)
       bMessage = False
       If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog("\n", True)
     Endif
+    Sleep 0.05
   Loop
   bAck = False
 
@@ -424,7 +454,7 @@ Public Function SetInitMode()
     bProtocol = MODERFXCOM
     WriteMessage(bBuf1, True)
   Else
-    If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog(("Initialized") & sInterfaceType & (" for No Handshake usage with => ") & Hex(bBuf2[0]) & Hex(bBuf2[1]) & Hex(bBuf2[2]) & Hex(bBuf2[3]) & "\n")
+    If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog(("Initialized ") & sInterfaceType & (" for No Handshake usage with => ") & Hex(bBuf2[0]) & Hex(bBuf2[1]) & Hex(bBuf2[2]) & Hex(bBuf2[3]) & "\n")
     bProtocol = MODERFXCOMNOREC
     WriteMessage(bBuf2, True)
   Endif
@@ -491,7 +521,7 @@ Public Function GetVersion()
   If Main.bRFXComTXDebug Then
     Main.WriteRFXDebugLog(("Version request to ") & sInterfaceType & (" => F030F030\n"), False)
     If Not bRFXmitter Then Main.WriteRFXDebugLog(("RF Modes are reset to: X10 enabled and all other modes are disabled\n"), False)
-    Main.WriteRFXDebugLog(sInterfaceType & (" Firmware Version: "), False)
+    Main.WriteRFXDebugLog(sInterfaceType & (" has Firmware Version: "), False)
   Endif
   WriteMessage(bBuf, True)
 
@@ -535,31 +565,31 @@ Private Function ToHouse(sHouse As String) As Byte
   End Select
 
 End
-
-Public Function GetUnit(iUnit As Integer) As Byte
-
-  If iUnit > 8 Then iUnit -= 8
-
-  Select Case iUnit
-    Case 1
-      Return &H0
-    Case 2
-      Return &H10
-    Case 3
-      Return &H8
-    Case 4
-      Return &H18
-    Case 5
-      Return &H40
-    Case 6
-      Return &H50
-    Case 7
-      Return &H48
-    Case 8
-      Return &H58
-  End Select
-
-End
+' 
+' PUBLIC FUNCTION GetUnit(iUnit AS Integer) AS Byte
+' 
+'   IF iUnit > 8 THEN iUnit -= 8
+' 
+'   SELECT CASE iUnit
+'     CASE 1
+'       RETURN &H0
+'     CASE 2
+'       RETURN &H10
+'     CASE 3
+'       RETURN &H8
+'     CASE 4
+'       RETURN &H18
+'     CASE 5
+'       RETURN &H40
+'     CASE 6
+'       RETURN &H50
+'     CASE 7
+'       RETURN &H48
+'     CASE 8
+'       RETURN &H58
+'   END SELECT
+' 
+' END
 
 Public Function GetHouse(sHouse As String, iUnit As Integer) As Byte
 
@@ -667,18 +697,19 @@ Public Sub KAKU(sAddress As String, sCmd As String, Optional iDeviceId As Intege
 
 End
 
-' X10 for RFXmitter
-Public Sub X10(sAddress As String, sCmd As String, Optional iDeviceId As Integer)
+' X10 for RFXmitter/transmitter
+Public Sub X10(sAddress As String, sCommand As String)
 
   ' [GB2:ARRD] Dim bBuf As Byte[5]
   Dim bBuf As New Byte[5]
   Dim bHouse, bUnit As Byte
   Dim iUnit, iDc, iUnithl As Integer
+  Dim sCmd As String = UCase(sCommand)
 
   bHouse = GetHouse(Left$(sAddress, 1), Right$(sAddress, 2))
-  bUnit = GetUnit(Right$(sAddress, 2))
+  bUnit = Val(Right$(sAddress, 2))
 
-  Select UCase(sCmd)
+  Select sCmd
     Case "ON"
       iUnit = 0
     Case "OFF"
@@ -696,7 +727,7 @@ Public Sub X10(sAddress As String, sCmd As String, Optional iDeviceId As Integer
       Return
   End Select
 
-  If UCase(sCmd) = "OFF" Or UCase(sCmd) = "ON" Then
+  If sCmd = "OFF" Or sCmd = "ON" Then
     If bUnit > 8 Then
       iUnithl = &H4 ' UNITS 9 TO 16
       iDc = bUnit - 8
@@ -704,28 +735,27 @@ Public Sub X10(sAddress As String, sCmd As String, Optional iDeviceId As Integer
       iUnithl = &H0 ' UNITS 1 TO 8
       iDc = bUnit
     Endif
-
     Select Case iDc
       Case 1
-        iunit = &H0 Or iunit '1 OR 9
+        iUnit = &H0 Or iUnit '1 OR 9
       Case 2
-        iunit = &H10 Or iunit '2 OR 10
+        iUnit = &H10 Or iUnit '2 OR 10
       Case 3
-        iunit = &H8 Or iunit '3 OR 11
+        iUnit = &H8 Or iUnit '3 OR 11
       Case 4
-        iunit = &H18 Or iunit '4 OR 12
+        iUnit = &H18 Or iUnit '4 OR 12
       Case 5
-        iunit = &H40 Or iunit '5 OR 13
+        iUnit = &H40 Or iUnit '5 OR 13
       Case 6
-        iunit = &H50 Or iunit '6 OR 14
+        iUnit = &H50 Or iUnit '6 OR 14
       Case 7
-        iunit = &H48 Or iunit '7 OR 15
+        iUnit = &H48 Or iUnit '7 OR 15
       Case 8
-        iunit = &H58 Or iunit '8 OR 16
+        iUnit = &H58 Or iUnit '8 OR 16
     End Select
   Endif
 
-  bBuf[0] = 32
+  bBuf[0] = &H20
   bBuf[1] = bHouse
   bBuf[2] = (Not bHouse) And &HFF
   bBuf[3] = iUnit
@@ -735,50 +765,49 @@ Public Sub X10(sAddress As String, sCmd As String, Optional iDeviceId As Integer
 
 End
 
-' ARC / X10 / KAKU for RFXtransmitter
-Public Sub ARC(sAddress As String, sCmd As String, Optional iDeviceId As Integer)
-
-  Dim bLength As Byte = &H20
-  ' [GB2:ARRD] Dim bBuf As Byte[5]
-  Dim bBuf As New Byte[5]
-  Dim bHouse, bUnit As Byte
-
-  bHouse = GetHouse(Left$(sAddress, 1), Right$(sAddress, 2))
-  bUnit = GetUnit(Right$(sAddress, 2))
-
-  bBuf[0] = bLength
-  bBuf[1] = bHouse And &HF0
-  bBuf[2] = &HFF - bBuf[1]
-
-  Select UCase(sCmd)
-    Case "ON"
-      bBuf[1] = bHouse
-      bBuf[2] = &HFF - bBuf[1]
-      bBuf[3] = bUnit
-    Case "OFF"
-      bBuf[3] = bUnit Or &H20
-    Case "BRIGHT"
-      bBuf[3] = &H88
-    Case "DIM"
-      bBuf[3] = &H98
-    Case "ALL_LIGHTS_ON"
-      bBuf[3] = &H90
-    Case "ALL_LIGHTS_OFF"
-      bBuf[3] = &H80
-    Case "ALL_UNITS_OFF"
-      ' not supported
-    Case "STOP"
-      ' not supported
-    Default
-      Main.WriteDebugLog(("[RFXComTX] Unknown command '") & UCase(sCmd) & ("' given!"))
-      Return
-  End Select
-
-  bBuf[4] = &HFF - bBuf[3]
-
-  WriteMessage(bBuf)
-
-End
+' ' ARC / X10 / KAKU for RFXtransmitter
+' PUBLIC SUB ARC(sAddress AS String, sCmd AS String, OPTIONAL iDeviceId AS Integer)
+' 
+'   DIM bLength AS Byte = &H20
+'   DIM bBuf AS Byte[5]
+'   DIM bHouse, bUnit AS Byte
+' 
+'   bHouse = GetHouse(Left$(sAddress, 1), Right$(sAddress, 2))
+'   bUnit = GetUnit(Right$(sAddress, 2))
+' 
+'   bBuf[0] = bLength
+'   bBuf[1] = bHouse AND &HF0
+'   bBuf[2] = &HFF - bBuf[1]
+' 
+'   SELECT UCase(sCmd)
+'     CASE "ON"
+'       bBuf[1] = bHouse
+'       bBuf[2] = &HFF - bBuf[1]
+'       bBuf[3] = bUnit
+'     CASE "OFF"
+'       bBuf[3] = bUnit OR &H20
+'     CASE "BRIGHT"
+'       bBuf[3] = &H88
+'     CASE "DIM"
+'       bBuf[3] = &H98
+'     CASE "ALL_LIGHTS_ON"
+'       bBuf[3] = &H90
+'     CASE "ALL_LIGHTS_OFF"
+'       bBuf[3] = &H80
+'     CASE "ALL_UNITS_OFF"
+'       ' not supported
+'     CASE "STOP"
+'       ' not supported
+'     DEFAULT
+'       Main.WriteDebugLog(("[RFXComTX] Unknown command '") & UCase(sCmd) & ("' given!"))
+'       RETURN
+'   END SELECT
+' 
+'   bBuf[4] = &HFF - bBuf[3]
+' 
+'   WriteMessage(bBuf)
+' 
+' END
 
 Public Sub ACHouse(sCode As String) As Byte
 
@@ -820,7 +849,7 @@ Public Sub ACHouse(sCode As String) As Byte
 End
 
 ' AC and HomeEasy UK for RFXtransmitter, HomeEasy EU for RFXmitter
-Public Sub HEEU(sAddress As String, sACAddress1 As String, sACAddress2 As String, sCmd As String, Optional iDeviceId As Integer)
+Public Sub HEEU(sAddress As String, sACAddress1 As String, sACAddress2 As String, sCmd As String)
 
   Dim bLength As Byte = 33
   ' [GB2:ARRD] Dim bBuf As Byte[6]
