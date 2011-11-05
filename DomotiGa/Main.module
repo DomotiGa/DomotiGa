@@ -1707,6 +1707,8 @@ PUBLIC SUB CloseAll()
   TRY hBroadcastUDPClient.Close
   ' pachube
   TRY Pachube.hPost.Close
+  ' hddtemp
+  TRY HDDTemp.hHDDTemp.Close
   ' plcbus close
   TRY hPLCBUS.Disconnect
   ' ctx35 close
@@ -1910,8 +1912,70 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PRIVATE SUB Setup_Astro()
 
+  DIM bSunRise AS Boolean = TRUE
+  DIM bSunSet AS Boolean = FALSE
+  DIM iTwilight AS Integer
+  DIM rResult AS Result
+  DIM aSplitTime AS string[]
+  DIM sSeasons, sSeason_Starts AS Array
+
   WriteLog(("Latitude: ") & iAstroLatitude & (" Longitude: ") & iAstroLongitude & (" Timezone: ") & iAstroTimezone)
-  ' the rest is done in SetGlobalVars()
+
+  ' calculate sun set/rise
+  SetGlobalVar("Sunrise", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunRise, 0))
+  SetGlobalVar("Sunset", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunSet, 0))
+
+  ' update Sunset/Sunrise triggers in database
+  aSplitTime = Split(GlobalVar["Sunset"], ":")
+  rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunset' ", Format(aSplitTime[1], "#") & " " & Format(aSplitTime[0], "#") & " * * *")
+  aSplitTime = Split(GlobalVar["Sunrise"], ":")
+  rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunrise' ", Format(aSplitTime[1], "#") & " " & Format(aSplitTime[0], "#") & " * * *")
+
+  IF (sAstroTwilight = "civil") THEN iTwilight = 1
+  IF (sAstroTwilight = "nautical") THEN iTwilight = 2
+  IF (sAstroTwilight = "astronomical") THEN iTwilight = 3
+  SetGlobalVar("Sunrise_Twilight", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunRise, iTwilight))
+  SetGlobalVar("Sunset_Twilight", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunSet, iTwilight))
+
+  IF bServer THEN
+    WriteLog("Sunrise at " & GlobalVar["Sunrise"] & (", Sunset at ") & GlobalVar["Sunset"])
+    WriteLog("Twilight Sunrise at " & GlobalVar["Sunrise_Twilight"] & (", Twilight Sunset at ") & GlobalVar["Sunset_Twilight"] & " (" & sAstroTwilight & ")")
+
+    ' calculate moon data
+    Astro.CalcMoonPhase()
+    WriteLog(("Moon phase is ") & MoonPhase & ".")
+    WriteLog(("Moon is in ") & MoonZodiac & ".")
+    WriteLog(("Age from new ") & MoonAge & (" days."))
+    WriteLog(("Distance ") & MoonDistance & (" Earth radii."))
+    WriteLog(("Ecliptic latitude: ") & MoonLatitude & (" degrees."))
+    WriteLog(("Ecliptic longitude: ") & MoonLongitude & (" degrees."))
+    IF MoonIsLeapYear THEN WriteLog(("This is a leap year."))
+  ENDIF
+  FMain.UpdateStatusPanel()
+  ' calculate season
+  sSeasons = Split(sAstroSeasons, ",")
+  sSeason_Starts = Split(sAstroSeasonStarts, ",")
+  IF (CInt(GlobalVar["Month"]) < 3) THEN
+    SetGlobalVar("Season", sSeasons[0])
+  ELSE IF (CInt(GlobalVar["Month"]) = 3) AND IF (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[0])) THEN
+    SetGlobalVar("Season", sSeasons[0])
+  ELSE IF (CInt(GlobalVar["Month"]) = 12) AND IF (CInt(GlobalVar["Day"]) > CInt(sSeason_Starts[3])) THEN
+    SetGlobalVar("Season", sSeasons[0])
+  ELSE IF (CInt(GlobalVar["Month"]) < 6) THEN
+    SetGlobalVar("Season", sSeasons[1])
+  ELSE IF (CInt(GlobalVar["Month"]) = 6) AND IF (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[1])) THEN
+    SetGlobalVar("Season", sSeasons[1])
+  ELSE IF (CInt(GlobalVar["Month"]) < 9) THEN
+    SetGlobalVar("Season", sSeasons[2])
+  ELSE IF (CInt(GlobalVar["Month"]) = 9) AND IF (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[2])) THEN
+    SetGlobalVar("Season", sSeasons[2])
+  ELSE
+    SetGlobalVar("Season", sSeasons[3])
+  END IF
+  IF bServer THEN WriteLog("Season is " & GlobalVar["Season"] & ".")
+
+CATCH
+  WriteLog("ERROR: " & Error.Text & (" at ") & Error.Where & ".")
 
 END
 
@@ -2756,6 +2820,7 @@ PRIVATE SUB Setup_HDDTemp()
     IF bServer THEN HDDTemp.Run()
   ELSE
     TRY HDDTemp.tHDDTemp.Stop
+    TRY HDDTemp.hHDDTemp.Close
     IF bMainDebug THEN WriteLog(("HDDTemp support disabled."))
   END IF
 
@@ -4687,13 +4752,6 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PRIVATE SUB SetGlobalVars()
 
-  DIM sSeasons, sSeason_Starts AS Array
-  DIM bSunRise AS Boolean = TRUE
-  DIM bSunSet AS Boolean = FALSE
-  DIM iTwilight AS Integer
-  DIM rResult AS Result
-  DIM sSplitTime AS String[]
-
   bNew_Second = 0
   bNew_Msecond_500 = 0
   bNew_Msecond_250 = 0
@@ -4798,59 +4856,8 @@ PRIVATE SUB SetGlobalVars()
           END IF
           SetGlobalVar("Year", Year(Now))
 
-          ' calculate sun set/rise
-          SetGlobalVar("Sunrise", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunRise, 0))
-          SetGlobalVar("Sunset", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunSet, 0))
+          Setup_Astro()
 
-          ' update Sunset/Sunrise triggers in database
-          sSplitTime = Split(GlobalVar["Sunset"], ":")
-          rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunset' ", Format(sSplitTime[1], "#") & " " & Format(sSplitTime[0], "#") & " * * *")
-          sSplitTime = Split(GlobalVar["Sunrise"], ":")
-          rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunrise' ", Format(sSplitTime[1], "#") & " " & Format(sSplitTime[0], "#") & " * * *")
-
-          IF (sAstroTwilight = "civil") THEN iTwilight = 1
-          IF (sAstroTwilight = "nautical") THEN iTwilight = 2
-          IF (sAstroTwilight = "astronomical") THEN iTwilight = 3
-          SetGlobalVar("Sunrise_Twilight", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunRise, iTwilight))
-          SetGlobalVar("Sunset_Twilight", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunSet, iTwilight))
-
-          IF bServer THEN
-            WriteLog("Sunrise at " & GlobalVar["Sunrise"] & (", Sunset at ") & GlobalVar["Sunset"])
-            WriteLog("Twilight Sunrise at " & GlobalVar["Sunrise_Twilight"] & (", Twilight Sunset at ") & GlobalVar["Sunset_Twilight"] & " (" & sAstroTwilight & ")")
-
-            ' calculate moon data
-            Astro.CalcMoonPhase()
-            WriteLog(("Moon phase is ") & MoonPhase & ".")
-            WriteLog(("Moon is in ") & MoonZodiac & ".")
-            WriteLog(("Age from new ") & MoonAge & (" days."))
-            WriteLog(("Distance ") & MoonDistance & (" Earth radii."))
-            WriteLog(("Ecliptic latitude: ") & MoonLatitude & (" degrees."))
-            WriteLog(("Ecliptic longitude: ") & MoonLongitude & (" degrees."))
-            IF MoonIsLeapYear THEN WriteLog(("This is a leap year."))
-          ENDIF
-          FMain.UpdateStatusPanel()
-
-          ' calculate season
-          sSeasons = Split(sAstroSeasons, ",")
-          sSeason_Starts = Split(sAstroSeasonStarts, ",")
-          IF (CInt(GlobalVar["Month"]) < 3) THEN
-            SetGlobalVar("Season", sSeasons[0])
-          ELSE IF (CInt(GlobalVar["Month"]) = 3) AND IF (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[0])) THEN
-            SetGlobalVar("Season", sSeasons[0])
-          ELSE IF (CInt(GlobalVar["Month"]) = 12) AND IF (CInt(GlobalVar["Day"]) > CInt(sSeason_Starts[3])) THEN
-            SetGlobalVar("Season", sSeasons[0])
-          ELSE IF (CInt(GlobalVar["Month"]) < 6) THEN
-            SetGlobalVar("Season", sSeasons[1])
-          ELSE IF (CInt(GlobalVar["Month"]) = 6) AND IF (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[1])) THEN
-            SetGlobalVar("Season", sSeasons[1])
-          ELSE IF (CInt(GlobalVar["Month"]) < 9) THEN
-            SetGlobalVar("Season", sSeasons[2])
-          ELSE IF (CInt(GlobalVar["Month"]) = 9) AND IF (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[2])) THEN
-            SetGlobalVar("Season", sSeasons[2])
-          ELSE
-            SetGlobalVar("Season", sSeasons[3])
-          END IF
-          IF bServer THEN WriteLog("Season is " & GlobalVar["Season"] & ".")
           ' new month
           IF (iPrev_Month <> GlobalVar["Month"]) THEN
             bNew_Month = 1
