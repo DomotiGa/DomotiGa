@@ -1,7 +1,7 @@
 <?php
 
 // DomotiGa - an open source home automation program
-// Copyright(C) 2008-2009 Ron Klinkien
+// Copyright(C) 2008-2011 Ron Klinkien
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -37,7 +37,7 @@ function get_device_list($view) {
    } else {
       $index=0;
       foreach($response AS $item) {
-         list( $retarr[$index]['id'], $retarr[$index]['deviceicon'], $retarr[$index]['devicename'], $retarr[$index]['devicelocation'], $retarr[$index]['devicevalue'], $retarr[$index]['devicelabel'], $retarr[$index]['devicevalue2'], $retarr[$index]['devicelabel2'], $retarr[$index]['devicevalue3'], $retarr[$index]['devicelabel3'], $retarr[$index]['devicevalue4'], $retarr[$index]['devicelabel4'], $retarr[$index]['devicelastseen']) = explode (';;', $item);
+         list( $retarr[$index]['id'], $retarr[$index]['deviceicon'], $retarr[$index]['devicename'], $retarr[$index]['devicelocation'], $retarr[$index]['devicevalue'], $retarr[$index]['devicelabel'], $retarr[$index]['devicevalue2'], $retarr[$index]['devicelabel2'], $retarr[$index]['devicevalue3'], $retarr[$index]['devicelabel3'], $retarr[$index]['devicevalue4'], $retarr[$index]['devicelabel4'], $retarr[$index]['devicelastseen'], $retarr[$index]['dimmable'], $retarr[$index]['switchable']) = explode (';;', $item);
          if ($retarr[$index]['deviceicon']) { $retarr[$index]['deviceicon'] = "<img src='images/icons/".$retarr[$index]['deviceicon']."' height='16' width='16' alt='icon' />"; } else { $retarr[$index]['deviceicon'] = ""; }
          if (strlen($retarr[$index]['devicevalue']) && $retarr[$index]['devicelabel']) { $retarr[$index]['devicevalue'] = $retarr[$index]['devicevalue']. " ".$retarr[$index]['devicelabel']; }
          if (strlen($retarr[$index]['devicevalue2']) && $retarr[$index]['devicelabel2']) { $retarr[$index]['devicevalue2'] = $retarr[$index]['devicevalue2']. " ".$retarr[$index]['devicelabel2']; }
@@ -76,25 +76,6 @@ function get_status() {
    $retarr['data_newvoicemails'] = $response[2];
 
    return $retarr;
-}
-
-// Get version
-function get_version() {
-    return do_xmlrpc("system.program_version");
-}
-
-// Set device <param1> with value <param2>
-function set_device($devname, $devvalue) {
-   $request = xmlrpc_encode_request("device.setdevice", array ($devname, $devvalue));
-   $response = do_xmlrpc($request);
-
-   if (is_array($response) && xmlrpc_is_fault($response)) {
-       trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");
-   } else {
-   echo "device switched?";
-   }
-    
-    return true;
 }
 
 // Function to sort second key in array (ascending)

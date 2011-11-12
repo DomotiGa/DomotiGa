@@ -1,7 +1,7 @@
 <?php
 
 // DomotiGa - an open source home automation program
-// Copyright(C) 2008-2009 Ron Klinkien
+// Copyright(C) 2008-2011 Ron Klinkien
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -57,6 +57,15 @@ if ($_SESSION['view']=="pachube") {
    }
    exit;
 }
+
+if ( isset($r_action))
+{
+   echo "<h3>Requested to turn ".$r_name." ".$r_action.".</h3>";
+   $request = xmlrpc_encode_request("device.setdevice",array( $r_name, $r_action ) );
+   $response = do_xmlrpc($request);
+   header("Location: index.php?setview=control");
+}
+
 
 ?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
@@ -158,7 +167,7 @@ if ($_SESSION['view']=="main") {
    foreach($data AS $item) {
       echo "<div class='$thisrow'>\n";
       echo "<div class='imgcol' style='width:20px;' id='i".$item['id']."deviceicon'>&nbsp;".$item['deviceicon']."</div>\n";
-      echo "<div class='datacol' style='width:170px;' id='i".$item['id']."devicename'>&nbsp;<a class='submodal-200-100' href='switch.php?id=".urlencode($item['devicename'])."'>".$item['devicename']."</a></div>\n";
+      echo "<div class='datacol' style='width:170px;' id='i".$item['id']."devicename'>&nbsp;".$item['devicename']."</div>\n";
       echo "<div class='datacol' style='width:110px;' id='i".$item['id']."devicelocation'>&nbsp;".$item['devicelocation']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue'>&nbsp;".$item['devicevalue']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue2'>&nbsp;".$item['devicevalue2']."</div>\n";
@@ -180,6 +189,51 @@ if ($_SESSION['view']=="main") {
 
 if ($_SESSION['view']=="control") {
 
+   // Header
+   $uparr="<img src='images/uparrow.gif' height='8' width='5' alt='Descending' />";
+   $downarr="<img src='images/downarrow.gif' height='8' width='5' alt='Ascending' />";
+
+   echo "<div class='headcol' style='width:25px;'><a href='?setsortkey=deviceicon&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>&nbsp;S</a>&nbsp;".($_SESSION['sortkey']=="deviceicon" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
+   echo "<div class='headcol' style='width:171px;'><a href='?setsortkey=devicename&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Device</a>&nbsp;".($_SESSION['sortkey']=="devicename" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
+   echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Status</a>&nbsp;".($_SESSION['sortkey']=="devicevalue" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
+   echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue2&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>On</a>&nbsp;".($_SESSION['sortkey']=="devicevalue2" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
+   echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue3&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Off</a>&nbsp;".($_SESSION['sortkey']=="devicevalue3" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
+   echo "<div class='headcollast' style='width:241px;'><a href='?setsortkey=devicelastseen&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Last Seen</a>&nbsp;".($_SESSION['sortkey']=="devicelastseen" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
+   // End of header
+
+   echo "<div class='spacer'></div>\n";
+
+   if ($r_debug==1) {
+      echo "<br><pre>";
+      echo htmlspecialchars(var_dump($data));
+      echo "</pre>";
+   }
+
+   // List devices
+   $totcount=0;
+   $thisrow="row1";
+   foreach($data AS $item) {
+      if ( $item['dimmable'] != "" || $item['switchable'] != "" )
+      {
+      echo "<div class='$thisrow'>\n";
+      echo "<div class='imgcol' style='width:20px;' id='i".$item['id']."deviceicon'>&nbsp;".$item['deviceicon']."</div>\n";
+      echo "<div class='datacol' style='width:170px;' id='i".$item['id']."devicename'>&nbsp;".$item['devicename']."</div>\n";
+      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue'>&nbsp;".$item['devicevalue']."</div>\n";
+      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue2'>&nbsp;<a href='?action=On&name=".$item['devicename']."'>On</a></div>\n";
+      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue3'>&nbsp;<a href='?action=Off&name=".$item['devicename']."'>Off</a></div>\n";
+      echo "<div class='datacollast' style='width:190px;' id='i".$item['id']."devicelastseen'>&nbsp;".$item['devicelastseen']."</div>\n";
+      echo "<div class='spacer'></div>\n";
+      echo "</div>\n"; // End of thisrow div
+      if ($thisrow=="row1") {$thisrow="row2";} else {$thisrow="row1";}
+      }
+   }
+
+   // Display message if no devices are found
+   if (!$data) {
+      echo "<div class='row1'>\n";
+      echo "<div class='namecol' align='center'><p>&nbsp;</p>No devices to display!<p>&nbsp;</p></div>\n";
+      echo "</div>\n";
+   }
 }
 
 echo "</div>\n"; // End of container div
@@ -194,7 +248,7 @@ echo "<span class='msgs' id='data_newvoicemails'>".$status['data_newvoicemails']
 
 // Footer
 echo "<div align='center' class='smalltext'>Page created in ".$restime=round(microtime(true)-$execstart,3)." secs.  ";
-echo "<a href='http://domotiga.nl' target='_blank'>DomotiGa V".$status['program_version']."</a> - by Ron Klinkien 2008-2009.</div>\n";
+echo "<a href='http://domotiga.nl' target='_blank'>DomotiGa V".$status['program_version']."</a> - by Ron Klinkien 2008-2011.</div>\n";
 ?>
 </div>
 </body>
