@@ -69,7 +69,7 @@ foreach ($data AS $item) {
 }
 echo "</style>\n";
 ?>
-<link rel="apple-touch-icon" href="images/apple-touch-icon.png" />
+<link rel="apple-touch-icon" href="images/favicon.ico" />
    <script language="javascript"> 
    <!--
    var state = 'none';

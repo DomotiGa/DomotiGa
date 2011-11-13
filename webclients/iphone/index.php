@@ -42,7 +42,7 @@ import_request_variables("gp","r_");
 <script type="text/javascript" src="domotiga.js"></script>
 <title>DomotiGa</title>
 <link rel="stylesheet" href="stylesheets/iphone.css" />
-<link rel="apple-touch-icon" href="images/apple-touch-icon.png" />
+<link rel="apple-touch-icon" href="images/favicon.ico" />
 	<script language="javascript"> 
 	<!--
 	var state = 'none';
