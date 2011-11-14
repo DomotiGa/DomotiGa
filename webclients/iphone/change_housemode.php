@@ -33,32 +33,32 @@ $housemode=$_GET["housemode"];
 if ($housemode == "mute") {
    $request = xmlrpc_encode_request("set.mutemode",true);
    $response = do_xmlrpc($request);
-   if (xmlrpc_is_fault($response)) {
+   if (is_array($response) && xmlrpc_is_fault($response)) {
      trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
 } else if ( $housemode == "unmute" )  {
    $request = xmlrpc_encode_request("set.mutemode",false);
    $response = do_xmlrpc($request);
-   if (xmlrpc_is_fault($response)) {
+   if (is_array($response) && xmlrpc_is_fault($response)) {
      trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
 } else if ( $housemode == "normal" )  {
    $request = xmlrpc_encode_request("set.housemode",$housemode);
    $response = do_xmlrpc($request);
-   if (xmlrpc_is_fault($response)) {
+   if (is_array($response) && xmlrpc_is_fault($response)) {
      trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
 } else if ( $housemode == "work" )  {
    $request = xmlrpc_encode_request("set.housemode",$housemode);
    $response = do_xmlrpc($request);
-   if (xmlrpc_is_fault($response)) {
+   if (is_array($response) && xmlrpc_is_fault($response)) {
      trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
 } else if ( $housemode == "away" )  {
    $request = xmlrpc_encode_request("set.housemode",$housemode);
    $response = do_xmlrpc($request);
-   if (xmlrpc_is_fault($response)) {
+   if (is_array($response) && xmlrpc_is_fault($response)) {
      trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
 } else if ( $housemode == "vacation" )  {
    $request = xmlrpc_encode_request("set.housemode",$housemode);
    $response = do_xmlrpc($request);
-   if (xmlrpc_is_fault($response)) {
+   if (is_array($response) && xmlrpc_is_fault($response)) {
      trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
 }
 header('Location: index.php'); 

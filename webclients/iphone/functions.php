@@ -31,8 +31,7 @@ function do_xmlrpc($request) {
 function get_device_list($view) {
    $request = xmlrpc_encode_request("device.list",null);
    $response = do_xmlrpc($request);
-
-   if (xmlrpc_is_fault($response)) {
+   if (is_array($response) && xmlrpc_is_fault($response)) {
        trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");
    } else {
       $index=0;
@@ -58,7 +57,7 @@ function get_device_listswitch($view) {
    $request = xmlrpc_encode_request("device.listswitch",null);
    $response = do_xmlrpc($request);
 
-   if (xmlrpc_is_fault($response)) {
+   if (is_array($response) && xmlrpc_is_fault($response)) {
        trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");
    } else {
       $index=0;
