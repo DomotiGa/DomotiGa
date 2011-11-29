@@ -37,6 +37,10 @@ PUBLIC tCULBusy AS Timer
 PUBLIC tCULLed AS Timer
 PUBLIC tCULConnect AS Timer
 
+' FS20 on/off-for-timers
+PRIVATE oOnOffTimers AS NEW Object[]
+PUBLIC tOnOffTimer AS CTimerOnOff
+
 PRIVATE bFirstByte AS Boolean = TRUE
 PRIVATE RecBuf AS Byte[255]
 PRIVATE bMessage AS Boolean = FALSE
@@ -46,6 +50,7 @@ PRIVATE bCULBusy AS Boolean  ' waiting for delay timer to finish
 PRIVATE iConnectRetry AS Integer = 0 ' retries
 PRIVATE iConnectDelay AS Integer = 60000 ' 1 minute
 PRIVATE cLowTemps AS NEW Collection ' to store FHT low temp byte
+PRIVATE bInitialised AS Boolean = FALSE
 
 ' FS20
 PRIVATE sFS20Values AS String[] = ["Off", "Dim 6", "Dim 12", "Dim 18", "Dim 25", "Dim 31", "Dim 37", "Dim 43", "Dim 50", "Dim 56", "Dim 62", "Dim 68", "Dim 75", "Dim 81", "Dim 87", "Dim 93", "Dim 100", "On", "Toggle", "DimUp", "DimDown", "DimUpDown", "Timer", "SendState", "Off-For-Timer", "On-For-Timer", "On-Old-For-Timer", "Reset", "Ramp-On-Time", "Ramp-Of-Time", "On-Old-For-Timer-Prev", "On-100-For-Timer-Prev"]
@@ -152,10 +157,15 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC FUNCTION Disconnect() AS Boolean
 
+  DIM oTimer AS Object
+
   ' try to close the connection
   TRY tCULBusy.Stop
   TRY tCULLed.Stop
   TRY tCULConnect.Stop
+  FOR EACH oTimer IN oOnOffTimers
+    TRY oTimer.Stop
+  NEXT
   TRY hCUL.Close
   TRY hCULSer.Close
 
@@ -326,6 +336,54 @@ PUBLIC SUB DoQueue()
 
 END
 
+' start on-off timer for iDeviceId and sCmd with sDuration
+PRIVATE SUB StartOnOffTimer(iDeviceId AS Integer, sCmd AS String, iDuration AS Integer)
+
+  IF FindTimer(iDeviceId, sCmd, iDuration) = FALSE THEN
+    tOnOffTimer = NEW CTimerOnOff AS "tOnOffTimer"
+    oOnOffTimers.Add(tOnOffTimer)
+    tOnOffTimer.Delay = iDuration * 1000
+    tOnOffTimer.Duration = iDuration
+    tOnOffTimer.DeviceId = iDeviceId
+    tOnOffTimer.Command = sCmd
+    tOnOffTimer.Started = Now()
+    tOnOffTimer.Start
+    IF Main.bCULDebug THEN Main.WriteDebugLog(("[CUL] Started ") & IIf(sCmd = "On", "Off", "On") & ("-For-Timer for device with id '") & iDeviceId & ("' for a duration of ") & iDuration & (" seconds."))
+  ENDIF
+
+END
+
+' looks if there is a on/off-for-timer running for iDeviceId
+PRIVATE SUB FindTimer(iDeviceId AS Integer, sCmd AS String, iDuration AS Integer) AS Boolean
+
+  DIM oObject AS Object
+
+  FOR EACH oObject IN oOnOffTimers
+    IF oObject.DeviceId = iDeviceId AND IF oObject.Command = sCmd AND IF oObject.Duration = iDuration THEN
+      IF bCULDebug THEN Main.WriteDebugLog(("[CUL] " & IIf(sCmd = "On", "Off", "On") & "-For-Timer for device with id '") & iDeviceId & (" and command ") & sCmd & (" with duration of ") & iDuration & (" seconds already runs, skipping."))
+      RETURN TRUE
+    ENDIF
+  NEXT
+  RETURN FALSE
+
+END
+
+' on/off-for-timer expired, update device
+PUBLIC SUB tOnOffTimer_Timer()
+
+  DIM iDeviceId AS Integer
+  DIM sCmd AS String
+
+  iDeviceId = LAST.DeviceId
+  sCmd = LAST.Command
+  LAST.Stop
+  oOnOffTimers.Remove(oOnOffTimers.Find(LAST))
+
+  IF bCULDebug THEN Main.WriteDebugLog(("[CUL] " & IIf(sCmd = "On", "Off", "On") & "-For-Timer expired, changing value of device with id '") & iDeviceId & "' to '" & sCmd & "'")
+  TRY Devices.ValueUpdate(iDeviceId, sCmd, " ", "", "")
+
+END
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' initialize interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -362,6 +420,7 @@ PUBLIC FUNCTION Init()
   QueueCommand("V")
 
   ' ParseDump("/home/ron/S300TH.txt")
+  bInitialised = TRUE
 
 END
 
@@ -394,6 +453,8 @@ PUBLIC SUB WriteCommand(sBuffer AS String, sKey AS String)
 
   DIM bByte AS Byte
   DIM iCnt AS Integer
+
+  IF NOT bInitialised THEN RETURN
 
   Main.ControlLed("CUL", "On")
   IF Main.bServer THEN tCULLed.Start
@@ -549,10 +610,13 @@ PRIVATE SUB Display_Message()
 
       ' calculate duration if extension bit is set
       IF (iCmd AND &H20) THEN
+        'iDur = Val("&H" & Chr(RecBuf[9]) & Chr(RecBuf[10]))
+        'iDur = Val("&H" & RecBuf[9] & RecBuf[10])
+        ' iDur = Val(Chr(RecBuf[9]) & Chr(RecBuf[10]))
         iDur = Val("&H" & Chr(RecBuf[9]) & Chr(RecBuf[10]))
         iI = (iDur AND &HF0) / 16
         iJ = (iDur AND &HF)
-        iDur = (iI ^ 2) * iJ * 0.25
+        iDur = (2 ^ iI) * iJ * 0.25
 
         ' calculate cmd
         iCmd = iCmd XOR &H20
@@ -562,22 +626,24 @@ PRIVATE SUB Display_Message()
       TRY sVal = sFS20Values[iCmd]
       IF NOT ERROR THEN
         IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FS20 message received with address '") & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and command '" & sVal & "'" & IIf(iDur, " duration " & iDur, "") & CalcRSSI(fRSSI))
+        iDeviceId = Devices.Find(sHouseCode & sAddress, Devices.FindInterface("CUL Interface"), "FS20")
         ' move some values around if needed
         IF iCmd < 18 THEN ' Off, Dim, On
           sValue = sVal
           sValue2 = " "
         ELSE IF iCmd = 24 ' Off-For-Timer
           sValue = "Off"
-          sValue2 = sVal
+          sValue2 = sVal & " " & iDur
+          StartOnOffTimer(iDeviceId, "On", iDur)
         ELSE IF iCmd = 25 ' On-For-Timer
           sValue = "On"
-          sValue2 = sVal
+          sValue2 = sVal & " " & iDur
+          StartOnOffTimer(iDeviceId, "Off", iDur)
         ELSE
           sValue = ""
           sValue2 = sVal
         ENDIF
         ' find device id
-        iDeviceId = Devices.Find(sHouseCode & sAddress, Devices.FindInterface("CUL Interface"), "FS20")
         IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sValue, sValue2, "", "")
       ELSE
         IF bCULDebug THEN Main.WriteDebugLog(("[CUL] FS20 message received with address '") & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and unknown/invalid command '" & Hex(iCmd) & "'")
