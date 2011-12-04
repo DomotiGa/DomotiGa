@@ -21,7 +21,7 @@ PRIVATE iMaxConn AS Integer
 PRIVATE bXMLRPCDebug AS Boolean
 
 PUBLIC hXMLRPC AS RpcServer
-PRIVATE APIVersion AS String = "0.10"
+PRIVATE APIVersion AS String = "0.11"
 
 PUBLIC FUNCTION Connect() AS Boolean
 
@@ -158,6 +158,18 @@ PUBLIC FUNCTION Connect() AS Boolean
   hXMLRPC.Register(hRpcFunc)
   hRpcFunc = NEW RpcFunction("cmdr.plcbustxcommand", [XmlRpc.xString, XmlRpc.xString, XmlRpc.xBoolean, XmlRpc.xInteger], XmlRpc.xBoolean)
   hRpcFunc.Help = ("cmdr plcbus queue command.")
+  hXMLRPC.Register(hRpcFunc)
+  hRpcFunc = NEW RpcFunction("thermostat.listscenario", NULL, XmlRpc.xStruct)
+  hRpcFunc.Help = ("thermostat list all scenarii.")
+  hXMLRPC.Register(hRpcFunc)
+  hRpcFunc = NEW RpcFunction("thermostat.getscenario", NULL, XmlRpc.xStruct)
+  hRpcFunc.Help = ("thermostat get active scenario.")
+  hXMLRPC.Register(hRpcFunc)
+  hRpcFunc = NEW RpcFunction("thermostat.setscenario", [XmlRpc.xString], XmlRpc.xBoolean)
+  hRpcFunc.Help = ("thermostat set scenario.")
+  hXMLRPC.Register(hRpcFunc)
+  hRpcFunc = NEW RpcFunction("thermostat.derogateheating", [XmlRpc.xString, XmlRpc.xString, XmlRpc.xString], XmlRpc.xBoolean)
+  hRpcFunc.Help = ("thermostat change requested temperature for a heating.")
   hXMLRPC.Register(hRpcFunc)
   TRY hXMLRPC.Listen(iHTTPPort, iMaxConn)
 
@@ -693,6 +705,122 @@ PRIVATE SUB PLCBUSTXcommand(sParams AS Variant[])
 
 END
 
+PRIVATE SUB ThermostatListScenarii(sParams AS Variant[])
+
+  DIM rResultScenarii AS Result
+  DIM sString AS NEW Collection
+  DIM sList AS NEW RpcStruct
+  DIM iCnt AS Integer
+
+  TRY rResultScenarii = Main.hDB.Exec("SELECT * FROM thermostat_scenarii")
+  IF rResultScenarii THEN
+    FOR EACH rResultScenarii
+    iCnt = iCnt + 1
+      sString[iCnt] = rResultScenarii!id & ";;" & rResultScenarii!name & ";;" & rResultScenarii!description
+      sList.Add(rResultScenarii!name, sString[iCnt], XmlRpc.xString)
+    NEXT
+    hXMLRPC.SetReply(sList)
+  ELSE
+    Message(("No thermostat_scenarii database table found!"))
+  ENDIF
+
+END
+
+PRIVATE SUB ThermostatGetScenario(sParams AS Variant[])
+
+  DIM rResultScenarii, rResultHeatings AS Result
+  DIM sString AS NEW Collection
+  DIM sList AS NEW RpcStruct
+  DIM iCnt AS Integer
+  DIM sCurrTemp, sReqTemp AS String
+  DIM fTemp AS Float
+
+  TRY rResultScenarii = Main.hDB.Exec("SELECT * FROM thermostat_scenarii where name=&1", Main.GlobalVar["Thermostat_Mode"])
+
+  IF rResultScenarii.Count > 0 THEN
+    iCnt = 1
+    sString[iCnt] = rResultScenarii!id & ";;" & rResultScenarii!name & ";;" & rResultScenarii!description
+    sList.Add(rResultScenarii!name, sString[iCnt], XmlRpc.xString)
+
+    rResultHeatings = Main.hDB.Exec("SELECT * FROM thermostat_schedule, thermostat_heating where heating=id and scenario=&1 ORDER BY name", rResultScenarii!id)
+    FOR EACH rResultHeatings
+      INC iCnt
+      sCurrTemp = Devices.GetCurrentValueForDevice(rResultHeatings!sensor, 1)
+      fTemp = Thermostat.GetDerogateHeating(rResultHeatings!id)
+      IF fTemp = Thermostat.NO_TEMP THEN fTemp = Thermostat.GetRequestedTempForHeating(rResultHeatings!scenario, rResultHeatings!id)
+      sReqTemp = fTemp
+      sString[iCnt] = rResultHeatings!id & ";;" & rResultHeatings!name & ";;" & sCurrTemp & ";;" & sReqTemp
+      sList.Add(rResultHeatings!name, sString[iCnt], XmlRpc.xString)
+    NEXT
+  ENDIF
+  hXMLRPC.SetReply(sList)
+
+END
+
+PRIVATE SUB ThermostatSetScenario(sParams AS Variant[])
+
+  ' param0 must be the scenario name
+  IF sParams.Count = 1 THEN
+    TRY Main.SetGlobalVar("Thermostat_Mode", sParams[0])
+    Thermostat.DeleteAllDerogateHeating()
+    hXMLRPC.SetReply(TRUE)
+  ELSE
+    hXMLRPC.SetReply(FALSE)
+  ENDIF
+
+END
+
+' param 0 : scenario id
+' param 1 : heating id
+' param 2 : '+' or '-'
+PRIVATE SUB ThermostatDerogateHeating(sParams AS Variant[])
+
+  DIM fNewVal, fVal, fDerVal AS Float
+  DIM scenarioId, heatingId AS Integer
+
+  IF sParams.Count = 3 THEN
+    scenarioId = CInt(sParams[0])
+    heatingId = CInt(sParams[1])
+    fVal = Thermostat.GetRequestedTempForHeating(scenarioId, heatingId)
+    fDerVal = Thermostat.GetDerogateHeating(heatingId)
+    IF fDerVal <> Thermostat.NO_TEMP THEN
+      fval = fderval
+    ENDIF
+    IF sParams[2] = "+" THEN
+      IF fDerVal = Thermostat.NO_TEMP THEN
+        fNewVal = Thermostat.GetNextRequestedTempForHeating(scenarioId, heatingId)
+        IF fNewVal <> Thermostat.NO_TEMP THEN
+          IF fNewVal < fval THEN
+            fNewVal = fval + 0.5
+          ENDIF
+        ELSE
+          fNewVal = fval + 0.5
+        ENDIF
+      ELSE
+        fNewVal = fval + 0.5
+      ENDIF
+    ELSE
+      IF fDerVal = Thermostat.NO_TEMP THEN
+        fNewVal = Thermostat.GetNextRequestedTempForHeating(scenarioId, heatingId)
+        IF fNewVal <> Thermostat.NO_TEMP THEN
+          IF fNewVal > fval THEN
+            fNewVal = fval - 0.5
+          ENDIF
+        ELSE
+          fNewVal = fval - 0.5
+        ENDIF
+      ELSE
+        fNewVal = fval - 0.5
+      ENDIF
+    ENDIF
+    Thermostat.SetDerogateHeating(scenarioId, heatingId, fNewVal)
+    hXMLRPC.SetReply(TRUE)
+  ELSE
+    hXMLRPC.SetReply(FALSE)
+  ENDIF
+
+END
+
 PUBLIC SUB hXMLRPC_RemoteCall(sName AS String, sData AS Variant[])
 
   DIM vValue AS Variant
@@ -804,6 +932,14 @@ PUBLIC SUB hXMLRPC_RemoteCall(sName AS String, sData AS Variant[])
       CULqueuecommand(sData)
     CASE "cmdr.plcbustxcommand"
       PLCBUSTXcommand(sData)
+    CASE "thermostat.listscenario"
+      ThermostatListScenarii(sData)
+    CASE "thermostat.getscenario"
+      ThermostatGetScenario(sData)
+    CASE "thermostat.setscenario"
+      ThermostatSetScenario(sData)
+    CASE "thermostat.derogateheating"
+      ThermostatDerogateHeating(sData)
     DEFAULT
       RETURN
   END SELECT
