@@ -1,0 +1,255 @@
+' Gambas class file
+
+' Description:
+' CCUPS.class
+' Connect to UPS via upsd's tcp socket and monitor status.
+
+' Development Status:
+' Working, maybe later add more variables to monitor.
+' Only tested with my APC SmartUPS 1000, only one UPS at a time supported.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2011 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PROPERTY Host AS String
+PROPERTY Port AS Integer
+PROPERTY PollTime AS Integer
+PROPERTY UPSDebug AS Boolean
+
+PRIVATE sTCPHost AS String
+PRIVATE iTCPPort AS Integer
+PRIVATE iPollTime AS Integer
+PRIVATE bUPSDebug AS Boolean
+
+PUBLIC hUPS AS NEW Socket
+PUBLIC tUPS AS Timer
+PUBLIC sBuffer AS String
+
+PUBLIC SUB CheckUPS()
+
+  DIM rResult AS Result
+
+  TRY rResult = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE", Devices.FindInterface("UPS Socket"))
+  IF NOT ERROR THEN
+    IF rResult.Count THEN
+      FOR EACH rResult
+        IF bUPSDebug THEN Main.WriteDebugLog(("[UPS] checking UPS named '") & rResult!name & ("' with address '") & rResult!address & "'")
+        Check(rResult!address, rResult!module)
+      NEXT
+    ELSE
+      Main.WriteLog(("UPS: no UPS(s) found in device table!"))
+    END IF
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the connection
+  TRY hUPS.Close
+
+  ' get a new one
+  hUPS = NEW Socket AS "UPS"
+  hUPS.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("UPS Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hUPS.Close
+  Main.WriteLog(("UPS socket close."))
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("UPS Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB UPS_Error()
+
+  ' handle error
+  SELECT CASE hUPS.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog(("UPS: The system does not allow to create a socket."))
+    CASE Net.HostNotFound
+      Main.WriteLog(("UPS: Host '") & sTCPHost & ("' not found."))
+    CASE Net.ConnectionRefused
+      Main.WriteLog(("UPS: Unable to connect. Connection refused."))
+    CASE Net.CannotRead
+      Main.WriteLog(("UPS: Error reading data."))
+    CASE Net.CannotWrite
+      Main.WriteLog(("UPS: Error writing data."))
+  END SELECT
+
+END
+
+PUBLIC SUB UPS_Read()
+
+  DIM sData AS String
+
+  TRY READ #hUPS, sData, 1
+  IF ERROR THEN Main.WriteDebugLog(("[UPS] Error reading data from network socket! -> ") & Error.Text)
+  IF sData = Chr(10) THEN ' buffer until newline then parse
+    IF Len(sBuffer) > 1 THEN ParseLine(sBuffer)
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  END IF
+
+END
+
+PUBLIC SUB ParseLine(sBuf AS String)
+
+  DIM sValue, sAddress AS String
+  DIM iDeviceId AS Integer
+
+  IF bUPSDebug THEN Main.WriteDebugLog(sBuf)
+
+  ' try to find address and deviceid
+  IF NOT InStr(sBuf, "ERR") THEN
+    sAddress = Replace(sBuf, "VAR ", "")
+    sAddress = Mid(sAddress, 1, InStr(sAddress, " ", 1) - 1)
+    iDeviceId = Devices.Find(sAddress, Devices.FindInterface("UPS Socket"), "UPS")
+  END IF
+
+  ' VAR smartups1000 input.voltage "223.6"
+  ' VAR smartups1000 ups.status "OL"
+  ' VAR smartups1000 ups.temperature "030.1"
+  ' VAR smartups1000 ups.load "41"
+  IF iDeviceId THEN
+    IF InStr(sBuf, "ups.status") THEN
+      IF InStr(sBuf, "OL") THEN
+        sValue = "Online"
+      ELSE IF InStr(sBuf, "OB") THEN
+        sValue = "On Battery"
+      ELSE IF InStr(sBuf, "LB") THEN
+        sValue = "Low Battery"
+      END IF
+      Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
+    ELSE IF InStr(sBuf, "input.voltage") THEN
+      sValue = Mid$(sBuf, Len(sBuf) - 5, -1)
+      Devices.ValueUpdate(iDeviceId, "", sValue, "", "")
+    ELSE IF InStr(sBuf, "battery.charge") THEN
+      sValue = Mid$(sBuf, Len(sBuf) - 3, -1)
+      Devices.ValueUpdate(iDeviceId, "", sValue, "", "")
+    ELSE IF InStr(sBuf, "ups.temperature") THEN
+      sValue = Mid$(sBuf, Len(sBuf) - 4, -1)
+      Devices.ValueUpdate(iDeviceId, "", "", sValue, "")
+    ELSE IF InStr(sBuf, "ups.load") THEN
+      sValue = Mid$(sBuf, Len(sBuf) - 1, -1)
+      Devices.ValueUpdate(iDeviceId, "", "", sValue, "")
+    END IF
+  END IF
+
+END
+
+PUBLIC SUB UPS_Ready()
+
+  Main.WriteLog(("UPS socket connected."))
+
+  ' start poll timer for UPS
+  tUPS = NEW Timer AS "tUPS"
+  tUPS.Delay = iPollTime * 1000 ' multiply for seconds
+  tUPS.Start
+
+END
+
+PUBLIC SUB tUPS_Timer()
+
+  CheckUPS()
+
+END
+
+PUBLIC SUB Check(sAddress AS String, iModule AS Integer)
+
+  DIM sCmd AS String = "GET VAR " & sAddress & " ups.status"
+
+  IF bUPSDebug THEN Main.WriteDebugLog("[UPS] " & sCmd)
+  TRY PRINT #hUPS, sCmd
+  IF ERROR THEN Main.WriteDebugLog(("[UPS] Error writing data to network socket! -> ") & Error.Text)
+  sCmd = "GET VAR " & sAddress & " ups.load"
+  IF bUPSDebug THEN Main.WriteDebugLog("[UPS] " & sCmd)
+  TRY PRINT #hUPS, sCmd
+  IF ERROR THEN Main.WriteDebugLog(("[UPS] Error writing data to network socket! -> ") & Error.Text)
+
+  SELECT CASE Devices.FindDescrForDeviceType(iModule)
+    CASE "BackUPS" ' APC BackUPS
+      sCmd = "GET VAR " & sAddress & " ups.load"
+    CASE "MGE" ' MGE PC 675
+      sCmd = "GET VAR " & sAddress & " battery.charge"
+    CASE ELSE ' APC SmartUPS
+      sCmd = "GET VAR " & sAddress & " ups.temperature"
+  END SELECT
+  IF bUPSDebug THEN Main.WriteDebugLog("[UPS] " & sCmd)
+  TRY PRINT #hUPS, sCmd
+  IF ERROR THEN Main.WriteDebugLog(("[UPS] Error writing data to network socket! -> ") & Error.Text)
+
+END
+
+' implement properties
+PRIVATE FUNCTION Host_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB Host_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION Port_Read() AS Integer
+
+  RETURN iTCPPort
+
+END
+
+PRIVATE SUB Port_Write(Value AS Integer)
+
+  iTCPPort = Value
+
+END
+
+PRIVATE FUNCTION UPSDebug_Read() AS Boolean
+
+  RETURN bUPSDebug
+
+END
+
+PRIVATE SUB UPSDebug_Write(Value AS Boolean)
+
+  bUPSDebug = Value
+
+END
+
+PRIVATE FUNCTION PollTime_Read() AS Integer
+
+  RETURN iPollTime
+
+END
+
+PRIVATE SUB PollTime_Write(Value AS Integer)
+
+  iPollTime = Value
+
+END

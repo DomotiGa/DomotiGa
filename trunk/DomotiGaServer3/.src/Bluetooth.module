@@ -1,0 +1,170 @@
+' Gambas module file
+
+' Description:
+' Bluetooth.module
+' Support for Bluetooth proximity, see if a user is around by checking his bluetooth device(s).
+
+' Development Status:
+' Works.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2011 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+Public tBluetooth As Timer
+Private sScan As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer for polling
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Run()
+
+  ' start poll timer for bluetooth
+  tBluetooth = New Timer As "tBluetooth"
+  tBluetooth.Delay = Main.iBluetoothPollTime * 1000 ' multiply for seconds
+  tBluetooth.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start one of two scan types depending on Threshold setting
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tBluetooth_Timer()
+
+  If Main.iBluetoothThreshold = 255 Then
+    ScanBluetooth()
+  Else
+    CheckBluetooth()
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' scan for BT devices, don't calculate RSSI
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckBluetooth()
+
+  Dim rResult, rUser As Result
+  Dim iRSSI As Integer
+  Dim sRSSI, sProx, sOutput As String
+
+  ' get all enabled devices of type blutooth
+  rResult = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE", Devices.FindInterface("Bluetooth Dongle"))
+  If rResult.Available Then
+    If rResult.Count >= 1 Then
+      ' check each device
+      For Each rResult
+        If Main.bBluetoothDebug Then Main.WriteDebugLog(("[Bluetooth] Checking device named '") & rResult!name & ("' with address '") & rResult!address & "'.")
+        ' check device for signal strenght
+        sRSSI = GetRSSI(rResult!address)
+        If Main.bBluetoothDebug Then Main.WriteDebugLog("[Bluetooth] " & Replace(sRSSI, gb.NewLine, ""))
+        ' [GB2:ISTY] If IsInteger(Val(sRSSI)) Then
+        If TypeOf(Val(sRSSI)) = gb.Integer  Then
+          ' [GB2:ISTY] iRSSI = IsInteger(Val(sRSSI))
+          iRSSI = TypeOf(Val(sRSSI)) = gb.Integer 
+          If iRSSI > Main.iBluetoothThreshold Then
+            sProx = ("Near")
+          Else
+            sProx = ("Far")
+          End If
+          Devices.ValueUpdate(rResult!id, sProx, Val(sRSSI), "", "")
+          If Main.bBluetoothDebug Then Main.WriteDebugLog(("[Bluetooth] Got RSSI value ") & iRSSI)
+          ' if signal strenght is within set threshold
+          If iRSSI > Main.iBluetoothThreshold Then
+            ' is there a user linked to this device?
+            If rResult!user Then
+              rUser = Main.hDB.Exec("SELECT * FROM users WHERE id = &1", rResult!user)
+              If rUser.Available Then Main.WriteLog(("Bluetooth Proximity detected that '") & rUser!fullname & ("' is home!"))
+            End If
+          End If
+        Else
+          Devices.ValueUpdate(rResult!id, ("Away"), "", "", "")
+        End If
+      Next
+    Else
+      Main.WriteLog(("Bluetooth: No Bluetooth device(s) found in device table!"))
+    End If
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' scan bluetooth network
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function ScanBluetooth() As String
+
+  Exec ["hcitool", "-i", Main.sBluetoothDevice, "scan", "2>&1"] For Read As "ScanBT"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got output, save it
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ScanBT_Read()
+
+  Dim sBuffer As String
+
+  Read #Last, sBuffer, -256
+  sScan &= sBuffer
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' scan bluetooth has finished, process it's output
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ScanBT_Kill()
+
+  Dim sLine As String
+  Dim aScan As String[]
+  Dim iDeviceId As Integer
+  Dim rResult, rUser As Result
+
+  rResult = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE", Devices.FindInterface("Bluetooth Dongle"))
+  If rResult.Available Then
+    If rResult.Count >= 1 Then
+      ' check each device
+      For Each rResult
+        If Main.bBluetoothDebug Then Main.WriteDebugLog(("[Bluetooth] Checking device named '") & rResult!name & ("' with address '") & rResult!address & "'.")
+        If InStr(sScan, rResult!address) Then
+          Devices.Find(rResult!address, Devices.FindInterface("Bluetooth Dongle"), "BLUETOOTH")
+          Devices.ValueUpdate(rResult!id, "Home", "", "", "")
+          ' is there a user linked to this device?
+          If rResult!user Then
+            rUser = Main.hDB.Exec("SELECT * FROM users WHERE id = &1", rResult!user)
+            If rUser.Available Then Main.WriteLog(("Bluetooth Proximity detected that '") & rUser!fullname & ("' is home!"))
+          End If
+        Else
+          Devices.Find(rResult!address, Devices.FindInterface("Bluetooth Dongle"), "BLUETOOTH")
+          Devices.ValueUpdate(rResult!id, ("Away"), "", "", "")
+        End If
+      Next
+    Else
+      Main.WriteLog(("Bluetooth: No Bluetooth device(s) found in device table!"))
+    End If
+  End If
+
+  ' parse each line
+  For Each sLine In Split(sScan, "\n")
+    ' check for sensor data
+    If InStr(sLine, "Scanning") Then Continue
+    aScan = Scan(sLine, " * *")
+    If aScan.Count = 2 Then
+      If Main.bBluetoothDebug Then Main.WriteDebugLog(("[Bluetooth] Found device with address '") & aScan[0] & ("' and name '") & aScan[1] & "'.")
+    End If
+  Next
+  sScan = ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return BT field strenght info for sAddress
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function GetRSSI(sAddress As String) As String
+
+  Dim sStrength As String
+
+  Exec ["hcitool", "rssi", sAddress] To sStrength
+  Return Replace$(sStrength, "RSSI return value: ", "")
+
+End

@@ -1,0 +1,1491 @@
+' Gambas class file
+
+' Description:
+' CZWave.class
+' Support for Z-Wave protocol.
+
+' Development Status:
+' Reading node list and info from controller and switching and dimming of modules works, certainly not finished yet!
+' Only tested with AEON Labs Z-Wave Stick and Duewi Dimmer and Switch module.
+
+' Remarks:
+' This code is put together with the use of the information found at these locations:
+' http://wiki.linuxmce.org/index.php/ZWave_API
+' http://svn.linuxmce.org/svn/trunk/src/ZWave
+' http://wiki.micasaverde.com/index.php/ZWave_Command_Classes
+' http://area26.no-ip.org/linked/zw_analysis.rtf
+' http://code.google.com/p/open-zwave/
+
+' Credits:
+' Thanks to Willem-Jan of ezHome.nl.
+' and Jaren for open-zwave wrapper code.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2011 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+Library "libdomozwave"
+Extern DomoZWave_Init(serialPort As String, rpcPort As Integer, deviceConfigPath As String, zwConfigPath As String, enableLog As Boolean)
+Extern DomoZWave_Destroy()
+Extern DomoZWave_SetNodeOn(node As Integer)
+Extern DomoZWave_SetNodeOff(node As Integer)
+Extern DomoZWave_SetNodeLevel(node As Integer, level As Integer)
+Extern DomoZWave_EnablePolling(node As Integer)
+Extern DomoZWave_DisablePolling(node As Integer)
+Extern DomoZWave_RequestNodeState(node As Integer)
+
+Property UseOZW As Boolean
+Property Port As String
+Property Baud As String
+Property ZWaveDebug As Boolean
+Property ReloadNodes As Boolean
+
+Private bUseOZW As Boolean
+Private sPort As String
+Private sBaud As String
+Private bZWaveDebug As Boolean
+Private bReloadNodes As Boolean
+
+Public hZWaveSer As New SerialPort
+Public tZWaveLED As New Timer
+
+Public sZWaveAPIVersion As String
+Public sZWaveZDKVersion As String
+Public sHomeID As String
+Public iSUCNodeID As Integer
+Public iControllerID As Integer
+Public sControllerChipType As String
+Public sControllerChipRev As String
+Public sControllerType As String = ("Unknown")
+Public bControllerCapabilities As Byte[]
+
+Private iCallback As Integer
+Private iTempNode As Integer
+
+' temp stuff
+Private bAwaitAck As Boolean
+Public tZWavePoll As New Timer
+Private bPolling As Boolean
+Private cRequestBuffer As Collection
+
+' Z-Wave constants
+Private Const SOF As Byte = &H01
+Private Const ACK As Byte = &H06
+Private Const NAK As Byte = &H15
+Private Const CAN As Byte = &H18
+Private Const REQUEST As Byte = &H0
+Private Const RESPONSE As Byte = &H1
+
+Private Const ZW_SUC_FUNC_NODEID_SERVER As Byte = &H01
+Private Const ZW_GET_VERSION As Byte = &H15
+Private Const ZW_MEMORY_GET_ID As Byte = &H20
+
+Private Const FUNC_ID_SERIAL_API_GET_INIT_DATA As Byte = &H02
+Private Const FUNC_ID_SERIAL_API_GET_CAPABILITIES As Byte = &H07
+Private Const FUNC_ID_ZW_SEND_DATA As Byte = &H13
+Private Const FUNC_ID_ZW_GET_NODE_PROTOCOL_INFO As Byte = &H41
+Private Const FUNC_ID_ZW_ENABLE_SUC As Byte = &H52
+Private Const FUNC_ID_ZW_SET_SUC_NODE_ID As Byte = &H54
+Private Const FUNC_ID_ZW_GET_SUC_NODE_ID As Byte = &H56
+Private Const FUNC_ID_APPLICATION_COMMAND_HANDLER As Byte = &H04
+
+Private Const FUNC_ID_ZW_GET_NODE_CAPABILITIES As Byte = &H60
+
+Private Const COMMAND_CLASS_MANUFACTURER_SPECIFIC As Byte = &H72
+Private Const MANUFACTURER_SPECIFIC_GET As Byte = &H04
+Private Const MANUFACTURER_SPECIFIC_REPORT As Byte = &H05
+
+Private Const COMMAND_CLASS_BASIC As Byte = &H20
+Private Const COMMAND_CLASS_SWITCH_MULTILEVEL As Byte = &H26
+Private Const SWITCH_MULTILEVEL_SET As Byte = &H01
+
+Private Const COMMAND_CLASS_MULTI_INSTANCE As Byte = &H60
+Private Const MULTI_INSTANCE_REPORT As Byte = &H05
+
+Private Const COMMAND_CLASS_VERSION As Byte = &H86
+Private Const VERSION_GET As Byte = &H11
+Private Const VERSION_REPORT As Byte = &H12
+
+Private Const COMMAND_CLASS_METER As Byte = &H32
+Private Const COMMAND_CLASS_SENSOR_MULTILEVEL As Byte = &H31
+
+Private Const SENSOR_MULTILEVEL_GET As Byte = &H04
+Private Const SENSOR_MULTILEVEL_REPORT As Byte = &H05
+
+Private Const SENSOR_MULTILEVEL_PRECISION_MASK As Byte = &HE0
+Private Const SENSOR_MULTILEVEL_SCALE_MASK As Byte = &H18
+Private Const SENSOR_MULTILEVEL_SIZE_MASK As Byte = &H07
+Private Const SENSOR_MULTILEVEL_PRECISION_SHIFT As Byte = &H05
+Private Const SENSOR_MULTILEVEL_SCALE_SHIFT As Byte = &H03
+Private Const SENSOR_TYPE_TEMPERATURE_SCALE_C As Byte = &H00
+Private Const SENSOR_TYPE_TEMPERATURE_SCALE_F As Byte = &H01
+Private Const SENSOR_TYPE_TEMPERATURE As Byte = &H01
+
+Private Const METER_PULSE_VERSION As Byte = &H01
+Private Const METER_PULSE_GET As Byte = &H04
+Private Const METER_PULSE_REPORT As Byte = &H05
+
+Private Const BASIC_SET As Byte = &H01
+Private Const BASIC_GET As Byte = &H02
+Private Const BASIC_REPORT As Byte = &H03
+
+Private Const TRANSMIT_OPTION_ACK As Byte = &H01
+Private Const TRANSMIT_OPTION_AUTO_ROUTE As Byte = &H04
+
+Private Const BASIC_TYPE_CONTROLLER As Byte = &H01
+Private Const BASIC_TYPE_STATIC_CONTROLLER As Byte = &H02
+Private Const BASIC_TYPE_SLAVE As Byte = &H03
+Private Const BASIC_TYPE_ROUTING_SLAVE As Byte = &H04
+
+Private Const GENERIC_TYPE_GENERIC_CONTROLLER As Byte = &H01
+Private Const GENERIC_TYPE_STATIC_CONTROLLER As Byte = &H02
+Private Const GENERIC_TYPE_AV_CONTROL_POINT As Byte = &H03
+Private Const GENERIC_TYPE_DISPLAY As Byte = &H06
+Private Const GENERIC_TYPE_GARAGE_DOOR As Byte = &H07
+Private Const GENERIC_TYPE_THERMOSTAT As Byte = &H08
+Private Const GENERIC_TYPE_WINDOW_COVERING As Byte = &H09
+Private Const GENERIC_TYPE_REPEATER_SLAVE As Byte = &H0F
+Private Const GENERIC_TYPE_SWITCH_BINARY As Byte = &H10
+Private Const GENERIC_TYPE_SWITCH_MULTILEVEL As Byte = &H11
+Private Const GENERIC_TYPE_SWITCH_REMOTE As Byte = &H12
+Private Const GENERIC_TYPE_SWITCH_TOGGLE As Byte = &H13
+Private Const GENERIC_TYPE_ZIP_GATEWAY As Byte = &H14
+Private Const GENERIC_TYPE_ZIP_NODE As Byte = &H15
+Private Const GENERIC_TYPE_SENSOR_BINARY As Byte = &H20
+Private Const GENERIC_TYPE_SENSOR_MULTILEVEL As Byte = &H21
+Private Const GENERIC_TYPE_WATER_CONTROL As Byte = &H22
+Private Const GENERIC_TYPE_METER_PULSE As Byte = &H30
+Private Const GENERIC_TYPE_METER As Byte = &H31
+Private Const GENERIC_TYPE_ENTRY_CONTROL As Byte = &H40
+Private Const GENERIC_TYPE_SEMI_INTEROPERABLE As Byte = &H50
+Private Const GENERIC_TYPE_SENSOR_ALARM As Byte = &HA1
+Private Const GENERIC_TYPE_NON_INTEROPERABLE As Byte = &HFF
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Connect() As Boolean
+
+  If bUseOZW Then Return True
+
+  ' try to close the port
+  Try hZWaveSer.Close
+
+  ' get a new one
+  hZWaveSer = New Serialport As "ZWaveSer"
+
+  With hZWaveSer
+    .PortName = sPort
+    .Speed = sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' start timer for Z-Wave status LED
+  tZWaveLED = New Timer As "tZWaveLED"
+  tZWaveLED.Delay = 250
+  tZWaveLED.Stop
+
+  ' start poll timer for Z-Wave receive function
+  tZWavePoll = New Timer As "tZWavePoll"
+  tZWavePoll.Delay = 1000
+  tZWavePoll.Stop
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("Z-Wave Error: ") & ERROR.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get information about version and nodes from stick
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub InitZWave()
+
+  ' [GB2:ARRD] Dim bBuf As Byte[16]
+  Dim bBuf As New Byte[16]
+
+  If bUseOZW
+    OZW_Init()
+    Return
+  Endif
+
+  bBuf[0] = NAK
+  WriteSerial(bBuf, 1)
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Get controller info"))
+  bBuf[0] = ZW_GET_VERSION
+  SendFunction(bBuf, 1, REQUEST, 0)
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Get home & controller IDs"))
+  bBuf[0] = ZW_MEMORY_GET_ID
+  SendFunction(bBuf, 1, REQUEST, 0)
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Get capabilities"))
+  bBuf[0] = FUNC_ID_SERIAL_API_GET_CAPABILITIES
+  SendFunction(bBuf, 1, REQUEST, 0)
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Get SUC node ID"))
+  bBuf[0] = FUNC_ID_ZW_GET_SUC_NODE_ID
+  SendFunction(bBuf, 1, REQUEST, 0)
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Get init data"))
+  bBuf[0] = FUNC_ID_SERIAL_API_GET_INIT_DATA
+  SendFunction(bBuf, 1, REQUEST, 0)
+
+  ' find out type and manufacturer of each node
+  ' and request their values
+  QueryNodes()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' called from devices module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim ibrightness As Integer
+
+  If bUseOZW
+    OZW_SendCommand(sAddress, sCmd)
+    Return
+  Endif
+
+  sCmd = UCase(sCmd)
+  If sCmd = "ON"
+    ChangeSwitch(sAddress, &HFF)
+  Else If sCmd = "OFF"
+    ChangeSwitch(sAddress, &H0)
+  Else If InStr(sCmd, "DIM ") Then ' DIM 0-100
+    iBrightness = Val(Replace(sCmd, "DIM ", ""))
+    ChangeSwitchLevel(sAddress, iBrightness)
+  Else
+    Main.WriteDebugLog(("[Z-Wave] Only DIM and ON/OFF commands are supported!"))
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' do the writes on the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WriteSerial(bBuffer As Byte[], iLength As Integer)
+
+  Dim iCnt As Integer
+  Dim bByte As Byte
+
+  If Not bZWaveDebug Then
+    bBuffer.Write(hZWaveSer, 0, iLength)
+    Return
+  Endif
+
+  Main.WriteDebugLog("[Z-Wave] >", True)
+  For Each bByte In bBuffer
+    If iCnt >= iLength Then Break
+    Write #hZWaveSer, CByte(bByte)
+    Main.WriteRFXDebugLog(" " & Hex(bByte, 2), True)
+    Inc iCnt
+  Next
+  Main.WriteRFXDebugLog("\n", True)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' create the correct packet frame to send
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendFunction(bBuffer As Byte[], iLength As Integer, iType As Integer, bResponse As Boolean)
+
+  Dim iPacketLen As Integer = iLength + 2 + IIf(bResponse, 1, 0)
+
+  If iCallback = 254 Then
+    iCallback = 1
+  Else
+    Inc iCallback
+  Endif
+
+  bBuffer.Add(SOF, 0) ' insert start of frame and length
+  bBuffer.Add(iPacketLen, 1)
+  bBuffer.Add(iType, 2)
+  If bResponse Then bBuffer.Add(CByte(iCallback), iPacketLen) ' insert callback if we request a response
+  bBuffer[iLength + 3 + IIf(bResponse, 1, 0)] = ChecksumZ(bBuffer, iPacketLen) ' insert checksum
+
+  WriteSerial(bBuffer, iPacketLen + 2)
+  ReceiveFunction()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' switch a binary switch
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ChangeSwitch(iNodeID As Integer, iLevel As Integer)
+
+  ' [GB2:ARRD] Dim bBuf As Byte[10]
+  Dim bBuf As New Byte[10]
+
+  If bUseOZW
+    OZW_ChangeSwitch(iNodeID, iLevel)
+    Return
+  Endif
+
+  bBuf[0] = FUNC_ID_ZW_SEND_DATA
+  bBuf[1] = iNodeID
+  bBuf[2] = &H3
+  bBuf[3] = COMMAND_CLASS_BASIC
+  bBuf[4] = BASIC_SET
+  bBuf[5] = iLevel
+  bBuf[6] = TRANSMIT_OPTION_ACK Or TRANSMIT_OPTION_AUTO_ROUTE
+
+  SendFunction(bBuf, 7, REQUEST, 1)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' control a multilevel switch (dimmer)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ChangeSwitchLevel(iNodeID As String, iLevel As Integer)
+
+  ' [GB2:ARRD] Dim bBuf As Byte[10]
+  Dim bBuf As New Byte[10]
+
+  If bUseOZW
+    OZW_ChangeNodeLevel(iNodeID, iLevel)
+    Return
+  Endif
+
+  bBuf[0] = FUNC_ID_ZW_SEND_DATA
+  bBuf[1] = iNodeID
+  bBuf[2] = &H3
+  bBuf[3] = COMMAND_CLASS_SWITCH_MULTILEVEL
+  bBuf[4] = SWITCH_MULTILEVEL_SET
+  bBuf[5] = Val("&H" & Hex(iLevel)) ' max 100 (0x64)
+  bBuf[6] = TRANSMIT_OPTION_ACK Or TRANSMIT_OPTION_AUTO_ROUTE
+
+  SendFunction(bBuf, 7, REQUEST, 1)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' request manufacturer and device type values from node
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RequestManufacturerSpecificReport(iNodeID As Integer)
+
+  ' [GB2:ARRD] Dim bBuf As Byte[10]
+  Dim bBuf As New Byte[10]
+
+  bBuf[0] = FUNC_ID_ZW_SEND_DATA
+  bBuf[1] = iNodeID
+  bBuf[2] = &H3
+  bBuf[3] = COMMAND_CLASS_MANUFACTURER_SPECIFIC
+  bBuf[4] = MANUFACTURER_SPECIFIC_GET
+  bBuf[5] = MANUFACTURER_SPECIFIC_REPORT
+  bBuf[6] = TRANSMIT_OPTION_ACK Or TRANSMIT_OPTION_AUTO_ROUTE
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Requesting Manufacturer Specific Report for Node ") & iNodeID)
+  SendFunction(bBuf, 6, REQUEST, 0)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' request multilevel sensor get from node
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RequestMultiLevelSensorReport(iNodeID As Integer)
+
+  ' [GB2:ARRD] Dim bBuf As Byte[10]
+  Dim bBuf As New Byte[10]
+
+  If bUseOZW
+    Main.WriteDebugLog("[Z-Wave] MultiLevelSensorReport not implemented for OpenZWave Mode yet. ")
+    Return
+  Endif
+
+  bBuf[0] = FUNC_ID_ZW_SEND_DATA
+  bBuf[1] = iNodeID
+  bBuf[2] = &H3
+  bBuf[3] = COMMAND_CLASS_SENSOR_MULTILEVEL
+  bBuf[4] = SENSOR_MULTILEVEL_GET
+  bBuf[5] = SENSOR_MULTILEVEL_REPORT
+  bBuf[6] = TRANSMIT_OPTION_ACK Or TRANSMIT_OPTION_AUTO_ROUTE
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Requesting Multilevel Sensor Report for Node ") & iNodeID)
+  SendFunction(bBuf, 6, REQUEST, 0)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' request capabilities from node
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RequestNodeCapabilities(iNodeID As Integer)
+
+  ' [GB2:ARRD] Dim bBuf As Byte[10]
+  Dim bBuf As New Byte[10]
+
+  bBuf[0] = FUNC_ID_ZW_GET_NODE_CAPABILITIES
+  bBuf[1] = iNodeID
+  'bBuf[2] = TRANSMIT_OPTION_ACK OR TRANSMIT_OPTION_AUTO_ROUTE
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Requesting Capabilities for Node ") & iNodeID)
+  SendFunction(bBuf, 2, REQUEST, 0)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send basic get to get node value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RequestBasicReport(iNodeID As Integer)
+
+  ' [GB2:ARRD] Dim bBuf As Byte[10]
+  Dim bBuf As New Byte[10]
+
+  If bUseOZW
+    If iNodeID == 255
+      OZW_RequestAllNodeStates()
+    Else
+      OZW_RequestNodeState(iNodeID)
+    Endif
+    Return
+  Endif
+
+  bBuf[0] = FUNC_ID_ZW_SEND_DATA
+  bBuf[1] = iNodeID
+  bBuf[2] = &H2
+  bBuf[3] = COMMAND_CLASS_BASIC
+  bBuf[4] = BASIC_GET
+  bBuf[5] = TRANSMIT_OPTION_ACK Or TRANSMIT_OPTION_AUTO_ROUTE
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Requesting basic report for Node ") & iNodeID)
+  SendFunction(bBuf, 6, REQUEST, 1)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send version get to get node value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RequestVersionReport(iNodeID As Integer)
+
+  ' [GB2:ARRD] Dim bBuf As Byte[10]
+  Dim bBuf As New Byte[10]
+
+  If bUseOZW
+    Main.WriteDebugLog("[Z-Wave] RequestVersionReport not implemented for OpenZWave mode yet. ")
+    Return
+  Endif
+
+  bBuf[0] = FUNC_ID_ZW_SEND_DATA
+  bBuf[1] = iNodeID
+  bBuf[2] = &H2
+  bBuf[3] = COMMAND_CLASS_VERSION
+  bBuf[4] = VERSION_GET
+  bBuf[5] = TRANSMIT_OPTION_ACK Or TRANSMIT_OPTION_AUTO_ROUTE
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Requesting version report for Node ") & iNodeID)
+  SendFunction(bBuf, 6, REQUEST, 1)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send meter get to get power usage
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RequestMeterReport(iNodeID As Integer)
+
+  ' [GB2:ARRD] Dim bBuf As Byte[10]
+  Dim bBuf As New Byte[10]
+
+  If bUseOZW
+    Main.WriteDebugLog("[Z-Wave] RequestMeterReport not implemented for OpenZWave mode yet. ")
+    Return
+  Endif
+
+  bBuf[0] = FUNC_ID_ZW_SEND_DATA
+  bBuf[1] = iNodeID
+  bBuf[2] = &H2
+  bBuf[3] = COMMAND_CLASS_METER
+  bBuf[4] = METER_PULSE_GET
+  bBuf[5] = TRANSMIT_OPTION_ACK Or TRANSMIT_OPTION_AUTO_ROUTE
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Requesting meter report for Node ") & iNodeID)
+  SendFunction(bBuf, 6, REQUEST, 1)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' calculate checksum of a frame
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ChecksumZ(bBuffer As Byte[], iLength As Integer) As Byte
+
+  Dim iChecksum As Byte = &HFF
+  Dim iCnt As Integer
+
+  For iCnt = 1 To iLength
+    iChecksum = iChecksum Xor bBuffer[iCnt]
+  Next
+
+  Return iChecksum
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' handle incoming data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ReceiveFunction()
+
+  ' [GB2:ARRD] Dim bMyBuf As Byte[512]
+  Dim bMyBuf As New Byte[512]
+  Dim iLen, iCnt, iLoop As Integer
+  ' [GB2:ARRD] Dim bBuf As Byte[8]
+  Dim bBuf As New Byte[8]
+
+  bPolling = True
+  While iLoop < 16384
+    bMyBuf[0] = 0
+    Try Read #hZwaveSer, bMyBuf[0], 1 ' read the first byte
+    If Not Error Then
+      Main.ControlLed("ZWave", "On")
+      If Main.bServer Then tZWaveLED.Start
+      iLen = 1
+      Select bMyBuf[0]
+        Case SOF
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] SOF found"))
+          If bAwaitAck Then
+            If bZWaveDebug Then Main.WriteRFXDebugLog(("[Z-Wave] ERROR: SOF found while awaiting ACK.. triggering resend"))
+            bAwaitAck = False
+          End If
+
+          Try Read #hZwaveSer, bMyBuf[0 + 1], 1 ' read the length byte
+          If Not Error Then
+            Inc iLen
+            If bZWaveDebug Then
+              Main.WriteDebugLog(("[Z-Wave] Packet Length = ") & bMyBuf[1])
+              Main.WriteDebugLog("[Z-Wave] < " & Hex(bMyBuf[0], 2) & " " & Hex(bMyBuf[1], 2), True)
+            End If
+            For iCnt = 0 To bMyBuf[1] - 1 ' read the rest of the frame
+              Try Read #hZwaveSer, bMyBuf[0 + 2 + iCnt], 1
+              If Not Error Then
+                If bZWaveDebug Then Main.WriteRFXDebugLog(" " & Hex(bMyBuf[0 + 2 + iCnt], 2), True)
+              Else
+                Main.WriteDebugLog(("[Z-Wave] ERROR reading frame!"))
+              End If
+            Next
+            If bZWaveDebug Then Main.WriteRFXDebugLog("\n", True)
+            iLen += bMyBuf[1]
+            If bMyBuf[iLen - 1] = ChecksumZ(bMyBuf, bMyBuf[1]) Then ' verify checksum of received frame
+              If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Checksum correct - sending an ACK"))
+              ' WAIT 0.1 ' work around here, possible bug
+              ' bBuf[0] = ACK
+              ' WriteSerial(bBuf, 1)
+              bBuf[0] = ACK
+              WriteSerial(bBuf, 1)
+              DecodeFrame(bMyBuf, iLen - 3) ' go and decode frame
+            Else
+              If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Checksum incorrect - sending an NAK"))
+              bBuf[0] = NAK
+              WriteSerial(bBuf, 1)
+            End If
+          Else
+            Main.WriteDebugLog(("[Z-Wave] ERROR reading length byte!"))
+          End If
+          ' BREAK
+        Case CAN
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] CAN Received"))
+          bAwaitAck = False
+          ' BREAK
+        Case NAK
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] NAK Received"))
+          bAwaitAck = False
+          ' BREAK
+        Case ACK
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] < 06 - Received ACK"))
+          If bAwaitAck Then bAwaitAck = False
+          bBuf[0] = ACK
+          WriteSerial(bBuf, 1)
+          ' remove job from list
+        Default
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] ERROR frame out of sync! (") & bMyBuf[0] & ")")
+          ' BREAK
+      End Select
+    Else
+     ' nothing to read
+    End If
+    Inc iLoop
+  Wend
+  bPolling = False
+
+End
+
+Public Sub tZWavePoll_Timer()
+
+  If Not bPolling Then
+    ReceiveFunction()
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' translate between API and ZDK version numbering
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ExpandVersion(sVersion As String) As String
+
+  Select sVersion
+    Case "2.78"
+      Return "5.02 Patch 3"
+    Case "2.64"
+      Return "5.02 Patch 2"
+    Case "2.51"
+      Return "5.02 Patch 1"
+    Case "2.48"
+      Return "5.02"
+    Case "2.74"
+      Return "4.50"
+    Case "2.67"
+      Return "4.28"
+    Case "2.40"
+      Return "4.27"
+    Default
+      Return "?"
+    End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' examine a received frame closely
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DecodeFrame(bBuffer As Byte[], length As Integer)
+
+  ' [GB2:ARRD] Dim bBuf As Byte[8]
+  Dim bBuf As New Byte[8]
+  Dim iCnt, jCnt, cCnt As Integer
+  Dim bSleeping As Boolean
+  Dim iNodeID, iTypeBasic, iTypeGeneric, iTypeSpecific, iCapabilities, iSecurity, iDeviceId As Integer
+  Dim sManufacturer, sType, sModel, sClasses, sValue As String
+
+  If (bBuffer[2] = RESPONSE) Then
+    If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Got response frame!"))
+
+    Select bBuffer[3]
+      Case ZW_MEMORY_GET_ID
+        sHomeID = Hex(bBuffer[4], 2) & Hex(bBuffer[5], 2) & Hex(bBuffer[6], 2) & Hex(bBuffer[7], 2)
+        iControllerID = bBuffer[8]
+        If bZWaveDebug Then
+          Main.WriteDebugLog(("[Z-Wave] Home ID: ") & sHomeID)
+          Main.WriteDebugLog(("[Z-Wave] Controller Node ID: ") & iControllerID)
+        End If
+        Main.WriteLog("Z-Wave Home ID is " & sHomeID)
+
+      Case FUNC_ID_SERIAL_API_GET_INIT_DATA
+        If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Got init data result back"))
+        sControllerChipType = bBuffer[length]
+        sControllerChipRev = Hex(bBuffer[length + 1], 2)
+        If bZWaveDebug Then
+          Main.WriteDebugLog(("[Z-Wave] Controller Chip Type: ") & sControllerChipType & " - " & ExpandChipType(sControllerChipType))
+          Main.WriteDebugLog(("[Z-Wave] Controller Chip Revison: ") & sControllerChipRev)
+        End If
+        RemoveNodes()
+        If (bBuffer[6] = 29) Then
+          For iCnt = 7 To 35
+            For jCnt = 0 To 7
+                If (bBuffer[iCnt] And Lsl(1, jCnt)) Then ' get bits
+                  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Getting node protocol info for node: ") & ((((iCnt - 7) * 8) + 1) + jCnt))
+                  iTempNode = ((((iCnt - 7) * 8) + 1) + jCnt)
+                  bBuf[0] = FUNC_ID_ZW_GET_NODE_PROTOCOL_INFO
+                  bBuf[1] = ((((iCnt - 7) * 8) + 1) + jCnt)
+                  SendFunction(bBuf, 2, REQUEST, 0)
+                End If
+            Next
+          Next
+        End If
+      Case FUNC_ID_ZW_SEND_DATA
+        Select bBuffer[4]
+          Case 1
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] data delivered to Z-Wave device"))
+          Case 0
+            If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] ERROR: data could not be delivered to Z-Wave device!"))
+          Default
+            If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] ERROR: response is invalid!"))
+        End Select
+
+      Case ZW_GET_VERSION
+        sZWaveAPIVersion = LTrim(Chr(bBuffer[10]) & Chr(bBuffer[11]) & Chr(bBuffer[12]) & Chr(bBuffer[13]) & Chr(bBuffer[14]))
+        sZWaveZDKVersion = ExpandVersion(sZWaveAPIVersion)
+        If bZWaveDebug Then
+          Main.WriteDebugLog(("[Z-Wave] API libary version: ") & sZWaveAPIVersion)
+          Main.WriteDebugLog(("[Z-Wave] ZDK version: ") & sZWaveZDKVersion)
+        End If
+        Main.WriteLog(("Running Z-Wave API version ") & sZWaveAPIVersion & (" and ZDK version ") & sZWaveZDKVersion)
+      Case FUNC_ID_ZW_GET_SUC_NODE_ID
+        If bBuffer[4] Then
+          iSUCNodeID = bBuffer[4]
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] SUC node ID: ") & iSUCNodeID)
+        Else
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] No SUC, we need to become SUC"))
+          ' is this needed for AEON stick, needs checking.
+          bBuf[0] = FUNC_ID_ZW_ENABLE_SUC
+          bBuf[1] = 1 ' 0 = SUC, 1 = SIS
+          bBuf[2] = ZW_SUC_FUNC_NODEID_SERVER
+          SendFunction(bBuf, 3, REQUEST, 0)
+          bBuf[0] = FUNC_ID_ZW_SET_SUC_NODE_ID
+          bBuf[1] = iControllerID
+          bBuf[2] = 1 ' we want to be SUC / SIS
+          bBuf[3] = 0 ' no low power
+          bBuf[4] = ZW_SUC_FUNC_NODEID_SERVER
+          SendFunction(bBuf, 5, REQUEST, 1)
+        End If
+        ' needs more work for other type of controllers
+        If (iSUCNodeID = iControllerID) Then ' the controller is a SUC
+          sControllerType = "Primary - SIS"
+        Else
+          sControllerType = "Unknown"
+        End If
+
+      Case FUNC_ID_ZW_ENABLE_SUC
+        ' placeholder
+      Case FUNC_ID_ZW_SET_SUC_NODE_ID
+        ' placeholder
+      Case FUNC_ID_SERIAL_API_GET_CAPABILITIES
+        If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] TODO: Handle get capabilities"))
+      Case FUNC_ID_ZW_GET_NODE_PROTOCOL_INFO
+        If bBuffer[8] Then
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Received node protocol info for node: ") & iTempNode)
+          iCapabilities = bBuffer[4]
+          iSecurity = bBuffer[5]
+          iTypeBasic = bBuffer[7]
+          iTypeGeneric = bBuffer[8]
+          iTypeSpecific = bBuffer[9]
+
+          If ((bBuffer[4]) And (Lsl(&H01, 7))) Then
+            If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Listening node"))
+            bSleeping = False
+          Else
+            If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Sleeping node"))
+            bSleeping = True
+          End If
+          If ((bBuffer[5]) And (Lsl(&H01, 7))) Then
+            If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Optional functionality"))
+          End If
+
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Basic Type: ") & ExpandBasicType(bBuffer[7]))
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Generic Type: ") & ExpandGenericType(bBuffer[8]))
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Specific Type: ") & bBuffer[9])
+          CreateNode(iTempNode, iTypeBasic, iTypeGeneric, iTypeSpecific, iCapabilities, iSecurity, bSleeping)
+          Inc iTempNode
+        Else
+          If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Invalid generic class ") & Hex(bBuffer[8], 2) & (", ignoring device!"))
+        End If
+      ' catch unimplemented types
+      Default
+        If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] TODO: handle response for ") & Hex(bBuffer[3], 2))
+    End Select
+
+  Else If (bBuffer[2] = REQUEST) Then
+    If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Got request frame!"))
+
+    Select bBuffer[3]
+      Case FUNC_ID_ZW_SEND_DATA
+        If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] response with callback ") & bBuffer[4] & " received")
+        bAwaitAck = False
+      Case FUNC_ID_APPLICATION_COMMAND_HANDLER
+        If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Application command handler response with callback ") & bBuffer[4] & " received")
+        Select bBuffer[7]
+          Case COMMAND_CLASS_BASIC
+            If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Received COMMAND_CLASS_BASIC data"))
+            Select bBuffer[8]
+              Case BASIC_REPORT
+                If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Got BASIC_REPORT from node ") & bBuffer[5] & (", value: ") & bBuffer[9])
+                If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Value changed, saving new value for node ") & bBuffer[5])
+                UpdateValueNode(bBuffer[5], bBuffer[9])
+                iDeviceId = Devices.Find(bBuffer[5], Devices.FindInterface("Z-Wave Controller"), "ZWAVE")
+                ' update value
+                If iDeviceId Then
+                  Select bBuffer[9]
+                    ' on/off/dim etc
+                    Case 255
+                      sValue = "On"
+                    Case 0
+                      sValue = "Off"
+                    Default
+                      sValue = "Dim " & bBuffer[9]
+                  End Select
+                  Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
+                End If
+                ' IF FToolsZWaveCmdr.Visible THEN FToolsZWaveCmdr.FillNodeTable()
+              Case BASIC_SET
+                If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Got BASIC_SET from node ") & bBuffer[5] & (", value: ") & bBuffer[9])
+              Default
+              If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Got unsupported COMMAND_CLASS_BASIC type: ") & Hex(bBuffer[8], 2) & (", ignoring"))
+            End Select
+          Case COMMAND_CLASS_MULTI_INSTANCE
+            If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Got COMMAND_CLASS_MULTI_INSTANCE"))
+            If bBuffer[8] = MULTI_INSTANCE_REPORT Then
+              If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Got MULTI_INSTANCE_REPORT from node ") & bBuffer[5] & (" Command Class ") & bBuffer[9] & (", instance count: ") & bBuffer[10])
+            End If
+          Case COMMAND_CLASS_VERSION
+            If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Got COMMAND_CLASS_VERSION from node "))
+            If bBuffer[8] = VERSION_REPORT Then
+              If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] REPORT: Lib type: ") & bBuffer[9] & (", Lib: ") & bBuffer[10] & "." & bBuffer[11] & (" App: ") & bBuffer[12] & "." & bBuffer[13])
+            End If
+          Case COMMAND_CLASS_MANUFACTURER_SPECIFIC
+            If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Manufacturer Report response received"))
+            sType = Hex(bBuffer[11], 2) & Hex(bBuffer[12], 2)
+            Select Hex(bBuffer[9], 2) & Hex(bBuffer[10], 2) ' manufacturers low and high byte
+              Case "0001"
+                sManufacturer = "Act"
+              Case "0002"
+                sManufacturer = "Danfoss"
+              Case "0005"
+                sManufacturer = "Intermatic"
+              Case "0006"
+                sManufacturer = "Aeon Labs"
+              Case "0008"
+                sManufacturer = "Wayne Dalton"
+              Case "0012"
+                sManufacturer = "Electronic Housekeeper"
+                If sType = "0004" Then sModel = "HA04C" ' switch
+              Case "001D"
+                sManufacturer = "Leviton"
+                If sType = "0101" Then sModel = "RZP15-1LW" ' switch
+                If sType = "0201" Then sModel = "RZP03-1LW" ' dimmer
+                If sType = "0301" Then sModel = "RZS15" ' switch wall plate
+              Case "001E"
+                sManufacturer = "Homeseer"
+                If sType = "0002" Then sModel = "HSM100" ' motion detector
+              Case "0005"
+                sManufacturer = "Intermatic"
+                If sType = "0004" Then sModel = "HA04C" ' switch
+              Case "0012"
+                sManufacturer = "E.Housekeeper"
+              Case "0033"
+                sManufacturer = "ESI Electronic Solutions"
+              Case "0059"
+                sManufacturer = "Horstmann"
+              Case "0060"
+                sManufacturer = "Everspring"
+              Case "0064"
+                sManufacturer = "Popp/Duwi"
+                If sType = "3001" Then sModel = "ZS 3500" ' switch
+                If sType = "1001" Then sModel = "ZDAN 300" ' dimmer
+              Case "0071"
+                sManufacturer = "LS Control"
+              Case "0077"
+                sManufacturer = "Innovus"
+                If sType = "0011" Then sModel = "RAone SmartDimmer"
+              Case "007A"
+                sManufacturer = "Merten"
+              Case "0095"
+                sManufacturer = "QEES"
+              Default
+                sManufacturer = ("Unknown (") & Hex(bBuffer[9], 2) & " " & Hex(bBuffer[10], 2) & ")"
+            End Select
+            If Not sModel Then sModel = ("Unknown (") & Hex(bBuffer[11], 2) & " " & Hex(bBuffer[12], 2) & ")"
+            If bZWaveDebug Then
+              Main.WriteDebugLog(("[Z-Wave] Node: ") & bBuffer[5])
+              Main.WriteDebugLog(("[Z-Wave] Manufacturer: ") & sManufacturer)
+              Main.WriteDebugLog(("[Z-Wave] Model: ") & sModel)
+            End If
+            UpdateManufacturersNode(Hex(bBuffer[5], 2), sManufacturer, sModel)
+          Default
+            If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Got unsupported FUNC_ID_APPLICATION_COMMAND_HANDLER type: ") & Hex(bBuffer[7], 2) & (", ignoring"))
+        End Select
+      Case &H49
+        If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Classes supported by Node ") & bBuffer[5] & (" are:"))
+        For iCnt = 10 To 6 + bBuffer[6]
+          If bZWaveDebug Then Main.WriteDebugLog("[Z-Wave] " & ExpandClass(Hex(bBuffer[iCnt], 2)))
+          sClasses &= ExpandClass(Hex(bBuffer[iCnt], 2)) & " "
+        Next
+        UpdateClassesNode(bBuffer[5], sClasses)
+      Default
+        If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] TODO: handle request for ") & Hex(bBuffer[3], 2))
+    End Select
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' translate chip type byte to text
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ExpandChipType(iTypeChip As Integer) As String
+
+  Select iTypeChip
+    Case 1
+      Return "ZW0102"
+    Case 2
+      Return "ZW0201"
+    Case 3
+      Return "ZW0301"
+    Default
+      Return "Unknown"
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' translate basic type byte to text
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ExpandBasicType(iTypeBasic As Integer) As String
+
+  Select iTypeBasic
+    Case BASIC_TYPE_CONTROLLER
+      Return "Controller"
+    Case BASIC_TYPE_STATIC_CONTROLLER
+      Return "Static Controller"
+    Case BASIC_TYPE_SLAVE
+      Return "Slave"
+    Case BASIC_TYPE_ROUTING_SLAVE
+      Return "Routing Slave"
+    Default
+      Return "Unknown (" & Hex(iTypeBasic, 2) & ")"
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' translate class byte to text
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ExpandClass(sByte As String) As String
+
+  Select Case sByte
+    Case "20"
+      Return "COMMAND_CLASS_BASIC"
+    Case "21"
+      Return "COMMAND_CLASS_CONTROLLER_REPLICATION"
+    Case "22"
+      Return "COMMAND_CLASS_APPLICATION_STATUS"
+    Case "23"
+      Return "COMMAND_CLASS_ZIP_SERVICES"
+    Case "24"
+      Return "COMMAND_CLASS_ZIP_SERVER"
+    Case "25"
+      Return "COMMAND_CLASS_SWITCH_BINARY"
+    Case "26"
+      Return "COMMAND_CLASS_SWITCH_MULTILEVEL"
+    Case "27"
+      Return "COMMAND_CLASS_SWITCH_ALL"
+    Case "28"
+      Return "COMMAND_CLASS_SWITCH_TOGGLE_BINARY"
+    Case "29"
+      Return "COMMAND_CLASS_SWITCH_TOGGLE_MULTILEVEL"
+    Case "2A"
+      Return "COMMAND_CLASS_CHIMNEY_FAN"
+    Case "2B"
+      Return "COMMAND_CLASS_SCENE_ACTIVATION"
+    Case "2C"
+      Return "COMMAND_CLASS_SCENE_ACTUATOR_CONF"
+    Case "2D"
+      Return "COMMAND_CLASS_SCENE_CONTROLLER_CONF"
+    Case "2E"
+      Return "COMMAND_CLASS_ZIP_CLIENT"
+    Case "2F"
+      Return "COMMAND_CLASS_ZIP_ADV_SERVICES"
+    Case "30"
+      Return "COMMAND_CLASS_SENSOR_BINARY"
+    Case "31"
+      Return "COMMAND_CLASS_SENSOR_MULTILEVEL"
+    Case "32"
+      Return "COMMAND_CLASS_METER"
+    Case "33"
+      Return "COMMAND_CLASS_ZIP_ADV_SERVER"
+    Case "34"
+      Return "COMMAND_CLASS_ZIP_ADV_CLIENT"
+    Case "35"
+      Return "COMMAND_CLASS_METER_PULSE"
+    Case "36"
+      Return "COMMAND_CLASS_BASIC_TARIFF_INFO"
+    Case "38"
+      Return "COMMAND_CLASS_THERMOSTAT_HEATING"
+    Case "40"
+      Return "COMMAND_CLASS_THERMOSTAT_MODE"
+    Case "42"
+      Return "COMMAND_CLASS_THERMOSTAT_OPERATING_STATE"
+    Case "43"
+      Return "COMMAND_CLASS_THERMOSTAT_SETPOINT"
+    Case "44"
+      Return "COMMAND_CLASS_THERMOSTAT_FAN_MODE"
+    Case "45"
+      Return "COMMAND_CLASS_THERMOSTAT_FAN_STATE"
+    Case "46"
+      Return "COMMAND_CLASS_CLIMATE_CONTROL_SCHEDULE"
+    Case "47"
+      Return "COMMAND_CLASS_THERMOSTAT_SETBACK"
+    Case "50"
+      Return "COMMAND_CLASS_BASIC_WINDOW_COVERING"
+    Case "51"
+      Return "COMMAND_CLASS_MTP_WINDOW_COVERING"
+    Case "60"
+      Return "COMMAND_CLASS_MULTI_INSTANCE"
+    Case "62"
+      Return "COMMAND_CLASS_DOOR_LOCK"
+    Case "63"
+      Return "COMMAND_CLASS_USER_CODE"
+    Case "70"
+      Return "COMMAND_CLASS_CONFIGURATION"
+    Case "71"
+      Return "COMMAND_CLASS_ALARM"
+    Case "72"
+      Return "COMMAND_CLASS_MANUFACTURER_SPECIFIC"
+    Case "73"
+      Return "COMMAND_CLASS_POWERLEVEL"
+    Case "75"
+      Return "COMMAND_CLASS_PROTECTION"
+    Case "76"
+      Return "COMMAND_CLASS_LOCK"
+    Case "77"
+      Return "COMMAND_CLASS_NODE_NAMING"
+    Case "7A"
+      Return "COMMAND_CLASS_FIRMWARE_UPDATE_MD"
+    Case "7B"
+      Return "COMMAND_CLASS_GROUPING_NAME"
+    Case "7C"
+      Return "COMMAND_CLASS_REMOTE_ASSOCIATION_ACTIVATE"
+    Case "7D"
+      Return "COMMAND_CLASS_REMOTE_ASSOCIATION"
+    Case "80"
+      Return "COMMAND_CLASS_BATTERY"
+    Case "81"
+      Return "COMMAND_CLASS_CLOCK"
+    Case "82"
+      Return "COMMAND_CLASS_HAIL"
+    Case "84"
+      Return "COMMAND_CLASS_WAKE_UP"
+    Case "85"
+      Return "COMMAND_CLASS_ASSOCIATION"
+    Case "86"
+      Return "COMMAND_CLASS_VERSION"
+    Case "87"
+      Return "COMMAND_CLASS_INDICATOR"
+    Case "88"
+      Return "COMMAND_CLASS_PROPRIETARY"
+    Case "89"
+      Return "COMMAND_CLASS_LANGUAGE"
+    Case "8A"
+      Return "COMMAND_CLASS_TIME"
+    Case "8B"
+      Return "COMMAND_CLASS_TIME_PARAMETERS"
+    Case "8C"
+      Return "COMMAND_CLASS_GEOGRAPHIC_LOCATION"
+    Case "8E"
+      Return "COMMAND_CLASS_MULTI_INSTANCE_ASSOCIATION"
+    Case "8F"
+      Return "COMMAND_CLASS_MULTI_CMD"
+    Case "90"
+      Return "COMMAND_CLASS_ENERGY_PRODUCTION"
+    Case "91"
+      Return "COMMAND_CLASS_MANUFACTURER_PROPRIETARY"
+    Case "92"
+      Return "COMMAND_CLASS_SCREEN_MD"
+    Case "93"
+      Return "COMMAND_CLASS_SCREEN_ATTRIBUTES"
+    Case "94"
+      Return "COMMAND_CLASS_SIMPLE_AV_CONTROL"
+    Case "95"
+      Return "COMMAND_CLASS_AV_CONTENT_DIRECTORY_MD"
+    Case "96"
+      Return "COMMAND_CLASS_AV_RENDERER_STATUS"
+    Case "97"
+      Return "COMMAND_CLASS_AV_CONTENT_SEARCH_MD"
+    Case "98"
+      Return "COMMAND_CLASS_SECURITY"
+    Case "99"
+      Return "COMMAND_CLASS_AV_TAGGING_MD"
+    Case "9A"
+      Return "COMMAND_CLASS_IP_CONFIGURATION"
+    Case "9B"
+      Return "COMMAND_CLASS_ASSOCIATION_COMMAND_CONFIGURATION"
+    Case "9C"
+      Return "COMMAND_CLASS_SENSOR_ALARM"
+    Case "9D"
+      Return "COMMAND_CLASS_SILENCE_ALARM"
+    Case "9E"
+      Return "COMMAND_CLASS_SENSOR_CONFIGURATION"
+    Case "EF"
+      Return "COMMAND_CLASS_MARK"
+    Case "F0"
+      Return "COMMAND_CLASS_NON_INTEROPERABLE"
+    Default
+      Return sByte
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' translate generic type byte to text
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ExpandGenericType(iTypeGeneric As Integer) As String
+
+  Select iTypeGeneric
+    Case GENERIC_TYPE_GENERIC_CONTROLLER
+      Return "Generic Controller"
+    Case GENERIC_TYPE_STATIC_CONTROLLER
+      Return "Static Controller"
+    Case GENERIC_TYPE_THERMOSTAT
+      Return "Thermostat"
+    Case GENERIC_TYPE_SWITCH_MULTILEVEL
+      Return "Multilevel Switch"
+    Case GENERIC_TYPE_SWITCH_REMOTE
+      Return "Remote Switch"
+    Case GENERIC_TYPE_SWITCH_BINARY
+      Return "Binary Switch"
+    Case GENERIC_TYPE_SENSOR_BINARY
+      Return "Sensor Binary"
+    Case GENERIC_TYPE_WINDOW_COVERING
+      Return "Window Covering"
+    Default
+      Return "Unknown (" & Hex(iTypeGeneric, 2) & ")"
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' create a record with node information in database
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CreateNode(iNodeID As Integer, iTypeBasic As Integer, iTypeGeneric As Integer, iTypeSpecific As Integer, iCapabilities As Integer, iSecurity As Integer, bSleeping As Boolean)
+
+  Dim rResult As Result
+
+  ' write node to the database table
+  Main.hDB.Begin()
+  rResult = Main.hDB.Create("devices_zwave")
+  rResult!nodeid = iNodeID
+  rResult!typebasic = iTypeBasic
+  rResult!typegeneric = iTypeGeneric
+  rResult!typespecific = iTypeSpecific
+  rResult!capabilities = iCapabilities
+  rResult!security = iSecurity
+  rResult!sleeping = bSleeping
+  rResult.Update()
+  Main.hDB.Commit()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' clear nodes table from database
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RemoveNodes()
+
+  Main.hDB.Exec("TRUNCATE TABLE devices_zwave")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find nodes and query them for more info
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueryNodes()
+
+  Dim rResultNodes As Result
+
+  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE")
+  If rResultNodes Then
+    If (rResultNodes.Count >= 1) Then
+      For Each rResultNodes
+        If rResultNodes!nodeid <> Main.hZWave.iControllerID Then ' we cannot query ourselves
+          RequestManufacturerSpecificReport(rResultNodes!nodeid)
+          RequestNodeCapabilities(rResultNodes!nodeid)
+        End If
+      Next
+    Else
+      If Main.bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] No nodes found to sent query!"))
+    End If
+  End If
+  RequestBasicReport(255)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' update a record with manufacturers information
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub UpdateManufacturersNode(iNodeID As Integer, sManufacturer As String, sModel As String) As Boolean
+
+  Dim rResult As Result
+
+  rResult = Main.hDB.Exec("UPDATE devices_zwave SET manufacturer = &1, model = &2 WHERE nodeid = &3", sManufacturer, sModel, iNodeID)
+  If Not rResult.Available Then
+    Return False
+  Else
+    Return True
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get value from node
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetCurrentValueNode(iNodeID As Integer) As String
+
+  Dim rResult As Result
+
+  rResult = Main.hDB.Exec("SELECT * FROM devices_zwave WHERE nodeid = &1", iNodeID)
+  If Not rResult.Available Then
+    If Main.bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Node with id '") & iNodeID & ("' not found in database!"))
+    Return 0
+  Else
+    Return rResult!value
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' update a node record with value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub UpdateValueNode(iNodeID As Integer, sValue As String) As Boolean
+
+  Dim rResult As Result
+
+  rResult = Main.hDB.Exec("UPDATE devices_zwave SET value = &1 WHERE nodeid = &2", sValue, iNodeID)
+  If rResult Then
+    Return True
+  Else
+    If Main.bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Node with !!id '") & iNodeID & ("' not found in database!"))
+    Return False
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' update a node record with supported classes
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub UpdateClassesNode(iNodeID As Integer, sClasses As String) As Boolean
+
+  Dim rResult As Result
+
+  rResult = Main.hDB.Exec("UPDATE devices_zwave SET classes = &1 WHERE nodeid = &2", sClasses, iNodeID)
+  If Not rResult.Available Then
+    If Main.bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Node with id '") & iNodeID & ("' not found in database!"))
+    Return False
+  Else
+    Return True
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reset led status in main status bar
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tZWaveLED_Timer()
+
+  Main.ControlLed("ZWave", "Off")
+  tZWaveLED.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' close serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  If bUseOZW
+    OZW_Disconnect()
+    Return
+  Endif
+
+  ' try to close the connection
+  Try hZWaveSer.Close
+  Main.WriteLog(("Z-Wave serial port close."))
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("Z-Wave Error: ") & ERROR.Text)
+  Return False
+
+End
+
+''''''''''''''''''''''''''''''''''''
+' OpenZWave Interface Functions
+''''''''''''''''''''''''''''''''''''
+Private Function OZW_Init()
+
+  DomoZWave_Init(sPort, Main.hXMLRPC.HTTPPort, Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ "wrappers/domozwave/", bZWaveDebug)
+
+Catch ' some errors
+  Main.WriteLog(("Z-Wave Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+End
+
+Public Sub OZW_SendCommand(sAddress As String, sCmd As String)
+
+  Dim ibrightness As Integer
+
+  sCmd = UCase(sCmd)
+  If sCmd = "ON"
+    OZW_TurnNodeOn(sAddress)
+  Else If sCmd = "OFF"
+    OZW_TurnNodeOff(sAddress)
+  Else If InStr(sCmd, "DIM ") Then ' DIM 0-100
+    iBrightness = Val(Replace(sCmd, "DIM ", ""))
+    OZW_ChangeNodeLevel(sAddress, iBrightness)
+  Else
+    Main.WriteDebugLog(("[Z-Wave] Only DIM and ON/OFF commands are supported!"))
+  Endif
+
+End
+
+Public Sub OZW_TurnNodeOn(iNodeID As Integer)
+
+  DomoZWave_SetNodeOn(iNodeID)
+
+End
+
+Public Sub OZW_TurnNodeOff(iNodeID As Integer)
+
+  DomoZWave_SetNodeOff(iNodeID)
+
+End
+
+Public Sub OZW_ChangeSwitch(iNodeID As Integer, iLevel As Integer)
+
+  If iLevel = &HFF
+    OZW_TurnNodeOn(iNodeID)
+  Else If ilevel = &H0
+    OZW_TurnNodeOff(iNodeID)
+  Else
+    OZW_ChangeNodeLevel(iNodeID, iLevel)
+  Endif
+
+End
+
+Public Sub OZW_ChangeNodeLevel(iNodeID As Integer, iLevel As Integer)
+
+  DomoZWave_SetNodeLevel(iNodeID, iLevel)
+
+End
+
+Public Sub OZW_RequestNodeState(iNodeID As Integer)
+
+  DomoZWave_RequestNodeState(iNodeID)
+
+End
+
+Public Sub OZW_RequestAllNodeStates()
+
+  Dim rResultNodes As Result
+
+  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE")
+  If rResultNodes Then
+    If (rResultNodes.Count >= 1) Then
+      For Each rResultNodes
+        If rResultNodes!nodeid <> Main.hZWave.iControllerID Then ' we cannot query ourselves
+          DomoZWave_RequestNodeState(rResultNodes!nodeid)
+        Endif
+      Next
+    Endif
+  Endif
+
+End
+
+Public Sub OZW_SetIds(homeId As Integer, controllerId As Integer)
+
+  sHomeID = homeId
+  iControllerID = controllerId
+
+End
+
+Public Sub OZW_BasicReport(homeId As Integer, nodeId As Integer, value As Integer)
+
+  Dim deviceId As Integer
+  Dim sValue As String
+
+  UpdateValueNode(nodeId, value)
+  ' update value
+  If nodeId Then
+    Select value
+      ' on/off/dim etc
+      Case 99, 255
+        sValue = "On"
+      Case 0
+        sValue = "Off"
+      Default
+        sValue = "Dim " & value
+    End Select
+    deviceId = Devices.Find(nodeId, Devices.FindInterface("Z-Wave Controller"), "ZWAVE")
+    If deviceId Then Devices.ValueUpdate(deviceId, sValue, "", "", "")
+  Endif
+
+End
+
+Public Sub OZW_AllQueried()
+
+  Dim rResultNodes As Result
+
+  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE")
+  If rResultNodes Then
+    If (rResultNodes.Count >= 1) Then
+      For Each rResultNodes
+        If rResultNodes!nodeid <> Main.hZWave.iControllerID Then ' we cannot query ourselves
+          DomoZWave_EnablePolling(rResultNodes!nodeid)
+        Endif
+      Next
+    Endif
+  Endif
+
+End
+
+Public Function OZW_Disconnect() As Boolean
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Destroyed open-zwave wrapper."))
+  DomoZWave_Destroy()
+
+End
+
+' implement properties
+Function Port_Read() As String
+
+  Return sPort
+
+End
+
+Sub Port_Write(Value As String)
+
+  sPort = Value
+
+End
+
+Private Function Baud_Read() As String
+
+  Return sBaud
+
+End
+
+Private Sub Baud_Write(Value As String)
+
+  sBaud = Value
+
+End
+
+Private Function ZWaveDebug_Read() As Boolean
+
+  Return bZWaveDebug
+
+End
+
+Private Sub ZWaveDebug_Write(Value As Boolean)
+
+  bZWaveDebug = Value
+
+End
+
+Private Function ReloadNodes_Read() As Boolean
+
+  Return bReloadNodes
+
+End
+
+Private Sub ReloadNodes_Write(Value As Boolean)
+
+  bReloadNodes = Value
+
+End
+
+Private Function UseOZW_Read() As Boolean
+
+  Return bUseOZW
+
+End
+
+Private Sub UseOZW_Write(Value As Boolean)
+
+  bUseOZW = Value
+
+End

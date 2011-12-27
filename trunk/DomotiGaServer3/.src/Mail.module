@@ -1,0 +1,227 @@
+' Gambas module file
+
+' Description:
+' Mail.module
+' Support for sending e-mails via SMTP and fetching Gmail RSS.
+
+' Development Status:
+' Working.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2010 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+Public tGmail As Timer
+Private sOutput As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function GmailRun()
+
+  ' start poll timer for Gmail
+  tGmail = New Timer As "tGmail"
+  tGmail.Delay = Main.iGmailPolltime * 1000 ' multiply for seconds
+  tGmail.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tGmail_Timer()
+
+  CheckGmail()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' fetch xml from gmail
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckGmail()
+
+  ' fetch rss xml in background with help of wget
+  Shell "wget -q -O - --user=" & Main.sGmailUser & " --password=" & Main.sGmailPassword & " https://mail.google.com/mail/feed/atom --no-check-certificate" For Read As "Gmail"
+  If Main.bGmailDebug Then Main.WriteDebugLog(("[Gmail] fetching RSS feed."))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse gmail xml data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Gmail_Read()
+
+  Dim sXml As String
+  Dim iCurrentMails As Integer
+
+  Read #Last, sXml, -256
+  sOutput &= sXml
+
+  ' check if we got a complete xml document
+  If InStr(sOutput, "</feed>") Then
+    If Main.bGmailDebug Then Main.WriteDebugLog(("[Gmail] parsing RSS xml."))
+    iCurrentMails = Main.iNewMails
+    ParseFeed(sOutput)
+    ' IF IsString(Main.GlobalVar["Minute"]) THEN Main.GlobalVar["Minute"] = Val(Main.GlobalVar["Minute"])
+    If Main.bGmailDebug Then Main.WriteDebugLog(("[Gmail] you have ") & Main.iNewMails & (" new e-mails."))
+    If (Main.iNewMails <> iCurrentMails) Or If Main.GlobalVar["Minute"] Mod 30 = 0 Then
+      If Main.iNewMails Then Main.WriteLog(("You have ") & Main.iNewMails & (" new ") & If(Main.iNewMails <> 1, ("e-mails"), ("e-mail")) & (" on Gmail."))
+      Main.SetGlobalVar("EmailCount", Main.iNewMails)
+    End If
+    sOutput = Null
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse xml document
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ParseFeed(data As String)
+
+  Dim Xml As New XmlReader
+
+  Try Xml.FromString(data)
+  If Error Then Return
+
+  Do While True
+    Try Xml.Read()
+    If Error Or Xml.Eof Then Return
+    Select Xml.Node.Type
+      Case XmlReaderNodeType.Element
+        ' The root element
+        PharseNode(Xml)
+    End Select
+  Loop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse xml node
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub PharseNode(Xml As XmlReader)
+
+  Dim sName As String
+
+  ' if it has no children, stop
+  If Xml.Node.IsEmptyElement Then Return
+
+  ' check all nodes of the element
+  sName = Xml.Node.Name
+  Do While True
+    Try Xml.Read()
+    If Error Or Xml.Eof Then Break
+    Select Xml.Node.Type
+      Case XmlReaderNodeType.EndElement
+        If Xml.Node.Name = sName Then Return
+      Case XmlReaderNodeType.Element
+        PharseNode(Xml)
+      Case XmlReaderNodeType.Text
+        ' look for element called fullcount
+        If sName = "fullcount" Then
+          Main.iNewMails = Val(Xml.Node.Value)
+          Main.UpdateCounters()
+        End If
+    End Select
+  Loop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send e-mail via configured smtp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendMail(sSubject As String, sBody As String, Optional sTo As String) As Boolean
+
+  Dim hMsg As New SmtpClient
+
+  ' if mail is disabled, return
+  If Not Main.bEmailEnabled Then Return
+
+  ' sent msg to alternate address instead of default one
+  If sTo Then
+    hMsg.To.Add(sTo)
+  Else
+    hMsg.To.Add(Main.sEmailToAddress)
+  End If
+
+  If Main.bEMailDebug Then
+    Main.WriteDebugLog("[e-mail] From address: " & Main.sEmailFromAddress)
+    Main.WriteDebugLog("[e-mail] SMTP server: " & Main.sEmailSMTPServer)
+    Main.WriteDebugLog("[e-mail] SMTP Port: " & Main.iEmailSMTPPort)
+    If sTo Then Main.WriteDebugLog("[e-mail] To Address: " & sTo)
+    Main.WriteDebugLog("[e-mail] Subject: " & sSubject)
+    Main.WriteDebugLog("[e-mail] Body: " & sBody)
+  End If
+
+  hMsg.Subject = sSubject
+  hMsg.Add(sBody & "\n\n" & ("-- \nPowered by ") & Application.Name & " V" & Main.sProgramVersion & "\n")
+  hMsg.From = Main.sEmailFromAddress
+  hMsg.Host = Main.sEmailSMTPServer
+  hMsg.Port = Main.iEmailSMTPPort
+  Try hMsg.Send()
+  If Not Error Then
+    Main.WriteLog(("Just sent an e-mail message with subject '") & sSubject & ("' to '") & sTo & "'.")
+  Else
+    Main.WriteLog(("An error occured sending an e-mail message with subject '") & sSubject & ("' to '") & sTo & "'.")
+  Endif
+  Return True
+
+Catch
+  Main.WriteLog(("Error sending an e-mail message with subject '") & sSubject & ("' to '") & sTo & "'.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send e-mail with captured image via configured smtp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCaptureByMail(sSubject As String, sBody As String, iCam As Integer, Optional sTo As String)
+
+  Dim hMsg As New SmtpClient
+  Dim rResult As Result
+  Dim sTable As String = "capture_camera"
+  Dim sTempFile As String = Temp() & ".jpg"
+  Dim hFile As File
+  Dim sImage As String
+
+  ' if mail is disabled, return
+  If Not Main.bEmailEnabled Then Return
+
+  sTable = sTable & iCam
+  ' get last image
+  rResult = Main.hDB.Exec(Subst("SELECT * FROM &1 ORDER BY stamp DESC LIMIT 1", sTable))
+  If rResult.Available Then
+    If rResult.Count = 1 Then
+      ' save blob to temp file
+      Try File.Save(sTempFile, rResult!image.Data)
+    End If
+  End If
+  ' if temp file exists, add to e-mail and delete it
+  If Exist(sTempFile) Then
+    hMsg.Add(File.Load(sTempFile), "image/jpeg", "FrontDoor" & Format(Now(), "yyyy-mm-dd-hh-nn-ss") & ".jpg ")
+    Kill sTempFile
+  End If
+  ' sent msg to alternate address instead of default one
+  If (Len(sTo)) Then
+    hMsg.To.Add(sTo)
+  Else
+    hMsg.To.Add(Main.sEmailToAddress)
+  End If
+
+  If Main.bEMailDebug Then
+    Main.WriteDebugLog(Main.sEmailFromAddress)
+    Main.WriteDebugLog(Main.sEmailSMTPServer)
+    Main.WriteDebugLog(Main.iEmailSMTPPort)
+  End If
+
+  hMsg.Subject = sSubject
+  hMsg.Add(sBody & "\n\n" & ("-- \nPowered by ") & Application.Name & " V" & Main.sProgramVersion & "\n")
+  hMsg.From = Main.sEmailFromAddress
+  hMsg.Host = Main.sEmailSMTPServer
+  hMsg.Port = Main.iEmailSMTPPort
+  Try hMsg.Send()
+  If Not Error Then Main.WriteLog(("Just sent an e-mail message."))
+
+Catch
+  Main.WriteLog(("e-mail Error: Sending e-mail message failed!"))
+
+End

@@ -1,0 +1,1337 @@
+' Gambas class file
+
+' Description:
+' CRFXComTX.class
+' Connect to RFXCom transmitter or xmitter interface via tcp socket or serial port.
+
+' Development Status:
+' Works, needs some more testing.
+
+' Credits:
+' Thanks to Bert Weijenberg of RFXCOM for all the support.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2011 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PROPERTY TCPHost AS String
+PROPERTY TCPPort AS Integer
+PROPERTY Interface AS String
+PROPERTY SerPort AS String
+PROPERTY Baud AS String
+PROPERTY RFXComDebug AS Boolean
+PROPERTY Handshake AS Boolean
+PROPERTY RelayPort AS Integer
+PROPERTY DisableX10 AS Boolean
+PROPERTY EnableARC AS Boolean
+PROPERTY EnableHarrison AS Boolean
+PROPERTY EnableKoppla AS Boolean
+PROPERTY ACAddress1 AS String
+PROPERTY ACAddress2 AS String
+PROPERTY RFXmitter AS Boolean
+PROPERTY InterfaceType AS String
+
+PRIVATE sTCPHost AS String
+PRIVATE iTCPPort AS Integer
+PRIVATE sInterface AS String
+PRIVATE sSerPort AS String
+PRIVATE sBaud AS String
+PRIVATE bHandshake AS Boolean
+PRIVATE bRFXComTXDebug AS Boolean
+PRIVATE iRelayPort AS Integer
+PRIVATE bDisableX10 AS Boolean
+PRIVATE bEnableARC AS Boolean
+PRIVATE bEnableHarrison AS Boolean
+PRIVATE bEnableKoppla AS Boolean
+PRIVATE sACAddress1 AS String
+PRIVATE sACAddress2 AS String
+PRIVATE bRFXmitter AS Boolean
+PRIVATE sInterfaceType AS String
+
+PUBLIC hRFXComTX AS NEW Socket
+PUBLIC hRFXComTXSer AS NEW SerialPort
+PUBLIC hRFXComTXRelay AS NEW ServerSocket
+PUBLIC hRelayTXClient AS Object[]
+PUBLIC hRelayTXSocket AS NEW Socket
+PUBLIC tRFXComTXConnect AS Timer
+PRIVATE iConnectRetry AS Integer = 0 ' retries
+PRIVATE iConnectDelay AS Integer = 60000 ' 1 minute
+
+CONST GETSW AS Byte = &H30
+CONST MODERFXCOM AS Byte = &H33
+CONST MODERFXCOMNOREC AS Byte = &H37
+
+PRIVATE bMessage AS Boolean
+PRIVATE bProtocol AS Byte = MODERFXCOM
+PRIVATE bAck AS Boolean = FALSE
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectTCP() AS Boolean
+
+  ' try to close the connection
+  TRY hRFXComTX.Close
+
+  ' get a new one
+  hRFXComTX = NEW Socket AS "RFXComTX"
+  hRFXComTX.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("RFXCom ") & sInterfaceType & (" Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectSerial() AS Boolean
+
+  ' try to close the connection
+  TRY hRFXComTXSer.Close
+
+  ' get a new one
+  hRFXComTXSer = NEW Serialport AS "RFXComTXSer"
+  WITH hRFXComTXSer
+    .PortName = sSerPort
+    .Speed = sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 2
+    .FlowControl = 0
+    .Open()
+  END WITH
+
+  DoInit()
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("RFXCom ") & sInterfaceType & (" Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hRFXComTX.Close
+  TRY hRFXComTXSer.Close
+  TRY tRFXComTXConnect.Stop
+  TRY hRFXComTXRelay.Close
+  Main.WriteLog(("RFXCom ") & sInterfaceType & (" TCP socket/serial port close."))
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("RFXCom Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tRFXComTXConnect_Timer()
+
+  IF NOT ConnectTCP() THEN
+    INC iConnectRetry
+    iConnectDelay *= iConnectRetry
+    tRFXComTXConnect.Delay = iConnectDelay
+  ENDIF
+
+END
+
+PUBLIC SUB RFXComTX_Closed()
+
+  Main.WriteDebugLog(("[RFXComTX] ERROR: TCP socket closed by peer."))
+  IF iConnectRetry < 6 THEN
+    Main.WriteDebugLog(("[RFXComRX] Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", ".")))
+    tRFXComTXConnect.Start
+  ENDIF
+
+END
+
+PUBLIC SUB RFXComTX_Error()
+
+  DIM sString AS String = "RFXCom transmitter: "
+
+  ' handle error
+  SELECT CASE hRFXComTX.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog(sString & ("The system does not allow to create a socket."))
+    CASE Net.HostNotFound
+      Main.WriteLog(sString & ("Host '") & sTCPHost & ("' not found."))
+    CASE Net.ConnectionRefused
+      Main.WriteLog(sString & ("Unable to connect. Connection refused."))
+    CASE Net.CannotRead
+      Main.WriteLog(sString & ("Error reading data."))
+    CASE Net.CannotWrite
+      Main.WriteLog(sString & ("Error writing data."))
+  END SELECT
+
+END
+
+PUBLIC SUB RFXComTX_Ready()
+
+  Main.WriteLog(("RFXCom ") & sInterfaceType & (" TCP socket connected."))
+  DoInit()
+
+  ' define timer for RFXComTX reconnect
+  tRFXComTXConnect = NEW Timer AS "tRFXComTXConnect"
+  tRFXComTXConnect.Delay = iConnectRetry
+  tRFXComTXConnect.Stop
+
+END
+
+PRIVATE SUB DoInit()
+
+  SetInitMode() ' set 48 bits
+  GetVersion()  ' get transmitter version and enable X10
+
+  IF NOT bRFXmitter THEN
+    IF bDisableX10 THEN DisableX10TX()
+    IF bEnableARC THEN EnableARCTX()
+    IF bEnableHarrison THEN EnableHarrisonTX()
+    IF bEnableKoppla THEN EnableKopplaTX()
+  ENDIF
+
+END
+
+PUBLIC FUNCTION StartRelay() AS Boolean
+
+  hRFXComTXRelay = NEW ServerSocket AS "RFXComTXRelay"
+  hRFXComTXRelay.Type = Net.Internet
+  hRFXComTXRelay.Port = iRelayPort
+  ' we start listening for max 1 connection
+  hRFXComTXRelay.Listen(1)
+
+  IF hRFXComTXRelay.Status = Net.Active THEN
+    hRelayTXClient = NEW Object[]
+    ' all ok
+    RETURN TRUE
+  ELSE
+    RETURN FALSE
+  ENDIF
+
+END
+
+PUBLIC SUB RFXComTXRelay_Connection(sHost AS String)
+
+  hRelayTXSocket = NEW Socket AS "RelayTXSocket"
+  ' accept client
+  IF hRFXComTXRelay.Status <= Net.Inactive THEN RETURN
+  IF Main.bRFXComTXDebug THEN Main.WriteDebugLog(("[RFXComTXSRelay] Connection request from ") & sHost)
+
+  hRelayTXSocket = hRFXComTXRelay.Accept()
+  hRelayTXClient.Add(hRelayTXSocket)
+  IF Main.bRFXComTXDebug THEN
+    IF hRelayTXSocket.Status = Net.Connected THEN Main.WriteLog(("RFXCom ") & sInterfaceType & (" Relay client connection from ip address ") & hRelayTXSocket.RemoteHost & " (" & DNS.ResolveHost(hRelayTXSocket.RemoteHost) & (" ) accepted."))
+  ENDIF
+
+END
+
+PUBLIC SUB RFXComTXRelay_Error()
+
+  ' handle error
+  SELECT CASE hRFXComTXRelay.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteDebugLog(("[RFXComTXRelay] The system does not allow to create a socket."))
+    CASE Net.CannotBindSocket
+      Main.WriteDebugLog(("[RFXComTXRelay] Cannot bind socket."))
+    CASE Net.CannotListen
+      Main.WriteDebugLog(("[RFXComTXRelay] Cannot listen on port."))
+  END SELECT
+
+END
+
+PUBLIC SUB Socket_Closed()
+
+  Main.WriteLog(("RFXCom ") & sInterfaceType & (" Relay client connection closed."))
+  hRelayTXClient.Remove(hRelayTXClient.Find(LAST))
+
+END
+
+PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String)
+
+  DIM iDeviceId AS Integer
+  DIM sType AS String
+  DIM bUnit, bDevice AS Byte
+
+  iDeviceId = Devices.Find(sAddress, Devices.FindInterface("RFXCom Transmitter"))
+  IF iDeviceId THEN
+    sType = Devices.FindTypeForDevice(iDeviceId)
+  ELSE
+    RETURN
+  ENDIF
+
+  IF NOT bRFXmitter THEN
+    SELECT sType
+      CASE "ARC", "X10", "KAKU" ' X10, KAKU with CodeWheel, NEXA, DomiaLite
+        IF sType = "X10" AND IF Main.bRFXComTXDisableX10 THEN
+          Main.WriteDebugLog(("[RFXComTX] You have disabled the X10 protocol, unable to control device!"))
+          RETURN
+        ENDIF
+        IF sType = "ARC" OR sType = "KAKU" AND IF NOT Main.bRFXComTXEnableARC THEN
+          Main.WriteDebugLog(("[RFXComTX] You have not enabled the KAKU/ARC protocol, unable to control device!"))
+          RETURN
+        ENDIF
+        IF Left$(sAddress, 1) LIKE "[A-Z]" THEN
+          X10(sAddress, sCmd)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid X10, ARC or KAKU address '") & sAddress & ("' given!"))
+        ENDIF
+      CASE "AC", "HE" ' AC protocol, KAKU without CodeWheel, HomeEasy UK, Chacon.
+        IF Len(sAddress) < 5 THEN
+          AC(sAddress, Main.sRFXComTXACAddress1, Main.sRFXComTXACAddress2, sCmd, FALSE)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid AC or HE address '") & sAddress & ("' given!"))
+        ENDIF
+      DEFAULT
+        Main.WriteDebugLog(("[RFXComTX] " & sType & " protocol is not supported by RFXtransmitter code!"))
+        RETURN
+    END SELECT
+  ELSE
+    SELECT sType
+      CASE "X10" ' X10 lightning
+        IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+          X10(sAddress, sCmd)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid X10 address '") & sAddress & ("' given!"))
+        ENDIF
+      CASE "ARC", "KAKU" ' KlikAanKlikUit with CodeWheel, NEXA, Domia Lite, Proove, ByeByeStandby, ELRO AB600, Intertechno, Duwi
+        IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+          KAKU(sAddress, sCmd)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid ARC or KAKU address '") & sAddress & ("' given!"))
+        ENDIF
+      CASE "AC", "HE" ' AC and HomeEasy UK/KAKU without codewheel
+        IF Len(sAddress) < 5 THEN
+          AC(sAddress, Main.sRFXComTXACAddress1, Main.sRFXComTXACAddress2, sCmd, FALSE)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid AC or HE address '") & sAddress & ("' given!"))
+        RETURN
+        ENDIF
+      CASE "HEEU" ' HomeEasy EU protocol
+        IF Len(sAddress) < 5 THEN
+          ' HEEU(sAddress, Main.sRFXComTXACAddress1, Main.sRFXComTXACAddress2, sCmd)
+          AC(sAddress, Main.sRFXComTXACAddress1, Main.sRFXComTXACAddress2, sCmd, TRUE)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid HEEU address '") & sAddress & ("' given!"))
+        RETURN
+        ENDIF
+      CASE "Digimax" ' RTS10 control
+        IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+          Digimax(sAddress, sCmd)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid Digimax address '") & sAddress & ("' given!"))
+        ENDIF
+      CASE "Harrison" ' Harrison
+        IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+          Harrison(sAddress, sCmd)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid Harrison address '") & sAddress & ("' given!"))
+        ENDIF
+      CASE "Koppla" ' IKEA Koppla
+        IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+          Koppla(sAddress, sCmd)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid Koppla address '") & sAddress & ("' given!"))
+        ENDIF
+      CASE "Waveman" ' Waveman
+        IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+          Waveman(sAddress, sCmd)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid Waveman address '") & sAddress & ("' given!"))
+        ENDIF
+      CASE "Flamingo" ' Flamingo
+        IF Left$(sAddress, 1) LIKE "[A-Z]" AND Right$(sAddress, 1) LIKE "[0-9]" THEN
+          Flamingo(sAddress, sCmd)
+        ELSE
+          Main.WriteDebugLog(("[RFXComTX] Invalid Flamingo address '") & sAddress & ("' given!"))
+        ENDIF
+      DEFAULT
+        Main.WriteDebugLog(("[RFXComTX] " & sType & " protocol is not supported by RFXmitter code!"))
+        RETURN
+    END SELECT
+  ENDIF
+
+END
+
+PRIVATE SUB WriteCom(bBuffer AS Byte[])
+
+  IF sInterface = "tcp" THEN
+    ' send the message to the tcp stream
+    TRY bBuffer.Write(hRFXComTX, 0, bBuffer.Length)
+    IF ERROR THEN Main.WriteRFXDebugLog(("[RFXComTX] Unable to write to TCP port!"))
+  ELSE
+    ' send the message to the serial port
+    TRY bBuffer.Write(hRFXComTXSer, 0, bBuffer.Length)
+    IF ERROR THEN Main.WriteRFXDebugLog(("[RFXComTX] Unable to write to serial port!"))
+  ENDIF
+
+END
+
+PRIVATE SUB WriteMessage(bBuf AS Byte[], OPTIONAL bCmd AS Boolean)
+
+  DIM sMessage AS String = Hex(bBuf[0], 2)
+  DIM dFinish AS Date
+  DIM bTemp AS Byte
+  DIM iIndex, iEnd, iTries AS Integer
+
+  bAck = FALSE
+
+  IF NOT bCmd THEN
+    iEnd = ((bBuf[0] AND &HF8) / 8)
+    IF (bBuf[0] AND &H7) <> 0 THEN INC iEnd
+    FOR iIndex = 1 TO iEnd
+      sMessage &= Hex(bBuf[iIndex], 2)
+    NEXT
+    IF Main.bRFXComTXDebug THEN Main.WriteDebugLog("[RFXComTX] " & sMessage)
+  ENDIF
+
+  ' write data to the interface
+  WriteCom(bBuf)
+
+  dFinish = Second(Now) + 3 ' wait for ACK, max 3 seconds
+
+  DO WHILE (bAck = FALSE)
+    IF (Second(Now) > dFinish) THEN
+      Main.WriteDebugLog("[RFXComTX] No ACK received within 3 seconds!", FALSE)
+      BREAK
+    ENDIF
+
+    IF sInterface = "tcp" THEN
+      TRY READ #hRFXComTX, bTemp
+      IF NOT ERROR THEN
+        IF bTemp = bProtocol THEN
+          IF Main.bRFXComTXDebug THEN Main.WriteDebugLog("[RFXComTX] ACK=>", TRUE)
+          bMessage = TRUE
+        ELSE IF bTemp = &H5A THEN
+          IF Main.bRFXComTXDebug THEN Main.WriteDebugLog("[RFXComTX] NAK=>", TRUE)
+          bMessage = TRUE
+        ENDIF
+        IF Main.bRFXComTXDebug THEN Main.WriteRFXDebugLog(Hex(bTemp, 2), TRUE)
+        IF bCmd THEN bMessage = TRUE
+      ENDIF
+    ELSE
+      TRY READ #hRFXComTXSer, bTemp
+      IF NOT ERROR THEN
+        IF bTemp = bProtocol THEN
+          IF Main.bRFXComTXDebug THEN Main.WriteDebugLog("[RFXComTX] ACK=>", TRUE)
+          bMessage = TRUE
+        ELSE IF bTemp = &H5A THEN
+          IF Main.bRFXComTXDebug THEN Main.WriteDebugLog("[RFXComTX] NAK=>", TRUE)
+          bMessage = TRUE
+        ENDIF
+        IF Main.bRFXComTXDebug THEN Main.WriteRFXDebugLog(Hex(bTemp, 2), TRUE)
+        IF bCmd THEN bMessage = TRUE
+      ENDIF
+    ENDIF
+
+    IF bMessage THEN
+      bAck = TRUE
+      bMessage = FALSE
+      IF Main.bRFXComTXDebug THEN Main.WriteRFXDebugLog("\n", TRUE)
+    ENDIF
+    SLEEP 0.05
+  LOOP
+  bAck = FALSE
+
+END
+
+' set interface mode
+PUBLIC FUNCTION SetInitMode()
+
+  DIM bBuf1 AS Byte[] = [CByte(&HF0), CByte(MODERFXCOM), &HF0, MODERFXCOM] ' handshake
+  DIM bBuf2 AS Byte[] = [CByte(&HF0), CByte(MODERFXCOMNOREC), &HF0, MODERFXCOMNOREC] ' no handshake
+
+  IF bHandshake THEN
+    IF Main.bRFXComTXDebug THEN Main.WriteRFXDebugLog(("Initialized ") & sInterfaceType & (" for Handshake usage with => ") & Hex(bBuf1[0]) & Hex(bBuf1[1]) & Hex(bBuf1[2]) & Hex(bBuf1[3]) & "\n")
+    bProtocol = MODERFXCOM
+    WriteMessage(bBuf1, TRUE)
+  ELSE
+    IF Main.bRFXComTXDebug THEN Main.WriteRFXDebugLog(("Initialized ") & sInterfaceType & (" for No Handshake usage with => ") & Hex(bBuf2[0]) & Hex(bBuf2[1]) & Hex(bBuf2[2]) & Hex(bBuf2[3]) & "\n")
+    bProtocol = MODERFXCOMNOREC
+    WriteMessage(bBuf2, TRUE)
+  ENDIF
+
+END
+
+' disable X10 protocol
+PUBLIC SUB DisableX10TX()
+
+  DIM bBuf AS Byte[] = [CByte(&HF0), CByte(&H3F), &HF0, &H3F]
+
+  IF Main.bRFXComTXDebug THEN
+    Main.WriteRFXDebugLog(("Cmd to ") & sInterfaceType & (" => F03FF03F\n"), FALSE)
+    Main.WriteRFXDebugLog(("Disable X10 RF\n"), FALSE)
+  ENDIF
+  WriteMessage(bBuf, TRUE)
+
+END SUB
+
+' enable ARC aka KAKU
+PUBLIC FUNCTION EnableARCTX()
+
+  DIM bBuf AS Byte[] = [CByte(&HF0), CByte(&H3D), &HF0, &H3D]
+
+  IF Main.bRFXComTXDebug THEN
+    Main.WriteRFXDebugLog(("Cmd to ") & sInterfaceType & (" => F03DF03D\n"), FALSE)
+    Main.WriteRFXDebugLog(("Enable KlikAan-KlikUit RF\n"), FALSE)
+  ENDIF
+  WriteMessage(bBuf, TRUE)
+
+END
+
+' enable harrison protocol
+PUBLIC SUB EnableHarrisonTX()
+
+  DIM bBuf AS Byte[] = [CByte(&HF0), CByte(&H3C), &HF0, &H3C]
+
+  IF Main.bRFXComTXDebug THEN
+    Main.WriteRFXDebugLog(("Cmd to ") & sInterfaceType & (" => F03CF03C\n"), FALSE)
+    Main.WriteRFXDebugLog(("Enable Harrison RF\n"), FALSE)
+  ENDIF
+  WriteMessage(bBuf, TRUE)
+
+END
+
+' enable koppla protocol
+PUBLIC SUB EnableKopplaTX()
+
+  DIM bBuf AS Byte[] = [CByte(&HF0), CByte(&H3E), &HF0, &H3E]
+
+  IF Main.bRFXComTXDebug THEN
+    Main.WriteRFXDebugLog(("Cmd to ") & sInterfaceType & (" => F03EF03E\n"), FALSE)
+    Main.WriteRFXDebugLog(("Enable Flamingo / Koppla RF\n"), FALSE)
+  ENDIF
+  WriteMessage(bBuf, TRUE)
+
+END
+
+' ask for firmware version
+PUBLIC FUNCTION GetVersion()
+
+  DIM bBuf AS Byte[] = [CByte(&HF0), CByte(GETSW), &HF0, GETSW]
+
+  IF Main.bRFXComTXDebug THEN
+    Main.WriteRFXDebugLog(("Version request to ") & sInterfaceType & (" => F030F030\n"), FALSE)
+    IF NOT bRFXmitter THEN Main.WriteRFXDebugLog(("RF Modes are reset to: X10 enabled and all other modes are disabled\n"), FALSE)
+    Main.WriteRFXDebugLog(sInterfaceType & (" has Firmware Version: "), FALSE)
+  ENDIF
+  WriteMessage(bBuf, TRUE)
+
+END
+
+PRIVATE FUNCTION ToHouse(sHouse AS String) AS Byte
+
+  SELECT CASE UCase(sHouse)
+    CASE "A"
+      RETURN &H60 'A
+    CASE "B"
+      RETURN &H70 'B
+    CASE "C"
+      RETURN &H40 'C
+    CASE "D"
+      RETURN &H50 'D
+    CASE "E"
+      RETURN &H80 'E
+    CASE "F"
+      RETURN &H90 'F
+    CASE "G"
+      RETURN &HA0 'G
+    CASE "H"
+      RETURN &HB0 'H
+    CASE "I"
+      RETURN &HE0 'I
+    CASE "J"
+      RETURN &HF0 'J
+    CASE "K"
+      RETURN &HC0 'K
+    CASE "L"
+      RETURN &HD0 'L
+    CASE "M"
+      RETURN &H0 'M
+    CASE "N"
+      RETURN &H10 'N
+    CASE "O"
+      RETURN &H20 'O
+    CASE "P"
+      RETURN &H30 'P
+  END SELECT
+
+END
+' 
+' PUBLIC FUNCTION GetUnit(iUnit AS Integer) AS Byte
+' 
+'   IF iUnit > 8 THEN iUnit -= 8
+' 
+'   SELECT CASE iUnit
+'     CASE 1
+'       RETURN &H0
+'     CASE 2
+'       RETURN &H10
+'     CASE 3
+'       RETURN &H8
+'     CASE 4
+'       RETURN &H18
+'     CASE 5
+'       RETURN &H40
+'     CASE 6
+'       RETURN &H50
+'     CASE 7
+'       RETURN &H48
+'     CASE 8
+'       RETURN &H58
+'   END SELECT
+' 
+' END
+
+PUBLIC FUNCTION GetHouse(sHouse AS String, iUnit AS Integer) AS Byte
+
+  DIM bTemp AS Byte
+
+  SELECT CASE sHouse
+    CASE "A"
+      bTemp = &H60
+    CASE "B"
+      bTemp = &H70
+    CASE "C"
+      bTemp = &H40
+    CASE "D"
+      bTemp = &H50
+    CASE "E"
+      bTemp = &H80
+    CASE "F"
+      bTemp = &H90
+    CASE "G"
+      bTemp = &HA0
+    CASE "H"
+      bTemp = &HB0
+    CASE "I"
+      bTemp = &HE0
+    CASE "J"
+      bTemp = &HF0
+    CASE "K"
+      bTemp = &HC0
+    CASE "L"
+      bTemp = &HD0
+    CASE "M"
+      bTemp = &H0
+    CASE "N"
+      bTemp = &H10
+    CASE "O"
+      bTemp = &H20
+    CASE "P"
+      bTemp = &H30
+    CASE ELSE
+      bTemp = &H60
+  END SELECT
+  IF iUnit > 8 THEN bTemp = bTemp OR &H4
+  RETURN bTemp
+
+END
+
+' Digimax RTS10 control with X10 commands for RFXmitter
+PUBLIC SUB Digimax(sAddress AS String, sCmd AS String)
+
+  DIM sData, sHouse, sDevice AS String
+  DIM iDevice, iHouse AS Integer
+
+  sHouse = Left$(sAddress, 1)
+  sDevice = Right$(sAddress, 2)
+  sData = Chr(44) & sHouse & sDevice
+  iHouse = Asc(sHouse)
+  iDevice = Asc(sDevice)
+
+  SELECT CASE UCase(sCmd)
+    CASE "ON"
+      sData &= Chr(&H10 OR (&HF - (Lsr(iHouse, 4) + iHouse + Lsr(iDevice, 4) + iDevice + &H1) AND &HF))
+      sData &= Chr(&H19) & Chr(&H20) & Chr(&HFF - (Lsl(12, 4)) AND &HF0)
+    CASE "OFF"
+      sData &= Chr(&H20 OR (&HF - (Lsr(iHouse, 4) + iHouse + Lsr(iDevice, 4) + iDevice + &H2) AND &HF))
+      sData &= Chr(&H21) & Chr(&H20) & Chr(&HFF - (Lsl(5, 4)) AND &HF0)
+    CASE "LEARN"
+      sData &= Chr(&H30 OR (&HF - (Lsr(iHouse, 4) + iHouse + Lsr(iDevice, 4) + iDevice + &H3) AND &HF))
+      sData &= Chr(&H21) & Chr(&H20) & Chr(&HFF - (Lsl(5, 4)) AND &HF0)
+  END SELECT
+
+END
+
+' ARC/KAKU for RFXmitter
+PUBLIC SUB KAKU(sAddress AS String, sCmd AS String)
+
+  DIM bBuf AS Byte[4]
+  DIM iDevice, iUnit AS Integer
+
+  iUnit = Asc(Left$(sAddress, 1)) - &H41
+  iDevice = Right$(sAddress, 2) - 1
+
+  bBuf[0] = 24
+
+  SELECT UCase(sCmd)
+    CASE "ON"
+      bBuf[1] = &H54
+    CASE "OFF"
+      bBuf[1] = &H14
+    DEFAULT
+      Main.WriteDebugLog(("[RFXComTX] Unknown command '") & UCase(sCmd) & ("' given!"))
+      RETURN
+  END SELECT
+
+  bBuf[2] = Lsl((iDevice AND &H8), 3) OR Lsl((iDevice AND &H4), 2) OR Lsl((iDevice AND &H2), 1) OR (iDevice AND &H1)
+  bBuf[3] = Lsl((iUnit AND &H8), 3) OR Lsl((iUnit AND &H4), 2) OR Lsl((iUnit AND &H2), 1) OR (iUnit AND &H1)
+
+  WriteMessage(bBuf)
+
+  bBuf[1] = &H55
+  bBuf[2] = &H80 OR Lsl((iDevice AND &H8), 3) OR Lsl((iDevice AND &H4), 2) OR &H7
+  bBuf[3] = Lsl((iUnit AND &H8), 3) OR Lsl((iUnit AND &H4), 2) OR Lsl((iUnit AND &H2), 1) OR (iUnit AND &H1)
+
+  WriteMessage(bBuf)
+
+END
+
+' X10 for RFXmitter/transmitter
+PUBLIC SUB X10(sAddress AS String, sCommand AS String)
+
+  DIM bBuf AS Byte[5]
+  DIM bHouse, bUnit AS Byte
+  DIM iUnit, iDc, iUnithl AS Integer
+  DIM sCmd AS String = UCase(sCommand)
+
+  bHouse = GetHouse(Left$(sAddress, 1), Right$(sAddress, 2))
+  bUnit = Val(Right$(sAddress, 2))
+
+  SELECT sCmd
+    CASE "ON"
+      iUnit = 0
+    CASE "OFF"
+      iUnit = &H20
+    CASE "BRIGHT"
+      iUnit = &H88
+    CASE "DIM"
+      iUnit = &H98
+    CASE "ALL_LIGHTS_ON"
+      iUnit = &H90
+    CASE "ALL_LIGHTS_OFF", "ALL_UNITS_OFF"
+      iUnit = &H80
+    DEFAULT
+      Main.WriteDebugLog(("[RFXComTX] Unknown command '") & UCase(sCmd) & ("' given!"))
+      RETURN
+  END SELECT
+
+  IF sCmd = "OFF" OR sCmd = "ON" THEN
+    IF bUnit > 8 THEN
+      iUnithl = &H4 ' UNITS 9 TO 16
+      iDc = bUnit - 8
+    ELSE
+      iUnithl = &H0 ' UNITS 1 TO 8
+      iDc = bUnit
+    ENDIF
+    SELECT CASE iDc
+      CASE 1
+        iUnit = &H0 OR iUnit '1 OR 9
+      CASE 2
+        iUnit = &H10 OR iUnit '2 OR 10
+      CASE 3
+        iUnit = &H8 OR iUnit '3 OR 11
+      CASE 4
+        iUnit = &H18 OR iUnit '4 OR 12
+      CASE 5
+        iUnit = &H40 OR iUnit '5 OR 13
+      CASE 6
+        iUnit = &H50 OR iUnit '6 OR 14
+      CASE 7
+        iUnit = &H48 OR iUnit '7 OR 15
+      CASE 8
+        iUnit = &H58 OR iUnit '8 OR 16
+    END SELECT
+  ENDIF
+
+  bBuf[0] = &H20
+  bBuf[1] = bHouse
+  bBuf[2] = (NOT bHouse) AND &HFF
+  bBuf[3] = iUnit
+  bBuf[4] = (NOT iUnit) AND &HFF
+
+  WriteMessage(bBuf)
+
+END
+
+PUBLIC SUB ACHouse(sCode AS String) AS Byte
+
+  SELECT CASE UCase(sCode)
+    CASE "A"
+      RETURN &H60
+    CASE "B"
+      RETURN &H70
+    CASE "C"
+      RETURN &H40
+    CASE "D"
+      RETURN &H50
+    CASE "E"
+      RETURN &H80
+    CASE "F"
+      RETURN &H90
+    CASE "G"
+      RETURN &HA0
+    CASE "H"
+      RETURN &HB0
+    CASE "I"
+      RETURN &HE0
+    CASE "J"
+      RETURN &HF0
+    CASE "K"
+      RETURN &HC0
+    CASE "L"
+      RETURN &HD0
+    CASE "M"
+      RETURN &H0
+    CASE "N"
+      RETURN &H10
+    CASE "O"
+      RETURN &H20
+    CASE "P"
+      RETURN &H30
+  END SELECT
+
+END
+
+' AC and HomeEasy UK for RFXtransmitter, HomeEasy EU for RFXmitter
+PUBLIC SUB AC(sAddress AS String, sACAddress1 AS String, sACAddress2 AS String, sCmd AS String, bHEEU AS Boolean)
+
+  DIM bLength AS Byte = 33
+  DIM bBuf AS Byte[6]
+  DIM iDim, iBrightness AS Integer
+
+  IF bHEEU THEN bLength = 34
+
+  bBuf[1] = ACHouse(Left$(sAddress, 1))
+  bBuf[2] = CByte(Val("&H" & sACAddress1))
+  bBuf[3] = CByte(Val("&H" & sACAddress2))
+  bBuf[4] = CByte(Val(Right$(sAddress, 2)) - 1)
+  bBuf[5] = 0
+
+  sCmd = UCase(sCmd)
+
+  IF InStr(sCmd, "ON") THEN
+    bBuf[4] = CByte(bBuf[4] OR &H10)
+  ELSE IF InStr(sCmd, "OFF") THEN
+    ' nothing to do
+  ELSE IF InStr(sCmd, "DIM ") THEN ' DIM 1 - 99
+    iBrightness = Val(Replace(sCmd, "DIM ", ""))
+    IF iBrightness > 0 THEN
+      iDim = Round(0.32 * iBrightness) ' 32 steps
+      iDim = CInt((iBrightness / 2) - 1)
+      IF iDim >= 14 THEN
+        bBuf[5] = CByte(bBuf[5] OR &HF0)
+      ELSE IF iDim > 0 THEN
+        bBuf[5] = CByte(bBuf[5] OR ((iDim * 16) AND &HF0))
+      ENDIF
+      bLength = 37
+    ENDIF
+  ELSE
+    Main.WriteDebugLog(("[RFXComTX] Unknown command '") & UCase(sCmd) & ("' given!"))
+  ENDIF
+  bBuf[0] = bLength
+
+  WriteMessage(bBuf)
+
+END
+
+' Koppla for RFXmitter
+PUBLIC SUB Koppla(sAddress AS String, sCmd AS String)
+
+  DIM bBuf AS Byte[5]
+  DIM sHouse, sDevice AS String
+  DIM iBrightness, iLevel AS Integer
+
+  sHouse = Left$(sAddress, 1)
+  sDevice = Right$(sAddress, 2)
+
+  bBuf[0] = 26
+  bBuf[2] = 0
+  bBuf[3] = Asc(sHouse) - Asc("A")
+  bBuf[4] = 0
+
+  SELECT CASE CInt(sDevice)
+    CASE 1
+      bBuf[3] = bBuf[3] OR &H20
+    CASE 2
+      bBuf[3] = bBuf[3] OR &H40
+    CASE 3
+      bBuf[3] = bBuf[3] OR &H80
+    CASE 4
+      bBuf[2] = &H1
+    CASE 5
+      bBuf[2] = &H2
+    CASE 6
+      bBuf[2] = &H4
+    CASE 7
+      bBuf[2] = &H8
+    CASE 8
+      bBuf[2] = &H10
+    CASE 9
+      bBuf[2] = &H20
+    CASE 10
+      bBuf[3] = bBuf[3] OR &H10
+    CASE ELSE
+      RETURN
+  END SELECT
+
+  IF InStr(sCmd, "DIM") THEN
+    iBrightness = Val(Replace(sCmd, "DIM ", ""))
+    sCmd = "DIM"
+  ENDIF
+
+  SELECT CASE UCase(sCmd)
+    CASE "ALL_LIGHTS_OFF", "ALL_UNITS_OFF"
+      bBuf[1] = &H9A ' off
+      bBuf[2] = &H3F
+      bBuf[3] = bBuf[3] OR &HF0
+    CASE "ALL_LIGHTS_ON"
+      bBuf[1] = &H90 ' on
+      bBuf[2] = &H3F
+      bBuf[3] = bBuf[3] OR &HF0
+    CASE "DIM"
+      IF iBrightness = 0 THEN
+        bBuf[1] = &H9A
+      ELSE
+        iLevel = CInt(iBrightness / 3)
+        SELECT CASE iLevel
+          CASE 0
+            bBuf[1] = &H9A ' off
+          CASE 1
+            bBuf[1] = &HD1
+          CASE 2
+            bBuf[1] = &H12
+          CASE 3
+            bBuf[1] = &H53
+          CASE 4
+            bBuf[1] = &HD4
+          CASE 5
+            bBuf[1] = &H95
+          CASE 6
+            bBuf[1] = &H56
+          CASE 7
+            bBuf[1] = &H17
+          CASE 8
+            bBuf[1] = &H18
+          CASE 9
+            bBuf[1] = &H59
+          CASE ELSE
+            bBuf[1] = &H90 ' on
+        END SELECT
+      ENDIF
+    CASE "OFF"
+      bBuf[1] = &H9A
+    CASE "ON"
+      bBuf[1] = &H90
+    CASE ELSE
+      RETURN
+  END SELECT
+
+  bBuf[2] = CalcIkeaParity(bBuf[2], bBuf[3])
+
+  WriteMessage(bBuf)
+
+END
+
+' calulate parity for koppla
+PRIVATE FUNCTION CalcIkeaParity(bBuf1 AS Byte, bBuf2 AS Byte) AS Byte
+
+  DIM iParity, iTemp, iIndex AS Integer
+  DIM bReturn AS Byte
+
+  bReturn = bBuf1
+  iTemp = (bBuf1 * 256) + bBuf2
+  iParity = 1
+  FOR iIndex = 1 TO 7
+    iParity = iParity + (iTemp AND &H1)
+    iTemp = Lsr(iTemp, 2)
+  NEXT
+  IF (iParity AND &H1) = 1 THEN bReturn = bReturn OR &H40
+
+  iTemp = (bReturn * 256) + bBuf2
+  iParity = 0
+  FOR iIndex = 1 TO 15
+    iParity = iParity + (iTemp AND &H1)
+    iTemp = Lsr(iTemp, 1)
+  NEXT
+  IF (iParity AND &H1) = 1 THEN bReturn = bReturn OR &H80
+
+END
+
+' Flamingo for RFXmitter
+PUBLIC SUB Flamingo(sAddress AS String, sCmd AS String)
+
+  DIM bBuf AS Byte[3]
+  DIM sHouse, sDevice AS String
+
+  sHouse = Left$(sAddress, 1)
+  sDevice = Right$(sAddress, 2)
+
+  bBuf[0] = 11
+  bBuf[1] = ToHouse(sHouse)
+  bBuf[2] = 0
+
+  SELECT CASE CInt(sDevice)
+    CASE 1
+      bBuf[1] = bBuf[1] OR &H40
+    CASE 2
+      bBuf[1] = bBuf[1] OR &H20
+    CASE 3
+      bBuf[1] = bBuf[1] OR &H10
+    CASE 4
+      bBuf[2] = &H80
+    CASE 5
+      bBuf[2] = &H40
+    CASE 6
+      bBuf[1] = bBuf[1] OR &HC0
+    CASE 7
+      bBuf[1] = bBuf[1] OR &HA0
+    CASE 8
+      bBuf[1] = bBuf[1] OR &H90
+    CASE 9
+      bBuf[1] = bBuf[1] OR &H80
+      bBuf[2] = &H80
+    CASE 10
+      bBuf[1] = bBuf[1] OR &H80
+      bBuf[2] = &H40
+    CASE ELSE
+      RETURN
+  END SELECT
+
+  SELECT CASE UCase(sCmd)
+    CASE "OFF"
+      'nothing to do
+    CASE "ON"
+    bBuf[2] = bBuf[2] OR &H20
+  END SELECT
+
+  WriteMessage(bBuf)
+
+END
+
+' Waveman for RFXmitter
+PUBLIC SUB Waveman(sAddress AS String, sCmd AS String)
+
+  DIM bBuf AS Byte[4]
+  DIM xLate AS Byte[] = [CByte(&H0), CByte(&H1), &H4, &H5, &H10, &H11, &H14, &H15, &H40, &H41, &H44, &H45, &H50, &H51, &H54, &H55]
+  DIM sHouse, sDevice AS String
+
+  sHouse = Left$(sAddress, 1)
+  sDevice = Right$(sAddress, 2)
+
+  bBuf[0] = 24
+
+  SELECT CASE UCase(sCmd)
+    CASE "ON"
+      bBuf[1] = &H54
+    CASE "OFF"
+      bBuf[1] = &H0
+  END SELECT
+
+  bBuf[2] = xLate[CInt(sDevice) - 1]
+  bBuf[3] = xLate[Asc(sHouse) - &H41]
+
+  WriteMessage(bBuf)
+
+END
+
+' Harrison for RFXmitter
+PUBLIC SUB Harrison(sAddress AS String, sCmd AS String)
+
+  DIM bBuf AS Byte[5]
+  DIM sHouse AS String = Left$(sAddress, 1)
+  DIM iDevice AS Integer = CInt(Right$(sAddress, 2))
+
+  bBuf[0] = 25
+  SELECT CASE sHouse
+    CASE "A"
+      bBuf[1] = &H3C
+    CASE "B"
+      bBuf[1] = &H3F
+    CASE "C"
+      bBuf[1] = &H30
+    CASE "D"
+      bBuf[1] = &H33
+    CASE "E"
+      bBuf[1] = &HC0
+    CASE "F"
+      bBuf[1] = &HC3
+    CASE "G"
+      bBuf[1] = &HCC
+    CASE "H"
+      bBuf[1] = &HCF
+    CASE "I"
+      bBuf[1] = &HFC
+    CASE "J"
+      bBuf[1] = &HFF
+    CASE "K"
+      bBuf[1] = &HF0
+    CASE "L"
+      bBuf[1] = &HF3
+    CASE "M"
+      bBuf[1] = &H0
+    CASE "N"
+      bBuf[1] = &H3
+    CASE "O"
+      bBuf[1] = &HC
+    CASE "P"
+      bBuf[1] = &HF
+  END SELECT
+
+  SELECT CASE iDevice
+    CASE 1
+      bBuf[2] = &H0
+    CASE 2
+      bBuf[2] = &H3
+    CASE 3
+      bBuf[2] = &HC
+    CASE 4
+      bBuf[2] = &HF
+    CASE 5
+      bBuf[2] = &H30
+    CASE 6
+      bBuf[2] = &H33
+    CASE 7
+      bBuf[2] = &H3C
+    CASE 8
+      bBuf[2] = &H3F
+    CASE 9
+      bBuf[2] = &HC0
+    CASE 10
+      bBuf[2] = &HC3
+    CASE 11
+      bBuf[2] = &HCC
+    CASE 12
+      bBuf[2] = &HCF
+    CASE 13
+      bBuf[2] = &HF0
+    CASE 14
+      bBuf[2] = &HF3
+    CASE 15
+      bBuf[2] = &HFC
+    CASE 16
+      bBuf[2] = &HFF
+  END SELECT
+
+  SELECT CASE UCase(sCmd)
+    CASE "OFF" ' open
+      bBuf[3] = &HCF
+    CASE "ON" ' close
+      bBuf[3] = &HF3
+    CASE "STOP" ' stop
+      bBuf[3] = &HFC
+  END SELECT
+  bBuf[4] = &H80
+
+  WriteMessage(bBuf)
+
+END
+
+' implement properties
+PRIVATE FUNCTION TCPHost_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB TCPHost_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION TCPPort_Read() AS Integer
+
+  RETURN iTCPPort
+
+END
+
+PRIVATE SUB TCPPort_Write(Value AS Integer)
+
+  iTCPPort = Value
+
+END
+
+PRIVATE FUNCTION Interface_Read() AS String
+
+  RETURN sInterface
+
+END
+
+PRIVATE SUB Interface_Write(Value AS String)
+
+  sInterface = Value
+
+END
+
+PRIVATE FUNCTION Baud_Read() AS String
+
+  RETURN sBaud
+
+END
+
+PRIVATE SUB Baud_Write(Value AS String)
+
+  sBaud = Value
+
+END
+
+PRIVATE FUNCTION SerPort_Read() AS String
+
+  RETURN sSerPort
+
+END
+
+PRIVATE SUB SerPort_Write(Value AS String)
+
+  sSerPort = Value
+
+END
+
+PRIVATE FUNCTION RFXComDebug_Read() AS Boolean
+
+  RETURN bRFXComTXDebug
+
+END
+
+PRIVATE SUB RFXComDebug_Write(Value AS Boolean)
+
+  bRFXComTXDebug = Value
+
+END
+
+PRIVATE SUB Handshake_Write(Value AS Boolean)
+
+  bHandshake = Value
+
+END
+
+PRIVATE FUNCTION Handshake_Read() AS Boolean
+
+  RETURN bHandshake
+
+END
+
+PRIVATE FUNCTION RelayPort_Read() AS Integer
+
+  RETURN iRelayPort
+
+END
+
+PRIVATE SUB RelayPort_Write(Value AS Integer)
+
+  iRelayPort = Value
+
+END
+
+PRIVATE SUB DisableX10_Write(Value AS Boolean)
+
+  bDisableX10 = Value
+
+END
+
+PRIVATE FUNCTION DisableX10_Read() AS Boolean
+
+  RETURN bDisableX10
+
+END
+
+PRIVATE SUB EnableARC_Write(Value AS Boolean)
+
+  bEnableARC = Value
+
+END
+
+PRIVATE FUNCTION EnableARC_Read() AS Boolean
+
+  RETURN bEnableARC
+
+END
+
+PRIVATE SUB EnableHarrison_Write(Value AS Boolean)
+
+  bEnableHarrison = Value
+
+END
+
+PRIVATE FUNCTION EnableHarrison_Read() AS Boolean
+
+  RETURN bEnableHarrison
+
+END
+
+PRIVATE SUB EnableKoppla_Write(Value AS Boolean)
+
+  bEnableKoppla = Value
+
+END
+
+PRIVATE FUNCTION EnableKoppla_Read() AS Boolean
+
+  RETURN bEnableKoppla
+
+END
+
+PRIVATE FUNCTION ACAddress1_Read() AS String
+
+  RETURN sACAddress1
+
+END
+
+PRIVATE SUB ACAddress1_Write(Value AS String)
+
+  sACAddress1 = Value
+
+END
+
+PRIVATE FUNCTION ACAddress2_Read() AS String
+
+  RETURN sACAddress2
+
+END
+
+PRIVATE SUB ACAddress2_Write(Value AS String)
+
+  sACAddress2 = Value
+
+END
+
+PRIVATE FUNCTION RFXmitter_Read() AS Boolean
+
+  RETURN bRFXmitter
+
+END
+
+PRIVATE SUB RFXmitter_Write(Value AS Boolean)
+
+  bRFXmitter = Value
+
+END
+
+PRIVATE FUNCTION InterfaceType_Read() AS String
+
+  RETURN sInterfaceType
+
+END
+
+PRIVATE SUB InterfaceType_Write(Value AS String)
+
+  sInterfaceType = Value
+
+END

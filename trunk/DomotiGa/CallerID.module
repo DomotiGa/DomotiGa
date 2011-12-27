@@ -1,0 +1,162 @@
+' Gambas module file
+
+' Description:
+' CallerID.module
+' Support for CallerID related functions.
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2009-2010 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return name of caller if known
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ReturnCallerID(sPhoneNo AS String) AS String
+
+  DIM rResult AS Result
+  DIM sName, sPhoneNoPrefix AS String
+
+  IF Len(sPhoneNo) THEN
+    IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] Searching contacts for number '") & sPhoneNo & "'.")
+    sName = FindCallerNameContact(sPhoneNo)
+    IF sName = "" THEN
+      sPhoneNoPrefix = Main.sCallerIDNationalPrefix & Main.sCallerIDAreaCode & sPhoneNo
+      IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] Searching contacts for number '") & sPhoneNoPrefix & "'.")
+      sName = FindCallerNameContact(sPhoneNoPrefix)
+    END IF
+    IF sName = "" THEN
+      IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] Searching online for number '") & sPhoneNo & "'.")
+      sName = FindCallerNameOnline(sPhoneNo)
+    END IF
+    IF sName = "" THEN
+      IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] Searching contacts for number '") & sPhoneNoPrefix & "'.")
+      sName = FindCallerNameOnline(sPhoneNoPrefix)
+    END IF
+    IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] Found name '") & sName & "'.")
+    RETURN IIf(Len(sName), sName, ("Unknown"))
+  ELSE
+    IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] No number to look for! (Hidden)"))
+    RETURN ("[Hidden Number]")
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' look through contact tables for caller name
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION FindCallerNameContact(sPhoneNo AS String) AS String
+
+  DIM rResult AS Result
+  DIM sName AS String
+
+  rResult = Main.hDB.Exec("SELECT name, cidphone FROM contacts WHERE phoneno LIKE &1", "%" & sPhoneNo & "%")
+  IF rResult.Count THEN
+    IF rResult!cidphone THEN
+      sName = rResult!cidphone
+    ELSE
+      sName = rResult!name
+    END IF
+  END IF
+  rResult = Main.hDB.Exec("SELECT name cidmobile FROM contacts WHERE mobileno LIKE &1", "%" & sPhoneNo & "%")
+  IF rResult.Count THEN
+    IF rResult!cidmobile THEN
+      sName = rResult!cidmobile
+    ELSE
+      sName = rResult!name
+    END IF
+  END IF
+
+  RETURN sName
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' search online database for caller name
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION FindCallerNameOnline(sPhoneNo AS String, OPTIONAL bUpdate AS Boolean) AS String
+
+  DIM hCallerID AS NEW HttpClient
+  DIM sURL, sBuffer, sName AS String
+  DIM aScan, aLine AS String[]
+  DIM rResult AS Result
+  DIM iId AS Integer
+
+  sURL = "http://www.gevonden.cc/zoek1.php?sort=lastname&search=1&phonenumber=" & sPhoneNo & "&export=csv"
+  IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] Fetching URL '") & sURL & "'")
+  hCallerID = NEW HttpClient AS "CallerID"
+  hCallerID.URL = sURL
+  hCallerID.Async = FALSE
+  hCallerID.TimeOut = 3
+  hCallerID.Get
+
+  IF hCallerID.Status < 0 THEN
+    ' site not reachable
+    IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] Error fething URL (") & hCallerID.Status & ")")
+    RETURN ""
+  ELSE
+    ' success - read the data
+    IF Lof(hCallerID) THEN READ #hCallerID, sBuffer, Lof(hCallerID)
+    sBuffer = Mid(sBuffer, 1, Len(sBuffer) - 1)
+    ' doesn't start with a ", data not found
+    IF Left(sBuffer, 1) <> Chr(34) THEN
+      IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] Not found!"))
+      RETURN ""
+    END IF
+
+    IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] Response '") & sBuffer & "'")
+
+    aLine = Split(sBuffer, "\n")
+    ' "NUMBER";SURNAME;FIRSTNAME;ADDRESS;ZIPCODE;CITY
+    aScan = Scan(aLine[0], "*;*;*;*;*;*")
+    IF aScan.Count = 6 THEN
+      IF Len(aScan[2]) > 0 THEN
+        sName = aScan[2] & " " & aScan[1]
+      ELSE
+        sName = aScan[1]
+      END IF
+
+      ' update contact info
+      IF bUpdate THEN
+        TRY rResult = Main.hDB.Exec("SELECT * FROM contacts WHERE phoneno LIKE &1", sPhoneNo)
+        IF rResult.Count THEN
+          TRY rResult = Main.hDB.Exec("UPDATE contacts SET name = &2, address = &3, zipcode = &4, city = &5 WHERE id = &1", rResult!id, sName, aScan[3], aScan[4], aScan[5])
+        ELSE
+          ' add new contact record to database
+          Main.hDB.Begin()
+          rResult = Main.hDB.Create("contacts")
+          rResult!name = sName
+          rResult!address = aScan[3]
+          rResult!zipcode = aScan[4]
+          rResult!city = aScan[5]
+          rResult!phoneno = sPhoneNo
+          rResult.Update()
+          Main.hDB.Commit()
+          RETURN "Added record.\n\nName:\n" & sName & "\n\n" & "Address:\n" & aScan[3] & "\n" & aScan[4] & "\n" & aScan[5] & "\n\nNumber:\n" & sPhoneNo
+        END IF
+        RETURN "Updated record.\n\nName:\n" & sName & "\n\n" & "Address:\n" & aScan[3] & "\n" & aScan[4] & "\n" & aScan[5] & "\n\nNumber:\n" & sPhoneNo
+      END IF
+
+      IF NOT Main.bCallerIDAutoCreateContacts THEN RETURN sName & (" from ") & aScan[5]
+
+      ' add new contact record to database
+      Main.hDB.Begin()
+      rResult = Main.hDB.Create("contacts")
+      rResult!name = sName
+      rResult!address = aScan[3]
+      rResult!zipcode = aScan[4]
+      rResult!city = aScan[5]
+      rResult!phoneno = sPhoneNo
+      rResult!comments = ("Auto created contact with data found on 'www.gevonden.cc'")
+      rResult.Update()
+      Main.hDB.Commit()
+      IF Main.bCallerIDDebug THEN Main.WriteDebugLog(("[CallerID] Auto created contact record for '") & sName & (" from ") & aScan[5] & "'")
+      RETURN sName & (" from ") & aScan[5]
+    END IF
+
+  ENDIF
+
+END

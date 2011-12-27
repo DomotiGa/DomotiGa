@@ -1,0 +1,335 @@
+' Gambas class file
+
+' Description:
+' CEZcontrol.class
+' Provide basic support for device control for the EZcontrol T-10 interface.
+
+' Development Status:
+' Just started developing this one, not complete yet.
+
+' Links:
+' http://www.ezcontrol.de/content/view/30/56/
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2010 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+Property UDPHost As String
+Property UDPPort As String
+Property EZcontrolDebug As Boolean
+
+Private sUDPHost As String
+Private sUDPPort As String
+Private bEZcontrolDebug As Boolean
+
+Public hEZcontrol As New UdpSocket
+
+' Constants
+Private Const PRESET_MODE As Short = &HAB01
+Private Const MANUAL_MODE As Short = &HAB02
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Connect() As Boolean
+
+  ' try to close the connection
+  Try hEZcontrol.Close
+
+  ' get a new one
+  hEZcontrol = New UdpSocket As "EZcontrol"
+  ' [GB2:BIND] hEZcontrol.Bind(0)
+  hEZcontrol.Port = 0
+  hEZcontrol.Bind()
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("EZcontrol Error: ") & ERROR.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hEZcontrol.Close
+  Main.WriteLog(("EZcontrol UDP socket unbind."))
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("EZcontrol Error: ") & ERROR.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send data via UDP
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendUDPPacket(bBuf As Short[])
+
+  Dim bData As Short
+
+  ' sent it to configured interface
+  hEZcontrol.TargetPort = sUDPPort
+  hEZcontrol.TargetHost = sUDPHost
+
+  bBuf.Write(hEZcontrol, 0, bBuf.Length)
+  If Not bEZcontrolDebug Then Return
+
+  Main.WriteDebugLog("[EZcontrol] >", True)
+  For Each bData In bBuf
+    Main.WriteRFXDebugLog(" " & Hex(bData, 4), True)
+  Next
+  Main.WriteRFXDebugLog("\n", True)
+
+Catch
+  Main.WriteLog(("ERROR: Cannot send UDP message! ") & ERROR.Text & (" at ") & ERROR.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' display error if connect failed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub EZcontrol_Error()
+
+  ' handle error
+  Select Case hEZcontrol.Status
+    Case Net.CannotCreateSocket
+      Main.WriteLog(("EZcontrol: The system does not allow to create a socket."))
+    Case Net.CannotBindSocket
+      Main.WriteLog(("EZcontrol: Unable to bind a socket."))
+    Case Net.CannotRead
+      Main.WriteLog(("EZcontrol: Error reading data."))
+    Case Net.CannotWrite
+      Main.WriteLog(("EZcontrol: Error writing data."))
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' called from devices module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String, iDeviceId As Integer)
+
+  Dim iBrightness, iDim As Integer
+  Dim sDeviceType As String
+  Dim aScan As String[]
+
+  sCmd = UCase(sCmd)
+  sDeviceType = Devices.FindTypeForDevice(iDeviceId)
+  Select Case sDeviceType
+    Case "T10-Preset"
+      ' address
+      If sCmd = "ON"
+        SendPreset(sAddress, &HFF)
+      Else If sCmd = "OFF"
+        SendPreset(sAddress, &H0)
+      Else If InStr(sCmd, "DIM ") Then ' DIM 0-100
+        iBrightness = Val(Replace(sCmd, "DIM ", ""))
+        iDim = Round(iBrightness / 6.25) ' 16 steps
+        If iDim = 0 Then Inc iDim
+        SendPreset(sAddress, iDim)
+      Else
+        Main.WriteDebugLog(("[EZcontrol] Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!"))
+      End If
+    Case "FS10", "RS200", "AB400", "AB601", "REV", "BS-QU", "MARMI", "OA-FM", "KO-FC", "RS862"
+      ' hc|0|address|repeat
+      aScan = Scan(sAddress, "*|0|*|*")
+      If aScan.Count = 3 Then
+        If Main.bEZcontrolDebug Then Main.WriteDebugLog(("[EZcontrol] FS10...RS862 HomeCode = " & aScan[0] & " Address = " & aScan[1] & " Repeat = " & aScan[2]))
+        If sCmd = "ON"
+          SendManual(aScan[1], &HFF, GetSystem(sDeviceType), aScan[0], 0, 0, aScan[2])
+        Else If sCmd = "OFF"
+          SendManual(aScan[1], &H0, GetSystem(sDeviceType), aScan[0], 0, 0, aScan[2])
+        Else If InStr(sCmd, "DIM ") Then ' DIM 0-100
+          iBrightness = Val(Replace(sCmd, "DIM ", ""))
+          iDim = Round(iBrightness / 6.25) ' 16 steps
+          If iDim = 0 Then Inc iDim
+          SendManual(aScan[1], iDim, GetSystem(sDeviceType), aScan[0], 0, 0, aScan[2])
+        Else
+          Main.WriteDebugLog(("[EZcontrol] Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!"))
+        End If
+      Else
+        Main.WriteDebugLog(("[EZcontrol] Invalid address specified for " & sDeviceType & " type device!"))
+      End If
+    Case "FS20"
+      ' hc|hc2|address|repeat or
+      ' hc|hc2|address|repeat|arg
+      aScan = Scan(sAddress, "*|*|*|*|*")
+      If aScan.Count = 5 Then
+        If Main.bEZcontrolDebug Then Main.WriteDebugLog(("[EZcontrol] FS20 HomeCode = " & aScan[0] & " HomeCode2 = " & aScan[1] & " Address = " & aScan[2] & " Repeat = " & aScan[3] & " Arg = " & aScan[4]))
+        If sCmd = "ON"
+          SendManual(aScan[2], &HFF, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
+        Else If sCmd = "OFF"
+          SendManual(aScan[2], &H0, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
+        Else If InStr(sCmd, "DIM ") Then ' DIM 0-100
+          iBrightness = Val(Replace(sCmd, "DIM ", ""))
+          iDim = Round(iBrightness / 6.25) ' 16 steps
+          If iDim <= 0 Then Inc iDim
+          SendManual(aScan[2], iDim, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
+        Else If InStr(sCmd, "ARG ") Then ' ARG <value>
+          ' not implemented yet
+        Else
+          Main.WriteDebugLog(("[EZcontrol] Only DIM, ARG and ON/OFF commands are supported for " & sDeviceType & " devices!"))
+        End If
+      Else
+        aScan = Scan(sAddress, "*|*|*|*")
+        If aScan.Count = 4 Then
+          If Main.bEZcontrolDebug Then Main.WriteDebugLog(("[EZcontrol] FS20 HomeCode = " & aScan[0] & " HomeCode2 = " & aScan[1] & " Address = " & aScan[2] & " Repeat = " & aScan[3]))
+          If sCmd = "ON"
+            SendManual(aScan[2], &HFF, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
+          Else If sCmd = "OFF"
+            SendManual(aScan[2], &H0, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
+          Else If InStr(sCmd, "DIM ") Then ' DIM 0-100
+            iBrightness = Val(Replace(sCmd, "DIM ", ""))
+            iDim = Round(iBrightness / 6.25) ' 16 steps
+            If iDim <= 0 Then Inc iDim
+            SendManual(aScan[2], iDim, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
+          Else
+            Main.WriteDebugLog(("[EZcontrol] Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!"))
+          End If
+        Else
+          Main.WriteDebugLog(("[EZcontrol] Invalid address specified for " & sDeviceType & " type device!"))
+        End If
+      End If
+    Case "IT"
+      ' hc|hc2|address|repeat
+      aScan = Scan(sAddress, "*|*|*|*")
+      If aScan.Count = 4 Then
+        If Main.bEZcontrolDebug Then Main.WriteDebugLog(("[EZcontrol] IT HomeCode = " & aScan[0] & " HomeCode2 = " & aScan[1] & " Address = " & aScan[2] & " Repeat = " & aScan[3]))
+        If sCmd = "ON"
+          SendManual(aScan[2], &HFF, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
+        Else If sCmd = "OFF"
+          SendManual(aScan[2], &H0, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
+        Else If InStr(sCmd, "DIM ") Then ' DIM 0-100
+          iBrightness = Val(Replace(sCmd, "DIM ", ""))
+          iDim = Round(iBrightness / 6.25) ' 16 steps
+          If iDim <= 0 Then Inc iDim
+          SendManual(aScan[2], iDim, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
+        Else
+          Main.WriteDebugLog(("[EZcontrol] Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!"))
+        End If
+      Else
+        Main.WriteDebugLog(("[EZcontrol] Invalid address specified for " & sDeviceType & " type device!"))
+      End If
+    Case Else
+        Main.WriteDebugLog(("[EZcontrol] Device type '" & sDeviceType & "' is unsupported!"))
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find system code to send to interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub GetSystem(sType As String) As Integer
+
+  Dim sSystems As String[] = ["FS10", "FS20", "RS200", "AB400", "AB601", "IT", "REV", "BS-QU", "MARMI", "OA-FM", "KO-FC", "RS862"]
+  Dim sName As String
+  Dim iSystem As Integer = 1
+
+  For Each sName In sSystems
+    If Comp(sName, sType) = 0 Then Return iSystem
+    Inc iSystem
+  Next
+  Return 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' prepare preset command packet
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub SendPreset(iSwitch As Integer, iValue As Integer)
+
+  ' [GB2:ARRD] Dim sBuf As Short[4]
+  Dim sBuf As New Short[4]
+
+  sBuf[1] = PRESET_MODE
+  sBuf[2] = iSwitch - 1
+  sBuf[3] = iValue
+  sBuf[0] = ChkSum(sBuf, 3)
+
+  SendUDPPacket(sBuf)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' prepare manual command packet
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendManual(iSwitch As Integer, iValue As Integer, iSystem As Integer, iHouseCode As Integer, iHouseCode2 As Integer, iArg As Integer, iRepeat As Integer)
+
+  ' [GB2:ARRD] Dim sBuf As Short[9]
+  Dim sBuf As New Short[9]
+
+  sBuf[1] = MANUAL_MODE
+  sBuf[2] = iSystem
+  sBuf[3] = iHouseCode
+  sBuf[4] = iHouseCode2
+  sBuf[5] = iSwitch
+  sBuf[6] = iValue
+  sBuf[7] = iArg
+  sBuf[8] = iRepeat
+  sBuf[0] = ChkSum(sBuf, 8)
+
+  SendUDPPacket(sBuf)
+
+End
+
+Private Sub ChkSum(sData As Short[], iLen As Integer) As Short
+
+  Dim sSum, iCount, iData As Integer
+
+  For iCount = 1 To iLen
+    iData = sData[iCount]
+    If iData < 0 Then iData += 65536
+    sSum = (sSum + iData) And 65535
+    If (sSum < iData) Then
+      sSum = (sSum + 1) And 65535
+    End If
+  Next
+  Return sSum
+
+End
+
+Private Function UDPHost_Read() As String
+
+  Return sUDPHost
+
+End
+
+Private Sub UDPHost_Write(Value As String)
+
+  sUDPHost = Value
+
+End
+
+Private Function UDPPort_Read() As String
+
+  Return sUDPPort
+
+End
+
+Private Sub UDPPort_Write(Value As String)
+
+  sUDPPort = Value
+
+End
+
+Private Function EZcontrolDebug_Read() As Boolean
+
+  Return bEZcontrolDebug
+
+End
+
+Private Sub EZcontrolDebug_Write(Value As Boolean)
+
+  bEZcontrolDebug = Value
+
+End

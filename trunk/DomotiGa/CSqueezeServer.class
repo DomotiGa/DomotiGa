@@ -1,0 +1,522 @@
+' Gambas class file
+
+' Description:
+' CSqueezeServer.class
+' Provide basic support for Squeeze/SlimServer and Player control.
+
+' Development Status:
+' Just started developing this one, not complete yet.
+
+' Links:
+' http://www.logitechsqueezebox.com/
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2010 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PROPERTY TCPHost AS String
+PROPERTY TCPPort AS String
+PROPERTY SqueezeServerDebug AS Boolean
+
+PRIVATE sTCPHost AS String
+PRIVATE sTCPPort AS String
+PRIVATE bSqueezeServerDebug AS Boolean
+
+PUBLIC hSqueezeServer AS NEW Socket
+PUBLIC tSqueezeServer AS Timer
+PRIVATE sBuffer AS String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the connection
+  TRY hSqueezeServer.Close
+
+  ' get a new one
+  hSqueezeServer = NEW Socket AS "SqueezeServer"
+  hSqueezeServer.Connect(sTCPHost, sTCPPort)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("Squeeze Server Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connection is lost
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SqueezeServer_Closed()
+
+  Main.WriteLog(("Squeeze Server Error: TCP socket closed. (is server still running?)"))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connected to server
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SqueezeServer_Ready()
+
+  DIM aPlayers, aPlayStr AS String[]
+  DIM sPlayer AS String
+
+  Main.WriteLog(("Squeeze Server TCP socket connected."))
+  Main.WriteLog(("Squeeze Server is running version ") & GetVersion() & ".")
+
+  aPlayers = GetPlayers()
+  IF aPlayers.Count THEN
+    Main.WriteLog(("Current player list:"))
+    FOR EACH sPlayer IN aPlayers
+      aPlayStr = Scan(sPlayer, "*^*^*")
+      ' activate listen mode - retrieve information
+      SendCmd("listen 1", aPlayStr[0])
+      IF aPlayStr.Count = 3 THEN Main.WriteLog(("ID: ") & aPlayStr[0] & (" Name: ") & aPlayStr[1] & (" Connected: ") & IIf(aPlayStr[2] = "1", "Yes", "No"))
+    NEXT
+  ELSE
+    Main.WriteLog(("No players found."))
+  END IF
+  Main.WriteLog(("Your SqueezeServer database holds ") & GetAlbumCount() & (" albums and ") & GetSongCount() & (" songs from ") & GetArtistCount() & (" artists."))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send command to player
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendCommand(sAddress AS String, sValue AS String)
+
+  ' handle switching on/off, vol 0-100 etc here
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send api command to server and return answer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendCmd(sCmd AS String, OPTIONAL sPlayerId AS String) AS String
+
+  DIM iTries AS Integer = 5
+  DIM sData AS String
+
+  IF sPlayerId THEN sCmd = URLEncode(sPlayerId) & " " & sCmd
+  IF bSqueezeServerDebug THEN Main.WriteDebugLog("[SqueezeServer] > " & sCmd)
+  TRY WRITE #hSqueezeServer, sCmd & Chr(10), Len(sCmd) + 1
+
+  RETURN ReceiveData()
+
+END
+
+PUBLIC SUB SqueezeServer_Read()
+
+  DIM sData AS String
+
+  TRY READ #hSqueezeServer, sData, 1
+  IF ERROR THEN Main.WriteDebugLog(("[SqueezeServer] Error reading data from the TCP port! -> ") & Error.Text)
+  IF sData = Chr(10) THEN ' buffer until linefeed then parse
+    IF Len(sBuffer) > 1 THEN ParseLine(sBuffer)
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB ParseLine(sStr AS String)
+
+  DIM sScan AS String[]
+  DIM sPlayer, sCmd, sRest, sValue, sButton AS String
+  DIM iDeviceId AS Integer
+
+  sStr = URLDecode(sStr)
+
+  sScan = Scan(sStr, "* * *")
+  IF sScan.count = 3 THEN
+    sPlayer = sScan[0]
+    sCmd = sScan[1]
+    sRest = sScan[2]
+  ELSE
+    RETURN
+  ENDIF
+  IF Main.bSqueezeServerDebug THEN Main.WriteDebugLog(("[SqueezeServer] Received string: ") & sStr)
+
+  SELECT CASE sCmd
+    CASE "unknownir"
+      ' received IR command is not from Squeezebox remote
+      ' maybe it's also necessary to take player id with
+      sButton = Split(sRest, " ")[0]
+      IF Main.bSqueezeServerDebug THEN Main.WriteDebugLog("[SqueezeServer] Remote: " & sPlayer & " Button: " & sButton)
+      Events.CheckIRRemoteEvents(sPlayer, sButton)
+    CASE "power"
+      sValue = IIf(Trim(sRest) = "0", "Off", "On")
+      IF Main.bSqueezeServerDebug THEN Main.WriteDebugLog("[SqueezeServer] Player " & sPlayer & " Power: " & sValue)
+      iDeviceId = Devices.Find(sPlayer, Devices.FindInterface("SqueezeServer Interface"))
+      ' if found then update it's value
+      IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
+      Events.CheckIRRemoteEvents(sPlayer, sButton)
+    CASE ELSE
+      IF Main.bSqueezeServerDebug THEN Main.WriteDebugLog(("[SqueezeServer] Received Player: ") & sPlayer & (" Command: ") & sCmd & (" Rest: ") & sScan[2])
+  END SELECT
+
+END
+
+PUBLIC SUB SetCommand(sCmd AS String, sValue AS String, sAddress AS String)
+
+END
+
+PUBLIC SUB GetCommand(sCmd AS String, sAddress AS String)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send api command and params to server and return answer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendCommandParams(sCmd AS String, aParams AS String[], OPTIONAL sPlayerId AS String) AS String
+
+  DIM sParam AS String
+
+  FOR EACH sParam IN aParams
+    sCmd &= " " & UrlEncode(sParam)
+  NEXT
+  IF sPlayerId THEN sCmd = URLEncode(sPlayerId) & " " & sCmd
+  IF bSqueezeServerDebug THEN Main.WriteDebugLog("[SqueezeServer] > " & sCmd)
+  WRITE #hSqueezeServer, sCmd & Chr(10), Len(sCmd) + 1
+
+  RETURN ReceiveData()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get the response
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB ReceiveData() AS String
+
+  DIM iTries AS Integer = 30
+  DIM sData AS String
+
+  ' see if we got some data
+  WHILE iTries > 0
+    TRY LINE INPUT #hSqueezeServer, sData
+    IF ERROR THEN
+      ' not yet
+      SLEEP 0.01
+    ELSE
+      ' got it
+      BREAK
+    END IF
+    DEC iTries
+  WEND
+  IF bSqueezeServerDebug THEN Main.WriteDebugLog("[SqueezeServer] < " & URLDecode(sData))
+
+  RETURN URLDecode(sData)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' count number of connected players
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB GetPlayerCount() AS Integer
+
+  DIM sData AS String = SendCmd("player count ?")
+
+  TRY RETURN Replace(sData, "player count ", "")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gather squeezeserver playerid for each connected player
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB GetPlayers() AS String[]
+
+  DIM aParams, aPlayers AS NEW String[]
+  DIM sName, sId, sPlayers, sConn AS String
+  DIM iLen, iPosName, iPos, iPosConn AS Integer
+
+  aParams.Add("0")
+  aParams.Add(GetPlayerCount())
+  sPlayers = SendCommandParams("players", aParams)
+  iPos = InStr(sPlayers, "playerid:")
+
+  WHILE iPos > 0
+    iLen = InStr(sPlayers, " ", iPos)
+    sId = Mid(sPlayers, iPos + 9, iLen - iPos - 9)
+    iPosName = InStr(sPlayers, "name:", iLen)
+    IF iPosName THEN
+      iLen = InStr(sPlayers, "model:", iPosName)
+      sName = Mid(sPlayers, iPosName + 5, iLen - iPosName - 6)
+    END IF
+    iPosConn = InStr(sPlayers, "connected:", iLen)
+    IF iPosConn THEN
+      sConn = Mid(sPlayers, iPosConn + 10, 1)
+    END IF
+    aPlayers.Add(sId & "^" & sName & "^" & sConn)
+    iPos = InStr(sPlayers, "playerid:", iPosConn)
+  WEND
+
+  RETURN aPlayers
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' set volume of player with playerid
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE FUNCTION SetVolume(sPlayerId AS String, iVol AS Integer) AS String
+
+  DIM aParams AS NEW String[]
+
+  aParams.Add(iVol)
+  IF iVol >= 0 OR IF iVol <= 100 THEN
+    RETURN SendCommandParams("mixer volume", aParams, sPlayerId)
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' stop player with playerid
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION StopPlayer(sPlayerId AS String) AS String
+
+  RETURN SendCmd("stop", sPlayerId)
+
+END FUNCTION
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' pause player with playerid
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION PausePlayer(sPlayerId AS String) AS String
+
+  RETURN SendCmd("pause", sPlayerId)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' play player with playerid
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION PlayPlayer(sPlayerId AS String) AS String
+
+  RETURN SendCmd("play", sPlayerId)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get songinfo from player with playerid and trackid
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION GetSongInfo(sPlayerId AS String, iTrackId AS Integer) AS String
+
+  DIM aParams AS NEW String[]
+
+  aParams.Add("0")
+  aParams.Add("100")
+
+  RETURN SendCommandParams("songinfo", aParams, sPlayerId)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get current title from player with playerid
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION GetCurrentTitle(sPlayerId AS String) AS String
+
+  DIM sData AS String = SendCmd("current_title ?", sPlayerId)
+
+  TRY RETURN Replace(sData, "current_title ", "")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' show message on display of player with playerid
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ShowMessage(sPlayerId AS String, sMessage AS String, iDuration AS Integer) AS String
+
+  DIM aParams AS NEW String[]
+
+  IF NOT Len(sMessage) THEN RETURN
+
+  aParams.Add("line2:" & sMessage)
+  aParams.Add("duration:" & iDuration)
+  aParams.Add("centered:1")
+  aParams.Add("font:huge")
+
+  RETURN SendCommandParams("show", aParams, sPlayerId)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' search database for keywords
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Search(sFind AS String) AS String
+
+  DIM aParams AS NEW String[]
+
+  aParams.Add("0")
+  aParams.Add("50")
+  aParams.Add("term:" & sFind)
+
+  RETURN SendCommandParams("search", aParams)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get version of server
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB GetVersion() AS String
+
+  RETURN (Replace(SendCmd("version ?"), "version ", ""))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get total albums found on server
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB GetAlbumCount() AS String
+
+  RETURN (Replace(SendCmd("info total albums ?"), "info total albums ", ""))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get total songs found on server
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB GetSongCount() AS String
+
+  RETURN (Replace(SendCmd("info total songs ?"), "info total songs ", ""))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get total artists found on server
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB GetArtistCount() AS String
+
+  RETURN (Replace(SendCmd("info total artists ?"), "info total artists ", ""))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' encode url
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB URLEncode(URL AS String) AS String
+
+  DIM iPos AS Integer
+  DIM sRes, sCar AS String
+
+  FOR iPos = 1 TO Len(URL)
+    sCar = Mid$(URL, iPos, 1)
+    IF sCar = " " THEN
+      sCar = "%20"
+    ELSE IF IsLetter(sCar) OR IF IsDigit(sCar) OR IF InStr("*-._", sCar) THEN
+    ELSE
+      sCar = "%" & Hex$(Asc(sCar), 2)
+    ENDIF
+    sRes &= sCar
+  NEXT
+
+  RETURN sRes
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' decode url
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE FUNCTION URLDecode(sUrl AS String) AS String
+
+  DIM sRes, sCar AS String
+  DIM iPos AS Integer
+
+  FOR iPos = 1 TO Len(sUrl)
+    sCar = Mid$(sUrl, iPos, 1)
+    IF sCar = "%20" THEN
+      sCar = " "
+    ELSE IF sCar = "%" THEN
+      sCar = Chr$(Val("&H" & Mid$(sUrl, iPos + 1, 2)))
+      iPos = iPos + 2
+    ENDIF
+    sRes = sRes & sCar
+  NEXT
+  sRes = Replace(sRes, "\r", "")
+
+  RETURN sRes
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hSqueezeServer.Close
+  TRY tSqueezeServer.Stop
+  Main.WriteLog(("Squeeze Server TCP socket port close."))
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("Squeeze Server Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' display error if connect failed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SqueezeServer_Error()
+
+  ' handle error
+  SELECT CASE hSqueezeServer.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog(("Squeeze Server: The system does not allow to create a socket."))
+    CASE Net.HostNotFound
+      Main.WriteLog(("Squeeze Server: Host '") & sTCPHost & ("' not found."))
+    CASE Net.ConnectionRefused
+      Main.WriteLog(("Squeeze Server: Unable to connect to SqueezeServer. Connection refused."))
+    CASE Net.CannotRead
+      Main.WriteLog(("Squeeze Server: Error reading data."))
+    CASE Net.CannotWrite
+      Main.WriteLog(("Squeeze Server: Error writing data."))
+  END SELECT
+
+END
+
+' implement properties
+PRIVATE FUNCTION TCPHost_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB TCPHost_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION TCPPort_Read() AS String
+
+  RETURN sTCPPort
+
+END
+
+PRIVATE FUNCTION TCPPort_Write(Value AS String)
+
+  sTCPPort = Value
+
+END
+
+PRIVATE FUNCTION SqueezeServerDebug_Read() AS Boolean
+
+  RETURN bSqueezeServerDebug
+
+END
+
+PRIVATE SUB SqueezeServerDebug_Write(Value AS Boolean)
+
+  bSqueezeServerDebug = Value
+
+END

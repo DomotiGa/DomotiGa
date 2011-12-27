@@ -1,0 +1,161 @@
+' Gambas module file
+
+' Description:
+' Ping.module
+' Support for Network related devices.
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2010 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PUBLIC tPing AS Timer
+PRIVATE hPing AS Process
+PRIVATE cOutput AS NEW Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Run()
+
+  ' start poll timer for Ping
+  tPing = NEW Timer AS "tPing"
+  tPing.Delay = Main.iPingPollTime * 1000 ' multiply for seconds
+  tPing.Start
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tPing_Timer()
+
+  CheckPing()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find all devices of type Ping and see if we can ping it
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB CheckPing()
+
+  DIM rResult AS Result
+  DIM iInterface AS Integer
+
+  ' get all devices with this devicetype
+  rResult = Main.hDB.Exec("SELECT * FROM devices WHERE interface = &1 AND enabled is TRUE", Devices.FindInterface("Ping Socket"))
+  IF rResult.Available THEN
+    IF rResult.Count >= 1 THEN
+      FOR EACH rResult
+        IF Main.bPingDebug THEN Main.WriteDebugLog(("[Ping] Checking '") & rResult!name & ("' with address '") & rResult!address & "'.")
+        ' try to fetch their index page
+        NetworkPing(rResult!id, rResult!address)
+      NEXT
+    ELSE
+      Main.WriteLog(("Ping: No Network devices found in device table!"))
+    END IF
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' try to ping the Device to detect if it's up or down
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB NetworkPing(iId AS Integer, sAddress AS String)
+
+  hPing = EXEC ["ping", "-c1", sAddress] FOR READ AS "Ping"
+  hPing.Tag = iId
+  cOutput.Add("", iId)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read ping output and store it in collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Ping_Read()
+
+  DIM sBuffer AS String
+  DIM iId AS Integer
+
+  READ #LAST, sBuffer, -256
+  iId = LAST.Tag
+
+  IF cOutput.Exist(iId) THEN cOutput[iId] &= sBuffer
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get id and return value, 0 means ok, anything else is not reached
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Ping_Kill()
+
+  DIM iId, iRc AS Integer
+  DIM sStatus, sOutput, sRTT AS String
+
+  iId = LAST.Tag
+  iRc = LAST.Value
+
+  ' save ping output
+  sOutput = cOutput[iId]
+  cOutput.Remove(iId)
+
+  SELECT Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(iId))
+    CASE "Status AIBO"
+      IF iRc = 0 THEN
+        ' ping succesful
+        sStatus = ("Awake")
+      ELSE
+        ' not reachable, unknown host etc.
+        sStatus = ("Sleeping")
+      END IF
+    CASE "Status On/Off"
+      IF iRc = 0 THEN
+        ' ping succesful
+        sStatus = ("On")
+      ELSE
+        ' not reachable, unknown host etc.
+        sStatus = ("Off")
+      END IF
+    CASE "Status Up/Down"
+      IF iRc = 0 THEN
+        ' ping succesful
+        sStatus = ("Up")
+        sRTT = GetRTT(sOutput)
+      ELSE
+        ' not reachable, unknown host etc.
+        sStatus = ("Down")
+        sRTT = " "
+      END IF
+  END SELECT
+
+  ' debug output
+  IF Main.bPingDebug THEN Main.WriteDebugLog(("[Ping] Device with id '") & iId & ("' is '") & sStatus & "'.")
+  ' find and update device
+  Devices.CheckFirstSeen(iId)
+  Devices.ValueUpdate(iId, sStatus, sRTT, "", "")
+
+CATCH
+  Main.WriteDebugLog(("ERROR: Parsing Ping Result: ") & Error.Text & " at " & Error.Where)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' extract round trip time from ping output
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE FUNCTION GetRTT(sOutput AS String) AS String
+
+  DIM sLine AS String
+  DIM aRTT AS String[]
+
+  FOR EACH sLine IN Split(sOutput, "\n")
+    ' rtt min/avg/max/mdev = 31.733/31.733/31.733/0.000 ms
+    IF InStr(sLine, "rtt min/avg/max/mdev") THEN
+      aRTT = Scan(sLine, "rtt min/avg/max/mdev */*/*/*")
+      IF aRTT.Count = 4 THEN RETURN aRTT[1]
+    END IF
+  NEXT
+
+END

@@ -1,0 +1,504 @@
+' Gambas module file
+
+' Description:
+' RRDTool.module
+' Support for RRDTool graphing.
+
+' Development Status:
+' Working, make hardcoded heartbeat and step values configurable, need better error checking.
+' Maybe create separate graphs table in db.
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2011 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+Public tRRDTool As Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' check for/create missing rrd files and start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Run()
+
+  ' start poll timer for RRDTool
+  tRRDTool = New Timer As "tRRDTool"
+  tRRDTool.Delay = Main.iRRDToolPollTime * 1000 ' multiply for seconds
+  tRRDTool.Start
+
+  ' create missing db's
+  CreateRRDs()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tRRDTool_Timer()
+
+  UpdateRRDs() ' update rrd values every Polltime seconds
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' delete rrd file belonging to device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DeleteRRD(sDeviceName As String)
+
+  Dim sCmd As String
+
+  sCmd = "rm -f " & GetRRDPath(sDeviceName)
+  If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] Delete rrd database '") & sCmd & "'")
+  Exec ["rm", "-f", GetRRDPath(sDeviceName)]
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return rrd database pathname
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetRRDPath(sDeviceName As String) As String
+
+  Return Main.sBaseDir &/ "rrd" &/ GetRRDName(sDeviceName) & ".rrd"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return rrd database name
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetRRDName(sDeviceName As String) As String
+
+  Dim sRRDName As String
+
+  sRRDName = LCase(Replace$(sDeviceName, " ", ""))
+  sRRDName = Replace$(sRRDName, "/", "")
+  sRRDName = Replace$(sRRDName, ".", "")
+  Return sRRDName
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' delete all rrd files
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DeleteAllRRDs()
+
+  If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] Delete rrd databases with '") & "rm -f " & Main.sBaseDir &/ "rrd/*.rrd'")
+  Exec ["rm", "-f", Main.sBaseDir &/ "rrd/*.rrd"]
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' delete all graphic images
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DeleteAllGraphs()
+
+  If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] Delete rrd graphs with '") & "rm -f " & Main.sBaseDir &/ "rrd/graphs/*.png'")
+  Exec ["rm", "-f", Main.sBaseDir &/ "rrd/graphs/*.png"]
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find all devices with rrd boolean enabled and
+' check for existance of rrd file, create one if missing
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CreateRRDs(Optional iId As Integer)
+
+  Dim rDevice As Result
+  Dim sRRD, sRRDCmd, sSQL As String
+
+  If Not Main.bRRDToolEnabled Then Return
+
+  sSQL = IIf(iId, "SELECT * FROM devices WHERE rrd is TRUE AND enabled is TRUE AND id = " & iId, "SELECT * FROM devices WHERE rrd is TRUE AND enabled is TRUE")
+  Try rDevice = Main.hDB.Exec(sSQL)
+  If Not Error Then
+    If rDevice.Count Then
+      For Each rDevice
+        If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] Device with address '") & rDevice!address & ("' named '") & rDevice!name & ("' has RRD enabled."))
+        sRRD = GetRRDPath(rDevice!name)
+        If Not Exist(sRRD) Then
+          sRRDCmd = "rrdtool create " & sRRD & " -s " & Main.iRRDToolPollTime & " "
+          If rDevice!valuerrddsname Then sRRDCmd = sRRDCmd & "DS:" & rDevice!valuerrddsname & ":" & rDevice!valuerrdtype & ":600:U:U "
+          If rDevice!value2rrddsname Then sRRDCmd = sRRDCmd & "DS:" & rDevice!value2rrddsname & ":" & rDevice!value2rrdtype & ":600:U:U "
+          If rDevice!value3rrddsname Then sRRDCmd = sRRDCmd & "DS:" & rDevice!value3rrddsname & ":" & rDevice!value3rrdtype & ":600:U:U "
+          If rDevice!value4rrddsname Then sRRDCmd = sRRDCmd & "DS:" & rDevice!value4rrddsname & ":" & rDevice!value4rrdtype & ":600:U:U "
+          sRRDCmd &= Main.sRRDToolRRA
+          If Main.bRRDToolDebug Then
+            Main.WriteDebugLog("[RRDTool] " & sRRDCmd)
+          Else
+            sRRDCmd &= " 2>&1 >/dev/null"
+          Endif
+          Shell sRRDCmd Wait
+        Endif
+      Next
+    Else
+      If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] No device(s) with RRD enabled found!"))
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices with graph boolean enabled and create graphs
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CreateGraphs(sGroup As String, sTime As String)
+
+  Dim rDevice As Result
+  Dim sRRD, sRRDCmd, sGraphImage, sRRDName, sValueRRDsName As String
+  Dim aValueRRDsName As String[] = ["valuerrddsname", "value2rrddsname", "value3rrddsname", "value4rrddsname"]
+  Dim iLbl As Integer
+  Dim aLabelsName As String[] = ["label", "label2", "label3", "label4"]
+
+  If Not Main.bRRDToolEnabled Then Return
+
+  Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE groups LIKE &1 AND rrd is TRUE AND graph is TRUE AND enabled is TRUE", "%" & sGroup & "%")
+  If Not Error Then
+    If rDevice.Count Then
+      For Each rDevice
+        sRRDName = GetRRDName(rDevice!name)
+        iLbl = 0
+        For Each sValueRRDsName In aValueRRDsName
+          If rDevice[sValueRRDsName] Then
+            If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] Device with address '") & rDevice!address & ("' named '") & rDevice!name & ("' has graphing enabled for ") & rDevice[sValueRRDsName] & ".")
+            sRRD = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+            sGraphImage = Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice[sValueRRDsName] & "-" & sTime & ".png"
+            sRRDCmd = "rrdtool graph " & sGraphImage & " --lazy --start -" & sTime & " -c SHADEA#FFFFFF -c SHADEB#FFFFFF -c BACK#FFFFFF -t '" & rDevice!name & " " & Main.Caps(rDevice[sValueRRDsName]) & "' -v '" & rDevice[alabelsName[iLbl]] & "' DEF:" & rDevice[sValueRRDsName] & "=" & sRRD & ":" & rDevice[sValueRRDsName] & ":AVERAGE LINE1:" & rDevice[sValueRRDsName] & "#00FF00:'" & Main.Caps(rDevice[sValueRRDsName]) & "'"
+            sRRDCmd &= " GPRINT:" & rDevice[sValueRRDsName] & ":MIN:'Min\\:%1.1lf' GPRINT:" & rDevice[sValueRRDsName] & ":MAX:'Max\\:%1.1lf' GPRINT:" & rDevice[sValueRRDsName] & ":AVERAGE:'Avg\\:%1.1lf' GPRINT:" & rDevice[sValueRRDsName] & ":LAST:'Last\\:%1.1lf'"
+            Inc iLbl
+            If Main.bRRDToolDebug Then
+              Main.WriteDebugLog("[RRDTool] " & sRRDCmd)
+            Else
+              sRRDCmd &= " 2>&1 >/dev/null"
+            Endif
+            Shell sRRDCmd Wait
+          Endif
+        Next
+      Next
+    Else
+      If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] No device(s) with graphing enabled found!"))
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' create extended graphs
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CreateExtGraphs(sGroup As String, sTime As String)
+
+  Dim rGraph As Result
+  Dim sRRDName, sRRDCmd, sGraphImage As String
+
+  Try rGraph = Main.hDB.Exec("SELECT * FROM graphs WHERE groups LIKE &1 AND enabled is TRUE", "%" & sGroup & "%")
+  If Not Error Then
+    If rGraph.Count Then
+      For Each rGraph
+        sRRDName = GetRRDName(rGraph!name)
+        sGraphImage = Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & sTime & ".png"
+        sRRDCmd = GenerateGraph(rGraph!id, sGraphImage, sTime)
+        Shell sRRDCmd Wait
+        If Not Main.bRRDToolDebug Then Continue
+        Main.WriteDebugLog("[RRDTool] " & sRRDCmd)
+      Next
+    Else
+      If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] No enabled extended graphs found!"))
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices with graph boolean enabled, return the names of their graphic images
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Graphs(sGroup As String) As String
+
+  Dim rDevice, rGraph As Result
+  Dim sGraphs, sRRDName, sValueRRDsName As String
+  Dim aValueRRDsName As String[] = ["valuerrddsname", "value2rrddsname", "value3rrddsname", "value4rrddsname"]
+
+  Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE groups LIKE &1 AND rrd is TRUE AND graph is TRUE AND enabled is TRUE", "%" & sGroup & "%")
+  If Not Error Then
+    If rDevice.Count Then
+      For Each rDevice
+        sRRDName = GetRRDName(rDevice!name)
+        For Each sValueRRDsName In aValueRRDsName
+          If rDevice[sValueRRDsName] Then
+            sGraphs &= Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice[sValueRRDsName] & "|"
+            If Not Main.bRRDToolDebug Then Continue
+            Main.WriteDebugLog(("[RRDTool] Device with address '") & rDevice!address & ("' named '") & rDevice!name & (" has graphing enabled for '") & rDevice[sValueRRDsName] & "'.")
+            Main.WriteDebugLog(("[RRDTool] Graphs: ") & Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "-" & rDevice[sValueRRDsName])
+          Endif
+        Next
+      Next
+    Else
+      If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] No device(s) with simple graphing enabled found!"))
+    Endif
+  Endif
+
+  Try rGraph = Main.hDB.Exec("SELECT * FROM graphs WHERE groups LIKE &1 AND enabled is TRUE", "%" & sGroup & "%")
+  If Not Error Then
+    If rGraph.Count Then
+      For Each rGraph
+        sRRDName = GetRRDName(rGraph!name)
+        sGraphs &= Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName & "|"
+        If Not Main.bRRDToolDebug Then Continue
+        Main.WriteDebugLog(("[RRDTool] Extended Graph with name '") & rGraph!name & ("' is in group named '") & sGroup & "'.")
+        Main.WriteDebugLog(("[RRDTool] Graphs: ") & Main.sBaseDir &/ "rrd/graphs/" &/ sRRDName)
+      Next
+    Else
+      If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] No enabled extended graphs found!"))
+    Endif
+  Endif
+  ' return string with all graph image names in this group
+  Return sGraphs
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find devices with graph enabled, and update rrd files with device values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub UpdateRRDs(Optional iId As Integer)
+
+  Dim rDevice As Result
+  Dim sRRDCmd, sRRDName As String
+  Dim sSql As String = "SELECT * FROM devices WHERE enabled is TRUE AND rrd is TRUE"
+
+  If iId Then sSql &= " AND id = " & iId
+
+  Try rDevice = Main.hDB.Exec(sSql)
+  If rDevice.Count Then
+    For Each rDevice
+      sRRDName = GetRRDPath(rDevice!name)
+      sRRDCmd = "N"
+      If rDevice!valuerrddsname Then
+        If rDevice!valuerrdtype = "COUNTER" Then
+          sRRDCmd &= ":" & Format(Devices.CorrectValue(rDevice!value, rDevice!correction, rDevice), "#")
+        Else
+          sRRDCmd &= ":" & CFloat(Devices.CorrectValue(Replace(rDevice!value, ",", ".", gb.String), rDevice!correction, rDevice))
+        Endif
+      Endif
+      If rDevice!value2rrddsname Then
+        If rDevice!value2rrdtype = "COUNTER" Then
+          sRRDCmd &= ":" & Format(Devices.CorrectValue(rDevice!value2, rDevice!correction2, rDevice), "#")
+        Else
+          sRRDCmd &= ":" & CFloat(Devices.CorrectValue(Replace(rDevice!value2, ",", ".", gb.String), rDevice!correction2, rDevice))
+        Endif
+      Endif
+      If rDevice!value3rrddsname Then
+        If rDevice!value3rrdtype = "COUNTER" Then
+          sRRDCmd &= ":" & Format(Devices.CorrectValue(rDevice!value3, rDevice!correction3, rDevice), "#")
+        Else
+          sRRDCmd &= ":" & CFloat(Devices.CorrectValue(Replace(rDevice!value3, ",", ".", gb.String), rDevice!correction3, rDevice))
+        Endif
+      Endif
+      If rDevice!value4rrddsname Then
+        If rDevice!value4rrdtype = "COUNTER" Then
+          sRRDCmd &= ":" & Format(Devices.CorrectValue(rDevice!value4, rDevice!correction4, rDevice), "#")
+        Else
+          sRRDCmd &= ":" & CFloat(Devices.CorrectValue(Replace(rDevice!value4, ",", ".", gb.String), rDevice!correction4, rDevice))
+        Endif
+      Endif
+      If Main.bRRDToolDebug Then Main.WriteDebugLog("[RRDTool] rrdtool update " & sRRDName & " " & sRRDCmd)
+      Exec ["rrdtool", "update", sRRDName, sRRDCmd]
+    Next
+  Else
+    If Main.bRRDToolDebug Then Main.WriteDebugLog(("[RRDTool] No device(s) with RRD enabled found!"))
+  Endif
+
+Catch
+  Main.WriteDebugLog(("[RRDTool] ") & Error.text)
+
+End
+
+Public Sub GenerateGraph(iGraph_id As Integer, sFile As String, sRange As String) As String
+
+  Dim rGraph_head, rGraph_data, rGraph_print As Result
+  Dim sRRDCmd, sRRD_graph, sRRDCmd_Main, sRRDCmd_DEF, sRRDCmd_SHIFT, sRRDCmd_CDEF, sRRDCmd_VDEF, sRRDCmd_GPRINT, sRRDCmd_GPRINT_Title, sRRRCmd_TIMESTAMP As String
+  Dim sRRDCmd_Graph, sRRDCmd_HRULE, sGraph_trend, sGraph_shift, sRRDName As String
+  Dim Graph_Height, Graph_Width, Graph_Color_Background, iGraph_Number As Integer
+
+  sRRDCmd_Main = "rrdtool graph " & sFile & " --lazy --start end-" & sRange & " -a PNG --slope-mode --font DEFAULT:7: --watermark 'Domotiga v" & Main.sProgramVersion & "'"
+
+  Try rGraph_print = Main.hDB.Exec("SELECT * FROM graphs WHERE id = &1", iGraph_id)
+  If Not Error Then
+    If rGraph_print.Count Then
+      sRRDCmd_Main &= " --width " & rGraph_print!graph_width
+      sRRDCmd_Main &= " --height " & rGraph_print!graph_height
+      sRRDCmd_Main &= " -c BACK#" & Hex$(rGraph_print!color_background, 6)
+      sRRDCmd_Main &= " -c CANVAS#" & Hex$(rGraph_print!color_canvas, 6)
+      sRRDCmd_Main &= " -c SHADEA#" & Hex$(rGraph_print!color_shadea, 6)
+      sRRDCmd_Main &= " -c SHADEB#" & Hex$(rGraph_print!color_shadeb, 6)
+      sRRDCmd_Main &= " -c GRID#" & Hex$(rGraph_print!color_grid, 6)
+      sRRDCmd_Main &= " -c MGRID#" & Hex$(rGraph_print!color_majorgrid, 6)
+      sRRDCmd_Main &= " -c FONT#" & Hex$(rGraph_print!color_font, 6)
+      sRRDCmd_Main &= " -c AXIS#" & Hex$(rGraph_print!color_axis, 6)
+      sRRDCmd_Main &= " -c FRAME#" & Hex$(rGraph_print!color_frame, 6)
+      sRRDCmd_Main &= " -c ARROW#" & Hex$(rGraph_print!color_arrow, 6)
+      sRRDCmd_Main &= " --title='" & rGraph_print!graph_title & "'"
+      sRRDCmd_Main &= " --vertical-label '" & rGraph_print!unit & "'"
+      ' RRDTool 2.4 sRRDCmd &= " " & grid_type(rGraph_print.gridtype)
+
+      Graph_Height = rGraph_print!graph_height + 95
+      Graph_Width = rGraph_print!graph_width + 95
+      Graph_Color_Background = rGraph_print!color_background
+
+      If rGraph_print!logarithmic_scale = True Then
+        sRRDCmd_Main &= " --logarithmic --units=si"
+      Endif
+      ' sRRDCmd_Main &= " --right-axis " &  1000:0
+    Endif
+  Endif
+
+  Try rGraph_head = Main.hDB.Exec("SELECT max(graph_max) as head_max, max(graph_min) as head_min, max(graph_avg) as head_avg, max(graph_last) as head_last FROM graph_data WHERE graph_id = &1;", iGraph_id)
+  If Not Error Then
+    sRRDCmd_GPRINT_Title = " COMMENT:'\\s' COMMENT:'" & Space(22)
+    If rGraph_head!head_min = True Then
+      sRRDCmd_GPRINT_Title &= "' COMMENT:'Min" & Space(2)
+    Endif
+    If rGraph_head!head_max = True Then
+      sRRDCmd_GPRINT_Title &= "' COMMENT:'Max" & Space(2)
+    Endif
+    If rGraph_head!head_avg = True Then
+      sRRDCmd_GPRINT_Title &= "' COMMENT:'Avg" & Space(2)
+    Endif
+    If rGraph_head!head_last = True Then
+      sRRDCmd_GPRINT_Title &= "' COMMENT:'Last"
+    Endif
+    sRRDCmd_GPRINT_Title &= "' COMMENT:'\\l' "
+  Endif
+
+  Try rGraph_data = Main.hDB.Exec("SELECT * FROM graph_data WHERE graph_id = &1", iGraph_id)
+  If Not Error Then
+    If rGraph_head.Count Then
+      For Each rGraph_data
+        sGraph_trend = ""
+        sGraph_shift = ""
+
+        sRRD_graph = Main.sBaseDir &/ "rrd" &/ sRRDName & ".rrd"
+
+        If rGraph_data!graph_trend = True Then
+          sGraph_trend = "trend_"
+        Endif
+        If rGraph_data!graph_timeshift = True Then
+          sGraph_shift = "shift_"
+        Endif
+
+        '# timeshift :
+        '# DEF:timeshift_name=rrd:name:AVERAGE:start={int}:end={int}
+        '# SHIFT:trend_name:{int}
+        '
+        '# trend :
+        '# DEF:trend_name=rrd:name:AVERAGE
+        '# CDEF:t_rrd_name=trend_name,{int},TREND
+        '
+        '# trend & timeshift : 
+        '# DEF:trend_timeshift_name=rrd:name:AVERAGE:start={int}:end={int}
+        '# SHIFT:trend_timeshift_name:{int}
+        '# CDEF:st_trend_timeshift_name=trend_timeshift_name,{int},TREND
+        '
+        '# Operation
+        '# DEF:operation_name=rrd:name:AVERAGE
+        '# CDEF:cdef_operation_name=operation_name,{int},operator
+
+        sRRDCmd_DEF = Function_DEF(iGraph_id, sRange)
+        sRRDCmd_SHIFT = Function_SHIFT(iGraph_id)
+        sRRDName = GetRRDName(rGraph_data!graph_devicename)
+
+        If rGraph_data!graph_timeshift = True And rGraph_data!graph_trend = False Then
+          sRRDCmd_GPRINT &= rGraph_data!graph_line_type & ":" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & "#" & Hex$(rGraph_data!graph_color, 6) & ":'" & rGraph_data!graph_name & Space(20 - Len(rGraph_data!graph_name)) & "'"
+        Else If rGraph_data!graph_trend = True And rGraph_data!graph_timeshift = False Then
+          sRRDCmd_CDEF &= " CDEF:" & Left(sGraph_shift, 1) & Left(sGraph_trend, 1) & "_" & sRRDName & "_" & rGraph_data!graph_rrddsname & "=" & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & "," & rGraph_data!graph_trend_value & ",TREND"
+          sRRDCmd_GPRINT &= rGraph_data!graph_line_type & ":" & Left(sGraph_shift, 1) & Left(sGraph_trend, 1) & "_" & sRRDName & "_" & rGraph_data!graph_rrddsname & "#" & Hex$(rGraph_data!graph_color, 6) & ":'" & rGraph_data!graph_name & Space(20 - Len(rGraph_data!graph_name)) & "'"
+        Else If rGraph_data!graph_trend = True And rGraph_data!graph_timeshift = True Then
+          sRRDCmd_CDEF &= " CDEF:" & Left(sGraph_shift, 1) & Left(sGraph_trend, 1) & "_" & sRRDName & "_" & rGraph_data!graph_rrddsname & "=" & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & "," & rGraph_data!graph_trend_value & ",TREND"
+          sRRDCmd_GPRINT &= rGraph_data!graph_line_type & ":" & Left(sGraph_shift, 1) & Left(sGraph_trend, 1) & "_" & sRRDName & "_" & rGraph_data!graph_rrddsname & "#" & Hex$(rGraph_data!graph_color, 6) & ":'" & rGraph_data!graph_name & Space(20 - Len(rGraph_data!graph_name)) & "'"
+        ' ELSE IF
+          ' sRRDCmd_CDEF &= " CDEF:ratio_" & rGraph_data!graph_devicename & "_" & rGraph_data!graph_rrddsname
+          ' CDEF:mydatabits=mydata,8,*
+        Else
+          sRRDCmd_GPRINT &= rGraph_data!graph_line_type & ":" & sRRDName & "_" & rGraph_data!graph_rrddsname & "#" & Hex$(rGraph_data!graph_color, 6) & ":'" & rGraph_data!graph_name & Space(20 - Len(rGraph_data!graph_name)) & "'"
+        Endif
+        If rGraph_data!graph_min = True Then
+          sRRDCmd_GPRINT &= " GPRINT:" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ":MIN:" & "'%4.1lf '"
+        Else If rGraph_head!head_min = True Then
+          sRRDCmd_GPRINT &= " COMMENT:'" & Space(5) & "'"
+        Endif
+        If rGraph_data!graph_max = True Then
+          sRRDCmd_GPRINT &= " GPRINT:" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ":MAX:" & "'%4.1lf '"
+        Else If rGraph_head!head_max = True Then
+          sRRDCmd_GPRINT &= " COMMENT:'" & Space(5) & "'"
+        Endif
+        If rGraph_data!graph_avg = True Then
+          sRRDCmd_GPRINT &= " GPRINT:" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ":AVERAGE:" & "'%4.1lf '"
+        Else If rGraph_head!head_avg = True Then
+          sRRDCmd_GPRINT &= " COMMENT:'" & Space(5) & "'"
+        Endif
+        If rGraph_data!graph_last = True Then
+          sRRDCmd_GPRINT &= " GPRINT:" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ":LAST:" & "'%4.1lf ' "
+        Else If rGraph_head!head_last = True Then
+          sRRDCmd_GPRINT &= " COMMENT:'" & Space(5) & "'"
+        Endif
+        If rGraph_data!graph_value_max = True Then
+          sRRDCmd_VDEF &= " VDEF:" & sGraph_trend & sGraph_shift & sRRDName & "_max=" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ",MAXIMUM"
+          sRRDCmd_Graph &= " HRULE:" & sGraph_trend & sGraph_shift & sRRDName & "_max#" & Hex$(rGraph_data!graph_value_max_color, 6)
+        Endif
+        If rGraph_data!graph_value_avg = True Then
+          sRRDCmd_VDEF &= " VDEF:" & sGraph_trend & sGraph_shift & sRRDName & "_avg=" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ",AVERAGE"
+          sRRDCmd_Graph &= " HRULE:" & sGraph_trend & sGraph_shift & sRRDName & "_avg#" & Hex$(rGraph_data!graph_value_avg_color, 6)
+        Endif
+        If rGraph_data!graph_value_min = True Then
+          sRRDCmd_VDEF &= " VDEF:" & sGraph_trend & sGraph_shift & sRRDName & "_min=" & sGraph_trend & sGraph_shift & sRRDName & "_" & rGraph_data!graph_rrddsname & ",MINIMUM"
+          sRRDCmd_Graph &= " HRULE:" & sGraph_trend & sGraph_shift & sRRDName & "_min#" & Hex$(rGraph_data!graph_value_avg_color, 6)
+        Endif
+        sRRDCmd_GPRINT &= " COMMENT:'\\s'" & " COMMENT:'\\s' "
+      Next
+    Endif
+
+    If rGraph_print!date = True Then
+      sRRRCmd_TIMESTAMP &= " COMMENT:'Date \\: " & Year(Now) & "-" & Month(Now) & "-" & Day(Now) & " " & Hour(Now) & "\\:" & Minute(Now) & "\\:" & Second(Now) & "\\r'"
+    Endif
+
+    sRRDCmd &= sRRDCmd_Main & sRRDCmd_DEF & sRRDCmd_SHIFT & sRRDCmd_CDEF & sRRDCmd_VDEF & sRRDCmd_GPRINT_Title & sRRDCmd_GPRINT & sRRDCmd_Graph & sRRRCmd_TIMESTAMP
+    sRRDCmd &= " 2>&1 >/dev/null"
+  Endif
+
+  Return sRRDCmd
+
+End
+
+Public Sub Function_DEF(graph_id As Integer, sRange As String) As String
+
+  Dim DEF As String
+  Dim iCount As Integer
+  Dim rGraph_DEF As Result
+
+  Try rGraph_DEF = Main.hDB.Exec("SELECT distinct `graph_devicename`, `graph_rrddsname`, `graph_timeshift`, `graph_timeshift_value` FROM graph_data WHERE graph_id = &1", graph_id)
+  If Not Error Then
+    If rGraph_DEF.Count Then
+      For Each rGraph_DEF
+        If rGraph_DEF!graph_timeshift = True Then
+          DEF &= " DEF:" & "shift_" & GetRRDName(rGraph_DEF!graph_devicename) & "_" & rGraph_DEF!graph_rrddsname & "=" & Main.sBaseDir &/ "rrd" &/ GetRRDName(rGraph_DEF!graph_devicename) & ".rrd" & ":" & rGraph_DEF!graph_rrddsname & ":" & "AVERAGE" & ":start='-" & rGraph_DEF!graph_timeshift_value & "-" & sRange & "':end='-" & sRange & "'"
+        Else
+          DEF &= " DEF:" & GetRRDName(rGraph_DEF!graph_devicename) & "_" & rGraph_DEF!graph_rrddsname & "=" & Main.sBaseDir &/ "rrd" &/ GetRRDName(rGraph_DEF!graph_devicename) & ".rrd" & ":" & rGraph_DEF!graph_rrddsname & ":" & "AVERAGE"
+        Endif
+      Next
+      Return DEF
+    Endif
+  Endif
+
+End
+
+Public Sub Function_SHIFT(graph_id As Integer) As String
+
+  Dim SHIFT As String
+  Dim iCount As Integer
+  Dim rGraph_SHIFT As Result
+
+  Try rGraph_SHIFT = Main.hDB.Exec("SELECT `graph_devicename`, `graph_rrddsname`, `graph_timeshift`, `graph_timeshift_value` FROM graph_data WHERE graph_id = &1 and `graph_timeshift` = TRUE", graph_id)
+  If Not Error Then
+    If rGraph_SHIFT.Count Then
+      For Each rGraph_SHIFT
+        SHIFT &= " SHIFT:" & "shift_" & rGraph_SHIFT!graph_devicename & "_" & rGraph_SHIFT!graph_rrddsname & ":" & rGraph_SHIFT!graph_timeshift_value
+      Next
+      Return SHIFT
+    Endif
+  Endif
+
+End
