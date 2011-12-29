@@ -3,7 +3,7 @@
 ' Description:
 ' Main.module
 
-' DomotiGa Server - the server part of DomotiGa an open source home automation program
+' DomotiGa Server3 - the server part of DomotiGa an open source home automation program
 ' Copyright(C) 2008-2011 Ron Klinkien
 
 ' This program is free software: you can redistribute it and/or modify
@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-Public sProgramVersion As String = "0.1.201"
+Public sProgramVersion As String = "0.1.202"
 Public sBaseDir As String
 Public sSettings As String = "server-domotiga.conf"
 Public bMainDebug As Boolean
@@ -192,8 +192,6 @@ Public bRFXComTXDisableX10 As Boolean
 Public bRFXComTXEnableARC As Boolean
 Public bRFXComTXEnableHarrison As Boolean
 Public bRFXComTXEnableKoppla As Boolean
-Public sRFXComTXACAddress1 As String
-Public sRFXComTXACAddress2 As String
 Public bRFXComTXRFXmitter As Boolean
 Public bRFXComTXDebug As Boolean
 
@@ -611,7 +609,6 @@ Public sCULSerialPort As String
 Public sCULBaudrate As String
 Public sCULType As String
 Public sCULFHTid As String
-Public bCULAutoCreate As Boolean
 Public hCUL As CCUL
 Public iCULModel As Integer
 Public bCULDebug As Boolean
@@ -991,8 +988,6 @@ Public Sub GetSettings()
   bRFXComTXEnableARC = rResult!enablearc
   bRFXComTXEnableHarrison = rResult!enableharrison
   bRFXComTXEnableKoppla = rResult!enablekoppla
-  sRFXComTXACAddress1 = rResult!acaddress1
-  sRFXComTXACAddress2 = rResult!acaddress2
   bRFXComTXRFXmitter = rResult!rfxmitter
   bRFXComTXDebug = rResult!debug
 
@@ -1419,7 +1414,6 @@ Public Sub GetSettings()
   sCULSerialPort = rResult!serialport
   sCULBaudrate = rResult!baudrate
   sCULFHTid = rResult!fhtid
-  bCULAutoCreate = rResult!autocreate
   iCULModel = rResult!model
   bCULDebug = rResult!debug
 
@@ -1610,6 +1604,8 @@ Public Sub CloseAll()
   Try hBroadcastEvent.Close
   ' pachube
   Try Pachube.hPost.Close
+  ' hddtemp
+  Try HDDTemp.hHDDTemp.Close
   ' plcbus close
   Try hPLCBUS.Disconnect
   ' ctx35 close
@@ -1777,11 +1773,11 @@ Public Sub Setup_Logfiles()
   sDebugLogFile As String = "server-debug-" & Format(Now, "yyyy-mm") & ".log"
 
   ' open the file in append mode and write to it
-  ' [GB2:OPEN] Open sBaseDir &/ "logs" &/ sMainLogFile For Append As #hMainLogFile
+  ' [GB2:OPEN] OPEN sBaseDir &/ "logs" &/ sMainLogFile FOR APPEND AS #hMainLogFile
   hMainLogFile = Open sBaseDir &/ "logs" &/ sMainLogFile For Append
-  ' [GB2:OPEN] Open sBaseDir &/ "logs" &/ sSpeakLogFile For Append As #hSpeakLogFile
+  ' [GB2:OPEN] OPEN sBaseDir &/ "logs" &/ sSpeakLogFile FOR APPEND AS #hSpeakLogFile
   hSpeakLogFile = Open sBaseDir &/ "logs" &/ sSpeakLogFile For Append
-  ' [GB2:OPEN] Open sBaseDir &/ "logs" &/ sDebugLogFile For Append As #hDebugLogFile
+  ' [GB2:OPEN] OPEN sBaseDir &/ "logs" &/ sDebugLogFile FOR APPEND AS #hDebugLogFile
   hDebugLogFile = Open sBaseDir &/ "logs" &/ sDebugLogFile For Append
 
 Catch
@@ -1804,8 +1800,70 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Setup_Astro()
 
+  Dim bSunRise As Boolean = True
+  Dim bSunSet As Boolean = False
+  Dim iTwilight As Integer
+  Dim rResult As Result
+  Dim aSplitTime As String[]
+  Dim sSeasons, sSeason_Starts As Array
+
   WriteLog(("Latitude: ") & iAstroLatitude & (" Longitude: ") & iAstroLongitude & (" Timezone: ") & iAstroTimezone)
-  ' the rest is done in SetGlobalVars()
+
+  ' calculate sun set/rise
+  SetGlobalVar("Sunrise", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunRise, 0))
+  SetGlobalVar("Sunset", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunSet, 0))
+
+  ' update Sunset/Sunrise triggers in database
+  aSplitTime = Split(GlobalVar["Sunset"], ":")
+  rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunset' ", Format(aSplitTime[1], "#") & " " & Format(aSplitTime[0], "#") & " * * *")
+  aSplitTime = Split(GlobalVar["Sunrise"], ":")
+  rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunrise' ", Format(aSplitTime[1], "#") & " " & Format(aSplitTime[0], "#") & " * * *")
+
+  If (sAstroTwilight = "civil") Then iTwilight = 1
+  If (sAstroTwilight = "nautical") Then iTwilight = 2
+  If (sAstroTwilight = "astronomical") Then iTwilight = 3
+  SetGlobalVar("Sunrise_Twilight", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunRise, iTwilight))
+  SetGlobalVar("Sunset_Twilight", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunSet, iTwilight))
+
+  If bServer Then
+    WriteLog("Sunrise at " & GlobalVar["Sunrise"] & (", Sunset at ") & GlobalVar["Sunset"])
+    WriteLog("Twilight Sunrise at " & GlobalVar["Sunrise_Twilight"] & (", Twilight Sunset at ") & GlobalVar["Sunset_Twilight"] & " (" & sAstroTwilight & ")")
+
+    ' calculate moon data
+    Astro.CalcMoonPhase()
+    WriteLog(("Moon phase is ") & MoonPhase & ".")
+    WriteLog(("Moon is in ") & MoonZodiac & ".")
+    WriteLog(("Age from new ") & MoonAge & (" days."))
+    WriteLog(("Distance ") & MoonDistance & (" Earth radii."))
+    WriteLog(("Ecliptic latitude: ") & MoonLatitude & (" degrees."))
+    WriteLog(("Ecliptic longitude: ") & MoonLongitude & (" degrees."))
+    If MoonIsLeapYear Then WriteLog(("This is a leap year."))
+  Endif
+
+  ' calculate season
+  sSeasons = Split(sAstroSeasons, ",")
+  sSeason_Starts = Split(sAstroSeasonStarts, ",")
+  If (CInt(GlobalVar["Month"]) < 3) Then
+    SetGlobalVar("Season", sSeasons[0])
+  Else If (CInt(GlobalVar["Month"]) = 3) And If (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[0])) Then
+    SetGlobalVar("Season", sSeasons[0])
+  Else If (CInt(GlobalVar["Month"]) = 12) And If (CInt(GlobalVar["Day"]) > CInt(sSeason_Starts[3])) Then
+    SetGlobalVar("Season", sSeasons[0])
+  Else If (CInt(GlobalVar["Month"]) < 6) Then
+    SetGlobalVar("Season", sSeasons[1])
+  Else If (CInt(GlobalVar["Month"]) = 6) And If (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[1])) Then
+    SetGlobalVar("Season", sSeasons[1])
+  Else If (CInt(GlobalVar["Month"]) < 9) Then
+    SetGlobalVar("Season", sSeasons[2])
+  Else If (CInt(GlobalVar["Month"]) = 9) And If (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[2])) Then
+    SetGlobalVar("Season", sSeasons[2])
+  Else
+    SetGlobalVar("Season", sSeasons[3])
+  End If
+  If bServer Then WriteLog("Season is " & GlobalVar["Season"] & ".")
+
+Catch
+  WriteLog(("ERROR: ") & Error.Text & (" at ") & Error.Where & ".")
 
 End
 
@@ -2170,8 +2228,6 @@ Private Sub Setup_RFXComTX()
         .EnableHarrison = bRFXComTXEnableHarrison
         .EnableKoppla = bRFXComTXEnableKoppla
         .RFXMitter = bRFXComTXRFXmitter
-        .ACAddress1 = sRFXComTXACAddress1
-        .ACAddress2 = sRFXComTXACAddress2
         .InterfaceType = sInterfaceType
       End With
       If InStr(sRFXComTXType, "tcp") Then
@@ -2650,6 +2706,7 @@ Private Sub Setup_HDDTemp()
     If bServer Then HDDTemp.Run()
   Else
     Try HDDTemp.tHDDTemp.Stop
+    Try HDDTemp.hHDDTemp.Close
     If bMainDebug Then WriteLog(("HDDTemp support disabled."))
   End If
 
@@ -4155,7 +4212,6 @@ Private Sub Setup_CUL()
         .SerPort = sCULSerialPort
         .Model = iCULModel
         .CULDebug = bCULDebug
-        .AutoCreate = bCULAutoCreate
         .FHTid = sCULFHTid
       End With
       If InStr(sCULType, "tcp") Then
@@ -4379,7 +4435,6 @@ End
 Public Sub ChangeMuteMode(bMode As Boolean)
 
   SetGlobalVar("Mute", bMode)
-
   If bMode Then
     WriteLog(("Mute mode is set to 'Audio Disabled'."))
   Else
@@ -4534,13 +4589,6 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub SetGlobalVars()
 
-  Dim sSeasons, sSeason_Starts As Array
-  Dim bSunRise As Boolean = True
-  Dim bSunSet As Boolean = False
-  Dim iTwilight As Integer
-  Dim rResult As Result
-  Dim sSplitTime As String[]
-
   bNew_Second = 0
   bNew_Msecond_500 = 0
   bNew_Msecond_250 = 0
@@ -4643,58 +4691,8 @@ Private Sub SetGlobalVars()
           End If
           SetGlobalVar("Year", Year(Now))
 
-          ' calculate sun set/rise
-          SetGlobalVar("Sunrise", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunRise, 0))
-          SetGlobalVar("Sunset", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunSet, 0))
+          Setup_Astro()
 
-          ' update Sunset/Sunrise triggers in database
-          sSplitTime = Split(GlobalVar["Sunset"], ":")
-          rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunset' ", Format(sSplitTime[1], "#") & " " & Format(sSplitTime[0], "#") & " * * *")
-          sSplitTime = Split(GlobalVar["Sunrise"], ":")
-          rResult = hDB.Exec("UPDATE triggers t SET t.param1 = &1 WHERE t.name = 'Time is Sunrise' ", Format(sSplitTime[1], "#") & " " & Format(sSplitTime[0], "#") & " * * *")
-
-          If (sAstroTwilight = "civil") Then iTwilight = 1
-          If (sAstroTwilight = "nautical") Then iTwilight = 2
-          If (sAstroTwilight = "astronomical") Then iTwilight = 3
-          SetGlobalVar("Sunrise_Twilight", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunRise, iTwilight))
-          SetGlobalVar("Sunset_Twilight", Astro.CalcSunTimes(iAstroLongitude, iAstroLatitude, iAstroTimezone, bSunSet, iTwilight))
-
-          If bServer Then
-            WriteLog("Sunrise at " & GlobalVar["Sunrise"] & (", Sunset at ") & GlobalVar["Sunset"])
-            WriteLog("Twilight Sunrise at " & GlobalVar["Sunrise_Twilight"] & (", Twilight Sunset at ") & GlobalVar["Sunset_Twilight"] & " (" & sAstroTwilight & ")")
-
-            ' calculate moon data
-            Astro.CalcMoonPhase()
-            WriteLog(("Moon phase is ") & MoonPhase & ".")
-            WriteLog(("Moon is in ") & MoonZodiac & ".")
-            WriteLog(("Age from new ") & MoonAge & (" days."))
-            WriteLog(("Distance ") & MoonDistance & (" Earth radii."))
-            WriteLog(("Ecliptic latitude: ") & MoonLatitude & (" degrees."))
-            WriteLog(("Ecliptic longitude: ") & MoonLongitude & (" degrees."))
-            If MoonIsLeapYear Then WriteLog(("This is a leap year."))
-          Endif
-
-          ' calculate season
-          sSeasons = Split(sAstroSeasons, ",")
-          sSeason_Starts = Split(sAstroSeasonStarts, ",")
-          If (CInt(GlobalVar["Month"]) < 3) Then
-            SetGlobalVar("Season", sSeasons[0])
-          Else If (CInt(GlobalVar["Month"]) = 3) And If (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[0])) Then
-            SetGlobalVar("Season", sSeasons[0])
-          Else If (CInt(GlobalVar["Month"]) = 12) And If (CInt(GlobalVar["Day"]) > CInt(sSeason_Starts[3])) Then
-            SetGlobalVar("Season", sSeasons[0])
-          Else If (CInt(GlobalVar["Month"]) < 6) Then
-            SetGlobalVar("Season", sSeasons[1])
-          Else If (CInt(GlobalVar["Month"]) = 6) And If (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[1])) Then
-            SetGlobalVar("Season", sSeasons[1])
-          Else If (CInt(GlobalVar["Month"]) < 9) Then
-            SetGlobalVar("Season", sSeasons[2])
-          Else If (CInt(GlobalVar["Month"]) = 9) And If (CInt(GlobalVar["Day"]) < CInt(sSeason_Starts[2])) Then
-            SetGlobalVar("Season", sSeasons[2])
-          Else
-            SetGlobalVar("Season", sSeasons[3])
-          End If
-          If bServer Then WriteLog("Season is " & GlobalVar["Season"] & ".")
           ' new month
           If (iPrev_Month <> GlobalVar["Month"]) Then
             bNew_Month = 1
@@ -4744,13 +4742,23 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' set globalvar to value
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SetGlobalVar(sVar As String, vValue As Variant)
+Public Sub SetGlobalVar(sVar As String, vValue As Variant, Optional broadcast As Boolean = False) As Boolean
 
-  If Events.CheckCondition(Main.GlobalVar[sVar], "<>", vValue, True) Then
+  If bServer And If Events.CheckCondition(Main.GlobalVar[sVar], "<>", vValue, True) Then
     Main.GlobalVar[sVar] = vValue
     Events.CheckGlobalVarEvents(sVar, vValue)
     BroadcastEvent("[GlobalVar]" & sVar & "|" & vValue)
   Endif
+  Return True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' del globalvar
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DelGlobalVar(sVar As String)
+
+  If Main.GlobalVar.Exist(sVar) Then Main.GlobalVar.Remove(sVar)
 
 End
 
