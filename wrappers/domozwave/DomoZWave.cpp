@@ -431,7 +431,7 @@ void DomoZWave_SetNodeLevel( int node, int level )
 	//pthread_mutex_unlock( &g_criticalSection );
 }
 
-void DomoZWave_EnablePolling( int node )
+void DomoZWave_EnablePolling( int node, int polltime )
 {
 	//pthread_mutex_lock( &g_criticalSection );
 	// Don't allow polling basic info on controllers.
@@ -442,7 +442,7 @@ void DomoZWave_EnablePolling( int node )
 		return;
 	}
 
-	Manager::Get()->SetPollInterval( 300.0f );
+	Manager::Get()->SetPollInterval( polltime );
 
 	if( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
 	{
