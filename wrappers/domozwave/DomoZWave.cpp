@@ -510,4 +510,18 @@ void DomoZWave_CancelControllerCommand( )
 	//pthread_mutex_unlock( &g_criticalSection );
 }
 
+void DomoZWave_SetConfigParam( int node, int param, int value ) 
+{
+	//pthread_mutex_lock( &g_criticalSection );
+	Manager::Get()->SetConfigParam( home, node, param, value);
+	//pthread_mutex_unlock( &g_criticalSection );
+}
+
+void DomoZWave_RequestAllConfigParams( int node )
+{
+	//pthread_mutex_lock( &g_criticalSection );
+	Manager::Get()->RequestAllConfigParams( home, node );
+	//pthread_mutex_unlock( &g_criticalSection );
+}
+
 }
