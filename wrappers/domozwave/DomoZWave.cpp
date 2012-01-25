@@ -328,24 +328,16 @@ void OnNotification
 		//case Notification::Type_NodeQueriesComplete:
 		{
 			//cout << endl << endl << endl << "NodeQueriesComplete Node=" << (int)(data->GetNodeId()) << " times=" << queriesFinishedTimes << endl;
-			//if ( Manager::Get()->GetNodeBasic( data->GetHomeId(), data->GetNodeId() ) < 0x03 )
-			//{
-			//	queriesFinishedTimes++;
-			//	if ( queriesFinishedTimes == 2 )
-			//	{
-					Manager::Get()->WriteConfig( home );
+			Manager::Get()->WriteConfig( home );
 
-					xmlrpc_value* resultP = NULL;
-        				pthread_mutex_unlock( &g_criticalSection );
- 					xmlrpc_client_call2f(&env, clientP, url, "zwave.allqueried", &resultP, "()" );
-					if ( resultP )
-					{
-						xmlrpc_DECREF(resultP);
-					}
-					return;
-			//	}
-			//}
-			break;
+			xmlrpc_value* resultP = NULL;
+       			pthread_mutex_unlock( &g_criticalSection );
+ 			xmlrpc_client_call2f(&env, clientP, url, "zwave.allqueried", &resultP, "()" );
+			if ( resultP )
+			{
+				xmlrpc_DECREF(resultP);
+			}
+			return;
 		}
 
 		default:
@@ -478,6 +470,43 @@ void DomoZWave_RequestNodeState( int node )
 {
 	//pthread_mutex_lock( &g_criticalSection );
 	Manager::Get()->RequestNodeState( home, node );
+	//pthread_mutex_unlock( &g_criticalSection );
+}
+
+//  bool BeginControllerCommand( uint32 const _homeId, Driver::ControllerCommand _command, Driver::pfnControllerCallback_t _callback = NULL, void* _context = NULL, bool _highPower = false, uint8 _nodeId = 0xff );
+
+void DomoZWave_RequestNetworkUpdate( )
+{
+	//pthread_mutex_lock( &g_criticalSection );
+	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNetworkUpdate, NULL, NULL, false, 0xff );
+	//pthread_mutex_unlock( &g_criticalSection );
+}
+
+void DomoZWave_AddDevice( )
+{
+	//pthread_mutex_lock( &g_criticalSection );
+	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_AddDevice, NULL, NULL, true, 0xff );
+	//pthread_mutex_unlock( &g_criticalSection );
+}
+
+void DomoZWave_RemoveDevice( int node )
+{
+	//pthread_mutex_lock( &g_criticalSection );
+	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RemoveDevice, NULL, NULL, false, node );
+	//pthread_mutex_unlock( &g_criticalSection );
+}
+
+void DomoZWave_RequestNodeNeighborUpdate( int node )
+{
+	//pthread_mutex_lock( &g_criticalSection );
+	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNodeNeighborUpdate, NULL, NULL, false, node );
+	//pthread_mutex_unlock( &g_criticalSection );
+}
+
+void DomoZWave_CancelControllerCommand( )
+{
+	//pthread_mutex_lock( &g_criticalSection );
+	Manager::Get()->CancelControllerCommand( home );
 	//pthread_mutex_unlock( &g_criticalSection );
 }
 
