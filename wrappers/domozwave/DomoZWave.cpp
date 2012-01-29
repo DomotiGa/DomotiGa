@@ -96,13 +96,13 @@ void RPC_AddValue( int homeID, int nodeID, ValueID valueID, uint8 value )
 {
 	// Eventually we should probably store these in an sql table.
 	// Then when we want to query values or set them we have them available. 
-	//cout << endl << endl << endl << "AddValue(" << homeID << ":" << nodeID << endl << endl << endl;
+	cout << endl << endl << endl << "AddValue(" << homeID << ":" << nodeID << endl << endl << endl;
 	//cout << "Genre=" << valueID.GetGenre() << endl;
-	//cout << "CommandClassId=" << valueID.GetCommandClassId() << endl;
-	//cout << "CommandClassInstance=" << valueID.GetInstance() << endl;
+	cout << "CommandClassId=" << valueID.GetCommandClassId() << endl;
+	cout << "CommandClassInstance=" << valueID.GetInstance() << endl;
 	//cout << "Index=" << valueID.GetIndex() << endl;
-	//cout << "Type=" << valueID.GetType() << endl;
-	//cout << "Value=" << value << endl;
+	cout << "Type=" << valueID.GetType() << endl;
+	cout << "Value=" << value << endl;
 }
 
 void RPC_RemoveValue( int homeID, int nodeID/*, int valueID*/ )
@@ -112,27 +112,31 @@ void RPC_RemoveValue( int homeID, int nodeID/*, int valueID*/ )
 
 // This is called when a device reports that a value has changed. 
 // If it was the basic command class we'll report that value back to domotiga.
+// Also try to get channel/instance and report that back
 void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, uint8 value )
 {
-	//cout << endl << endl << endl << "ChangeValue(" << homeID << ":" << nodeID << endl << endl << endl;
+	cout << endl << endl << endl << "ChangeValue(" << homeID << ":" << nodeID << endl << endl << endl;
+	cout << endl << endl << endl << "ChangeValue Node id: " << nodeID << endl << endl << endl;
 	//cout << "Genre=" << (int)(valueID.GetGenre()) << endl;
 	int id = valueID.GetCommandClassId();
 	int index = valueID.GetIndex();
-	//cout << "CommandClassId=" << (int)(valueID.GetCommandClassId()) << endl;
-	//cout << "CommandClassInstance=" << (int)(valueID.GetInstance()) << endl;
+	cout << "CommandClassId=" << (int)(valueID.GetCommandClassId()) << endl;
+	int instanceID = valueID.GetInstance();
+	cout << "CommandClassInstance=" << instanceID << endl;
 	//cout << "Index=" << (int)(valueID.GetIndex()) << endl;
-	//cout << "Type=" << (int)(valueID.GetType()) << endl;
-	//cout << "Value=" << (int)(value) << endl;
+	cout << "Type=" << (int)(valueID.GetType()) << endl;
+	cout << "Value=" << (int)(value) << endl;
 	//cout << "Label=" << Manager::Get()->GetValueLabel( valueID ) << endl;
 	//cout << "Units=" << Manager::Get()->GetValueUnits( valueID ) << endl;
 
 	uint8 byteValue;
 	Manager::Get()->GetValueAsByte( valueID, &byteValue );
-	if ( id == COMMAND_CLASS_BASIC && index == 0 )
+	if (( id == COMMAND_CLASS_BASIC || id ==  COMMAND_CLASS_SWITCH_BINARY || id == COMMAND_CLASS_SWITCH_MULTILEVEL) && index == 0 )
 	{
-		//cout << "basic command class value changed" << endl;
+		cout << "basic command class value changed" << endl;
+		cout << "instance" << instanceID << endl;
 		xmlrpc_value* resultP = NULL;
- 		xmlrpc_client_call2f(&env, clientP, url, "zwave.basicreport", &resultP, "(iii)", homeID, nodeID, (int)byteValue );
+// 		xmlrpc_client_call2f(&env, clientP, url, "zwave.basicreport", &resultP, "(iiii)", homeID, nodeID, instanceID, (int)byteValue );
 		if ( resultP )
 		{
 			xmlrpc_DECREF(resultP);
@@ -162,6 +166,7 @@ void RPC_ProtocolInfo( int homeID, int nodeID )
 	xmlrpc_int32 capabilities = 0; // Caps is broken into Version, BaudRate, listening, routing
 	xmlrpc_int32 security = Manager::Get()->GetNodeSecurity( homeID, nodeID );
 	xmlrpc_bool sleeping = !Manager::Get()->IsNodeListeningDevice( homeID, nodeID );
+
 	//cout << "node=" << nodeID << endl;
 	//cout << "basic=" << basic << endl;
 	//cout << "generic=" << generic << endl;
@@ -181,7 +186,7 @@ void RPC_ProtocolInfo( int homeID, int nodeID )
 
 void RPC_NodeEvent( int homeID, int nodeID, int value )
 {
-	//cout << endl << endl << endl << "NodeEvent(" << homeID << ":" << nodeID << endl << endl << endl;
+	cout << endl << endl << endl << "NodeEvent(" << homeID << ":" << nodeID << endl << endl << endl;
 	
 	xmlrpc_value* resultP = NULL;
  	xmlrpc_client_call2f(&env, clientP, url, "zwave.basicreport", &resultP, "(iii)", homeID, nodeID, value );
@@ -397,35 +402,28 @@ void DomoZWave_Destroy()
 	pthread_mutex_destroy( &g_criticalSection );
 }
 
+/*
 void DomoZWave_SetNodeOn( int node )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	//cout << "Turn on Node " << home << ":" << node << endl;
 	Manager::Get()->SetNodeOn( home, node );
-//	Manager::Get()->SetNodeLevel( home, node, 255 );
-	//pthread_mutex_unlock( &g_criticalSection );
 }
 
 void DomoZWave_SetNodeOff( int node )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	//cout << "Turn off Node " << home << ":" << node << endl;
 	Manager::Get()->SetNodeOff( home, node );
-	//pthread_mutex_unlock( &g_criticalSection );
 }
 
 void DomoZWave_SetNodeLevel( int node, int level )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	//cout << "Set Node Level " << home << ":" << node << " => " << level << endl;
 	Manager::Get()->SetNodeLevel( home, node, level );
-
-	//pthread_mutex_unlock( &g_criticalSection );
 }
+*/
 
 void DomoZWave_EnablePolling( int node, int polltime )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	// Don't allow polling basic info on controllers.
 	// I was seeing strange results when we did this. 
 	if ( Manager::Get()->GetNodeBasic( home, node ) < 0x03 )
@@ -449,12 +447,10 @@ void DomoZWave_EnablePolling( int node, int polltime )
 			}
 		}
         }
-	//pthread_mutex_unlock( &g_criticalSection );
 }
 
 void DomoZWave_DisablePolling( int node )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	if( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
 	{
         	// Mark all the nodes for polling
@@ -463,65 +459,103 @@ void DomoZWave_DisablePolling( int node )
 			Manager::Get()->DisablePoll( *it );	
 		}
         }
-	//pthread_mutex_unlock( &g_criticalSection );
 }
 
 void DomoZWave_RequestNodeState( int node )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	Manager::Get()->RequestNodeState( home, node );
-	//pthread_mutex_unlock( &g_criticalSection );
 }
-
-//  bool BeginControllerCommand( uint32 const _homeId, Driver::ControllerCommand _command, Driver::pfnControllerCallback_t _callback = NULL, void* _context = NULL, bool _highPower = false, uint8 _nodeId = 0xff );
 
 void DomoZWave_RequestNetworkUpdate( )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNetworkUpdate, NULL, NULL, false, 0xff );
-	//pthread_mutex_unlock( &g_criticalSection );
 }
 
 void DomoZWave_AddDevice( )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_AddDevice, NULL, NULL, true, 0xff );
-	//pthread_mutex_unlock( &g_criticalSection );
 }
 
 void DomoZWave_RemoveDevice( int node )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RemoveDevice, NULL, NULL, false, node );
-	//pthread_mutex_unlock( &g_criticalSection );
 }
 
 void DomoZWave_RequestNodeNeighborUpdate( int node )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNodeNeighborUpdate, NULL, NULL, false, node );
-	//pthread_mutex_unlock( &g_criticalSection );
 }
 
 void DomoZWave_CancelControllerCommand( )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	Manager::Get()->CancelControllerCommand( home );
-	//pthread_mutex_unlock( &g_criticalSection );
 }
 
 void DomoZWave_SetConfigParam( int node, int param, int value ) 
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	Manager::Get()->SetConfigParam( home, node, param, value);
-	//pthread_mutex_unlock( &g_criticalSection );
 }
 
 void DomoZWave_RequestAllConfigParams( int node )
 {
-	//pthread_mutex_lock( &g_criticalSection );
 	Manager::Get()->RequestAllConfigParams( home, node );
-	//pthread_mutex_unlock( &g_criticalSection );
+}
+
+void DomoZWave_SetValue( int node, int instance, int value )
+{
+	bool bool_value;
+	int int_value;
+	uint8 uint8_value;
+	uint16 uint16_value;
+
+        if( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+        {
+                // Find the correct instance
+                for( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+                {
+                        int id = (*it).GetCommandClassId();
+                        int inst = (*it).GetInstance();
+                        if ( id == COMMAND_CLASS_SWITCH_MULTILEVEL || id == COMMAND_CLASS_SWITCH_BINARY)
+                        {
+				if ( inst == instance )
+				{
+                                	if( ValueID::ValueType_Bool == (*it).GetType() )
+                                	{
+						bool_value = (bool)value;
+						Manager::Get()->SetValue( *it, bool_value );
+         	                       	}
+                                	else if( ValueID::ValueType_Byte == (*it).GetType() )
+                                	{
+						uint8_value = (uint8)value;
+						Manager::Get()->SetValue( *it, uint8_value );
+               		                }
+               		                else if( ValueID::ValueType_Short == (*it).GetType() )
+                                	{
+						uint16_value = (uint16)value;
+						Manager::Get()->SetValue( *it, uint16_value );
+                               		}
+                                	else if( ValueID::ValueType_Int == (*it).GetType() )
+                                	{
+						int_value = value;
+						Manager::Get()->SetValue( *it, int_value );
+                                	}
+                                	else if( ValueID::ValueType_List == (*it).GetType() )
+                                	{
+						Manager::Get()->SetValue( *it, value );
+                                	}
+                                	else
+                                	{
+						return;
+                        		}
+
+                                	//cout << "SetValue for node " << node << endl;
+                                	//cout << "class id " << id << endl;
+                                	//cout << "instance " << instance << endl;
+                                	//cout << "value " << value << endl;
+                        	}
+			}
+                }
+        }
 }
 
 }

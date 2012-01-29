@@ -34,6 +34,7 @@ EXTERN DomoZWave_RemoveDevice(node AS Integer)
 EXTERN DomoZWave_CancelControllerCommand()
 EXTERN DomoZWave_SetConfigParam(node AS Integer, param AS Integer, value AS Integer)
 EXTERN DomoZWave_RequestAllConfigParams(node AS Integer)
+EXTERN DomoZWave_SetValue(node AS Integer, instance AS Integer, value AS Integer)
 
 PROPERTY UseOZW AS Boolean
 PROPERTY Port AS String
@@ -390,11 +391,6 @@ PUBLIC SUB ChangeSwitch(iNodeId AS Integer, iLevel AS Integer)
 
   DIM bBuf AS Byte[10]
 
-  IF bUseOZW
-    OZW_ChangeSwitch(iNodeId, iLevel)
-    RETURN
-  ENDIF
-
   bBuf[0] = FUNC_ID_ZW_SEND_DATA
   bBuf[1] = iNodeId
   bBuf[2] = &H3
@@ -413,11 +409,6 @@ END
 PUBLIC SUB ChangeSwitchLevel(iNodeId AS String, iLevel AS Integer)
 
   DIM bBuf AS Byte[10]
-
-  IF bUseOZW
-    OZW_ChangeNodeLevel(iNodeId, iLevel)
-    RETURN
-  ENDIF
 
   bBuf[0] = FUNC_ID_ZW_SEND_DATA
   bBuf[1] = iNodeId
@@ -1211,7 +1202,29 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB RemoveNodes()
 
-  Main.hDB.Exec("TRUNCATE TABLE devices_zwave")
+  DIM hTable AS Table
+
+  TRY Main.hDB.Tables.Remove("devices_zwave")
+  hTable = Main.hDB.Tables.Add("devices_zwave")
+
+  hTable.Fields.Add("id", db.Serial)
+  hTable.Fields.Add("nodeid", gb.String, 32)
+  hTable.Fields.Add("value", gb.String, 32)
+  hTable.Fields.Add("typebasic", gb.Integer)
+  hTable.Fields.Add("typegeneric", gb.Integer)
+  hTable.Fields.Add("typespecific", gb.Integer)
+  hTable.Fields.Add("capabilities", gb.Integer)
+  hTable.Fields.Add("security", gb.Integer)
+  hTable.Fields.Add("sleeping", gb.Boolean)
+  hTable.Fields.Add("manufacturer", gb.String, 64)
+  hTable.Fields.Add("model", gb.String, 64)
+  hTable.Fields.Add("version", gb.String, 32)
+  hTable.Fields.Add("neighbors", gb.String, 32)
+  hTable.Fields.Add("speed", gb.String, 32)
+  hTable.Fields.Add("classes", gb.String)
+  hTable.PrimaryKey = ["id"]
+
+  hTable.Update
 
 END
 
@@ -1275,15 +1288,15 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' update a node record with value
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC SUB UpdateValueNode(iNodeId AS Integer, sValue AS String) AS Boolean
+PUBLIC SUB UpdateValueNode(sAddress AS String, sValue AS String) AS Boolean
 
   DIM rResult AS Result
 
-  rResult = Main.hDB.Exec("UPDATE devices_zwave SET value = &1 WHERE nodeid = &2", sValue, iNodeId)
+  rResult = Main.hDB.Exec("UPDATE devices_zwave SET value = &1 WHERE nodeid = &2", sValue, sAddress)
   IF rResult THEN
     RETURN TRUE
   ELSE
-    IF Main.bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Node with !!id '") & iNodeId & ("' not found in database!"))
+    IF Main.bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Node with id '") & sAddress & ("' not found in database!"))
     RETURN FALSE
   END IF
 
@@ -1354,56 +1367,75 @@ END
 
 PUBLIC SUB OZW_SendCommand(sAddress AS String, sCmd AS String)
 
-  DIM ibrightness AS Integer
+  DIM iBrightness AS Integer
+  DIM sNode, sInstance AS String
+  DIM aAddr AS String[]
+
+  ' address format 8:2, for instance 2 of node 8
+  aAddr = Scan(sAddress, "*:*")
+  IF aAddr.Count = 2 THEN
+    sNode = aAddr[0]
+    sInstance = aAddr[1]
+  ELSE
+    sNode = sAddress
+    sInstance = 1 ' no instance specified, use first
+  ENDIF
 
   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Sending command " & sCmd & " to address " & sAddress & "."))
   sCmd = UCase(sCmd)
   IF sCmd = "ON"
-    OZW_TurnNodeOn(sAddress)
+    SetValue(sNode, sInstance, 255)
   ELSE IF sCmd = "OFF"
-    OZW_TurnNodeOff(sAddress)
+    SetValue(sNode, sInstance, 0)
   ELSE IF InStr(sCmd, "DIM ") THEN ' DIM 0-100
     iBrightness = Val(Replace(sCmd, "DIM ", ""))
-    OZW_ChangeNodeLevel(sAddress, iBrightness)
+    SetValue(sNode, sInstance, iBrightness)
   ELSE
     Main.WriteDebugLog(("[Z-Wave] Only DIM and ON/OFF commands are supported!"))
   ENDIF
 
 END
 
-PUBLIC SUB OZW_TurnNodeOn(iNodeId AS Integer)
+' PUBLIC SUB OZW_TurnNodeOn(iNodeId AS Integer)
+' 
+'   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Turning node " & iNodeId & " On."))
+'   DomoZWave_SetNodeOn(iNodeId)
+' 
+' END
+' 
+' PUBLIC SUB OZW_TurnNodeOff(iNodeId AS Integer)
+' 
+'   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Turning node " & iNodeId & " Off."))
+'   DomoZWave_SetNodeOff(iNodeId)
+' 
+' END
+' 
+' PUBLIC SUB OZW_ChangeSwitch(iNodeId AS Integer, iLevel AS Integer)
+' 
+'   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Change switch level " & iNodeId & " to " & Hex(iLevel)))
+'   IF iLevel = &HFF
+'     OZW_TurnNodeOn(iNodeId)
+'   ELSE IF ilevel = &H0
+'     OZW_TurnNodeOff(iNodeId)
+'   ELSE
+'     OZW_ChangeNodeLevel(iNodeId, iLevel)
+'   ENDIF
+' 
+' END
 
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Turning node " & iNodeId & " On."))
-  DomoZWave_SetNodeOn(iNodeId)
+PUBLIC SUB SetValue(iNodeId AS Integer, iInstance AS Integer, iValue AS Integer)
+
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Set value for " & iNodeId & " and instance " & iInstance & " to " & iValue))
+  DomoZWave_SetValue(iNodeId, iInstance, iValue)
 
 END
 
-PUBLIC SUB OZW_TurnNodeOff(iNodeId AS Integer)
-
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Turning node " & iNodeId & " Off."))
-  DomoZWave_SetNodeOff(iNodeId)
-
-END
-
-PUBLIC SUB OZW_ChangeSwitch(iNodeId AS Integer, iLevel AS Integer)
-
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Change switch level " & iNodeId & " to " & Hex(iLevel)))
-  IF iLevel = &HFF
-    OZW_TurnNodeOn(iNodeId)
-  ELSE IF ilevel = &H0
-    OZW_TurnNodeOff(iNodeId)
-  ELSE
-    OZW_ChangeNodeLevel(iNodeId, iLevel)
-  ENDIF
-
-END
-
-PUBLIC SUB OZW_ChangeNodeLevel(iNodeId AS Integer, iLevel AS Integer)
-
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Change node level " & iNodeId & " to " & Hex(iLevel)))
-  DomoZWave_SetNodeLevel(iNodeId, iLevel)
-
-END
+' PUBLIC SUB OZW_ChangeNodeLevel(iNodeId AS Integer, iLevel AS Integer)
+' 
+'   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Change node level " & iNodeId & " to " & Hex(iLevel)))
+'   DomoZWave_SetNodeLevel(iNodeId, iLevel)
+' 
+' END
 
 PUBLIC SUB OZW_RequestNodeState(iNodeId AS Integer)
 
@@ -1438,12 +1470,13 @@ PUBLIC SUB OZW_SetIds(homeId AS Integer, controllerId AS Integer)
 
 END
 
-PUBLIC SUB OZW_BasicReport(homeId AS Integer, nodeId AS Integer, value AS Integer)
+PUBLIC SUB OZW_BasicReport(homeId AS Integer, nodeId AS String, instanceId AS Integer, value AS Integer)
 
-  DIM deviceId AS Integer
-  DIM sValue AS String
+  DIM iDeviceId AS Integer
+  DIM sAddress, sValue AS String
 
-  UpdateValueNode(nodeId, value)
+  sAddress = nodeId & IIf(instanceId > 1, ":" & instanceId, "")
+  UpdateValueNode(sAddress, value)
   ' update value
   IF nodeId THEN
     SELECT value
@@ -1455,9 +1488,9 @@ PUBLIC SUB OZW_BasicReport(homeId AS Integer, nodeId AS Integer, value AS Intege
       DEFAULT
         sValue = "Dim " & value
     END SELECT
-    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Got basic report for node " & nodeId & " with value " & sValue & "."))
-    deviceId = Devices.Find(nodeId, Devices.FindInterface("Z-Wave Controller"), "ZWAVE")
-    IF deviceId THEN Devices.ValueUpdate(deviceId, sValue, "", "", "")
+    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Got basic report for node " & nodeid & " and instance " & instanceId & " with value " & sValue & "."))
+    iDeviceId = Devices.Find(sAddress, Devices.FindInterface("Z-Wave Controller"), "ZWAVE")
+    IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
   ENDIF
 
 END
