@@ -425,29 +425,32 @@ void RPC_AddNode( int homeID, int nodeID )
 }
 void RPC_RemoveNode( int homeID, int nodeID )
 {
-	//cout << endl << endl << endl << "AddNode(" << homeID << ":" << nodeID << endl << endl << endl;
+	if ( debugging )
+	{
+		cout << endl << endl << endl << "RemoveNode: " << homeID << ":" << nodeID << endl << endl;
+	}
 }
 
 // We got results to a Protocol Info query, send them over to domotiga.
 void RPC_ProtocolInfo( int homeID, int nodeID )
 {
-	//cout << endl << endl << endl << "Protocol(" << homeID << ":" << nodeID << endl << endl << endl;
-
 	xmlrpc_int32 basic = Manager::Get()->GetNodeBasic( homeID, nodeID );
 	xmlrpc_int32 generic = Manager::Get()->GetNodeGeneric( homeID, nodeID );
 	xmlrpc_int32 specific = Manager::Get()->GetNodeSpecific( homeID, nodeID );
 	xmlrpc_int32 capabilities = 0; // Caps is broken into Version, BaudRate, listening, routing
 	//xmlrpc_int32 security = Manager::Get()->GetNodeSecurity( homeID, nodeID );
 	xmlrpc_bool sleeping = !Manager::Get()->IsNodeListeningDevice( homeID, nodeID );
-
 	xmlrpc_int32 security = 0;
-	//cout << "node=" << nodeID << endl;
-	//cout << "basic=" << basic << endl;
-	//cout << "generic=" << generic << endl;
-	//cout << "specific=" << specific << endl;
-	//cout << "cap=" << capabilities << endl;
-	//cout << "security=" << security << endl;
-
+	if ( debugging )
+	{
+		cout << endl << endl << "ProtocolInfo: " << homeID << ":" << nodeID << endl << endl;
+		cout << "node=" << nodeID << endl;
+		cout << "basic=" << basic << endl;
+		cout << "generic=" << generic << endl;
+		cout << "specific=" << specific << endl;
+		cout << "cap=" << capabilities << endl;
+		cout << "security=" << security << endl;
+	}
 	xmlrpc_value* resultP = NULL;
  	xmlrpc_client_call2f(&env, clientP, url, "zwave.createnode", &resultP, "(iiiiiib)", nodeID, basic, generic, specific, capabilities, security, sleeping );
 
@@ -457,9 +460,20 @@ void RPC_ProtocolInfo( int homeID, int nodeID )
 	}
 }
 
+void RPC_Group( int homeID, int nodeID )
+{
+	if ( debugging )
+	{
+		cout << endl << endl << endl << "GroupEvent: " << homeID << ":" << nodeID << endl << endl << endl;
+	}
+}
+
 void RPC_NodeEvent( int homeID, int nodeID, int value )
 {
-	cout << endl << endl << endl << "NodeEvent(" << homeID << ":" << nodeID << endl << endl << endl;
+	if ( debugging )
+	{
+		cout << endl << endl << endl << "NodeEvent: " << homeID << ":" << nodeID << endl << endl << endl;
+	}
 /*	
 	xmlrpc_value* resultP = NULL;
  	xmlrpc_client_call2f(&env, clientP, url, "zwave.basicreport", &resultP, "(iii)", homeID, nodeID, value );
@@ -472,18 +486,27 @@ void RPC_NodeEvent( int homeID, int nodeID, int value )
 
 void RPC_EnabledPolling( int homeID, int nodeID )
 {
-	//cout << endl << endl << endl << "EnabledPolling(" << homeID << ":" << nodeID << endl << endl << endl;
+	if ( debugging )
+	{
+		cout << endl << endl << endl << "EnabledPolling(" << homeID << ":" << nodeID << endl << endl << endl;
+	}
 }
 
 void RPC_DisabledPolling( int homeID, int nodeID )
 {
-	//cout << endl << endl << endl << "DisabledPolling(" << homeID << ":" << nodeID << endl << endl << endl;
+	if ( debugging )
+	{
+		cout << endl << endl << endl << "DisabledPolling(" << homeID << ":" << nodeID << endl << endl << endl;
+	}
 }
 
 void RPC_DriverReady( int homeID, int nodeID )
 {
 	home = homeID;
-	//cout << endl << endl << endl << "DriverReady(" << homeID << ":" << nodeID << endl << endl << endl;
+	if ( debugging )
+	{
+		cout << endl << endl << "DriverReady: " << homeID << ":" << nodeID << endl << endl;
+	}
 
 	xmlrpc_value* resultP = NULL;
  	xmlrpc_client_call2f(&env, clientP, url, "zwave.setids", &resultP, "(ii)", homeID, nodeID );
@@ -544,7 +567,10 @@ void OnNotification
 		case Notification::Type_ValueChanged:
 		{
 			RPC_ChangeValue( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), data->GetByte() );
-
+		}
+		case Notification::Type_Group:
+		{
+			RPC_Group( (int)data->GetHomeId(), (int)data->GetNodeId() );
 		}
 		case Notification::Type_NodeAdded:
 		{
