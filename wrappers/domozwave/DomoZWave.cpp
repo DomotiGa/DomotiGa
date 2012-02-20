@@ -383,6 +383,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 			break;
 		}
 		case COMMAND_CLASS_SENSOR_MULTILEVEL:
+		case COMMAND_CLASS_METER:
 		{
 			if (label == "Temperature")
 			{
@@ -399,6 +400,10 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 			else if (label == "Power")
 			{
 				value_no = 2;
+			}
+			else if (label == "Energy")
+			{
+				value_no = 3;
 			}
 			break;
 		}
