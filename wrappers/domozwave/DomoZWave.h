@@ -20,7 +20,7 @@
 extern "C" {
 extern const char *cclasstoStr( uint8 );
 extern const char *cgenretoStr( uint8 );
-void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir, const char* zwdir, bool enableLog );
+void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir, const char* zwdir, bool enableLog, int polltime );
 void DomoZWave_EnablePolling( int node, int polltime );
 void DomoZWave_DisablePolling( int node );
 void DomoZWave_RequestNodeState( int node );
@@ -32,4 +32,5 @@ void DomoZWave_CancelControllerCommand();
 void DomoZWave_SetConfigParam( int node, int param, int value );
 void DomoZWave_RequestAllConfigParams( int node );
 void DomoZWave_SetValue( int node, int instance, int value );
+void DomoZWave_AddAssociation( int node, int group );
 }

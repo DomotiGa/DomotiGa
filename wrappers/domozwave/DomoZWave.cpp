@@ -204,18 +204,25 @@ void RPC_AddValue( int homeID, int nodeID, ValueID valueID, uint8 value )
 {
 	// Eventually we should probably store these in an sql table.
 	// Then when we want to query values or set them we have them available. 
-	//cout << endl << endl << endl << "AddValue(" << homeID << ":" << nodeID << endl << endl << endl;
-	//cout << "Genre=" << valueID.GetGenre() << endl;
-	//cout << "CommandClassId=" << valueID.GetCommandClassId() << endl;
-	//cout << "CommandClassInstance=" << valueID.GetInstance() << endl;
-	//cout << "Index=" << valueID.GetIndex() << endl;
-	//cout << "Type=" << valueID.GetType() << endl;
-	//cout << "Value=" << value << endl;
+	if ( debugging )
+	{
+		cout << endl << "AddValue: " << homeID << ":" << nodeID << endl;
+		cout << "Genre=" << valueID.GetGenre() << endl;
+		cout << "CommandClassId=" << valueID.GetCommandClassId() << endl;
+		cout << "CommandClassInstance=" << valueID.GetInstance() << endl;
+		cout << "Index=" << valueID.GetIndex() << endl;
+		cout << "Type=" << valueID.GetType() << endl;
+		cout << "Value=" << value << endl;
+		cout << "Label=" << Manager::Get()->GetValueLabel( valueID ) << endl;
+	}
 }
 
 void RPC_RemoveValue( int homeID, int nodeID/*, int valueID*/ )
 {
-	//cout << endl << endl << endl << "RemoveValue(" << homeID << ":" << nodeID << endl << endl << endl;
+	if ( debugging )
+	{
+		cout << endl << "RemoveValue: " << homeID << ":" << nodeID << endl;
+	}
 }
 
 // This is called when a device reports that a value has changed. 
@@ -231,8 +238,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 
 	if ( debugging )
 	{
-		//cout << endl << "ChangeValue(" << homeID << ":" << nodeID << endl << endl;
-		//cout << endl << "ChangeValue Node id: " << nodeID << endl << endl;
+		cout << endl << "ChangeValue: " << homeID << ":" << nodeID << endl;
 		cout << "Genre=" << genre << endl;
 		cout << "GenreName=" << cgenretoStr(genre) << endl;
 		cout << "CommandClassId=" << id << endl;
@@ -341,7 +347,6 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 			{
 				cout << "LIST" << endl;
 			}
-			//Manager::Get()->GetValueListItems(valueID, &list_strs );
 			Manager::Get()->GetValueListSelection(valueID, &list_value );
 			snprintf(dev_value, 32, "%s", strdup(list_value.c_str()));
 			break;
@@ -382,8 +387,37 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 			}
 			break;
 		}
-		case COMMAND_CLASS_SENSOR_MULTILEVEL:
 		case COMMAND_CLASS_METER:
+		{
+			if (label == "Power")
+			{
+				value_no = 2;
+			}
+			else if (label == "Energy")
+			{
+				value_no = 3;
+			}
+			break;
+		}
+		case COMMAND_CLASS_SENSOR_BINARY:
+		{	
+			if (label == "Sensor")
+			{
+				value_no = 1;
+				if ( strcmp(dev_value, "1") == 0 )
+                                {
+                                        strcpy(dev_value, "Closed");
+                                }
+                                else
+                                {
+                                        strcpy(dev_value, "Open");
+                                }
+
+			}
+		}
+		case COMMAND_CLASS_BATTERY:
+		case COMMAND_CLASS_ALARM:
+		case COMMAND_CLASS_SENSOR_MULTILEVEL:
 		{
 			if (label == "Temperature")
 			{
@@ -397,15 +431,18 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 			{
 				value_no = 255;
 			}
-			else if (label == "Power")
+			else if (label == "Alarm Level")
 			{
 				value_no = 2;
+				if ( strcmp(dev_value, "0") == 0 )
+				{
+					strcpy(dev_value, "Secure");
+				}
+				else
+				{
+					strcpy(dev_value, "Tamper");
+				}
 			}
-			else if (label == "Energy")
-			{
-				value_no = 3;
-			}
-			break;
 		}
 	}
 	if ( debugging )
@@ -425,14 +462,17 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 
 void RPC_AddNode( int homeID, int nodeID )
 {
-	//cout << endl << endl << endl << "AddNode(" << homeID << ":" << nodeID << endl << endl << endl;
+	if ( debugging )
+	{
+		cout << endl << "AddNode: " << homeID << ":" << nodeID << endl;
+	}
 
 }
 void RPC_RemoveNode( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << endl << endl << "RemoveNode: " << homeID << ":" << nodeID << endl << endl;
+		cout << endl << "RemoveNode: " << homeID << ":" << nodeID << endl;
 	}
 }
 
@@ -448,13 +488,13 @@ void RPC_ProtocolInfo( int homeID, int nodeID )
 	xmlrpc_int32 security = 0;
 	if ( debugging )
 	{
-		cout << endl << endl << "ProtocolInfo: " << homeID << ":" << nodeID << endl << endl;
-		cout << "node=" << nodeID << endl;
-		cout << "basic=" << basic << endl;
-		cout << "generic=" << generic << endl;
-		cout << "specific=" << specific << endl;
-		cout << "cap=" << capabilities << endl;
-		cout << "security=" << security << endl;
+		cout << endl << "ProtocolInfo: " << homeID << ":" << nodeID << endl;
+		cout << "Node=" << nodeID << endl;
+		cout << "Basic=" << basic << endl;
+		cout << "Generic=" << generic << endl;
+		cout << "Specific=" << specific << endl;
+		cout << "Cap=" << capabilities << endl;
+		cout << "Security=" << security << endl;
 	}
 	xmlrpc_value* resultP = NULL;
  	xmlrpc_client_call2f(&env, clientP, url, "zwave.createnode", &resultP, "(iiiiiib)", nodeID, basic, generic, specific, capabilities, security, sleeping );
@@ -469,7 +509,7 @@ void RPC_Group( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << endl << endl << "GroupEvent: " << homeID << ":" << nodeID << endl << endl << endl;
+		cout << endl << "GroupEvent: " << homeID << ":" << nodeID << endl;
 	}
 }
 
@@ -477,7 +517,7 @@ void RPC_NodeEvent( int homeID, int nodeID, int value )
 {
 	if ( debugging )
 	{
-		cout << endl << endl << endl << "NodeEvent: " << homeID << ":" << nodeID << endl << endl << endl;
+		cout << endl << "NodeEvent: " << homeID << ":" << nodeID << endl;
 	}
 /*	
 	xmlrpc_value* resultP = NULL;
@@ -493,7 +533,7 @@ void RPC_EnabledPolling( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << endl << endl << "EnabledPolling(" << homeID << ":" << nodeID << endl << endl << endl;
+		cout << endl << "EnabledPolling: " << homeID << ":" << nodeID << endl;
 	}
 }
 
@@ -501,7 +541,7 @@ void RPC_DisabledPolling( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << endl << endl << "DisabledPolling(" << homeID << ":" << nodeID << endl << endl << endl;
+		cout << endl << "DisabledPolling: " << homeID << ":" << nodeID << endl;
 	}
 }
 
@@ -510,7 +550,7 @@ void RPC_DriverReady( int homeID, int nodeID )
 	home = homeID;
 	if ( debugging )
 	{
-		cout << endl << endl << "DriverReady: " << homeID << ":" << nodeID << endl << endl;
+		cout << endl << "DriverReady: " << homeID << ":" << nodeID << endl;
 	}
 
 	xmlrpc_value* resultP = NULL;
@@ -601,7 +641,6 @@ void OnNotification
                                         break;
                                 }
                         }
-
 			break;
 		}
 		case Notification::Type_NodeProtocolInfo:
@@ -630,14 +669,14 @@ void OnNotification
 			RPC_DriverReady( (int)data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
-		// HACK ALERT
-		// For some reason I'm not getting the AllNodesQueried or AwakeNodesQueried notifications EVER.
-		// So for now, the 2nd time the controller node reports that it is done querying we'll assume we are done.
 		case Notification::Type_AllNodesQueried:
 		case Notification::Type_AwakeNodesQueried:
 		//case Notification::Type_NodeQueriesComplete:
 		{
-			//cout << endl << endl << endl << "NodeQueriesComplete Node=" << (int)(data->GetNodeId()) << " times=" << queriesFinishedTimes << endl;
+			if ( debugging )
+			{
+				cout << endl << "NodeQueriesComplete Node=" << (int)(data->GetNodeId()) << " times=" << queriesFinishedTimes << endl;
+			}
 			Manager::Get()->WriteConfig( home );
 
 			xmlrpc_value* resultP = NULL;
@@ -659,7 +698,7 @@ void OnNotification
 // C style bindings are required since we call these functions from gambas.
 extern "C" {
 
-void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir, const char* zwdir, bool enableLog )
+void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir, const char* zwdir, bool enableLog, int polltime )
 {
 	pthread_mutexattr_t mutexattr;
 
@@ -711,14 +750,10 @@ void DomoZWave_Destroy()
 
 void DomoZWave_EnablePolling( int node, int polltime )
 {
-	// Don't allow polling basic info on controllers.
-	// I was seeing strange results when we did this. 
 	if ( Manager::Get()->GetNodeBasic( home, node ) < 0x03 )
 	{	
-		//pthread_mutex_unlock( &g_criticalSection );
 		return;
 	}
-
 	Manager::Get()->SetPollInterval( polltime );
 
 	if( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
@@ -730,7 +765,10 @@ void DomoZWave_EnablePolling( int node, int polltime )
 			if ( id == COMMAND_CLASS_BASIC )
 			{
 				Manager::Get()->EnablePoll( *it );	
-				//cout << "Enable Polling for node " << node << endl;
+				if ( debugging )
+				{
+					cout << endl << "Enabled Polling for node " << node << endl;
+				}
 			}
 		}
         }
@@ -781,6 +819,12 @@ void DomoZWave_CancelControllerCommand( )
 void DomoZWave_SetConfigParam( int node, int param, int value ) 
 {
 	Manager::Get()->SetConfigParam( home, node, param, value);
+}
+
+void DomoZWave_AddAssociation( int node, int group ) 
+{
+	Manager::Get()->AddAssociation( home, 1, group, node);
+	Manager::Get()->RefreshNodeInfo( home, node);
 }
 
 void DomoZWave_RequestAllConfigParams( int node )
