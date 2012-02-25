@@ -1,0 +1,211 @@
+' Gambas class file
+
+' Description:
+' Ncid.class
+' Provide support for Ncid phonecall monitoring. (via call log port)
+
+' Development Status:
+' Just started to build this one.
+' Incoming/outgoing call logging implemented.
+' Tested with a Ncid 7170 Annex A running Firmware upto 58.04.76
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2012 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PROPERTY TCPHost AS String
+PROPERTY TCPPort AS Integer
+PROPERTY NcidDebug AS Boolean
+
+PRIVATE sTCPHost AS String
+PRIVATE iTCPPort AS Integer
+PRIVATE bNcidDebug AS Boolean
+PUBLIC tNcidConnect AS Timer
+
+PRIVATE iConnectRetry AS Integer = 0 ' retries
+PRIVATE iConnectDelay AS Integer = 60000 ' 1 minute
+
+PRIVATE hNcid AS NEW Socket
+PRIVATE sBuffer AS String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tNcidConnect_Timer()
+
+  IF NOT Connect() THEN
+    INC iConnectRetry
+    iConnectDelay *= iConnectRetry
+    tNcidConnect.Delay = iConnectDelay
+  ENDIF
+
+END
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the connection
+  TRY hNcid.Close
+
+  ' get a new one
+  hNcid = NEW Socket AS "Ncid"
+  hNcid.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("Ncid Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB Ncid_Ready()
+
+  Main.WriteLog(("Ncid TCP socket connected."))
+   ' define timer for Ncid reconnect
+  tNcidConnect = NEW Timer AS "tNcidConnect"
+  tNcidConnect.Delay = iConnectRetry
+  tNcidConnect.Stop
+
+END
+
+PUBLIC SUB Ncid_Closed()
+
+  Main.WriteLog(("ERROR: Ncid TCP socket connection is lost."))
+  IF iConnectRetry < 6 THEN
+    Main.WriteDebugLog(("[Ncid] Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", ".")))
+    tNcidConnect.Start
+  ENDIF
+
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hNcid.Close
+  TRY tNcidConnect.Stop
+  Main.WriteLog(("Ncid TCP socket port close."))
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("Ncid Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB Ncid_Read()
+
+  DIM sData AS String
+
+  READ #hNcid, sData, 1
+  IF sData = Chr(10) THEN ' buffer until linefeed then parse
+    IF Len(sBuffer) > 1 THEN ParseLine(Left(sBuffer, Len(sBuffer) - 1))
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  END IF
+
+END
+
+PRIVATE SUB ParseLine(sStr AS String)
+
+  DIM aScan AS String[]
+  DIM rResult AS Result
+  DIM iId AS Integer
+  DIM sName AS String
+
+  IF Main.bNcidDebug THEN Main.WriteDebugLog("[Ncid] " & sStr)
+  ' CID: *DATE*12102011*TIME*1326*LINE*-*NMBR*0612954340*MESG*NONE*NAME*NO NAME*
+  IF InStr(sStr, "CID:") THEN
+    sStr = Replace(sStr, "*", ";")
+    aScan = Scan(sStr, "CID: ;DATE;*;TIME;*;LINE;*;NMBR;*;MESG;*;NAME;*;")
+    IF aScan.Count = 6 THEN
+      sName = CallerID.ReturnCallerID(aScan[3])
+      Main.WriteLog("Incoming phone call from " & IIf(aScan[3], aScan[3] & " (" & sName & ")", "0000000000") & ".")
+      Main.SetGlobalVar("PhoneCall_Incoming", aScan[3] & " (" & sName & ") at " & Format(Now(), "hh:mm:ss dd-mm-yyyy"))
+      IF Main.bNcidDebug THEN Main.WriteDebugLog(("[Ncid] Incoming call [id=") & aScan[0] & aScan[1] & ("] from ") & aScan[3] & (" on line ") & aScan[2] & " (" & aScan[5] & ")")
+      ' write data to cdr table
+      Main.hDB.Begin()
+      rResult = Main.hDB.Create("cdr")
+      rResult!calldate = Now()
+      rResult!uniqueid = aScan[0] & aScan[1]
+      rResult!clid = IIf(aScan[3], aScan[3], "0000000000")
+      rResult!src = IIf(aScan[3], aScan[3], "0000000000")
+      rResult!dcontext = "incoming"
+      rResult!channel = aScan[2]
+      rResult!disposition = "NO ANSWER"
+      rResult.Update()
+      Main.hDB.Commit()
+      Main.RefreshPhoneCallList()
+    ELSE
+      Main.WriteDebugLog(("[Ncid] Error couldn't parse: ") & sStr)
+    END IF
+  END IF
+
+END
+
+PUBLIC SUB Ncid_Error()
+
+  DIM sString AS String = "Ncid: "
+
+  ' handle error
+  SELECT CASE hNcid.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog(sString & ("The system does not allow to create a socket."))
+    CASE Net.HostNotFound
+      Main.WriteLog(sString & ("Host '") & sTCPHost & ("' not found."))
+    CASE Net.ConnectionRefused
+      Main.WriteLog(sString & ("Unable to connect. Connection refused."))
+    CASE Net.CannotRead
+      Main.WriteLog(sString & ("Error reading data."))
+    CASE Net.CannotWrite
+      Main.WriteLog(sString & ("Error writing data."))
+  END SELECT
+
+END
+
+' implement properties
+PRIVATE FUNCTION TCPHost_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB TCPHost_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION TCPPort_Read() AS Integer
+
+  RETURN iTCPPort
+
+END
+
+PRIVATE SUB TCPPort_Write(Value AS Integer)
+
+  iTCPPort = Value
+
+END
+
+PRIVATE FUNCTION NcidDebug_Read() AS Boolean
+
+  RETURN bNcidDebug
+
+END
+
+PRIVATE SUB NcidDebug_Write(Value AS Boolean)
+
+  bNcidDebug = Value
+
+END
