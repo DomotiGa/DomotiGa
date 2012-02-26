@@ -361,6 +361,22 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 
 	switch ( id )
 	{
+		case COMMAND_CLASS_BASIC:
+		{
+			if (label == "Basic")
+			{
+				value_no = 1;
+				if ( strcmp(dev_value, "255") == 0 ) 
+				{
+					strcpy(dev_value, "On");
+				}
+				else if ( strcmp(dev_value, "0") == 0 ) 
+				{
+					strcpy(dev_value, "Off");
+				}
+			}
+			break;
+		}
 		case COMMAND_CLASS_SWITCH_BINARY:
 		{
 			if (label == "Switch")
@@ -368,14 +384,14 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 				value_no = 1;
 				if ( strcmp(dev_value, "1") == 0 ) 
 				{
-					strcpy(dev_value, "On");;
+					strcpy(dev_value, "On");
 				}
 				else
 				{
-					strcpy(dev_value, "Off");;
+					strcpy(dev_value, "Off");
 				}
 			}
-			break;				
+			break;
 		}
 		case COMMAND_CLASS_SWITCH_MULTILEVEL:
 		{	
