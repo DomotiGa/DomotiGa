@@ -47,6 +47,36 @@ INSERT INTO `settings_ncid` VALUES (0,0,'127.0.0.1',0,3333),(1,0,'192.168.200.15
 /*!40000 ALTER TABLE `settings_ncid` ENABLE KEYS */;
 UNLOCK TABLES;
 
+--
+-- Table structure for table `settings_zwave`
+--
+
+DROP TABLE IF EXISTS `settings_zwave`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_zwave` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `serialport` varchar(32) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
+  `reloadnodes` tinyint(1) DEFAULT NULL,
+  `useozw` tinyint(1) DEFAULT NULL,
+  `polltime` int(11) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_zwave`
+--
+
+LOCK TABLES `settings_zwave` WRITE;
+/*!40000 ALTER TABLE `settings_zwave` DISABLE KEYS */;
+INSERT INTO `settings_zwave` VALUES (0,0,'/dev/ttyUSB4','115200',0,0,0,0),(1,0,'/dev/ttyUSB10','115200',0,0,0,0);
+/*!40000 ALTER TABLE `settings_zwave` ENABLE KEYS */;
+UNLOCK TABLES;
+
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
