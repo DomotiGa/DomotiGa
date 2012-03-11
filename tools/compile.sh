@@ -24,3 +24,15 @@ rm -rf .gambas
 cd ..
 chmod +x DomotiGa.gambas
 ls -la DomotiGa.gambas
+
+if [ -d DomotiGaServer3 ]; then
+  cd DomotiGaServer3
+else
+  cd ../DomotiGaServer3
+fi
+gbc3 -agm
+gba3 -o `pwd`/../DomotiGaServer3.gambas
+rm -rf .gambas
+cd ..
+chmod +x DomotiGaServer3.gambas
+ls -la DomotiGaServer3.gambas
