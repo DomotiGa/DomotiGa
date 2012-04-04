@@ -152,11 +152,13 @@ CONST sTypeHarrison AS Byte = &H0
 ' security
 CONST pTypeSecurity1 AS Byte = &H20
 CONST sTypeSecX10 AS Byte = &H0
-CONST sTypeKD101 AS Byte = &H1
-CONST sTypePowercodeSensor AS Byte = &H2
-CONST sTypePowercodeMotion AS Byte = &H3
-CONST sTypeCodesecure AS Byte = &H4
-CONST sTypePowercodeAux AS Byte = &H5
+CONST sTypeSecX10M AS Byte = &H1
+CONST sTypeSecX10R AS Byte = &H2
+CONST sTypeKD101 AS Byte = &H3
+CONST sTypePowercodeSensor AS Byte = &H4
+CONST sTypePowercodeMotion AS Byte = &H5
+CONST sTypeCodesecure AS Byte = &H6
+CONST sTypePowercodeAux AS Byte = &H7
 
 ' status security
 CONST sStatusNormal AS Byte = &H0
@@ -496,12 +498,14 @@ PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String)
   ENDIF
 
   SELECT UCase(sType)
-    CASE "X10", "ARC", "AB400", "WAVEMAN", "EMW200", "IMPLUS" ' Lightning1
+    CASE "X10", "ARC", "AB400", "WAVEMAN", "EMW200", "IMPULS" ' Lightning1
       Lighting1(sType, sAddress, sCmd)
     CASE "AC", "HEEU", "ANSLUT" ' Lightning2
       Lighting2(sType, sAddress, sCmd)
+    CASE "LIGHTWAVERF" ' Lightning5
+      Lighting5(sType, sAddress, sCmd)
     CASE "HARRISON" ' Curtain1
-      Curtain1(sType, sAddress, sCmd)
+      Curtain(sType, sAddress, sCmd)
     CASE ELSE
       Main.WriteDebugLog(("[RFXComTRX] " & sType & " protocol is not (yet) supported by RFXComTRX code!"))
       RETURN
@@ -784,7 +788,7 @@ PRIVATE SUB ProcessReceivedChar(bTemp AS Byte)
     Decode_Messages()  ' decode message
     RecBytes = 0  ' set to zero to receive next message
   ELSE
-    IF bRFXComTRXDebug THEN Main.WriteRFXDebugLog(Hex(bTemp, 2) & " ", 1) ' write the output to the screen
+    IF bRFXComTRXDebug THEN Main.WriteRFXDebugLog(Hex(bTemp, 2), 1) ' write the output to the screen
   ENDIF
 
 END
@@ -1523,22 +1527,31 @@ END
 '      seqnbr = 3
 '      id1 = 4
 '      id2 = 5
-'      status = 6
-'      battery_level = 7   'bits 3-0
-'      rssi = 7            'bits 7-4
-'      filler = 7
-'      size = 7
+'      id3 = 6
+'      status = 7
+'      battery_level = 8  'bits 3-0
+'      rssi = 8           'bits 7-4
+'      filler = 8
+'      size = 8
 '  END ENUM
 
 PUBLIC SUB Decode_Security1()
 
-  DIM sAddress, sType, sCmd, sBatt AS String
+  DIM sAddress, sType, sCmd AS String
+  DIM sTamper AS String = " "
+  DIM sBatt AS String = "OK"
   DIM iDeviceId AS Integer
 
   SELECT CASE RecBuf[2]
     CASE sTypeSecX10
       sType = "X10Security"
       WriteMessage("Subtype       = X10 security")
+    CASE sTypeSecX10M
+      sType = "X10Security"
+      WriteMessage("Subtype       = X10 security motion")
+    CASE sTypeSecX10R
+      sType = "X10Security"
+      WriteMessage("Subtype       = X10 security remote")
     CASE sTypeKD101
       WriteMessage("Subtype       = KD101 smoke detector")
     CASE sTypePowercodeSensor
@@ -1554,14 +1567,14 @@ PUBLIC SUB Decode_Security1()
       sType = "VisonicPwrCode"
       WriteMessage("Subtype       = Visonic PowerCode sensor - auxiliary contact")
     CASE ELSE
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[12]) & ": " & Hex(RecBuf[2]))
+      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
       RETURN
   END SELECT
   WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress("x10sec " & Hex(RecBuf[4], 2) & Hex(RecBuf[5], 2) & Hex(RecBuf[6], 2))
   WriteMessage("ID1-3         = " & sAddress)
 
-  SELECT CASE RecBuf[6]
+  SELECT CASE RecBuf[7]
     CASE sStatusNormal
       sCmd = "Normal"
     CASE sStatusNormalDelayed
@@ -1579,7 +1592,7 @@ PUBLIC SUB Decode_Security1()
     CASE sStatusPanicOff
       sCmd = "Panic End"
     CASE sStatusTamper
-      sCmd = "Tamper"
+      sTamper = "Tamper"
     CASE sStatusArmAway
       sCmd = "Arm Away"
     CASE sStatusArmAwayDelayed
@@ -1604,18 +1617,23 @@ PUBLIC SUB Decode_Security1()
       sCmd = "Light"
     CASE sStatusBatLow
       sCmd = "Battery low MS10 or XX18 sensor"
+      sBatt = "Low"
     CASE sStatusPairKD101
       sCmd = "Pair KD101"
   END SELECT
   WriteMessage("Status        = " & sCmd)
-  sBatt = CStr(RecBuf[7] AND &HF)
+  IF (RecBuf[8] AND &HF) = 0 THEN
+    sBatt = "Low"
+  ELSE
+    sBatt = "OK"
+  ENDIF
   WriteMessage("Battery level = " & sBatt)
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[4], 4)))
+  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
   iDeviceId = Devices.Find(sAddress, Devices.FindInterface("RFXCom Tranceiver"), UCase(sType))
   ' update value & battery status
   IF iDeviceId THEN
     ' cmd
-    Devices.ValueUpdate(iDeviceId, sCmd, "", "", "")
+    Devices.ValueUpdate(iDeviceId, sCmd, sTamper, "", "")
     Devices.Battery(iDeviceId, sBatt)
   ENDIF
 
@@ -3693,7 +3711,7 @@ PUBLIC SUB Lighting2(sType AS String, sAddress AS String, sCommand AS String, OP
   IF aAddr.Count = 2 THEN
     sAddress = aAddr[0]
     sUnit = aAddr[1]
-    IF sUnit == "group" THEN
+    IF LCase(sUnit) = "group" THEN
       bGroup = TRUE
       sUnit = 0
     ENDIF
@@ -3719,14 +3737,14 @@ PUBLIC SUB Lighting2(sType AS String, sAddress AS String, sCommand AS String, OP
   bBuf[7] = CByte(Val("&H" & Mid(sAddress, 6, 2)))
   bBuf[8] = CByte(Val(sUnit))
 
-  IF InStr(sCmd, "ON") OR IF InStr(sCmd, "DIM 100") THEN
-    bBuf[9] = IIf(bGroup, 4, 1)
-  ELSE IF InStr(sCmd, "OFF") OR IF InStr(sCmd, "DIM 0") THEN
-    bBuf[9] = IIf(bGroup, 3, 0)
-  ELSE IF InStr(sCmd, "ALL OFF") OR IF InStr(sCmd, "GROUP OFF") THEN
+  IF InStr(sCmd, "ALL OFF") OR IF InStr(sCmd, "GROUP OFF") THEN
     bBuf[9] = 3
   ELSE IF InStr(sCmd, "ALL ON") OR IF InStr(sCmd, "GROUP ON") THEN
     bBuf[9] = 4
+  ELSE IF InStr(sCmd, "ON") OR IF InStr(sCmd, "DIM 100") THEN
+    bBuf[9] = IIf(bGroup, 4, 1)
+  ELSE IF InStr(sCmd, "OFF") OR IF InStr(sCmd, "DIM 0") THEN
+    bBuf[9] = IIf(bGroup, 3, 0)
   ELSE IF InStr(sCmd, "DIM ") THEN ' DIM 1 - 99
     iBrightness = Val(Replace(sCmd, "DIM ", ""))
     IF iBrightness > 0 THEN
@@ -3739,6 +3757,104 @@ PUBLIC SUB Lighting2(sType AS String, sAddress AS String, sCommand AS String, OP
     RETURN
   ENDIF
   bBuf[11] = 0
+  WriteCommand(bBuf)
+
+END
+
+' ENUM LIGHTING5 AS Byte
+' packetlength = 0
+' packettype = 1
+' subtype = 2
+' seqnbr = 3
+' id1 = 4
+' id2 = 5
+' id3 = 6
+' unitcode = 7
+' cmnd = 8
+' filler = 9 'bits 3-0
+' rssi = 9   'bits 7-4
+' size = 9
+'
+' pType = &H14
+' sTypeLightwaveRF = &H0
+'
+' sOff = 0
+' sOn = 1
+' sGroupOff = 2
+' sMood1 = 3
+' sMood2 = 4
+' sMood3 = 5
+' sUnlock = 6
+' sLock = 7
+' sAllLock = 8
+' END ENUM
+
+' Lightning5
+PUBLIC SUB Lighting5(sType AS String, sAddress AS String, sCommand AS String)
+
+  ' [GB2:ARRD] DIM bBuf AS Byte[10]
+  DIM bBuf As New Byte[10]
+  DIM sCmd AS String = UCase(sCommand)
+  DIM aAddr AS String[]
+  DIM sUnit AS String
+
+  ' "LIGHTWAVERF"
+  SELECT CASE UCase(sType)
+    CASE "LIGHTWAVERF"
+      bBuf[2] = 0
+    CASE ELSE
+      WriteMessage("[RFXComTRX] Not a valid Lighting5 type : " & sType)
+      RETURN
+  END SELECT
+
+  aAddr = Split(sAddress, " ")
+  IF aAddr.Count = 2 THEN
+    sAddress = aAddr[0]
+    sUnit = aAddr[1]
+  ELSE
+    Main.WriteDebugLog(("[RFXComTRX] Lighting5 address has wrong format, use '<Device> <Unit>'!"))
+    RETURN
+  ENDIF
+
+  IF Len(sAddress) = 8 AND IF Left(sAddress, 2) = "0x" THEN sAddress = Right(sAddress, 6)
+  IF Len(sAddress) <> 6 THEN
+    Main.WriteDebugLog(("[RFXComTRX] Lighting5 device address length must be 6 characters!"))
+    RETURN
+  ENDIF
+
+  bBuf[0] = 9
+  bBuf[1] = pTypeLighting5
+  bBuf[3] = iSeq
+
+  bBuf[4] = CByte(Val("&H" & Left(sAddress, 2)))
+  bBuf[5] = CByte(Val("&H" & Mid(sAddress, 3, 2)))
+  bBuf[6] = CByte(Val("&H" & Mid(sAddress, 5, 2)))
+  bBuf[7] = CByte(Val(sUnit))
+
+  SELECT CASE sCmd
+    CASE "ON"
+      bBuf[8] = 1
+    CASE "OFF"
+      bBuf[8] = 0
+    CASE "ALL OFF", "GROUP OFF"
+      bBuf[8] = 2
+    CASE "MOOD1"
+      bBuf[8] = 3
+    CASE "MOOD2"
+      bBuf[8] = 4
+    CASE "MOOD3"
+      bBuf[8] = 5
+    CASE "UNLOCK"
+      bBuf[8] = 6
+    CASE "LOCK"
+      bBuf[8] = 7
+    CASE "ALL LOCK"
+      bBuf[8] = 8
+    CASE ELSE
+      Main.WriteDebugLog(("[RFXComTRX] Unknown Lighting5 command '") & sCmd & ("' given!"))
+      RETURN
+  END SELECT
+  bBuf[9] = 0
   WriteCommand(bBuf)
 
 END
@@ -3758,7 +3874,7 @@ END
 ' END ENUM
 
 ' Curtain1
-PUBLIC SUB Curtain1(sType AS String, sAddress AS String, sCommand AS String)
+PUBLIC SUB Curtain(sType AS String, sAddress AS String, sCommand AS String)
 
   ' [GB2:ARRD] DIM bBuf AS Byte[8]
   DIM bBuf As New Byte[8]
@@ -3773,7 +3889,7 @@ PUBLIC SUB Curtain1(sType AS String, sAddress AS String, sCommand AS String)
       ENDIF
       bBuf[2] = &H0
     CASE ELSE
-      WriteMessage("[RFXComTRX] Not a valid Curtain1 type : " & sType)
+      WriteMessage("[RFXComTRX] Not a valid Curtain type : " & sType)
       RETURN
   END SELECT
 
@@ -3793,7 +3909,7 @@ PUBLIC SUB Curtain1(sType AS String, sAddress AS String, sCommand AS String)
     CASE "PROGRAM"
       bBuf[6] = 3
     CASE ELSE
-      Main.WriteDebugLog(("[RFXComTRX] Unknown Curtain1 command '") & UCase(sCmd) & ("' given!"))
+      Main.WriteDebugLog(("[RFXComTRX] Unknown Curtain command '") & UCase(sCmd) & ("' given!"))
       RETURN
   END SELECT
   bBuf[7] = 0
