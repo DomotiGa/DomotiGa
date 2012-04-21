@@ -17,6 +17,7 @@
 // You should have received a copy of the GNU General PUBLIC License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+// system
 #include <iostream>
 #include <stdio.h>
 #include <pthread.h>
@@ -44,101 +45,14 @@
 
 // wrapper
 #include "DomoZWave.h"
-
-#define COMMAND_CLASS_NO_OPERATION 0x00 
-#define COMMAND_CLASS_BASIC 0x20 
-#define COMMAND_CLASS_CONTROLLER_REPLICATION 0x21 
-#define COMMAND_CLASS_APPLICATION_STATUS 0x22 
-#define COMMAND_CLASS_ZIP_SERVICES 0x23 
-#define COMMAND_CLASS_ZIP_SERVER 0x24 
-#define COMMAND_CLASS_SWITCH_BINARY 0x25 
-#define COMMAND_CLASS_SWITCH_MULTILEVEL 0x26 
-#define COMMAND_CLASS_SWITCH_ALL 0x27 
-#define COMMAND_CLASS_SWITCH_TOGGLE_BINARY 0x28 
-#define COMMAND_CLASS_SWITCH_TOGGLE_MULTILEVEL 0x29 
-#define COMMAND_CLASS_CHIMNEY_FAN 0x2A 
-#define COMMAND_CLASS_SCENE_ACTIVATION 0x2B 
-#define COMMAND_CLASS_SCENE_ACTUATOR CONF 0x2C 
-#define COMMAND_CLASS_SCENE_CONTROLLER CONF 0x2D 
-#define COMMAND_CLASS_ZIP_CLIENT 0x2E 
-#define COMMAND_CLASS_ZIP_ADV_SERVICES 0x2F 
-#define COMMAND_CLASS_SENSOR_BINARY 0x30 
-#define COMMAND_CLASS_SENSOR_MULTILEVEL 0x31 
-#define COMMAND_CLASS_METER 0x32 
-#define COMMAND_CLASS_ZIP_ADV_SERVER 0x33 
-#define COMMAND_CLASS_ZIP_ADV_CLIENT 0x34 
-#define COMMAND_CLASS_METER_PULSE 0x35 
-#define COMMAND_CLASS_THERMOSTAT_HEATING 0x38 
-#define COMMAND_CLASS_THERMOSTAT_MODE 0x40 
-#define COMMAND_CLASS_THERMOSTAT_OPERATING_STATE 0x42 
-#define COMMAND_CLASS_THERMOSTAT_SETPOINT 0x43 
-#define COMMAND_CLASS_THERMOSTAT_FAN_MODE 0x44 
-#define COMMAND_CLASS_THERMOSTAT_FAN_STATE 0x45 
-#define COMMAND_CLASS_CLIMATE_CONTROL_SCHEDULE 0x46 
-#define COMMAND_CLASS_THERMOSTAT_SETBACK 0x47 
-#define COMMAND_CLASS_DOOR_LOCK_LOGGING 0x4C 
-#define COMMAND_CLASS_SCHEDULE_ENTRY_LOCK 0x4E 
-#define COMMAND_CLASS_BASIC_WINDOW_COVERING 0x50 
-#define COMMAND_CLASS_MTP_WINDOW_COVERING 0x51 
-#define COMMAND_CLASS_MULTI_INSTANCE 0x60 
-#define COMMAND_CLASS_DOOR_LOCK 0x62 
-#define COMMAND_CLASS_USER_CODE 0x63 
-#define COMMAND_CLASS_CONFIGURATION 0x70 
-#define COMMAND_CLASS_ALARM 0x71 
-#define COMMAND_CLASS_MANUFACTURER_SPECIFIC 0x72 
-#define COMMAND_CLASS_POWERLEVEL 0x73 
-#define COMMAND_CLASS_PROTECTION 0x75 
-#define COMMAND_CLASS_LOCK 0x76 
-#define COMMAND_CLASS_NODE_NAMING 0x77 
-#define COMMAND_CLASS_FIRMWARE_UPDATE_MD 0x7A 
-#define COMMAND_CLASS_GROUPING_NAME 0x7B 
-#define COMMAND_CLASS_REMOTE_ASSOCIATION_ACTIVATE 0x7C 
-#define COMMAND_CLASS_REMOTE_ASSOCIATION 0x7D 
-#define COMMAND_CLASS_BATTERY 0x80 
-#define COMMAND_CLASS_CLOCK 0x81 
-#define COMMAND_CLASS_HAIL 0x82 
-#define COMMAND_CLASS_WAKE_UP 0x84 
-#define COMMAND_CLASS_ASSOCIATION 0x85 
-#define COMMAND_CLASS_VERSION 0x86 
-#define COMMAND_CLASS_INDICATOR 0x87 
-#define COMMAND_CLASS_PROPRIETARY 0x88 
-#define COMMAND_CLASS_LANGUAGE 0x89 
-#define COMMAND_CLASS_TIME 0x8A 
-#define COMMAND_CLASS_TIME_PARAMETERS 0x8B 
-#define COMMAND_CLASS_GEOGRAPHIC_LOCATION 0x8C 
-#define COMMAND_CLASS_COMPOSITE 0x8D 
-#define COMMAND_CLASS_MULTI_INSTANCE_ASSOCIATION 0x8E 
-#define COMMAND_CLASS_MULTI_CMD 0x8F 
-#define COMMAND_CLASS_ENERGY_PRODUCTION 0x90 
-#define COMMAND_CLASS_MANUFACTURER_PROPRIETARY 0x91 
-#define COMMAND_CLASS_SCREEN_MD 0x92 
-#define COMMAND_CLASS_SCREEN_ATTRIBUTES 0x93 
-#define COMMAND_CLASS_SIMPLE_AV_CONTROL 0x94 
-#define COMMAND_CLASS_AV_CONTENT_DIRECTORY MD 0x95 
-#define COMMAND_CLASS_AV_RENDERER_STATUS 0x96 
-#define COMMAND_CLASS_AV_CONTENT_SEARCH_MD 0x97 
-#define COMMAND_CLASS_SECURITY 0x98 
-#define COMMAND_CLASS_AV_TAGGING_MD 0x99 
-#define COMMAND_CLASS_IP_CONFIGURATION 0x9A 
-#define COMMAND_CLASS_ASSOCIATION_COMMAND_CONFIGURATION 0x9B 
-#define COMMAND_CLASS_SENSOR_ALARM 0x9C 
-#define COMMAND_CLASS_SILENCE_ALARM 0x9D 
-#define COMMAND_CLASS_SENSOR_CONFIGURATION 0x9E 
-#define COMMAND_CLASS_MARK 0xEF 
-#define COMMAND_CLASS_NON_INTEROPERABLE 0xF0 
-
 using namespace OpenZWave;
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-int home;       // The homeId for our controller. Ideally I think this should be done differently in case people
-		// have multiple homeIds in their network. 
+int home;	// the HomeId for our controller, needs fix if people use multiple home id's.
 xmlrpc_env env;
 xmlrpc_client* clientP;
 char url[35];
 bool debugging;
 
-int queriesFinishedTimes = 0; // A value used in a hacky way of determining when the startup queries are done. 
 static pthread_mutex_t g_criticalSection;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -151,7 +65,7 @@ typedef struct
 {
         uint32                  m_homeId;
         uint8                   m_nodeId;
-        list<ValueID>   m_values;
+        list<ValueID>		m_values;
 }NodeInfo;
 static list<NodeInfo*> g_nodes;
 
@@ -198,25 +112,6 @@ bool fault_occurred(xmlrpc_env* env)
 	return false; 
 }
 
-////////////////////////////////////////////////////////////////////////
-
-void RPC_AddValue( int homeID, int nodeID, ValueID valueID, uint8 value )
-{
-	// Eventually we should probably store these in an sql table.
-	// Then when we want to query values or set them we have them available. 
-	if ( debugging )
-	{
-		cout << endl << "AddValue: " << homeID << ":" << nodeID << endl;
-		cout << "Genre=" << valueID.GetGenre() << endl;
-		cout << "CommandClassId=" << valueID.GetCommandClassId() << endl;
-		cout << "CommandClassInstance=" << valueID.GetInstance() << endl;
-		cout << "Index=" << valueID.GetIndex() << endl;
-		cout << "Type=" << valueID.GetType() << endl;
-		cout << "Value=" << value << endl;
-		cout << "Label=" << Manager::Get()->GetValueLabel( valueID ) << endl;
-	}
-}
-
 void RPC_RemoveValue( int homeID, int nodeID/*, int valueID*/ )
 {
 	if ( debugging )
@@ -225,41 +120,46 @@ void RPC_RemoveValue( int homeID, int nodeID/*, int valueID*/ )
 	}
 }
 
-// This is called when a device reports that a value has changed. 
-// If it was the basic command class we'll report that value back to domotiga.
-// Also try to get channel/instance and report that back
-void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
+// This is called when a device reports that a value has changed or added.
+// If it was from a known command class we'll report that value back to DomotiGa.
+void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 {
 	int id = valueID.GetCommandClassId();
 	int genre = valueID.GetGenre();
 	string label =  Manager::Get()->GetValueLabel( valueID );
 	int instanceID = valueID.GetInstance();
 	int type = valueID.GetType();
+	char dev_value[64];
+	char tmp_dev_value[64];
+	uint8 byte_value;
+	bool bool_value;
+	string decimal_value;
+	string list_value;
+	string string_value;
+	vector<string> list_strs;
+	int int_value;
+	int16 short_value;
+	int value_no = 0;
 
 	if ( debugging )
 	{
-		cout << endl << "ChangeValue: " << homeID << ":" << nodeID << endl;
+		if ( add )
+		{
+			cout << endl << "AddValue: HomeId=" << homeID << " Node=" << nodeID << endl;
+		}
+		else
+		{
+			cout << endl << "ChangeValue: HomeId=" << homeID << " Node=" << nodeID << endl;
+		}	
 		cout << "Genre=" << genre << endl;
 		cout << "GenreName=" << cgenretoStr(genre) << endl;
 		cout << "CommandClassId=" << id << endl;
 		cout << "CommandClassName=" << cclasstoStr(id) << endl;
 		cout << "CommandClassInstance=" << instanceID << endl;
 		cout << "Index=" << (int)(valueID.GetIndex()) << endl;
-		//cout << "Type=" << type << endl;
 		cout << "Label=" << label << endl;
 		cout << "Units=" << Manager::Get()->GetValueUnits( valueID ) << endl;
 	}
-
-	char dev_value[32];
-	char tmp_dev_value[64];
-	uint8 byte_value;
-	bool bool_value;
-	string decimal_value;
-	string list_value;
-	vector<string> list_strs;
-	int int_value;
-	int16 short_value;
-	int value_no = 0;
 
 	switch ( type )
 	{
@@ -267,57 +167,57 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 		{
 			if ( debugging )
 			{
-				cout << "BOOL" << endl;
+				cout << "Type=Bool" << endl;
 			}
 			Manager::Get()->GetValueAsBool(valueID, &bool_value );
-			snprintf(dev_value, 32, "%i", bool_value);
+			snprintf(dev_value, 64, "%i", bool_value);
 			break;
 		}
 		case ValueID::ValueType_Byte:
 		{
 			if ( debugging )
 			{
-				cout << "BYTE" << endl;
+				cout << "Type=Byte" << endl;
 			}
 			Manager::Get()->GetValueAsByte(valueID, &byte_value );
-			snprintf(dev_value, 32, "%i", byte_value);
+			snprintf(dev_value, 64, "%i", byte_value);
 			break;
 		}
 		case ValueID::ValueType_Decimal:
 		{
 			if ( debugging )
 			{
-				cout << "DECIMAL" << endl;
+				cout << "Type=Decimal" << endl;
 			}
 			Manager::Get()->GetValueAsString(valueID, &decimal_value );
-			snprintf(dev_value, 32, "%s", strdup(decimal_value.c_str()));
+			snprintf(dev_value, 64, "%s", strdup(decimal_value.c_str()));
 			break;
 		}
 		case ValueID::ValueType_Int:
 		{
 			if ( debugging )
 			{
-				cout << "INTEGER" << endl;
+				cout << "Type=Integer" << endl;
 			}
 			Manager::Get()->GetValueAsInt(valueID, &int_value );
-			snprintf(dev_value, 32, "%d", int_value);
+			snprintf(dev_value, 64, "%d", int_value);
 			break;
 		}
 		case ValueID::ValueType_Short:
 		{
 			if ( debugging )
 			{
-				cout << "SHORT" << endl;
+				cout << "Type=Short" << endl;
 			}
 			Manager::Get()->GetValueAsShort(valueID, &short_value );
-			snprintf(dev_value, 32, "%d.h", short_value);
+			snprintf(dev_value, 64, "%d.h", short_value);
 			break;
 		}
 		case ValueID::ValueType_Schedule:
 		{
 			if ( debugging )
 			{
-				cout << "SCHEDULE" << endl;
+				cout << "Type=Schedule" << endl;
 			}
 			return;
 			//break;
@@ -326,17 +226,17 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 		{
 			if ( debugging )
 			{
-				cout << "STRING" << endl;
+				cout << "Type=String" << endl;
 			}
-			Manager::Get()->GetValueAsString(valueID, &decimal_value );
-			snprintf(dev_value, 32, "%s", strdup(decimal_value.c_str()));
+			Manager::Get()->GetValueAsString(valueID, &string_value );
+			snprintf(dev_value, 64, "%s", strdup(string_value.c_str()));
 			break;
 		}
 		case ValueID::ValueType_Button:
 		{
 			if ( debugging )
 			{
-				cout << "BUTTON" << endl;
+				cout << "Type=Button" << endl;
 			}
 			return;
 			//break;
@@ -345,16 +245,16 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 		{
 			if ( debugging )
 			{
-				cout << "LIST" << endl;
+				cout << "Type=List" << endl;
 			}
 			Manager::Get()->GetValueListSelection(valueID, &list_value );
-			snprintf(dev_value, 32, "%s", strdup(list_value.c_str()));
+			snprintf(dev_value, 64, "%s", strdup(list_value.c_str()));
 			break;
 		}
 		default:
 		if ( debugging ) 
 		{
-			cout << "UNKNOWN" << endl;
+			cout << "Type=Unknown" << endl;
 		}
 		return;
 	}
@@ -373,6 +273,11 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 				else if ( strcmp(dev_value, "0") == 0 ) 
 				{
 					strcpy(dev_value, "Off");
+				}
+				else
+				{
+					sprintf(tmp_dev_value, "Dim %s", dev_value);
+					strcpy(dev_value, tmp_dev_value);
 				}
 			}
 			break;
@@ -463,7 +368,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, int val )
 	}
 	if ( debugging )
 	{
-		cout << "Value=" << dev_value << endl;
+		cout << "Value=" << dev_value << endl << endl;
 	}
 	if ( value_no > 0 )
 	{
@@ -480,7 +385,7 @@ void RPC_AddNode( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << "AddNode: " << homeID << ":" << nodeID << endl;
+		cout << endl << "AddNode: HomeId=" << homeID << " Node=" << nodeID << endl;
 	}
 
 }
@@ -488,7 +393,7 @@ void RPC_RemoveNode( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << "RemoveNode: " << homeID << ":" << nodeID << endl;
+		cout << endl << "RemoveNode: HomeId=" << homeID << " Node=" << nodeID << endl;
 	}
 }
 
@@ -504,8 +409,7 @@ void RPC_ProtocolInfo( int homeID, int nodeID )
 	xmlrpc_int32 security = 0;
 	if ( debugging )
 	{
-		cout << endl << "ProtocolInfo: " << homeID << ":" << nodeID << endl;
-		cout << "Node=" << nodeID << endl;
+		cout << endl << "ProtocolInfo: HomeId=" << homeID << " Node=" << nodeID << endl;
 		cout << "Basic=" << basic << endl;
 		cout << "Generic=" << generic << endl;
 		cout << "Specific=" << specific << endl;
@@ -549,7 +453,7 @@ void RPC_EnabledPolling( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << "EnabledPolling: " << homeID << ":" << nodeID << endl;
+		cout << endl << "EnabledPolling: HomeId=" << homeID << " Node=" << nodeID << endl;
 	}
 }
 
@@ -557,7 +461,7 @@ void RPC_DisabledPolling( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << "DisabledPolling: " << homeID << ":" << nodeID << endl;
+		cout << endl << "DisabledPolling: HomeId=" << homeID << " Node=" << nodeID << endl;
 	}
 }
 
@@ -566,7 +470,7 @@ void RPC_DriverReady( int homeID, int nodeID )
 	home = homeID;
 	if ( debugging )
 	{
-		cout << endl << "DriverReady: " << homeID << ":" << nodeID << endl;
+		cout << endl << "DriverReady: HomeId=" << homeID << " Node=" << nodeID << endl;
 	}
 
 	xmlrpc_value* resultP = NULL;
@@ -603,7 +507,8 @@ void OnNotification
 				// Add the new value to our list
 				nodeInfo->m_values.push_back( data->GetValueID() );
 			}
-			RPC_AddValue( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), data->GetByte() );
+			//RPC_AddValue( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), data->GetByte() );
+			RPC_ChangeValue( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), true );
 
 			break;
 		}
@@ -625,13 +530,22 @@ void OnNotification
                         }
 			break;
 		}
+		case Notification::Type_NodeNaming:
+                    {
+			cout << endl << "NodeNaming: HomeId=" << (int)data->GetHomeId() << " Node=" << (int)data->GetNodeId() << endl;
+                        cout << "ManufacturerName=" << Manager::Get()->GetNodeManufacturerName( data->GetHomeId(), data->GetNodeId() ) <<endl;
+                        cout << "ProductName=" << Manager::Get()->GetNodeProductName( data->GetHomeId(), data->GetNodeId() ) <<endl;
+                        break;
+                    }
 		case Notification::Type_ValueChanged:
 		{
-			RPC_ChangeValue( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), data->GetByte() );
+			RPC_ChangeValue( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), false );
+			break;
 		}
 		case Notification::Type_Group:
 		{
 			RPC_Group( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			break;
 		}
 		case Notification::Type_NodeAdded:
 		{
@@ -687,11 +601,10 @@ void OnNotification
 		}
 		case Notification::Type_AllNodesQueried:
 		case Notification::Type_AwakeNodesQueried:
-		//case Notification::Type_NodeQueriesComplete:
 		{
 			if ( debugging )
 			{
-				cout << endl << "NodeQueriesComplete Node=" << (int)(data->GetNodeId()) << " times=" << queriesFinishedTimes << endl;
+				cout << endl << "AwakeNodeQueries Done!" << endl;
 			}
 			Manager::Get()->WriteConfig( home );
 
@@ -702,9 +615,8 @@ void OnNotification
 			{
 				xmlrpc_DECREF(resultP);
 			}
-			return;
+			break;
 		}
-
 		default:
 		break;
 	}
@@ -716,6 +628,8 @@ extern "C" {
 
 void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir, const char* zwdir, bool enableLog, int polltime )
 {
+	debugging = enableLog;
+
 	pthread_mutexattr_t mutexattr;
 
 	pthread_mutexattr_init ( &mutexattr );
@@ -726,9 +640,20 @@ void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir,
 	sprintf( url, "http://localhost:%d", rpcPort ); 
 
 	Options::Create( configdir, zwdir, "" );
-	Options::Get()->Lock();
+        Options::Get()->AddOptionBool("AppendLogFile", false);
+        Options::Get()->AddOptionBool("ConsoleOutput", true);
+	if ( enableLog )
+	{
+        	Options::Get()->AddOptionInt("SaveLogLevel", LogLevel_Error );
+        	Options::Get()->AddOptionInt("QueueLogLevel", LogLevel_Debug);
+        	Options::Get()->AddOptionInt("DumpTriggerLevel", LogLevel_Error);
+	}
 
-	debugging = enableLog;
+        Options::Get()->AddOptionInt("PollInterval", polltime);
+       	Options::Get()->AddOptionBool("IntervalBetweenPolls", true);
+	Options::Get()->AddOptionBool("SuppressValueRefresh", false);
+
+        Options::Get()->Lock();
 
 	Manager::Create();
 	Log::SetLoggingState( debugging );
@@ -764,27 +689,28 @@ void DomoZWave_Destroy()
 	pthread_mutex_destroy( &g_criticalSection );
 }
 
-void DomoZWave_EnablePolling( int node, int polltime )
+void DomoZWave_EnablePolling( int node, int32 polltime )
 {
 	if ( Manager::Get()->GetNodeBasic( home, node ) < 0x03 )
 	{	
 		return;
 	}
-	Manager::Get()->SetPollInterval( polltime );
 
 	if( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
 	{
         	// Mark the basic command class values for polling
                 for( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
 		{
-			int id = (*it).GetCommandClassId();
-			if ( id == COMMAND_CLASS_BASIC )
+ 			ValueID v = *it;
+                        if( v.GetCommandClassId() == 0x20 )
 			{
-				Manager::Get()->EnablePoll( *it );	
+				Manager::Get()->EnablePoll( *it, 2 );
+
 				if ( debugging )
 				{
 					cout << endl << "Enabled Polling for node " << node << endl;
 				}
+				break;
 			}
 		}
         }
@@ -835,6 +761,11 @@ void DomoZWave_CancelControllerCommand( )
 void DomoZWave_SetConfigParam( int node, int param, int value ) 
 {
 	Manager::Get()->SetConfigParam( home, node, param, value);
+}
+
+void DomoZWave_RequestConfigParam( int node, int param ) 
+{
+	Manager::Get()->RequestConfigParam( home, node, param );
 }
 
 void DomoZWave_AddAssociation( int node, int group ) 

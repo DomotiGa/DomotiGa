@@ -1,0 +1,1026 @@
+' Gambas class file
+
+' Description:
+' CHomeMatic.class
+' Connect to HomeMatic LAN adapter via tcp socket.
+
+' Development Status:
+' Just started.
+
+' Credits: JK
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2012 Ron Klinkien
+
+' Read file called COPYING for license details.
+
+PROPERTY TCPHost AS String
+PROPERTY TCPPort AS Integer
+PROPERTY HMDebug AS Boolean
+PROPERTY HMLANid AS String
+PROPERTY Pairing AS Boolean
+
+PRIVATE sTCPHost AS String
+PRIVATE iTCPPort AS Integer
+PRIVATE bHMDebug AS Boolean
+PRIVATE sHMLANid AS String
+
+PUBLIC hHM AS NEW Socket
+PUBLIC tHMBusy AS Timer
+PUBLIC tHMConnect AS Timer
+PUBLIC bHMPairEnabled AS Boolean
+PUBLIC iStackCount AS Integer
+
+PRIVATE bFirstByte AS Boolean = TRUE
+PRIVATE RecBuf AS Byte[255]
+PRIVATE bMessage AS Boolean = FALSE
+PRIVATE iByteCount AS Integer = 0
+PRIVATE cQueue AS NEW Collection  ' command buffer
+PRIVATE bHMBusy AS Boolean  ' waiting for delay timer to finish
+PRIVATE iConnectRetry AS Integer = 5 ' retries
+PRIVATE iConnectDelay AS Integer = 60000 ' 1 minute
+PRIVATE cAckstore AS NEW Collection
+PRIVATE cMsgnr AS NEW Collection
+PRIVATE cDestDevice_id AS NEW Collection
+PRIVATE iMessageCounter AS Integer = 0
+PRIVATE sPairing_lastMsg AS Integer ' need to retain after exiting the sub
+PRIVATE bWaiting_Ack AS Boolean = FALSE
+PRIVATE cDevice_state AS NEW Collection
+PRIVATE cPayload AS NEW Collection
+PRIVATE cTimeStamp AS NEW Collection
+PRIVATE tKeepAlive AS Timer
+PRIVATE sLastSent AS String
+PRIVATE sNewDevice AS NEW String[7]
+PRIVATE tAckTimer AS Timer
+PRIVATE bHMLANConfirmed AS Boolean = TRUE
+PRIVATE iUTCoffset AS Integer
+PRIVATE iDelta AS Long
+
+PUBLIC SUB HM_Ready()
+
+  Main.WriteLog(("HomeMatic TCP socket connected."))
+  Init()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tHMConnect_Timer()
+
+  IF NOT ConnectTCP() THEN
+    INC iConnectRetry
+    iConnectDelay *= iConnectRetry
+    tHMConnect.Delay = iConnectDelay
+  ENDIF
+
+END
+
+PUBLIC SUB HM_Closed()
+
+  Main.WriteDebugLog(("[HomeMatic] ERROR: TCP socket closed by peer."))
+  IF iConnectRetry < 6 THEN
+    Main.WriteDebugLog(("[HomeMatic] Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60000) & " minutes.", ".")))
+    tHMConnect.Start
+  ENDIF
+
+END
+
+PUBLIC SUB HM_Found()
+
+  Main.WriteLog(("HomeMatic IP address resolved."))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectTCP() AS Boolean
+
+  ' try to close the connection
+  TRY hHM.Close
+
+  ' get a new one
+  hHM = NEW Socket AS "HM"
+  hHM.Connect(sTCPHost, iTCPPort)
+
+  ' start keeping the HMLAN Adapter alive
+  tKeepAlive = NEW timer AS "tKeepAlive"
+  tKeepAlive.Delay = 20000
+  tKeepAlive.Start
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors does not seem to catch an error if the cable is disconnected
+
+  Main.WriteLog(("HomeMatic Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY tHMBusy.Stop
+  TRY tHMConnect.Stop
+  TRY hHM.Close
+
+  Main.WriteLog(("HomeMatic TCP socket close."))
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+
+  Main.WriteLog(("HM Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' keep the HM LAN Adapter connection alive
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PUBLIC SUB tKeepAlive_Timer()
+
+  SendHMLAN("K")
+
+  tKeepAlive.Stop
+  tKeepAlive.Start
+
+END
+
+PUBLIC SUB HM_Error()
+
+  DIM sString AS String = "HomeMatic: "
+
+  ' handle error
+  SELECT CASE hHM.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog(sString & ("The system does not allow to create a socket."))
+    CASE Net.HostNotFound
+      Main.WriteLog(sString & ("Host '") & sTCPHost & ("' not found."))
+    CASE Net.ConnectionRefused
+      Main.WriteLog(sString & ("Unable to connect. Connection refused."))
+    CASE Net.CannotRead
+      Main.WriteLog(sString & ("Error reading data."))
+    CASE Net.CannotWrite
+      Main.WriteLog(sString & ("Error writing data."))
+  END SELECT
+
+END
+
+PUBLIC SUB HM_Read()
+
+  DIM bData AS Byte
+
+  TRY READ #hHM, bData
+  IF ERROR THEN Main.WriteDebugLog(("[HomeMatic] Error reading data from the TCP port! -> ") & Error.Text)
+  ProcessReceivedChar(bData)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' control devices
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendCommand(sAddress AS String, sValue AS String, iDeviceId AS Integer)
+
+  DIM iValue, iSpace AS Integer
+  DIM sCmd, sModel AS String
+
+  ' find last space and split there to get command and value
+  iSpace = RInStr(sValue, " ")
+  IF iSpace = 0 THEN RETURN
+
+  sCmd = Left(sValue, iSpace - 1)
+  iValue = Int(Right(sValue, Len(sValue) - iSpace))
+
+  ' get description of devicetype to use as model
+  TRY sModel = Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(iDeviceId))
+  IF ERROR THEN RETURN
+
+  IF sModel = "HM_CC_TC"
+    SELECT sCmd
+      CASE "Temperature"
+        HM_CC_TC_Temperature(sAddress, iValue)
+      CASE "Status Request"
+        HM_CC_TC_Status(sAddress)
+    END SELECT
+    RETURN
+  ENDIF
+
+END
+
+PRIVATE SUB ProcessPair(sAddress AS String, sStep AS String)
+
+  SELECT sStep
+    CASE "Pair1"
+      Pair1(sAddress)
+    CASE "Pair2"
+      Pair2(sAddress)
+    CASE "Pair3"
+      Pair3(sAddress)
+  END SELECT
+
+END
+
+PRIVATE SUB HM_CC_TC_Temperature(sAddress AS String, iValue AS Integer)
+
+  DIM sStatusbits, sMsgtype, sSrc, sDst, sData, sCmd AS String
+
+  sStatusbits = "A0"  ' wakeup, bidi, rpten
+  sMsgtype = "11"
+  sSrc = sHMLANid     ' address
+  sDst = sAddress
+  sData = "0202" & Hex$((iValue), 2)
+  sCmd = sStatusbits & sMsgtype & sSrc & sDst & sData ' & iValue
+  StackCommand(sCmd)
+  Main.WriteDebugLog("[HomeMatic] " & sAddress & " Requested Temperature " & (iValue / 2) & " Degrees C")
+
+END
+
+PRIVATE SUB HM_CC_TC_Status(sAddress AS String)
+
+  DIM sStatusbits, sMsgtype, sSrc, sDst, sData, sCmd AS String
+
+  sStatusbits = "A1"  ' bidi, rpten
+  sMsgtype = "01"
+  sSrc = sHMLANid     ' address
+  sDst = sAddress
+  sData = "010E"
+  sCmd = sStatusbits & sMsgtype & sSrc & sDst & sData
+  StackCommand(sCmd)
+  Main.WriteDebugLog("[HomeMatic] " & sAddress & " Requested status")
+
+END
+
+PRIVATE SUB Pair1(sAddress AS String)
+
+  DIM sStatusbits, sMsgtype, sSrc, sDst, sData, sCmd AS String
+
+  sStatusbits = "A0"  ' bidi, rpten
+  sMsgtype = "01"
+  sSrc = sHMLANid     ' address
+  sDst = sAddress
+  sData = "00050000000000"
+  sCmd = sStatusbits & sMsgtype & sSrc & sDst & sData
+  StackCommand(sCmd)
+  Main.WriteDebugLog("[HomeMatic] " & sAddress & " Pairing stage 1")
+
+END
+
+PRIVATE SUB Pair2(sAddress AS String)
+
+  DIM sStatusbits, sMsgtype, sSrc, sDst, sData, sCmd AS String
+
+  sStatusbits = "A0"  ' bidi, rpten
+  sMsgtype = "01"
+  sSrc = sHMLANid     ' address
+  sDst = sAddress
+  sData = "000802010A0E0BFF0CDB" ' fixme hmlan id still hardcoded here
+  sCmd = sStatusbits & sMsgtype & sSrc & sDst & sData 
+  StackCommand(sCmd)
+  Main.WriteDebugLog("[HomeMatic] " & sAddress & " Pairing stage 2")
+
+END
+
+PRIVATE SUB Pair3(sAddress AS String)
+
+  DIM sStatusbits, sMsgtype, sSrc, sDst, sData, sCmd AS String
+
+  sStatusbits = "A0"  ' bidi, rpten
+  sMsgtype = "01"
+  sSrc = sHMLANid     ' address
+  sDst = sAddress
+  sData = "0006"
+  sCmd = sStatusbits & sMsgtype & sSrc & sDst & sData
+  StackCommand(sCmd)
+  Main.WriteDebugLog("[HomeMatic] " & sAddress & " Pairing stage 3")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' message for HMLAN adapter
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendHMLAN(sBuffer AS String)
+
+  QueueAdd(sBuffer & "\r\n")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to stack
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB StackCommand(sPayload AS String)
+
+  DIM sMsgnr, sDst, sRaw, sHash, sSentHash, sMsgState, sState, sDummy AS String
+
+  sDst = Mid$(sPayload, 11, 6)
+  sMsgnr = MessageCounter()
+
+  ' check how many commands have not been positive or negative confirmed.
+  iStackCount = 0
+  FOR EACH sDummy IN cAckstore
+    IF sDummy = "QUEUED" THEN INC iStackCount
+  NEXT
+  IF iStackCount > 0 THEN Main.WriteDebugLog("[HomeMatic] FAILED COMMANDS " & iStackCount)
+  ' populate with new commands
+
+  sHash = sDst & sMsgnr
+  cPayload.Add(sPayload, sHash)
+  cAckstore.Add("STORED", sHash)
+  cMsgnr.Add(sMsgnr, sHash)
+  cDestDevice_id.Add(sDst, sHash)
+  cTimestamp.Add(timestamp(), sHash)
+
+  '-----------DEBUG- PRINT THE STACK------
+  ' FOR EACH sPayload IN cPayload
+  '   PRINT "dst " & cPayload.Key & " NR " & cMsgnr[cPayload.key] & " Payload " & sPayload & " time " & cTimestamp[cPayload.Key] & " ACK " & cAckstore[cPayload.Key]
+  ' NEXT
+  ' PRINT "-------------------------------"
+
+  ' wait for Ack or NACK, else timeout
+  FOR EACH sDummy IN cAckstore
+    WHILE bHMLANConfirmed = FALSE
+      SLEEP 0.1
+    WEND
+
+    TRY sState = cAckstore[cAckstore.Key]
+    IF sState = "STORED" THEN
+      WAIT 0.2  ' improves reliability
+      TRY sRaw = "S" & timestamp() & "," & "00,00000000,01" & "," & Hex$((UNIXtime() - iDelta), 8) & "," & cMsgnr[cAckstore.Key] & cPayload[cAckstore.key]
+      IF sRaw THEN
+        TRY tAckTimer.Start
+        bHMLANConfirmed = FALSE
+        TRY sSentHash = Mid$(cPayload[cAckstore.key], 11, 6) & cMsgnr[cAckstore.Key]
+        IF sSentHash THEN
+          QueueAdd(sRaw, sSentHash)
+        ENDIF
+      ENDIF
+    ENDIF
+  NEXT
+
+END
+
+PUBLIC SUB QueueAdd(sCommand AS String, OPTIONAL SHash AS String) ' add command to queue
+
+  cQueue.Add(sCommand & "\r\n", Rnd)
+  IF sHash THEN cAckstore[sHash] = "QUEUED"
+
+  ' process it
+  IF bHMBusy = FALSE THEN DoQueue()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB DoQueue()
+
+ DIM sPacket AS String
+
+ FOR EACH sPacket IN cQueue
+   WriteCommand(sPacket, cQueue.Key)
+   ' BREAK ' only do first one, or wait for echo and do next one ?
+  NEXT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' initialize interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Init()
+
+  ' define timer for interface busy
+  tHMBusy = NEW Timer AS "tHMBusy"
+  tHMBusy.Stop
+
+  ' define Timer for Ack/Nack timeouts
+  tAckTimer = NEW timer AS "tAcktimer"
+  tAckTimer.Delay = 1000
+  tAckTimer.Stop
+
+  ' define timer for reconnect
+  tHMConnect = NEW Timer AS "tHMConnect"
+  tHMConnect.Delay = iConnectRetry
+  tHMConnect.Stop
+
+  ' get version
+  IF bHMDebug THEN
+   Main.WriteDebugLog("[HomeMatic] Getting version info.")
+   SendHmlan("K")
+  ENDIF
+
+  ' get offset from UTC for time calculations
+  iUTCoffset = UTCoffset()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' simple send string to HMLAN interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB WriteCommand(sBuffer AS String, sKey AS String)
+
+  DIM bByte AS Byte
+  DIM iCnt AS Integer
+
+  ' return if not connected yet
+  IF hHM.Status <> Net.Connected THEN RETURN
+  ' send the message to the tcp stream
+  TRY WRITE #hHM, sBuffer, Len(sBuffer)
+
+  IF ERROR THEN Main.WriteRFXDebugLog(("[HomeMatic] Unable to write to TCP port! -> ") & Error.Text)
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey) 
+
+  tHMBusy.Delay = 100 ' 100mS
+  IF bHMBusy = FALSE THEN bHMBusy = TRUE
+  tHMBusy.Start
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tHMBusy_Timer()
+
+  bHMBusy = FALSE
+  tHMBusy.Stop
+
+  IF cQueue.Count THEN ' if there are more commands left in queue, send next one
+  DoQueue()
+  ENDIF
+
+END
+
+PRIVATE SUB ProcessReceivedChar(bTemp AS Byte)
+
+  IF bFirstByte = TRUE THEN
+    bFirstByte = FALSE
+    iByteCount = 0
+  ENDIF
+
+  Main.ControlLed("HM", "On")
+
+  TRY RecBuf[iByteCount] = bTemp
+  IF ERROR THEN RETURN
+
+  IF bTemp = &HA THEN
+    iByteCount -= 2 ' do not count \r\n
+    bMessage = TRUE
+  ELSE
+    INC iByteCount
+  ENDIF
+
+  IF bMessage THEN Process_Raw_Message
+
+END
+
+' process the message received from the HM-LAN interface
+' all messages are , separated text strings, closed with CR/LF
+' so far 5 different types found
+' with 1 segment: Response to D1 or D2 etc, don't know what it is
+' with 3 segments: received when sending a D to the interface
+' with 4 segments: the HM-LAN Ack I00, also received when sending a Y to the interface
+' with 6 segments: Routine messages and pairing
+' with 7 segments: Version information, response to "K"
+' sending B turns on the red light and waits (for new FW ?)
+' monitor (and store for transmission) received signal strength
+
+PRIVATE SUB Process_Raw_Message()
+
+  DIM iCnt, iMaxSegments AS Integer
+  DIM sReceivedData AS String
+  DIM sMsgSegments AS String[]
+
+  bMessage = FALSE
+  bFirstByte = TRUE
+
+  ' convert to a string so it can be split
+  FOR iCnt = 0 TO iByteCount + 2
+    sReceivedData &= Chr(RecBuf[iCnt])
+  NEXT
+  ' split it
+  sMsgSegments = Split(sReceivedData)
+  iMaxSegments = sMsgSegments.Count
+
+  IF bHMDebug THEN
+    SELECT CASE iMaxSegments
+     CASE 3
+       ' Main.WriteDebugLog("[HomeMatic] D " & (sMsgSegments[0]) & " Seg1 " & (sMsgSegments[1]) & " Time " & (sMsgSegments[2]))
+     CASE 6
+       ' Main.WriteDebugLog("[HomeMatic] Received from: " & (sMsgSegments[0]) & " Seg1 " & (sMsgSegments[1]) & " Time " & (sMsgSegments[2]) & " Seg3 " & (sMsgSegments[3]) & " RecRSSI " & (sMsgSegments[4]) & " Payload " & (sMsgSegments[5]))
+     CASE 7
+       Main.WriteDebugLog("[HomeMatic] " & (sMsgSegments[0]) & ", Firmware " & (sMsgSegments[1]) & ", Serialnr " & (sMsgSegments[2]) & ", Address " & (sMsgSegments[4]) & ", Uptime " & (Val("&H" & sMsgSegments[5]) DIV 1000) & " Seconds")
+     CASE 1
+       ' Main.WriteDebugLog("[HomeMatic] Dx " & (sMsgSegments[0]))
+     CASE 4
+       ' Main.WriteDebugLog("[HomeMatic] Y " & (sMsgSegments[0]) & " Seg1 " & (sMsgSegments[1]) & " Time " & (sMsgSegments[2]) & " Seg3 " & (sMsgSegments[3]))
+     CASE ELSE 
+       ' Main.WriteDebugLog(("[HomeMatic] ERROR: " & Error.Text & " at " & Error.Where & " Parsing HM data packet: "))
+       DisplayPacket(RecBuf)
+    END SELECT
+  ENDIF
+
+  ' do some errorchecking on the segmentdata, notify if something's not normal.
+  ' idea: notify for low rssi values.
+
+  IF iMaxSegments > 0 THEN Process_Raw_Messagetypes(iMaxSegments, sMsgSegments)
+
+END
+
+' process the message from the radio
+PRIVATE SUB Process_Raw_Messagetypes(iMax AS Integer, sSegments AS String[])
+
+  DIM sSrc, sDst, sMsgnr, sMsgtype, sPayload, sCmd, sDummy, sHash AS String
+  DIM sHMRssi AS String  ' signal strength from device to HM adapter, not yet implemented
+  DIM sDeviceRssi AS String  'signal strength from HM adapter to device, not yet implemented
+  DIM bAckRequested, bWakeup, bAsleep, bBroadcast AS Boolean
+  DIM iPayload_length, iCnt, iHMLANUptimecounter AS Integer
+
+  SELECT CASE iMax
+    CASE 6 ' this covers all normal communication
+      sMsgnr = Left(sSegments[5], 2)
+      bWakeUp = BTst(Val("&H" & (Mid(sSegments[5], 3, 2)) & "&"), 0)       'for later use and diagnostics
+      bAsleep = BTst(Val("&H" & (Mid(sSegments[5], 3, 2)) & "&"), 1)       'for later use and diagnostics
+      bBroadcast = BTst(Val("&H" & (Mid(sSegments[5], 3, 2)) & "&"), 2)    'for later use and diagnostics
+      bAckRequested = BTst(Val("&H" & (Mid(sSegments[5], 3, 2)) & "&"), 5) 'for later use and diagnostics
+      sMsgtype = (Mid(sSegments[5], 5, 2))                                 '&00 &01 &02, &10, &58 &70 
+      sSrc = (Mid(sSegments[5], 7, 6))   
+      sDst = (Mid(sSegments[5], 13, 6))  
+      sPayload = (Right(sSegments[5], -18))
+      iPayload_length = Len(Right(sSegments[5], -18))                      'for later use and diagnostics
+
+      ' Messagetypes :
+      ' &00 config request from Device
+      ' &01 config message to Device
+      ' &02 normally a plain Ack
+      ' &10 status from device, sometimes with ack request
+      ' &70 weather info
+      ' &58 status from radiator valve
+
+      ' send a simple Ack to the device
+      IF Sdst = sHMLANid AND bAckRequested = TRUE AND sMsgtype <> "00" AND sMsgtype <> "3F" AND Left$(sSegments[0], 1) = "E" THEN  
+        sCmd = "+" & sSrc & ",00,00,"
+        SendHMLAN(sCmd)
+        sCmd = ("S" & Timestamp() & ",00,00000000,01," & Hex$((UNIXtime() - iDelta), 8) & "," & sMsgnr & "8002" & sDst & sSrc & "00")
+        QueueAdd(sCmd)
+      ENDIF
+      IF Sdst = sHMLANid AND bAckRequested = TRUE AND sMsgtype = "3F" AND Left$(sSegments[0], 1) = "E" THEN 
+        sCmd = "+" & sSrc & ",00,00,"
+        SendHMLAN(sCmd)
+        sCmd = ("S" & Timestamp() & ",00,00000000,01," & Hex$((UNIXtime() - iDelta), 8) & "," & sMsgnr & "803F" & sDst & sSrc & "0204" & Systemtime())
+        QueueAdd(sCmd)
+      ENDIF
+
+      ' process received ACKs AND NACKs
+
+      ' check for NACK
+      sHash = sDst & sMsgnr
+      IF (cMsgnr.exist(sHash) AND sSegments[1] = "0008") THEN
+        cAckstore[sHash] = "NACK"
+        sCmd = "+" & sDst & ",02,00,"
+        SendHMLAN(sCmd)
+        tAckTimer.Stop
+        bHMLANConfirmed = TRUE
+      ENDIF
+
+      'check for ACK
+      sHash = sSrc & sMsgnr 
+      IF (cMsgnr.Exist(sHash) AND sSegments[1] = "0001") THEN
+        cPayload.Remove(sHash)
+        cAckstore.Remove(sHash)
+        cMsgnr.Remove(sHash)
+        cDestDevice_id.Remove(sHash)
+        cTimestamp.Remove(sHash)
+        sCmd = "+" & sSrc & ",00,00,"
+        SendHMLAN(sCmd)
+        tAckTimer.Stop
+        bHMLANConfirmed = TRUE
+      ENDIF
+
+      ' check for open messages on the stack
+      IF sSegments[1] = "0081" THEN
+        FOR EACH sDummy IN cDestDevice_id
+          IF cAckstore[cDestDevice_id.Key] = "NACK" AND Left$(cDestDevice_id.Key, 6) = sSrc
+            sPayload = cPayload[cDestDevice_id.Key]
+            cPayload.Remove(cDestDevice_id.Key)
+            cAckstore.Remove(cDestDevice_id.Key)
+            cMsgnr.Remove(cDestDevice_id.Key)
+            cTimestamp.Remove(cDestDevice_id.Key)
+            cDestDevice_id.Remove(cDestDevice_id.Key)
+            StackCommand(sPayload)
+          ENDIF
+       NEXT
+      ENDIF
+
+      ' if Pairing enabled, run the pairing routine
+      IF bHMPairEnabled
+        Pair_me(sMsgnr, sSrc, sPayload, sMsgtype) ' run the pairing routine
+        'ELSE 'Main.WriteDebugLog("[CUL] not pairing" ' deconstruct payload, and store all parameters in the database under the device id (for logs and graphs and actions)
+      ENDIF
+      ' analyze and display the data for 6 segment messages
+      Display_Message(sSegments)
+    CASE 7 ' HMLAN info
+      ' sync the clocks
+      iHMLANUptimecounter = Val("&H" & sSegments[5])
+      iDelta = UNIXtime() - iHMLANUptimecounter
+  END SELECT
+
+END
+
+PRIVATE SUB Pair_me(sMsgnr AS String, sNewDevice_id AS String, sPayload AS String, sMsgtype AS String)
+
+  DIM sNewDevice_serH, sNewDevice_serA, sCmd, sDummy, sQuery, sValue AS String
+  DIM sValues AS String[]
+  DIM iCnt, iModuleref AS Integer
+  DIM rDeviceInfo, rResult AS Result
+
+  IF sMsgtype = "00" ' received a pairing request while pairing is enabled
+    sNewDevice[0] = sNewDevice_id           ' address
+    sNewDevice[2] = Left(sPayload, 2)       ' firmware version
+    sNewDevice[3] = Mid(sPayload, 3, 4)     ' device type
+    sNewDevice[4] = Mid(sPayload, 7, 2)     ' device sub type
+    sNewDevice[5] = Mid(sPayload, 15, 4)    ' device class (not used yet, but maybe later)
+    sNewDevice[6] = Mid(sPayload, 26, 6)    ' device additional information (not used yet)
+    sNewDevice_serH = Mid(sPayload, 9, 20)  ' device serial in hex char
+
+    FOR iCnt = 1 TO 17 STEP 2
+      sNewDevice_serA &= Chr(Val("&" & (Mid(sNewDevice_serH, iCnt, 2))))
+    NEXT
+    sNewDevice[1] = sNewDevice_serA         ' device serial in ASCII
+    Main.WriteDebugLog("[HomeMatic] Pairing Request from " & sNewDevice[0] & " of the type " & sNewDevice[3] & " and subtype " & sNewDevice[4])
+
+    ' check if it's a supported HomeMatic device
+    rDeviceInfo = Main.hDB.Exec("SELECT * FROM devicetypes_homematic WHERE type_code = &1", sNewDevice[3])
+    IF rDeviceInfo!commands = "none supported"
+      Main.WriteDebugLog("[HomeMatic] This device is not (yet) supported " & sNewDevice[0] & ", " & sNewDevice[1] & ", " & sNewDevice[2] & ", " & sNewDevice[3] & ", " & sNewDevice[4] & ", " & sNewDevice[5])
+    ELSE
+      ' pairing IS partially done IN hardware. A pairing timer makes sure it's not always responding to pairing requests
+      ' the neighbours might be trying to pair ;)
+
+      '----------------------------------------------
+      '  respond to the pairing request
+      '----------------------------------------------
+
+      ' just clear any open commands for this device
+      FOR EACH sDummy IN cDestDevice_id
+        cDestDevice_id.Remove(cDestDevice_id.key)
+      NEXT
+      sCmd = "+" & sNewDevice_Id & ",00,00,"
+      SendHMLAN(sCmd)
+      sCmd = "+" & sNewDevice_Id & ",00,00,"
+      SendHMLAN(sCmd)
+      sCmd = "+" & sNewDevice_Id & ",00,00,"
+      SendHMLAN(sCmd)
+      sCmd = "-" & sNewDevice_Id & ",00,00,"
+      SendHMLAN(sCmd)
+      sCmd = "+" & sNewDevice_Id & ",00,00,"
+      SendHMLAN(sCmd)
+      sCmd = "+" & sNewDevice_Id & ",00,00,"
+      SendHMLAN(sCmd)
+      sCmd = "+" & sNewDevice_Id & ",00,00,"
+      SendHMLAN(sCmd)
+      sCmd = "+" & sNewDevice_Id & ",00,00,"
+      SendHMLAN(sCmd)
+      ProcessPair("Pair1")
+
+      ' grab the last command from the stack (this assumes that we get there before the command is acknowledged and removed,which is after about 0.5 seconds)
+      FOR EACH sDummy IN cDestDevice_id
+        IF sDummy = sNewDevice_id THEN sLastSent = cDestDevice_id.Key
+      NEXT
+
+      cDevice_state.Add("idle", sNewDevice_Id)
+      cDevice_state[sNewDevice_Id] = "pairing phase 1"
+    ENDIF
+  ENDIF
+
+  IF cDevice_state[sNewDevice_Id] = "pairing phase 1"  ' add device address as well simultanous pairing requests
+    IF NOT (cMsgnr.Exist(sLastSent))
+      cDevice_state[sNewDevice_Id] = "pairing phase 2"
+      ProcessPair("Pair2")
+      ' grab the last command
+      FOR EACH sDummy IN cDestDevice_id
+        IF sDummy = sNewDevice_id THEN sLastSent = cDestDevice_id.Key
+      NEXT
+    ENDIF
+  ENDIF
+
+  IF cDevice_state[sNewDevice_Id] = "pairing phase 2" 
+    IF NOT (cMsgnr.Exist(sLastSent))
+      cDevice_state[sNewDevice_Id] = "pairing phase 3"
+      ProcessPair("Pair3")
+      FOR EACH sDummy IN cDestDevice_id
+        IF sDummy = sNewDevice_id THEN sLastSent = cDestDevice_id.Key
+      NEXT
+    ENDIF
+  ENDIF
+
+  IF cDevice_state[sNewDevice_Id] = "pairing phase 3" 
+    IF NOT (cMsgnr.Exist(sLastSent))
+      cDevice_state[sNewDevice_Id] = "pairing complete"
+    ENDIF
+  ENDIF
+
+  ' insert device in devices table if pairing was successful
+  IF cDevice_state[sNewDevice_id] = "pairing complete"
+    rDeviceInfo = Main.hDB.Exec("SELECT * FROM devicetypes_homematic WHERE type_code = &1", sNewDevice[3])
+    sValue = rDeviceInfo!values
+    sValues = Split(sValue)
+    iModuleRef = rDeviceInfo!moduleref
+    ' check if device exists with this address.
+    rResult = Main.hDB.Exec("SELECT * FROM devices WHERE address=&1", sNewDevice_Id)
+    IF NOT rResult.Available THEN 
+      ' give it a temporary name (serialnumber)
+      rResult = Main.hDB.Create("devices")
+      rResult!name = sNewDevice[1]
+      rResult!module = iModuleRef   ' translates from type_code, which is transmitted by the device to the correct devicetypes id
+      rResult!interface = "36"  '
+      rResult!address = sNewDevice_id
+      rResult!enabled = TRUE
+      rResult!onicon = "new.png"
+      rResult!dimicon = "new.png"
+      rResult!officon = "new.png"
+      rResult!hide = FALSE
+      rResult!log = FALSE
+      rResult!logdisplay = FALSE
+      rResult!logspeak = FALSE
+      rResult!dimable = FALSE
+      rResult!switchable = FALSE
+      rResult!firstseen = Now()
+      rResult!lastseen = Now()
+      rResult!location = 1
+      rResult.Update()
+      Main.hDB.Commit()
+
+      rResult = Main.hDB.Exec("SELECT id FROM devices WHERE address = &1", sNewDevice_id)
+      sQuery = "CREATE TABLE domotigalogs." & rResult!id & " (id int, LastSeen CHAR(64), lastChanged CHAR(6))"
+      Main.hDB.Exec(sQuery)
+      FOR Icnt = 0 TO sValues.Count - 1
+        sQuery = "ALTER TABLE domotigalogs." & rResult!id & " ADD COLUMN " & sValues[iCnt] & " FLOAT"
+        Main.hDB.Exec(sQuery)
+      NEXT
+    ELSE
+      Main.WriteDebugLog("[HomeMatic] Device with address " & sNewDevice_id & " already exists. Not creating any new tables. Delete the device and logtables first to clear old device data")
+    ENDIF
+  ENDIF
+
+END
+
+'----------------------------------------------
+' display and log messages
+'----------------------------------------------
+PRIVATE SUB Display_Message(sSegments AS String[])
+
+  DIM sSrc, sDst, sMsgnr, sMsgtype, sPayload AS String
+  DIM bAckRequested, bWakeup, bAsleep, bBroadcast AS Boolean = FALSE
+  DIM iCnt, iDeviceId, iHumidity, iValvestate, iPayload_length AS Integer
+  DIM fTemperature, fSetTemperature AS Float
+  DIM rResult AS Result
+
+  sMsgnr = Left(sSegments[5], 2)
+  bWakeUp = BTst(Val("&H" & (Mid(sSegments[5], 3, 2)) & "&"), 0)
+  bAsleep = BTst(Val("&H" & (Mid(sSegments[5], 3, 2)) & "&"), 1)
+  bBroadcast = BTst(Val("&H" & (Mid(sSegments[5], 3, 2)) & "&"), 2)
+  bAckRequested = BTst(Val("&H" & (Mid(sSegments[5], 3, 2)) & "&"), 5)
+  sMsgtype = (Mid(sSegments[5], 5, 2))  ' %1 &2, &10, &58 &70 &00
+  sSrc = (Mid(sSegments[5], 7, 6))      ' sending device id
+  sDst = (Mid(sSegments[5], 13, 6))     ' receiving device id
+  sPayload = (Right(sSegments[5], -18))
+  iPayload_length = Len(Right(sSegments[5], -18))
+
+  TRY rResult = Main.hDB.Exec("SELECT id, module FROM devices WHERE address = &1", sSrc) ' don't bail out on unknown devices
+  TRY rResult = Main.hDB.Exec("SELECT description FROM devicetypes WHERE id = &1", rResult!module)
+  IF rResult.Available THEN
+    SELECT rResult!description
+      CASE "HM_CC_TC"
+        SELECT sMsgtype
+          CASE "70"
+            iHumidity = (ascii2hex(Mid(sSegments[5], 23, 2)))
+            fTemperature = (ascii2hex(Mid(sSegments[5], 19, 4))) / 10
+            iDeviceId = Devices.Find(sSrc, Devices.FindInterface("HomeMatic LAN Adapter"))
+            IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, fTemperature, iHumidity, "", "")
+            IF bHMDebug THEN Main.WriteDebugLog("[HomeMatic] " & sSrc & " Temperature " & fTemperature & " Humidity " & iHumidity)
+          CASE "58"
+            iValvestate = (ascii2hex(Mid(sSegments[5], 21, 2))) / 2.55
+            iDeviceId = Devices.Find(sSrc, Devices.FindInterface("HomeMatic LAN Adapter"))
+            IF bHMDebug THEN Main.WriteDebugLog("[HomeMatic] " & sSrc & " Requesting Valve for " & iValvestate & " % open")
+            IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "", "", "", iValvestate)
+          CASE "02"
+            IF bAsleep = FALSE AND bAckRequested = FALSE AND Mid$(sSegments[5], 19, 4) = "0102" THEN 
+             fTemperature = (ascii2hex(Mid(sSegments[5], 23, 2))) / 2
+             IF bHMDebug THEN Main.WriteDebugLog("[HomeMatic] " & sSrc & " Set Temperature " & fTemperature)
+             iDeviceId = Devices.Find(sSrc, Devices.FindInterface("HomeMatic LAN Adapter"))
+             IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "", "", fTemperature, "")
+            ELSE IF bAsleep = FALSE AND bAckRequested = FALSE AND Mid$(sSegments[5], 19, 2) = "00" THEN 
+              Main.WriteDebugLog("[HomeMatic] " & sSrc & " Awake")
+            ELSE
+              Main.WriteDebugLog("[HomeMatic] " & sSrc & " Message type " & sMsgtype & " with unsupported content " & Left$(sSegments[5], -2))
+            ENDIF
+          CASE "10"
+            IF (bAsleep = FALSE) AND IF (bAckRequested = TRUE) AND IF (Mid$(sSegments[5], 19, 4) = "0602") THEN 
+              fTemperature = (ascii2hex(Mid(sSegments[5], 23, 2))) / 2
+              IF bHMDebug THEN Main.WriteDebugLog("[HomeMatic] " & sSrc & " Manual override Temperature " & fTemperature)
+              iDeviceId = Devices.Find(sSrc, Devices.FindInterface("HomeMatic LAN Adapter"))
+              IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "", "", fTemperature, "")
+            ELSE
+              Main.WriteDebugLog("[HomeMatic] " & sSrc & " Message type " & sMsgtype & " with unsupported content " & Left$(sSegments[5], -2))
+            ENDIF
+          CASE "3F"
+            Main.WriteDebugLog("[HomeMatic] " & sSrc & " Timesync") ' done in Ack message
+          CASE ELSE
+            IF bHMDebug THEN Main.WriteDebugLog("[HomeMatic] Unknown message " & Left$(sSegments[5], -2) & " from address " & sSrc)
+        END SELECT ' HM-CC-TC
+      CASE ELSE
+        IF bHMDebug THEN Main.WriteDebugLog("[HomeMatic] Unknown Devicetype (Check Database)")
+    END SELECT ' devices
+  ELSE
+    IF bHMDebug THEN
+      IF sSrc = sHMLANid THEN
+        ' Main.WriteDebugLog("[HomeMatic] sending " & Left$(sSegments[5], -2) & " to " & sDst)
+      ELSE
+        Main.WriteDebugLog("[HomeMatic] Received message " & Left$(sSegments[5], -2) & " from unknown device with address " & sSrc)
+      ENDIF
+    ENDIF
+  ENDIF
+
+END
+
+PUBLIC SUB tAckTimer_Timer()
+
+  ' PRINT "Command timed out"
+  tAckTimer.Stop
+  bHMLANConfirmed = TRUE
+
+END
+
+PRIVATE SUB Restack() ' not used
+
+  DIM sSrc, sPayload AS String
+
+  FOR EACH sSrc IN cDestDevice_id
+    IF cAckstore[cDestDevice_id.Key] = "QUEUED"
+      sPayload = cPayload[cDestDevice_id.Key]
+      cPayload.Remove(cDestDevice_id.Key)
+      cAckstore.Remove(cDestDevice_id.Key)
+      cMsgnr.Remove(cDestDevice_id.Key)
+      cTimestamp.Remove(cDestDevice_id.Key)
+      cDestDevice_id.Remove(cDestDevice_id.Key)
+      StackCommand(sPayload, "RESTACKED")
+    ENDIF
+  NEXT
+
+END
+
+PUBLIC SUB Timestamp() AS String ' mS since 00:00
+
+  DIM sDateUnits AS String[4]
+  DIM iMilliseconds, iSeconds, iMinutes AS Integer
+
+  sdateUnits = Split(Format$(Now, "hh:nn:ssu"), ":")
+  iMilliseconds = Val(Right$(sDateUnits[2], 3))
+  iseconds = Val(Left$(sDateUnits[2], 2))
+  iMilliseconds = 3600000 * sDateUnits[0] + 60000 * sDateUnits[1] + 1000 * iSeconds + iMilliseconds
+  RETURN Hex$(iMilliseconds, 8)
+
+END
+
+' seconds since 01/01/2000
+PUBLIC SUB Systemtime() AS String
+
+  DIM fTimestamp AS Float
+  DIM iTimestamp AS Integer
+  DIM sHexTimestamp, sDate AS String
+
+  fTimestamp = DateDiff("12/31/1999 00:00:00", Now, gb.Second)
+  iTimestamp = fTimestamp - iUTCoffset
+  sHexTimestamp = Hex$(iTimestamp, 8)
+
+  RETURN sHexTimestamp
+
+END
+
+'offset in seconds from UTC
+PUBLIC FUNCTION UTCoffset() AS Integer
+
+  DIM iUTCtime, iLOCALtime AS Integer
+
+  SHELL ("date -u +%s") TO iUTCtime
+  iLOCALtime = DateDiff("01/01/1970 00:00:00", Now, gb.Second)
+  RETURN iLOCALtime - iUTCtime
+
+END
+
+' unix time in mS since epoch
+PUBLIC FUNCTION UNIXtime() AS Long
+
+  DIM iReturnValue AS Long
+  DIM sReturnValue AS String
+
+  EXEC ["date", "-u", "+%s%N"] TO sReturnValue
+  iReturnValue = (Val(sReturnValue)) / 1000000
+
+  RETURN iReturnValue
+
+END
+
+PRIVATE SUB DisplayPacket(bBuf AS Byte[]) AS String
+
+  DIM sMsg AS String
+  DIM iCnt AS Integer
+
+  FOR iCnt = 0 TO iByteCount
+    sMsg &= Chr(bBuf[iCnt])
+  NEXT
+  RETURN sMsg
+
+END
+
+PRIVATE FUNCTION MessageCounter() AS String
+
+  IF iMessageCounter < 255 THEN
+    INC iMessageCounter
+  ELSE
+    iMessageCounter = 0
+  ENDIF
+
+  RETURN Hex$(iMessagecounter, 2)
+
+END
+
+PRIVATE FUNCTION ascii2hex(sAsciiString AS String) AS Short
+
+  DIM iDecResult AS Short
+
+  iDecResult = Val("&H" & sAsciiString & "&")
+  IF iDecResult > 16384 THEN iDecResult = - (32768 - iDecResult)
+
+  RETURN iDecResult
+
+END
+
+' implement properties
+PRIVATE FUNCTION TCPHost_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB TCPHost_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION TCPPort_Read() AS Integer
+
+  RETURN iTCPPort
+
+END
+
+PRIVATE SUB TCPPort_Write(Value AS Integer)
+
+  iTCPPort = Value
+
+END
+
+PRIVATE FUNCTION HMDebug_Read() AS Boolean
+
+  RETURN bHMDebug
+
+END
+
+PRIVATE SUB HMDebug_Write(Value AS Boolean)
+
+  bHMDebug = Value
+
+END
+
+PRIVATE FUNCTION HMLANid_Read() AS String
+
+  RETURN sHMLANid
+
+END
+
+PRIVATE SUB HMLANid_Write(Value AS String)
+
+  sHMLANid = Value
+
+END
+
+PRIVATE SUB Pairing_Write(Value AS Boolean)
+
+  bHMPairEnabled = Value
+
+END
+
+PRIVATE FUNCTION Pairing_Read() AS Boolean
+
+  RETURN bHMPairEnabled
+
+END
