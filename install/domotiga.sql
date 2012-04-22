@@ -1354,7 +1354,7 @@ CREATE TABLE `settings_homematic` (
 
 LOCK TABLES `settings_homematic` WRITE;
 /*!40000 ALTER TABLE `settings_homematic` DISABLE KEYS */;
-INSERT INTO `settings_homematic` VALUES (1,0,1,'192.168.1.15','9','tcp',0,1000),(1,0,1,'192.168.1.15','9','tcp',0,1000);
+INSERT INTO `settings_homematic` VALUES (0,0,1,'192.168.1.15','9','tcp',0,1000),(1,0,1,'192.168.1.15','9','tcp',0,1000);
 /*!40000 ALTER TABLE `settings_homematic` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1712,7 +1712,7 @@ CREATE TABLE `settings_dsc` (
 
 LOCK TABLES `settings_dsc` WRITE;
 /*!40000 ALTER TABLE `settings_dsc` DISABLE KEYS */;
-INSERT INTO `settings_dsc` VALUES (0,0,'/dev/ttyS0',9600,0),(1,0,'/dev/ttyS0',9600,0);
+INSERT INTO `settings_dsc` VALUES (0,0,'/dev/ttyS0',9600,0,1234,NULL),(1,0,'/dev/ttyS0',9600,0,1234,0);
 /*!40000 ALTER TABLE `settings_dsc` ENABLE KEYS */;
 UNLOCK TABLES;
 
