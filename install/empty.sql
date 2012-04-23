@@ -450,7 +450,6 @@ CREATE TABLE `devices_camera` (
 
 LOCK TABLES `devices_camera` WRITE;
 /*!40000 ALTER TABLE `devices_camera` DISABLE KEYS */;
-INSERT INTO `devices_camera` VALUES (1,'Example Local Video Cam','Video4Linux','tv:// -tv norm=auto:input=1:device=/dev/video0 -quiet','','','Sony VISCA','','Sony E31 on Dazzle s-video port',0,'','',-1),(2,'VideoServer Feed','Fetch Image','','http://192.168.1.70/image.jpg','','','','Channel #0 of IP9100',0,'','',-1),(3,'AXIS Camera','Stream MJPEG','','http://194.218.96.93/mjpg/video.mjpg','','','','Public AXIS Camera Somewhere',0,'','',-1),(14,'Example Local Video Cam 2','Video4Linux','tv:// -tv norm=pal:input=0:device=/dev/video0 -quiet','','','','','Elro wireless camera on Dazzle composite-video port',0,'','',-1),(7,'Public PTZ AXIS Camera','Stream MJPEG','-quiet','http://80.101.217.249:443/mjpg/video.mjpg','','AXIS API','http://80.101.217.249:443/axis-cgi/com/ptz.cgi?','Public PTZ AXIS Camera ;-)',0,'','',-1),(13,'Mobotix M1 Cam','Stream MJPEG','','http://82.79.20.52:40002/cgi-bin/faststream.jpg?.mjpg','','','','Mobotix Video Stream',0,'','',-1);
 /*!40000 ALTER TABLE `devices_camera` ENABLE KEYS */;
 UNLOCK TABLES;
 
