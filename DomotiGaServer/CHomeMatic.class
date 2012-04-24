@@ -29,7 +29,11 @@ PUBLIC hHM AS NEW Socket
 PUBLIC tHMBusy AS Timer
 PUBLIC tHMConnect AS Timer
 PUBLIC bHMPairEnabled AS Boolean
-PUBLIC iStackCount AS Integer
+PUBLIC iStackCount AS Integer              'Use in Main form statusbar?
+PUBLIC iStackCountUntransmitted AS Integer 'Use in Main form statusbar?
+PUBLIC sHMLANReportedFW AS String          'HMLAN real properties
+PUBLIC sHMLANReportedSerial AS String           'HMLAN real properties
+PUBLIC sHMLANReportedAddress AS String          'HMLAN real properties
 
 PRIVATE bFirstByte AS Boolean = TRUE
 PRIVATE RecBuf AS Byte[255]
@@ -152,6 +156,8 @@ PUBLIC SUB tKeepAlive_Timer()
   tKeepAlive.Stop
   tKeepAlive.Start
 
+  StackStats()
+
 END
 
 PUBLIC SUB HM_Error()
@@ -187,17 +193,21 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' control devices
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC SUB SendCommand(sAddress AS String, sValue AS String, iDeviceId AS Integer)
+PUBLIC SUB SendCommand(iDeviceId AS Integer, sValue AS String)
 
-  DIM iValue, iSpace AS Integer
-  DIM sCmd, sModel AS String
+  DIM sAttribute, iSpace AS Integer
+  DIM sCmd, sAddress, sModel AS String
 
   ' find last space and split there to get command and value
   iSpace = RInStr(sValue, " ")
   IF iSpace = 0 THEN RETURN
 
   sCmd = Left(sValue, iSpace - 1)
-  iValue = Int(Right(sValue, Len(sValue) - iSpace))
+  sAttribute = (Right(sValue, Len(sValue) - iSpace))
+
+  ' get address of Device
+  TRY sAddress = Devices.FindAddressForDevice(Devices.FindNameForDevice(iDeviceId))
+  IF ERROR THEN RETURN
 
   ' get description of devicetype to use as model
   TRY sModel = Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(iDeviceId))
@@ -206,7 +216,7 @@ PUBLIC SUB SendCommand(sAddress AS String, sValue AS String, iDeviceId AS Intege
   IF sModel = "HM_CC_TC"
     SELECT sCmd
       CASE "Temperature"
-        HM_CC_TC_Temperature(sAddress, iValue)
+        HM_CC_TC_Temperature(sAddress, sAttribute)
       CASE "Status Request"
         HM_CC_TC_Status(sAddress)
     END SELECT
@@ -237,7 +247,7 @@ PRIVATE SUB HM_CC_TC_Temperature(sAddress AS String, iValue AS Integer)
   sSrc = sHMLANid     ' address
   sDst = sAddress
   sData = "0202" & Hex$((iValue), 2)
-  sCmd = sStatusbits & sMsgtype & sSrc & sDst & sData ' & iValue
+  sCmd = sStatusbits & sMsgtype & sSrc & sDst & sData
   StackCommand(sCmd)
   Main.WriteDebugLog("[HomeMatic] " & sAddress & " Requested Temperature " & (iValue / 2) & " Degrees C")
 
@@ -322,12 +332,6 @@ PUBLIC SUB StackCommand(sPayload AS String)
   sDst = Mid$(sPayload, 11, 6)
   sMsgnr = MessageCounter()
 
-  ' check how many commands have not been positive or negative confirmed.
-  iStackCount = 0
-  FOR EACH sDummy IN cAckstore
-    IF sDummy = "QUEUED" THEN INC iStackCount
-  NEXT
-  IF iStackCount > 0 THEN Main.WriteDebugLog("[HomeMatic] FAILED COMMANDS " & iStackCount)
   ' populate with new commands
 
   sHash = sDst & sMsgnr
@@ -346,7 +350,7 @@ PUBLIC SUB StackCommand(sPayload AS String)
   ' wait for Ack or NACK, else timeout
   FOR EACH sDummy IN cAckstore
     WHILE bHMLANConfirmed = FALSE
-      SLEEP 0.1
+      WAIT 0.1
     WEND
 
     TRY sState = cAckstore[cAckstore.Key]
@@ -363,7 +367,6 @@ PUBLIC SUB StackCommand(sPayload AS String)
       ENDIF
     ENDIF
   NEXT
-
 END
 
 PUBLIC SUB QueueAdd(sCommand AS String, OPTIONAL SHash AS String) ' add command to queue
@@ -516,12 +519,15 @@ PRIVATE SUB Process_Raw_Message()
      CASE 6
        ' Main.WriteDebugLog("[HomeMatic] Received from: " & (sMsgSegments[0]) & " Seg1 " & (sMsgSegments[1]) & " Time " & (sMsgSegments[2]) & " Seg3 " & (sMsgSegments[3]) & " RecRSSI " & (sMsgSegments[4]) & " Payload " & (sMsgSegments[5]))
      CASE 7
-       Main.WriteDebugLog("[HomeMatic] " & (sMsgSegments[0]) & ", Firmware " & (sMsgSegments[1]) & ", Serialnr " & (sMsgSegments[2]) & ", Address " & (sMsgSegments[4]) & ", Uptime " & (Val("&H" & sMsgSegments[5]) DIV 1000) & " Seconds")
+       Main.WriteDebugLog("[HomeMatic] " & (sMsgSegments[0]) & ", Uptime " & (Val("&H" & sMsgSegments[5]) DIV 1000) & " Seconds, UNTRANSMITTED COMMANDS: " & iStackCountUntransmitted & ", OPEN COMMANDS: " & iStackCount)
+       sHMLANReportedFW = sMsgSegments[1]
+       sHMLANReportedSerial = sMsgSegments[2]
+       sHMLANReportedAddress = sMsgSegments[4]
      CASE 1
        ' Main.WriteDebugLog("[HomeMatic] Dx " & (sMsgSegments[0]))
      CASE 4
        ' Main.WriteDebugLog("[HomeMatic] Y " & (sMsgSegments[0]) & " Seg1 " & (sMsgSegments[1]) & " Time " & (sMsgSegments[2]) & " Seg3 " & (sMsgSegments[3]))
-     CASE ELSE 
+     CASE ELSE
        ' Main.WriteDebugLog(("[HomeMatic] ERROR: " & Error.Text & " at " & Error.Where & " Parsing HM data packet: "))
        DisplayPacket(RecBuf)
     END SELECT
@@ -962,6 +968,21 @@ PRIVATE FUNCTION ascii2hex(sAsciiString AS String) AS Short
 
   RETURN iDecResult
 
+END
+
+'Analyze the stack. 
+'Untransmitted: No response from the HMLAN adapter
+'StackCount: No response from remote device
+PRIVATE SUB StackStats()
+  
+  DIM sDummy AS String
+  iStackCountUntransmitted = 0
+  iStackCount = 0
+  FOR EACH sDummy IN cAckstore
+    IF sDummy = "QUEUED" THEN INC iStackCountUntransmitted
+    IF sDummy = "NACK" THEN INC iStackCount
+  NEXT
+  
 END
 
 ' implement properties

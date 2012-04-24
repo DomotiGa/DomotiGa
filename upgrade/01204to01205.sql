@@ -19,7 +19,7 @@
 -- Dumping data for table `devicetypes`
 --
 
-INSERT INTO `devicetypes` VALUES (234,'HomeMatic Thermostat','HM_CC_TC','HomeMatic','1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (234,'HomeMatic Thermostat','HM_CC_TC','HomeMatic','F1F1F1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (235,'UPM/ESIC WT440H/WT450H','Temp/Hygro Sensor','UPM','th8 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (236,'DSC Partition','Security Partition','DSC','1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 
