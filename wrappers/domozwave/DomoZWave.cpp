@@ -270,15 +270,21 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 				{
 					strcpy(dev_value, "On");
 				}
+				else if ( strcmp(dev_value, "1") == 0 ) 
+				{
+					strcpy(dev_value, "On");
+				}
 				else if ( strcmp(dev_value, "0") == 0 ) 
 				{
 					strcpy(dev_value, "Off");
 				}
+/*
 				else
 				{
 					sprintf(tmp_dev_value, "Dim %s", dev_value);
 					strcpy(dev_value, tmp_dev_value);
 				}
+*/
 			}
 			break;
 		}
