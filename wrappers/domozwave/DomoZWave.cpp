@@ -19,6 +19,7 @@
 
 // system
 #include <iostream>
+#include <ctime>
 #include <stdio.h>
 #include <pthread.h>
 
@@ -54,6 +55,27 @@ char url[35];
 bool debugging;
 
 static pthread_mutex_t g_criticalSection;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Returns current date/time in readable format, used for cout
+
+ostream &OZW_datetime(ostream &stream)
+{
+  time_t t;
+  char *localt;
+  
+  t = time(NULL);
+  localt = asctime(localtime(&t));
+
+  // Remove \n which is always added to the asctime routine
+  if (localt[strlen(localt) - 1] == '\n') localt[strlen(localt) - 1] = '\0';
+
+  // Return the datetime, including suffix OZW for more readable output
+  stream << localt << " OZW ";
+
+  return stream;
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -106,7 +128,7 @@ bool fault_occurred(xmlrpc_env* env)
 {
 	if ( env->fault_occurred )
 	{
-		cout << "XML-RPC Fault: " <<  env->fault_string << " (" << env->fault_code << ")" << endl;
+		cout << OZW_datetime << "XML-RPC Fault: " <<  env->fault_string << " (" << env->fault_code << ")" << endl;
 		return true;
 	}
 	return false; 
@@ -116,7 +138,7 @@ void RPC_RemoveValue( int homeID, int nodeID/*, int valueID*/ )
 {
 	if ( debugging )
 	{
-		cout << endl << "RemoveValue: " << homeID << ":" << nodeID << endl;
+		cout << endl << OZW_datetime << "RemoveValue: " << homeID << ":" << nodeID << endl;
 	}
 }
 
@@ -145,20 +167,20 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 	{
 		if ( add )
 		{
-			cout << endl << "AddValue: HomeId=" << homeID << " Node=" << nodeID << endl;
+			cout << endl << OZW_datetime << "AddValue: HomeId=" << homeID << " Node=" << nodeID << endl;
 		}
 		else
 		{
-			cout << endl << "ChangeValue: HomeId=" << homeID << " Node=" << nodeID << endl;
+			cout << endl << OZW_datetime << "ChangeValue: HomeId=" << homeID << " Node=" << nodeID << endl;
 		}	
-		cout << "Genre=" << genre << endl;
-		cout << "GenreName=" << cgenretoStr(genre) << endl;
-		cout << "CommandClassId=" << id << endl;
-		cout << "CommandClassName=" << cclasstoStr(id) << endl;
-		cout << "CommandClassInstance=" << instanceID << endl;
-		cout << "Index=" << (int)(valueID.GetIndex()) << endl;
-		cout << "Label=" << label << endl;
-		cout << "Units=" << Manager::Get()->GetValueUnits( valueID ) << endl;
+		cout << OZW_datetime << "Genre=" << genre << endl;
+		cout << OZW_datetime << "GenreName=" << cgenretoStr(genre) << endl;
+		cout << OZW_datetime << "CommandClassId=" << id << endl;
+		cout << OZW_datetime << "CommandClassName=" << cclasstoStr(id) << endl;
+		cout << OZW_datetime << "CommandClassInstance=" << instanceID << endl;
+		cout << OZW_datetime << "Index=" << (int)(valueID.GetIndex()) << endl;
+		cout << OZW_datetime << "Label=" << label << endl;
+		cout << OZW_datetime << "Units=" << Manager::Get()->GetValueUnits( valueID ) << endl;
 	}
 
 	switch ( type )
@@ -167,7 +189,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 			if ( debugging )
 			{
-				cout << "Type=Bool" << endl;
+				cout << OZW_datetime << "Type=Bool" << endl;
 			}
 			Manager::Get()->GetValueAsBool(valueID, &bool_value );
 			snprintf(dev_value, 64, "%i", bool_value);
@@ -177,7 +199,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 			if ( debugging )
 			{
-				cout << "Type=Byte" << endl;
+				cout << OZW_datetime << "Type=Byte" << endl;
 			}
 			Manager::Get()->GetValueAsByte(valueID, &byte_value );
 			snprintf(dev_value, 64, "%i", byte_value);
@@ -187,7 +209,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 			if ( debugging )
 			{
-				cout << "Type=Decimal" << endl;
+				cout << OZW_datetime << "Type=Decimal" << endl;
 			}
 			Manager::Get()->GetValueAsString(valueID, &decimal_value );
 			snprintf(dev_value, 64, "%s", strdup(decimal_value.c_str()));
@@ -197,7 +219,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 			if ( debugging )
 			{
-				cout << "Type=Integer" << endl;
+				cout << OZW_datetime << "Type=Integer" << endl;
 			}
 			Manager::Get()->GetValueAsInt(valueID, &int_value );
 			snprintf(dev_value, 64, "%d", int_value);
@@ -207,7 +229,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 			if ( debugging )
 			{
-				cout << "Type=Short" << endl;
+				cout << OZW_datetime << "Type=Short" << endl;
 			}
 			Manager::Get()->GetValueAsShort(valueID, &short_value );
 			snprintf(dev_value, 64, "%d.h", short_value);
@@ -217,7 +239,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 			if ( debugging )
 			{
-				cout << "Type=Schedule" << endl;
+				cout << OZW_datetime << "Type=Schedule" << endl;
 			}
 			return;
 			//break;
@@ -226,7 +248,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 			if ( debugging )
 			{
-				cout << "Type=String" << endl;
+				cout << OZW_datetime << "Type=String" << endl;
 			}
 			Manager::Get()->GetValueAsString(valueID, &string_value );
 			snprintf(dev_value, 64, "%s", strdup(string_value.c_str()));
@@ -236,7 +258,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 			if ( debugging )
 			{
-				cout << "Type=Button" << endl;
+				cout << OZW_datetime << "Type=Button" << endl;
 			}
 			return;
 			//break;
@@ -245,7 +267,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 			if ( debugging )
 			{
-				cout << "Type=List" << endl;
+				cout << OZW_datetime << "Type=List" << endl;
 			}
 			Manager::Get()->GetValueListSelection(valueID, &list_value );
 			snprintf(dev_value, 64, "%s", strdup(list_value.c_str()));
@@ -254,7 +276,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		default:
 		if ( debugging ) 
 		{
-			cout << "Type=Unknown" << endl;
+			cout << OZW_datetime << "Type=Unknown" << endl;
 		}
 		return;
 	}
@@ -374,7 +396,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 	}
 	if ( debugging )
 	{
-		cout << "Value=" << dev_value << endl << endl;
+		cout << OZW_datetime << "Value=" << dev_value << endl;
 	}
 	if ( value_no > 0 )
 	{
@@ -391,7 +413,7 @@ void RPC_AddNode( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << "AddNode: HomeId=" << homeID << " Node=" << nodeID << endl;
+		cout << endl << OZW_datetime << "AddNode: HomeId=" << homeID << " Node=" << nodeID << endl;
 	}
 
 }
@@ -399,7 +421,7 @@ void RPC_RemoveNode( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << "RemoveNode: HomeId=" << homeID << " Node=" << nodeID << endl;
+		cout << endl << OZW_datetime << "RemoveNode: HomeId=" << homeID << " Node=" << nodeID << endl;
 	}
 }
 
@@ -415,12 +437,12 @@ void RPC_ProtocolInfo( int homeID, int nodeID )
 	xmlrpc_int32 security = 0;
 	if ( debugging )
 	{
-		cout << endl << "ProtocolInfo: HomeId=" << homeID << " Node=" << nodeID << endl;
-		cout << "Basic=" << basic << endl;
-		cout << "Generic=" << generic << endl;
-		cout << "Specific=" << specific << endl;
-		cout << "Cap=" << capabilities << endl;
-		cout << "Security=" << security << endl;
+		cout << endl << OZW_datetime << "ProtocolInfo: HomeId=" << homeID << " Node=" << nodeID << endl;
+		cout << OZW_datetime << "Basic=" << basic << endl;
+		cout << OZW_datetime << "Generic=" << generic << endl;
+		cout << OZW_datetime << "Specific=" << specific << endl;
+		cout << OZW_datetime << "Cap=" << capabilities << endl;
+		cout << OZW_datetime << "Security=" << security << endl;
 	}
 	xmlrpc_value* resultP = NULL;
  	xmlrpc_client_call2f(&env, clientP, url, "zwave.createnode", &resultP, "(iiiiiib)", nodeID, basic, generic, specific, capabilities, security, sleeping );
@@ -435,7 +457,7 @@ void RPC_Group( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << "GroupEvent: " << homeID << ":" << nodeID << endl;
+		cout << endl << OZW_datetime << "GroupEvent: " << homeID << ":" << nodeID << endl;
 	}
 }
 
@@ -443,8 +465,9 @@ void RPC_NodeEvent( int homeID, int nodeID, int value )
 {
 	if ( debugging )
 	{
-		cout << endl << "NodeEvent: " << homeID << ":" << nodeID << endl;
+		cout << endl << OZW_datetime << "NodeEvent: " << homeID << ":" << nodeID << endl;
 	}
+
 /*	
 	xmlrpc_value* resultP = NULL;
  	xmlrpc_client_call2f(&env, clientP, url, "zwave.basicreport", &resultP, "(iii)", homeID, nodeID, value );
@@ -459,7 +482,7 @@ void RPC_EnabledPolling( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << "EnabledPolling: HomeId=" << homeID << " Node=" << nodeID << endl;
+		cout << endl << OZW_datetime << "EnabledPolling: HomeId=" << homeID << " Node=" << nodeID << endl;
 	}
 }
 
@@ -467,7 +490,7 @@ void RPC_DisabledPolling( int homeID, int nodeID )
 {
 	if ( debugging )
 	{
-		cout << endl << "DisabledPolling: HomeId=" << homeID << " Node=" << nodeID << endl;
+		cout << endl << OZW_datetime << "DisabledPolling: HomeId=" << homeID << " Node=" << nodeID << endl;
 	}
 }
 
@@ -476,7 +499,7 @@ void RPC_DriverReady( int homeID, int nodeID )
 	home = homeID;
 	if ( debugging )
 	{
-		cout << endl << "DriverReady: HomeId=" << homeID << " Node=" << nodeID << endl;
+		cout << endl << OZW_datetime << "DriverReady: HomeId=" << homeID << " Node=" << nodeID << endl;
 	}
 
 	xmlrpc_value* resultP = NULL;
@@ -538,9 +561,9 @@ void OnNotification
 		}
 		case Notification::Type_NodeNaming:
                     {
-			cout << endl << "NodeNaming: HomeId=" << (int)data->GetHomeId() << " Node=" << (int)data->GetNodeId() << endl;
-                        cout << "ManufacturerName=" << Manager::Get()->GetNodeManufacturerName( data->GetHomeId(), data->GetNodeId() ) <<endl;
-                        cout << "ProductName=" << Manager::Get()->GetNodeProductName( data->GetHomeId(), data->GetNodeId() ) <<endl;
+			cout << endl << OZW_datetime << "NodeNaming: HomeId=" << (int)data->GetHomeId() << " Node=" << (int)data->GetNodeId() << endl;
+                        cout << OZW_datetime << "ManufacturerName=" << Manager::Get()->GetNodeManufacturerName( data->GetHomeId(), data->GetNodeId() ) <<endl;
+                        cout << OZW_datetime << "ProductName=" << Manager::Get()->GetNodeProductName( data->GetHomeId(), data->GetNodeId() ) <<endl;
                         break;
                     }
 		case Notification::Type_ValueChanged:
@@ -610,7 +633,7 @@ void OnNotification
 		{
 			if ( debugging )
 			{
-				cout << endl << "AwakeNodeQueries Done!" << endl;
+				cout << endl << OZW_datetime << "AwakeNodeQueries Done!" << endl;
 			}
 			Manager::Get()->WriteConfig( home );
 
@@ -685,11 +708,11 @@ void DomoZWave_Destroy()
 	xmlrpc_client_destroy(clientP);
 	xmlrpc_client_teardown_global_const();
 
-	//cout << "Destroyed xmlrpc" << endl;
+	//cout << OZW_datetime << "Destroyed xmlrpc" << endl;
 	Manager::Get()->Destroy();
-	//cout << "Destroyed manager" << endl;
+	//cout << OZW_datetime << "Destroyed manager" << endl;
 	Options::Get()->Destroy();
-	//cout << "Destroyed options" << endl;
+	//cout << OZW_datetime << "Destroyed options" << endl;
 
 	pthread_mutex_unlock( &g_criticalSection );
 	pthread_mutex_destroy( &g_criticalSection );
@@ -714,7 +737,7 @@ void DomoZWave_EnablePolling( int node, int32 polltime )
 
 				if ( debugging )
 				{
-					cout << endl << "Enabled Polling for node " << node << endl;
+					cout << endl << OZW_datetime << "Enabled Polling for node " << node << endl;
 				}
 				break;
 			}
@@ -832,10 +855,10 @@ void DomoZWave_SetValue( int node, int instance, int value )
 						return;
                         		}
 
-                                	//cout << "SetValue for node " << node << endl;
-                                	//cout << "class id " << id << endl;
-                                	//cout << "instance " << instance << endl;
-                                	//cout << "value " << value << endl;
+                                	//cout << OZW_datetime << "SetValue for node " << node << endl;
+                                	//cout << OZW_datetime << "class id " << id << endl;
+                                	//cout << OZW_datetime << "instance " << instance << endl;
+                                	//cout << OZW_datetime << "value " << value << endl;
                         	}
 			}
                 }
