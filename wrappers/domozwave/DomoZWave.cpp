@@ -20,6 +20,7 @@
 // system
 #include <iostream>
 #include <ctime>
+#include <sys/time.h>
 #include <stdio.h>
 #include <pthread.h>
 
@@ -62,17 +63,19 @@ static pthread_mutex_t g_criticalSection;
 
 ostream &OZW_datetime(ostream &stream)
 {
-  time_t t;
-  char *localt;
-  
-  t = time(NULL);
-  localt = asctime(localtime(&t));
+  // Get a timestamp
+  struct timeval tv;
+  gettimeofday(&tv, NULL);
+  struct tm *tm;
+  tm = localtime( &tv.tv_sec );
 
-  // Remove \n which is always added to the asctime routine
-  if (localt[strlen(localt) - 1] == '\n') localt[strlen(localt) - 1] = '\0';
+  // create a time stamp string for the log message
+  char localt[100];
+  snprintf( localt, sizeof(localt), "%04d-%02d-%02d %02d:%02d:%02d:%03d",
+            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+            tm->tm_hour, tm->tm_min, tm->tm_sec, tv.tv_usec / 1000 );
 
-  // Return the datetime, including suffix OZW for more readable output
-  stream << localt << " OZW ";
+  stream << localt << " [DomoZwave] ";
 
   return stream;
 }
@@ -670,16 +673,19 @@ void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir,
 
 	Options::Create( configdir, zwdir, "" );
         Options::Get()->AddOptionBool("AppendLogFile", false);
-        Options::Get()->AddOptionBool("ConsoleOutput", true);
+	Options::Get()->AddOptionBool("ConsoleOutput", false);
 	if ( enableLog )
 	{
-        	Options::Get()->AddOptionInt("SaveLogLevel", LogLevel_Error );
+		Options::Get()->AddOptionInt("SaveLogLevel", LogLevel_Detail );
         	Options::Get()->AddOptionInt("QueueLogLevel", LogLevel_Debug);
         	Options::Get()->AddOptionInt("DumpTriggerLevel", LogLevel_Error);
 	}
 
-        Options::Get()->AddOptionInt("PollInterval", polltime);
-       	Options::Get()->AddOptionBool("IntervalBetweenPolls", true);
+	if ( polltime > 0 )
+	{
+        	Options::Get()->AddOptionInt("PollInterval", polltime);
+       		Options::Get()->AddOptionBool("IntervalBetweenPolls", true);
+	}
 	Options::Get()->AddOptionBool("SuppressValueRefresh", false);
 
         Options::Get()->Lock();
