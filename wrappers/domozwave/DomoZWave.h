@@ -116,4 +116,13 @@ void DomoZWave_RequestConfigParam( int node, int param );
 void DomoZWave_RequestAllConfigParams( int node );
 void DomoZWave_SetValue( int node, int instance, int value );
 void DomoZWave_AddAssociation( int node, int group );
+const char* DomoZWave_GetNodeManufacturerName( int node );
+const char* DomoZWave_GetNodeProductName( int node );
+const char* DomoZWave_GetNodeName( int node );
+const char* DomoZWave_GetNodeLocation( int node );
+const char* DomoZWave_GetNodeManufacturerId( int node );
+const char* DomoZWave_GetNodeProductType( int node );
+const char* DomoZWave_GetNodeProductId( int node );
+const char* DomoZWave_GetLibraryVersion();
+const char* DomoZWave_GetLibraryTypeName();
 }

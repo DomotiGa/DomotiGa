@@ -726,6 +726,13 @@ void DomoZWave_Destroy()
 
 void DomoZWave_EnablePolling( int node, int32 polltime )
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "EnablePolling - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	if ( Manager::Get()->GetNodeBasic( home, node ) < 0x03 )
 	{	
 		return;
@@ -753,6 +760,13 @@ void DomoZWave_EnablePolling( int node, int32 polltime )
 
 void DomoZWave_DisablePolling( int node )
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "DisablePolling - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	if( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
 	{
         	// Mark all the nodes for polling
@@ -765,52 +779,122 @@ void DomoZWave_DisablePolling( int node )
 
 void DomoZWave_RequestNodeState( int node )
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "RequestNodeState - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	Manager::Get()->RequestNodeState( home, node );
 }
 
 void DomoZWave_RequestNetworkUpdate( )
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "RequestNetworkUpdate - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNetworkUpdate, NULL, NULL, false, 0xff );
 }
 
 void DomoZWave_AddDevice( )
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "AddDevice - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_AddDevice, NULL, NULL, true, 0xff );
 }
 
 void DomoZWave_RemoveDevice( int node )
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "RemoveDevice - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RemoveDevice, NULL, NULL, false, node );
 }
 
 void DomoZWave_RequestNodeNeighborUpdate( int node )
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "RequestNodeNeighborUpdate - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNodeNeighborUpdate, NULL, NULL, false, node );
 }
 
 void DomoZWave_CancelControllerCommand( )
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "CancelControllerCommand - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	Manager::Get()->CancelControllerCommand( home );
 }
 
 void DomoZWave_SetConfigParam( int node, int param, int value ) 
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "SetConfigParam - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	Manager::Get()->SetConfigParam( home, node, param, value);
 }
 
 void DomoZWave_RequestConfigParam( int node, int param ) 
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "RequestConfigParam - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	Manager::Get()->RequestConfigParam( home, node, param );
 }
 
 void DomoZWave_AddAssociation( int node, int group ) 
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "AddAssociation - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	Manager::Get()->AddAssociation( home, 1, group, node);
 	Manager::Get()->RefreshNodeInfo( home, node);
 }
 
 void DomoZWave_RequestAllConfigParams( int node )
 {
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "RequestAllConfigParams - HomeId=0, can't continue" << endl;
+		return;
+	}
+
 	Manager::Get()->RequestAllConfigParams( home, node );
 }
 
@@ -820,6 +904,13 @@ void DomoZWave_SetValue( int node, int instance, int value )
 	int int_value;
 	uint8 uint8_value;
 	uint16 uint16_value;
+
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "SetValue - HomeId=0, can't continue" << endl;
+		return;
+	}
 
         if( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
         {
@@ -869,6 +960,141 @@ void DomoZWave_SetValue( int node, int instance, int value )
 			}
                 }
         }
+}
+
+const char* DomoZWave_GetNodeManufacturerName( int node )
+{
+	string str;
+
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "GetNodeManufacturerName - HomeId=0, can't continue" << endl;
+		return "";
+	}
+
+	str = Manager::Get()->GetNodeManufacturerName( home, node );
+	return str.c_str();
+}
+
+const char* DomoZWave_GetNodeProductName( int node )
+{
+	string str;
+
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "GetNodeProductName - HomeId=0, can't continue" << endl;
+		return "";
+	}
+
+	str = Manager::Get()->GetNodeProductName( home, node );
+	return str.c_str();
+}
+
+const char* DomoZWave_GetNodeName( int node )
+{
+	string str;
+
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "GetNodeName - HomeId=0, can't continue" << endl;
+		return "";
+	}
+
+	str = Manager::Get()->GetNodeName( home, node );
+	return str.c_str();
+}
+
+const char* DomoZWave_GetNodeLocation( int node )
+{
+	string str;
+
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "GetNodeLocation - HomeId=0, can't continue" << endl;
+		return "";
+	}
+
+	str = Manager::Get()->GetNodeLocation( home, node );
+	return str.c_str();
+}
+
+const char* DomoZWave_GetNodeManufacturerId( int node )
+{
+	string str;
+
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "GetNodeManufacturerId - HomeId=0, can't continue" << endl;
+		return "";
+	}
+
+	str = Manager::Get()->GetNodeManufacturerId( home, node );
+	return str.c_str();
+}
+
+const char* DomoZWave_GetNodeProductType( int node )
+{
+	string str;
+
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "GetNodeProductType - HomeId=0, can't continue" << endl;
+		return "";
+	}
+
+	str = Manager::Get()->GetNodeProductType( home, node );
+	return str.c_str();
+}
+
+const char* DomoZWave_GetNodeProductId( int node )
+{
+	string str;
+
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "GetNodeProductId - HomeId=0, can't continue" << endl;
+		return "";
+	}
+
+	str = Manager::Get()->GetNodeProductId( home, node );
+	return str.c_str();
+}
+
+const char* DomoZWave_GetLibraryVersion()
+{
+	string str;
+
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "GetLibraryVersion - HomeId=0, can't continue" << endl;
+		return "";
+	}
+
+	str = Manager::Get()->GetLibraryVersion( home );
+	return str.c_str();
+}
+
+const char* DomoZWave_GetLibraryTypeName()
+{
+	string str;
+
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "GetLibraryTypeName - HomeId=0, can't continue" << endl;
+		return "";
+	}
+
+	str = Manager::Get()->GetLibraryTypeName( home );
+	return str.c_str();
 }
 
 const char *cclasstoStr (uint8 class_value)
