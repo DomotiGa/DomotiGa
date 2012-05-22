@@ -184,6 +184,7 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		cout << OZW_datetime << "Index=" << (int)(valueID.GetIndex()) << endl;
 		cout << OZW_datetime << "Label=" << label << endl;
 		cout << OZW_datetime << "Units=" << Manager::Get()->GetValueUnits( valueID ) << endl;
+
 	}
 
 	switch ( type )
@@ -466,19 +467,26 @@ void RPC_Group( int homeID, int nodeID )
 
 void RPC_NodeEvent( int homeID, int nodeID, int value )
 {
+	int instanceID = 1;
+	int value_no = 1;
+	char dev_value[64];
+
+	snprintf(dev_value, 64, "%d", value);
+
 	if ( debugging )
 	{
 		cout << endl << OZW_datetime << "NodeEvent: " << homeID << ":" << nodeID << endl;
+		cout << OZW_datetime << "Value=" << dev_value << endl;
 	}
 
-/*	
+	snprintf(dev_value, 64, "%d", value);
+
 	xmlrpc_value* resultP = NULL;
- 	xmlrpc_client_call2f(&env, clientP, url, "zwave.basicreport", &resultP, "(iii)", homeID, nodeID, value );
+	xmlrpc_client_call2f(&env, clientP, url, "zwave.setvalue", &resultP, "(iiiis)", homeID, nodeID, instanceID, value_no, dev_value );
 	if ( resultP )
 	{
 		xmlrpc_DECREF(resultP);
 	}
-*/
 }
 
 void RPC_EnabledPolling( int homeID, int nodeID )
@@ -649,6 +657,107 @@ void OnNotification
 			}
 			break;
 		}
+		case Notification::Type_CreateButton:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "CreateButton: HomeId=" << (int)data->GetHomeId() << " Node=" << (int)data->GetNodeId() << endl;
+				cout << OZW_datetime << "ButtonId=" << (int)data->GetButtonId() << endl;
+			}
+			break;
+		}	
+		case Notification::Type_DeleteButton:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "DeleteButton: HomeId=" << (int)data->GetHomeId() << " Node=" << (int)data->GetNodeId() << endl;
+				cout << OZW_datetime << "ButtonId=" << (int)data->GetButtonId() << endl;
+			}
+			break;
+		}	
+		case Notification::Type_ButtonOn:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "ButtonOn: HomeId=" << (int)data->GetHomeId() << " Node=" << (int)data->GetNodeId() << endl;
+				cout << OZW_datetime << "ButtonId=" << (int)data->GetButtonId() << endl;
+			}
+			break;
+		}	
+		case Notification::Type_ButtonOff:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "ButtonOff: HomeId=" << (int)data->GetHomeId() << " Node=" << (int)data->GetNodeId() << endl;
+				cout << OZW_datetime << "ButtonId=" << (int)data->GetButtonId() << endl;
+			}
+			break;
+		}	
+		case Notification::Type_DriverFailed:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "DriverFailed !" << endl;
+			}
+			break;
+		}
+		case Notification::Type_DriverReset:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "DriverReset !" << endl;
+			}
+			break;
+		}
+		case Notification::Type_EssentialNodeQueriesComplete:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "EssentialNodeQueriesComplete: HomeId=" << (int)data->GetHomeId() << endl;
+			}
+			break;
+		}
+		case Notification::Type_MsgComplete:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "MsgComplete: HomeId=" << (int)data->GetHomeId() << endl;
+			}
+			break;
+		}
+		case Notification::Type_NodeNew:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "NodeNew: HomeId=" << (int)data->GetHomeId() << " Node=" << (int)data->GetNodeId() << endl;
+			}
+			break;
+		}
+		case Notification::Type_NodeQueriesComplete:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "NodeQueriesComplete: HomeId=" << (int)data->GetHomeId() << endl;
+			}
+			break;
+		}
+		case Notification::Type_ValueRefreshed:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "ValueRefreshed: HomeId=" << (int)data->GetHomeId() << " Node=" << (int)data->GetNodeId() << endl;
+			}
+			break;
+		}
+		case Notification::Type_Error:
+		{
+			if ( debugging )
+			{
+				cout << endl << OZW_datetime << "Error: HomeId=" << (int)data->GetHomeId() << " Node=" << (int)data->GetNodeId() << endl;
+				cout << OZW_datetime << "ErrorCode=" << (int)data->GetErrorCode() << endl;
+			}
+			break;
+		}
 		default:
 		break;
 	}
@@ -681,14 +790,11 @@ void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir,
         	Options::Get()->AddOptionInt("DumpTriggerLevel", LogLevel_Error);
 	}
 
-	if ( polltime > 0 )
-	{
-        	Options::Get()->AddOptionInt("PollInterval", polltime);
-       		Options::Get()->AddOptionBool("IntervalBetweenPolls", true);
-	}
+    Options::Get()->AddOptionInt("PollInterval", polltime);
+    Options::Get()->AddOptionBool("IntervalBetweenPolls", true);
 	Options::Get()->AddOptionBool("SuppressValueRefresh", false);
 
-        Options::Get()->Lock();
+    Options::Get()->Lock();
 
 	Manager::Create();
 	Log::SetLoggingState( debugging );
@@ -769,7 +875,7 @@ void DomoZWave_DisablePolling( int node )
 
 	if( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
 	{
-        	// Mark all the nodes for polling
+        	// disable polling for all values of this node
                 for( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
 		{
 			Manager::Get()->DisablePoll( *it );	
@@ -787,6 +893,18 @@ void DomoZWave_RequestNodeState( int node )
 	}
 
 	Manager::Get()->RequestNodeState( home, node );
+}
+
+void DomoZWave_RequestNodeDynamic( int node )
+{
+	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
+	if ( home == 0 )
+	{
+		cout << endl << OZW_datetime << "RequestNodeDynamic - HomeId=0, can't continue" << endl;
+		return;
+	}
+
+	Manager::Get()->RequestNodeDynamic( home, node );
 }
 
 void DomoZWave_RequestNetworkUpdate( )

@@ -106,6 +106,7 @@ void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir,
 void DomoZWave_EnablePolling( int node, int polltime );
 void DomoZWave_DisablePolling( int node );
 void DomoZWave_RequestNodeState( int node );
+void DomoZWave_RequestNodeDynamic( int node );
 void DomoZWave_RequestNetworkUpdate( );
 void DomoZWave_AddDevice();
 void DomoZWave_RemoveDevice( int node );
