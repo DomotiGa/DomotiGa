@@ -49,15 +49,22 @@ PROPERTY Port AS String
 PROPERTY Baud AS String
 PROPERTY ZWaveDebug AS Boolean
 PROPERTY ReloadNodes AS Boolean
-PROPERTY Polltime AS Integer
+PROPERTY PollTime AS Integer
+PROPERTY PollTimeSleeping AS String
+PROPERTY EnablePollSleeping AS Boolean
+PROPERTY UpdateNeighbor AS String
+PROPERTY EnableUpdateNeighbor AS Boolean
 
 PRIVATE bUseOZW AS Boolean
 PRIVATE sPort AS String
 PRIVATE sBaud AS String
 PRIVATE bZWaveDebug AS Boolean
 PRIVATE bReloadNodes AS Boolean
-PRIVATE iPolltime AS Integer
-
+PRIVATE iPollTime AS Integer
+PRIVATE sPollTimeSleeping AS String
+PRIVATE bEnablePollSleeping AS Boolean
+PRIVATE sUpdateNeighbor AS String
+PRIVATE bEnableUpdateNeighbor AS Boolean
 PUBLIC hZWaveSer AS NEW SerialPort
 PUBLIC tZWaveLED AS NEW Timer
 
@@ -211,6 +218,23 @@ PUBLIC FUNCTION Connect() AS Boolean
 CATCH ' some errors
   Main.WriteLog(("Z-Wave Error: ") & ERROR.Text)
   RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' run zwave network related tasks
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB RunTasks()
+
+  ' check if neighbor needs updating
+  IF bEnableUpdateNeighbor THEN
+    IF Events.TimeCron(sUpdateNeighbor) THEN OZW_RequestAllNodeUpdateNeighbor()
+  ENDIF
+
+  ' check if sleeping nodes needs polling
+  IF bEnablePollSleeping THEN
+    IF Events.TimeCron(sPollTimeSleeping) THEN OZW_RequestAllSleepingNodeDynamics()
+  ENDIF
 
 END
 
@@ -1304,9 +1328,9 @@ PUBLIC SUB OZW_GetManufacturerAndModel()
     IF (rResultNodes.Count >= 1) THEN
       FOR EACH rResultNodes
         sManufacturer = DomoZWave_GetNodeManufacturerName(rResultNodes!nodeid)
-        sManufacturer = Replace(sManufacturer,"Unknown: ","")
+        sManufacturer = Replace(sManufacturer, "Unknown: ", "")
         sModel = DomoZWave_GetNodeProductName(rResultNodes!nodeid)
-        sModel = Replace(sModel,"Unknown: ","")
+        sModel = Replace(sModel, "Unknown: ", "")
         UpdateManufacturersNode(rResultNodes!nodeid, sManufacturer, sModel)
       NEXT
     END IF
@@ -1321,7 +1345,7 @@ PUBLIC SUB OZW_GetLibraryVersion()
 
    sZWaveAPIVersion = DomoZWave_GetLibraryVersion()
    ' Strip off "Z-Wave "
-   sZWaveAPIVersion = Replace(sZWaveAPIVersion,"Z-Wave ","")
+   sZWaveAPIVersion = Replace(sZWaveAPIVersion, "Z-Wave ", "")
    sZWaveZDKVersion = ExpandVersion(sZWaveAPIVersion)
 
 END
@@ -1510,7 +1534,7 @@ END
 
 PUBLIC SUB OZW_RequestNodeDynamic(iNodeId AS Integer)
 
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting node dynamic of node id " & iNodeId))
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting dynamic of node id " & iNodeId))
   DomoZWave_RequestNodeDynamic(iNodeId)
 
 END
@@ -1527,6 +1551,44 @@ PUBLIC SUB OZW_RequestAllNodeStates()
         IF rResultNodes!nodeid <> Main.hZWave.iControllerID THEN ' we cannot query ourselves
           IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting state for node id " & rResultNodes!nodeid & "."))
           DomoZWave_RequestNodeState(rResultNodes!nodeid)
+        ENDIF
+      NEXT
+    ENDIF
+  ENDIF
+
+END
+
+PUBLIC SUB OZW_RequestAllSleepingNodeDynamics()
+
+  DIM rResultNodes AS Result
+
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger sleeping nodes to update their values, when they wake-up"))
+  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is TRUE")
+  IF rResultNodes THEN
+    IF (rResultNodes.Count >= 1) THEN
+      FOR EACH rResultNodes
+        IF rResultNodes!nodeid <> Main.hZWave.iControllerID THEN ' we cannot query ourselves
+          IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting dynamic of sleeping node id " & rResultNodes!nodeid & "."))
+          DomoZWave_RequestNodeDynamic(rResultNodes!nodeid)
+        ENDIF
+      NEXT
+    ENDIF
+  ENDIF
+
+END
+
+PUBLIC SUB OZW_RequestAllNodeUpdateNeighbor()
+
+  DIM rResultNodes AS Result
+
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger nodes to update their neighbor routing"))
+  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE")
+  IF rResultNodes THEN
+    IF (rResultNodes.Count >= 1) THEN
+      FOR EACH rResultNodes
+        IF rResultNodes!nodeid <> Main.hZWave.iControllerID THEN ' we cannot query ourselves
+          IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting node id " & rResultNodes!nodeid & " to update it's neighbors."))
+          DomoZWave_RequestNodeNeighborUpdate(rResultNodes!nodeid)
         ENDIF
       NEXT
     ENDIF
@@ -1574,7 +1636,7 @@ PUBLIC SUB OZW_AllQueried()
 
   DIM rResultNodes AS Result
 
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Searching for nodes to poll."))
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Searching for nodes to enable/disable poll."))
   rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE")
   IF rResultNodes THEN
     IF (rResultNodes.Count >= 1) THEN
@@ -1584,7 +1646,7 @@ PUBLIC SUB OZW_AllQueried()
             IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Disable polling for node " & rResultNodes!nodeid))
             DomoZWave_DisablePolling(rResultNodes!nodeid)
           ELSE
-            IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Enable polling for node " & rResultNodes!nodeid & " every " & iPollTime & " mS."))
+            IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Enable polling for node " & rResultNodes!nodeid & " every " & iPollTime & " mSec."))
             DomoZWave_EnablePolling(rResultNodes!nodeid, iPolltime)
           ENDIF
         ENDIF
@@ -1671,5 +1733,53 @@ END
 PRIVATE SUB Polltime_Write(Value AS Integer)
 
   iPolltime = Value
+
+END
+
+PRIVATE FUNCTION PolltimeSleeping_Read() AS String
+
+  RETURN sPollTimeSleeping
+
+END
+
+PRIVATE SUB PolltimeSleeping_Write(Value AS String)
+
+  sPollTimeSleeping = Value
+
+END
+
+PRIVATE FUNCTION UpdateNeighbor_Read() AS String
+
+  RETURN sUpdateNeighbor
+
+END
+
+PRIVATE SUB UpdateNeighbor_Write(Value AS String)
+
+  sUpdateNeighbor = Value
+
+END
+
+PRIVATE FUNCTION EnablePollSleeping_Read() AS Boolean
+
+  RETURN bEnablePollSleeping
+
+END
+
+PRIVATE SUB EnablePollSleeping_Write(Value AS Boolean)
+
+  bEnablePollSleeping = Value
+
+END
+
+PRIVATE FUNCTION EnableUpdateNeighbor_Read() AS Boolean
+
+  RETURN bEnableUpdateNeighbor
+
+END
+
+PRIVATE SUB EnableUpdateNeighbor_Write(Value AS Boolean)
+
+  bEnableUpdateNeighbor = Value
 
 END
