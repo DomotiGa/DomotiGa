@@ -186,7 +186,12 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 		cout << OZW_datetime << "Units=" << Manager::Get()->GetValueUnits( valueID ) << endl;
 
 	}
-
+/*
+	if ( add )
+	{
+		Manager::Get()->SetChangeVerified( valueID, true );
+	}
+*/
 	switch ( type )
 	{
 		case ValueID::ValueType_Bool:
@@ -967,7 +972,7 @@ void DomoZWave_CancelControllerCommand( )
 	Manager::Get()->CancelControllerCommand( home );
 }
 
-void DomoZWave_SetConfigParam( int node, int param, int value ) 
+void DomoZWave_SetConfigParam( int node, int param, int value, int size )
 {
 	// if HomeId=0, don't call the Open Z-Wave lib, it will cause a sigterm
 	if ( home == 0 )
@@ -976,7 +981,7 @@ void DomoZWave_SetConfigParam( int node, int param, int value )
 		return;
 	}
 
-	Manager::Get()->SetConfigParam( home, node, param, value);
+	Manager::Get()->SetConfigParam( home, node, param, value, size);
 }
 
 void DomoZWave_RequestConfigParam( int node, int param ) 

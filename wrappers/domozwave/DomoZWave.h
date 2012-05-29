@@ -112,7 +112,7 @@ void DomoZWave_AddDevice();
 void DomoZWave_RemoveDevice( int node );
 void DomoZWave_RequestNodeNeighborUpdate( int node );
 void DomoZWave_CancelControllerCommand();
-void DomoZWave_SetConfigParam( int node, int param, int value );
+void DomoZWave_SetConfigParam( int node, int param, int value, int size );
 void DomoZWave_RequestConfigParam( int node, int param );
 void DomoZWave_RequestAllConfigParams( int node );
 void DomoZWave_SetValue( int node, int instance, int value );
