@@ -1,0 +1,433 @@
+' Gambas class file
+
+' Description:
+' SmartMeter.class
+' Provide support for parsing the output of a NTA8130 compatible smart meter.
+
+' Development Status:
+' Just started developing this one.
+
+' Links:
+' http://www.energiened.nl/_upload/bestellingen/publicaties/285_313186a%20-%20DSMR%20v4.0%20final%20P1.pdf
+' http://www.domoticaforum.eu/viewtopic.php?f=16&t=6104
+
+' DomotiGa - an open source home automation program.
+' Copyright(C) 2008-2012 Ron Klinkien
+' This module is written by and Copyright(C) 2009 Timo Sariwating
+
+' Read file called COPYING for license details.
+
+Property TCPHost As String
+Property TCPPort As Integer
+Property Interface As String
+Property SerPort As String
+Property Baud As String
+Property Databits As Integer
+Property Stopbits As Integer
+Property Parity As Integer
+Property SmartMeterDebug As Boolean
+
+Private sTCPHost As String
+Private iTCPPort As Integer
+Private sInterface As String
+Private sSerPort As String
+Private sBaud As String
+Private iDatabits As Integer
+Private iStopbits As Integer
+Private iParity As Integer
+Private bSmartMeterDebug As Boolean
+
+Public hSmartMeter As New Socket
+Public hSmartMeterSer As New SerialPort
+Private sBuffer As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectTCP() As Boolean
+
+  ' try to close the connection
+  Try hSmartMeter.Close
+
+  ' get a new one
+  hSmartMeter = New Socket As "SmartMeter"
+  hSmartMeter.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("SmartMeter Error: ") & ERROR.Text & " at " & ERROR.Where)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectSerial() As Boolean
+
+  ' try to close the connection
+  Try hSmartMeterSer.Close
+
+  ' get a new one
+  hSmartMeterSer = New Serialport As "SmartMeterSer"
+  With hSmartMeterSer
+    .PortName = sSerPort
+    .Speed = sBaud
+    .Parity = iParity
+    .DataBits = iDatabits
+    .StopBits = iStopbits
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("SmartMeter Error: ") & ERROR.Text & " at " & ERROR.Where)
+
+  ' just here for development/debugging
+  Try ProcessData(File.Load("/home/ron/SmartMeter.log"))
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hSmartMeter.Close
+  Try hSmartMeterSer.Close
+  Main.WriteLog(("SmartMeter TCP socket/serial port close."))
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("SmartMeter Error: ") & ERROR.Text & " at " & ERROR.Where)
+  Return False
+
+End
+
+' got data on serial port
+Public Sub SmartMeterSer_Read()
+
+  Dim sData As String
+
+  Try Read #hSmartMeterSer, sData, 1
+  If Error Then Main.WriteDebugLog(("[SmartMeter] Error reading data from serial port! -> ") & Error.Text)
+  If sData = "!" Then ' buffer until end of record
+    sBuffer &= sData
+    ProcessData(sBuffer)
+    sBuffer = Null
+  Else
+    sBuffer &= sData
+  End If
+
+End
+
+' parse P1 telegram
+Private Sub ProcessData(sTelegram As String)
+
+  Dim aTelegram, aRecord, aReading, aGasRecord As String[]
+  Dim aMBusId, aMBusType, aMBusReading, aMBusUnit, aMBusValve, aMBusTime As New String[4]
+  Dim sLine, sSupplier, sEquipmentIdPower, sReadingPowerNormalUnit, sReadingPowerLowUnit, sReadingPowerGenNormalUnit, sReadingPowerGenLowUnit, sCurrentPowerUsageUnit, sCurrentPowerGenUnit, sPowerThresholdUnit As String
+  Dim sMsgCode, sMsgText, sId, sTimeStamp, sCurrentTariff, sValve As String
+  Dim fReadingPowerNormal, fReadingPowerLow, fReadingPowerGenNormal, fReadingPowerGenLow, fCurrentPowerUsage, fCurrentPowerGen, fPowerThreshold As Float
+  Dim iCurrentTariff, iSwitchPos, iChannel, iType, iDeviceId As Integer
+
+  aTelegram = Split(sTelegram, "\n")
+  For Each sLine In aTelegram
+    If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] < " & sLine)
+    Select Case Left(sLine, 1)
+      Case "/" ' header
+        If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Received start of P1 data telegram.")
+        ' decode meter supplier
+        Select Case Mid(sLine, 2, 3)
+          Case "KMP"
+            sSupplier = "Kamstrup"
+          Case "ISk"
+            sSupplier = "IskraEmeco"
+          Case Else
+            sSupplier = "Unknown (" & Mid(sLine, 2, 3) & ")"
+        End Select
+        If Main.bSmartMeterDebug Then
+          Main.WriteDebugLog("[SmartMeter] Meter supplier is '" & sSupplier & "'")
+          Main.WriteDebugLog("[SmartMeter] Meter information '" & sLine & "'")
+        Endif
+      Case "!" ' end of datagram
+        If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Received end of P1 data telegram.")
+      Case Else ' data
+        aRecord = Scan(sLine, "*:*(*)*")
+        If aRecord.Count = 4 Then
+          Select Case aRecord[1]
+            Case "96.1.1" ' identifier
+              sEquipmentIdPower = aRecord[2]
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Equipment identifier (Power) is '" & sEquipmentIdPower & "'")
+            Case "1.8.2" ' meter reading normal tariff
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                fReadingPowerNormal = CFloat(aReading[0])
+                sReadingPowerNormalUnit = aReading[1]
+              Endif
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Meter reading power usage (T2/Normal tariff) is " & fReadingPowerNormal & " " & sReadingPowerNormalUnit)
+            Case "1.8.1" ' meter reading low tariff
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                fReadingPowerLow = CFloat(aReading[0])
+                sReadingPowerLowUnit = aReading[1]
+              Endif
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Meter reading power usage (T1/Low tariff) is " & fReadingPowerLow & " " & sReadingPowerLowUnit)
+            Case "2.8.2" ' meter reading delivered to net normal tariff
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                fReadingPowerGenNormal = CFloat(aReading[0])
+                sReadingPowerGenNormalUnit = aReading[1]
+              Endif
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Meter reading power generated (T2/Normal tariff) is " & fReadingPowerGenNormal & " " & sReadingPowerGenNormalUnit)
+            Case "2.8.1" ' meter reading delivered to net low tariff
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                fReadingPowerGenLow = CFloat(aReading[0])
+                sReadingPowerGenLowUnit = aReading[1]
+              Endif
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Meter reading power generated (T1/Low tariff) is " & fReadingPowerGenLow & " " & sReadingPowerGenLowUnit)
+            Case "96.14.0"
+              iCurrentTariff = CInt(aRecord[2])
+              sCurrentTariff = IIf(iCurrentTariff = 1, "Low", "Normal")
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Current tariff is T" & iCurrentTariff & " " & sCurrentTariff)
+            Case "1.7.0" ' current power usage
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                fCurrentPowerUsage = CFloat(aReading[0])
+                sCurrentPowerUsageUnit = aReading[1]
+              Endif
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Current power usage (+P) is " & fCurrentPowerUsage & " " & sCurrentPowerUsageUnit)
+            Case "2.7.0" ' current power generated
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                fCurrentPowerGen = CFloat(aReading[0])
+                sCurrentPowerGenUnit = aReading[1]
+              Endif
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Current power generated (-P) is " & fCurrentPowerGen & " " & sCurrentPowerGenUnit)
+            Case "17.0.0" ' power threshold
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                fPowerThreshold = CFloat(aReading[0])
+                sPowerThresholdUnit = aReading[1]
+              Endif
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Electricity threshold is " & fPowerThreshold & " " & sPowerThresholdUnit)
+            Case "96.3.10" ' in/out/enabled
+              iSwitchPos = CInt(aRecord[2])
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Electricity switch position is " & iSwitchPos)
+            Case "96.13.1" ' message
+              sMsgCode = aRecord[2]
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Message Code is '" & sMsgCode & "'")
+            Case "96.13.0" ' message text
+              sMsgText = aRecord[2]
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] Message Text is '" & sMsgText & "'")
+            ' optional MBus connected meters (channel 1-4)
+            Case "96.1.0" ' channel identifiers
+              iChannel = CInt(Right(aRecord[0]))
+              aMBusId[iChannel - 1] = aRecord[2]
+            Case "24.1.0" ' device type
+              iChannel = CInt(Right(aRecord[0]))
+              iType = CInt(aRecord[2])
+              Select Case iType
+                Case 3
+                  aMBusType[iChannel - 1] = "Gas"
+                Case 5
+                  aMBusType[iChannel - 1] = "Heat"
+                Case 6
+                  aMBusType[iChannel - 1] = "Cooling"
+                Case 8
+                  aMBusType[iChannel - 1] = "Cold Water"
+                Case 9
+                  aMBusType[iChannel - 1] = "Warm Water"
+              End Select
+            Case "24.3.0" ' gas
+              iChannel = CInt(Right(aRecord[0]))
+              aMBusTime[iChannel - 1] = "20" & Left(aRecord[2], 2) & "-" & Mid(aRecord[2], 3, 2) & "-" & Mid(aRecord[2], 5, 2) & " " & Mid(aRecord[2], 7, 2) & ":" & Mid(aRecord[2], 9, 2) & ":" & Mid(aRecord[2], 11, 2)
+              aGasRecord = Scan(aRecord[3], "(*)(*)(*)(*)(*)(*)")
+              If aGasRecord.Count = 6 Then ' Companion layout
+                aMBusReading[iChannel - 1] = CFloat(aGasRecord[5])
+                aMBusUnit[iChannel - 1] = aGasRecord[4]
+              Else ' Kamstrup/Iskraemeco layout
+                aGasRecord = Scan(aRecord[3], "(*)(*)(*)(*)(*)")
+                If aGasRecord.Count = 5 Then ' Kamstrup layout
+                  aMBusUnit[iChannel - 1] = aGasRecord[4]
+                Endif
+                ' data is on next line parse it later
+              Endif
+            Case "24.4.0" ' valve position
+              iChannel = CInt(Right(aRecord[0]))
+              Select Case CInt(aRecord[2])
+                Case 1
+                  sValve = "Open"
+                Case 2
+                  sValve = "Closed"
+                Case 3
+                  sValve = "Released"
+                Case Else
+                  sValve = "Unknown"
+              End Select
+              aMBusValve[iChannel - 1] = sValve
+            Case Else
+              If Main.bSmartMeterDebug Then Main.WriteDebugLog("[SmartMeter] to decode : " & aRecord[1])
+          End Select
+        Endif
+        aRecord = Scan(sLine, "(*)") ' possible mbus meter value on seperate line
+        If aRecord.Count = 1 Then
+          aMBusReading[iChannel - 1] = CFloat(aRecord[0])
+        Endif
+    End Select
+  Next
+  ' walk through mbus channels
+  For iChannel = 1 To 4
+    If Len(aMBusReading[iChannel - 1]) Then
+    If Main.bSmartMeterDebug Then
+      Main.WriteDebugLog("[SmartMeter] MBus Meter on Channel #" & iChannel & ":")
+      Main.WriteDebugLog("[SmartMeter] Id : " & aMBusId[iChannel - 1])
+      Main.WriteDebugLog("[SmartMeter] Type : " & aMBusType[iChannel - 1])
+      Main.WriteDebugLog("[SmartMeter] Reading : " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
+      Main.WriteDebugLog("[SmartMeter] Timestamp : " & aMBusTime[iChannel - 1])
+      Main.WriteDebugLog("[SmartMeter] Valve Pos. : " & aMBusValve[iChannel - 1])
+    Endif
+    ' optional mbus meters
+    iDeviceId = Devices.Find("P1-MBus" & aMBusType[iChannel - 1], Devices.FindInterface("SmartMeter Interface"), "P1-Meter")
+    ' update value
+    If iDeviceId Then Devices.ValueUpdate(iDeviceId, aMBusReading[iChannel - 1], aMBusValve[iChannel - 1], aMBusType[iChannel - 1], aMBusTime[iChannel - 1])
+    Endif
+  Next
+  ' power usage
+  iDeviceId = Devices.Find("P1-PowerUsed", Devices.FindInterface("SmartMeter Interface"), "P1-Meter")
+  If iDeviceId Then Devices.ValueUpdate(iDeviceId, CStr(fCurrentPowerUsage), CStr(fReadingPowerLow), CStr(fReadingPowerNormal), sCurrentTariff)
+  ' power generated
+  iDeviceId = Devices.Find("P1-PowerDelivered", Devices.FindInterface("SmartMeter Interface"), "P1-Meter")
+  If iDeviceId Then Devices.ValueUpdate(iDeviceId, CStr(fCurrentPowerGen), CStr(fReadingPowerGenLow), CStr(fReadingPowerGenNormal), sCurrentTariff)
+
+Catch ' some errors
+  Main.WriteDebugLog(("SmartMeter Error while parsing telegram ") & ERROR.Text & " at " & ERROR.Where)
+  Main.WriteDebugLog(("SmartMeter Current line was '") & sLine & "'")
+
+End
+
+Private Sub ParseReading(sReading As String) As String[]
+
+  Return Split(sReading, "*")
+
+End
+
+' implement properties
+Private Function TCPHost_Read() As String
+
+  Return sTCPHost
+
+End
+
+Private Sub TCPHost_Write(Value As String)
+
+  sTCPHost = Value
+
+End
+
+Private Function TCPPort_Read() As Integer
+
+  Return iTCPPort
+
+End
+
+Private Sub TCPPort_Write(Value As Integer)
+
+  iTCPPort = Value
+
+End
+
+Private Function Baud_Read() As String
+
+  Return sBaud
+
+End
+
+Private Sub Baud_Write(Value As String)
+
+  sBaud = Value
+
+End
+
+Private Function Databits_Read() As Integer
+
+  Return iDatabits
+
+End
+
+Private Sub Databits_Write(Value As Integer)
+
+  iDatabits = Value
+
+End
+
+Private Function Stopbits_Read() As Integer
+
+  Return iStopbits
+
+End
+
+Private Sub Stopbits_Write(Value As Integer)
+
+  iStopbits = Value
+
+End
+
+Private Function Parity_Read() As Integer
+
+  Return iParity
+
+End
+
+Private Sub Parity_Write(Value As Integer)
+
+  iParity = Value
+
+End
+
+Private Function SmartMeterDebug_Read() As Boolean
+
+  Return bSmartMeterDebug
+
+End
+
+Private Sub SmartMeterDebug_Write(Value As Boolean)
+
+  bSmartMeterDebug = Value
+
+End
+
+Private Function SerPort_Read() As String
+
+  Return sSerPort
+
+End
+
+Private Sub SerPort_Write(Value As String)
+
+  sSerPort = Value
+
+End
+
+Private Function Interface_Read() As String
+
+  Return sInterface
+
+End
+
+Private Sub Interface_Write(Value As String)
+
+  sInterface = Value
+
+End
