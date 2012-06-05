@@ -3322,6 +3322,30 @@ LOCK TABLES `stock` WRITE;
 INSERT INTO `stock` VALUES (8710400190868,'Biologische Pindakaas AH',7,0,1,0,0),(8710400136880,'Bloemenhoning AH',1,0,2,0,0),(8710496503986,'De Ruijter Chocoladehagel Puur',1,0,3,0,0),(8722700208945,'Knorr Chicken Tonight Sate',2,0,4,3,6.9),(8713300042435,'Dubbel Frisss Appel en Perzik',4,0,5,0,0),(8717644239766,'OMO Waspoeder Wit',1,0,6,1,0),(8715700016504,'Heinz Tomaten Ketchup',1,0,7,0,0),(8710406212885,'Belegen Geraspte Kaas Super de Boer',1,0,8,12,1.2),(8710243922381,'Maaslander Plakjes Komijn Kaas',1,0,9,0,0),(8711000194645,'Senseo Mocca Gourmet Pads 36 stuks',2,0,10,6,3.05),(5410041360608,'Liga Milk Break Melk - Aardbei',1,0,11,2,3.95),(8710408108056,'Penne Pasta 500gr C1000',1,0,13,1,0);
 /*!40000 ALTER TABLE `stock` ENABLE KEYS */;
 UNLOCK TABLES;
+
+--
+-- Table structure for table `thermostat_constant`
+--
+
+DROP TABLE IF EXISTS `thermostat_constant`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `thermostat_constant` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(64) DEFAULT NULL,
+  `value` decimal(6,2) DEFAULT NULL,
+  `description` text,
+  `color` int(11) NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `thermostat_constant`
+--
+
+LOCK TABLES `thermostat_constant` WRITE;
+/*!40000 ALTER TABLE `thermostat_constant` DISABLE KEYS */;
 /*!40000 ALTER TABLE `thermostat_constant` ENABLE KEYS */;
 UNLOCK TABLES;
 
