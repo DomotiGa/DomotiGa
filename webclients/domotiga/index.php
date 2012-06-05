@@ -1,7 +1,7 @@
 <?php
 
 // DomotiGa - an open source home automation program
-// Copyright(C) 2008-2011 Ron Klinkien
+// Copyright(C) 2008-2012 Ron Klinkien
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -30,7 +30,7 @@ if (!extension_loaded('xmlrpc')) {
    exit;
 }
 include "functions.php";
-import_request_variables("gp","r_");
+extract($_REQUEST, EXTR_PREFIX_ALL|EXTR_REFS, 'r_');
 
 // Sorting
 if (!isset($_SESSION['sortkey'])) $_SESSION['sortkey']="devicename";
