@@ -19,7 +19,7 @@
 session_start();
 include "config.php";
 include "functions.php";
-import_request_variables("gp","r_");
+extract($_REQUEST, EXTR_PREFIX_ALL|EXTR_REFS, 'r_');
 
 if (!isset($r_view)) $r_view="main";
 $totcount=0;
