@@ -16,8 +16,8 @@
 // You should have received a copy of the GNU General PUBLIC License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-$execstart=$start=microtime(true);
 session_start();
+$execstart=$start=microtime(true);
 $configfile = 'config.php';
 if (file_exists($configfile)) {
    include "config.php";
@@ -58,12 +58,17 @@ if ($_SESSION['view']=="pachube") {
    exit;
 }
 
-if ( isset($r_action))
-{
+if(isset($_GET['action'])){
    echo "<h3>Requested to turn ".$r_name." ".$r_action.".</h3>";
-   $request = xmlrpc_encode_request("device.setdevice",array( $r_name, $r_action ) );
+   $request = xmlrpc_encode_request("device.setdevice",array( $_GET['name'], $_GET['action'] ) );
    $response = do_xmlrpc($request);
    header("Location: index.php?setview=control");
+}
+
+if(!isset($_GET['setview'])){
+    $_SESSION['view'] = 'main';
+}else{
+    $_SESSION['view'] = $_GET['setview'];
 }
 
 ?>
