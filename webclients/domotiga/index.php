@@ -30,20 +30,20 @@ if (!extension_loaded('xmlrpc')) {
    exit;
 }
 include "functions.php";
-extract($_REQUEST, EXTR_PREFIX_ALL|EXTR_REFS, 'r_');
+//extract($_REQUEST, EXTR_PREFIX_ALL|EXTR_REFS, 'r_');
 
 // Sorting
 if (!isset($_SESSION['sortkey'])) $_SESSION['sortkey']="devicename";
-if (isset($r_setsortkey)) $_SESSION['sortkey']=$r_setsortkey;
+if (isset($_GET['setsortkey'])) $_SESSION['sortkey']=$_GET['setsortkey'];
 if (!isset($_SESSION['sortord'])) $_SESSION['sortord']="asc";
-if (isset($r_setsortord)) $_SESSION['sortord']=$r_setsortord;
+if (isset($_GET['setsortord'])) $_SESSION['sortord']=$_GET['setsortord'];
 
 // Session variables for current view
 if (!isset($_SESSION['view'])) $_SESSION['view']="main";
-if (isset($r_setview)) $_SESSION['view']=$r_setview;
-if (isset($r_reload)) unset($_SESSION['lastget']);
-if (!isset($_SESSION['refresh'])) $_SESSION['refresh']=$defaultrefresh;
-if (!isset($r_debug)) $r_debug=0;
+//if (isset($r_setview)) $_SESSION['view']=$r_setview;
+//if (isset($r_reload)) unset($_SESSION['lastget']);
+//if (!isset($_SESSION['refresh'])) $_SESSION['refresh']=$defaultrefresh;
+//if (!isset($r_debug)) $r_debug=0;
 
 // Pachube view only outputs the data from Pachube.CreatePachubeData()
 if ($_SESSION['view']=="pachube") {
@@ -59,14 +59,16 @@ if ($_SESSION['view']=="pachube") {
 }
 
 if(isset($_GET['action'])){
-   echo "<h3>Requested to turn ".$r_name." ".$r_action.".</h3>";
+   echo "<h3>Requested to turn ".$_GET['name']." ".$_GET['action'].".</h3>";
    $request = xmlrpc_encode_request("device.setdevice",array( $_GET['name'], $_GET['action'] ) );
    $response = do_xmlrpc($request);
    header("Location: index.php?setview=control");
 }
 
 if(!isset($_GET['setview'])){
-    $_SESSION['view'] = 'main';
+    if(!isset($_SESSION['view'])){
+        $_SESSION['view'] = 'main';
+    }
 }else{
     $_SESSION['view'] = $_GET['setview'];
 }
@@ -226,7 +228,7 @@ if ($_SESSION['view']=="control") {
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue2'>&nbsp;<a href='?action=On&name=".$item['devicename']."'>On</a></div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue3'>&nbsp;<a href='?action=Off&name=".$item['devicename']."'>Off</a></div>\n";
       echo "<div class='datacollast' style='width:190px;' id='i".$item['id']."devicelastseen'>&nbsp;".$item['devicelastseen']."</div>\n";
-      echo "<div class='spacer'></div>\n";
+      echo "<div class='spacer'>&nbsp</div>\n";
       echo "</div>\n"; // End of thisrow div
       if ($thisrow=="row1") {$thisrow="row2";} else {$thisrow="row1";}
       }
