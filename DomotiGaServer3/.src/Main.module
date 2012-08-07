@@ -4,7 +4,7 @@
 ' Main.module
 
 ' DomotiGa Server - the server part of DomotiGa an open source home automation program
-' Copyright(C) 2008-2012 Ron Klinkien
+' Copyright (C) Ron, The Netherlands.
 
 ' This program is free software: you can redistribute it and/or modify
 ' it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-PUBLIC sProgramVersion AS String = "0.1.207"
+PUBLIC sProgramVersion AS String = "0.1.209"
 PUBLIC sBaseDir AS String
 PUBLIC sSettings AS String = "server-domotiga.conf"
 PUBLIC bMainDebug AS Boolean
@@ -689,11 +689,26 @@ PUBLIC bOpenThermSyncClock AS Boolean
 PUBLIC bOpenThermDebug AS Boolean
 PUBLIC hOpenTherm AS COpenTherm
 
+' SmartMeter
+PUBLIC bSmartMeterEnabled AS Boolean
+PUBLIC sSmartMeterTCPHost AS String
+PUBLIC iSmartMeterTCPPort AS Integer
+PUBLIC sSmartMeterSerialPort AS String
+PUBLIC sSmartMeterBaudrate AS String
+PUBLIC iSmartMeterParity AS Integer
+PUBLIC iSmartMeterDatabits AS Integer
+PUBLIC iSmartMeterStopbits AS Integer
+PUBLIC sSmartMeterType AS String
+PUBLIC bSmartMeterDebug AS Boolean
+PUBLIC hSmartMeter AS CSmartMeter
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' this is where domotiga starts
 ' determine basedir, set language and run application
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC FUNCTION Main() AS Boolean
+
+  DIM sBackTrace, sTrace AS String
 
   ' determine basedir
   IF Exist(Application.Path &/ "logs") THEN
@@ -714,6 +729,7 @@ PUBLIC FUNCTION Main() AS Boolean
   System.Language = sLanguage
   ' start different sections
   Main.Setup_BroadcastAddrs()
+  Main.Setup_BroadcastUDP()
   Main.Setup_Logfiles()
   Main.DisplayProgramInfo()
   Main.WriteLog(("Checking directory structure ..."))
@@ -757,7 +773,10 @@ PUBLIC FUNCTION Main() AS Boolean
   ' exit program
 
 CATCH ' error trap
-  Main.WriteLog(("Error: ") & Error.Text & " " & Error.Code & " " & Error.Where)
+  FOR EACH sBackTrace IN Error.Backtrace
+    sTrace &= sBackTrace & "\n"
+  NEXT
+  Main.WriteLog(("Error: ") & Error.Text & " " & Error.Code & " at\n" & sTrace)
   Main.WriteLog(("Program abort."))
   QUIT
 
@@ -780,7 +799,7 @@ PRIVATE FUNCTION ParseArgs()
       ELSE IF sArg = "-h" THEN
         ' display help info
         PRINT Application.Name & " version " & sProgramVersion
-        PRINT "Copyright(C) 2008-2010 Ron Klinkien"
+        PRINT "Copyright(C) 2008-" & Year(Now) & " Ron Klinkien"
         PRINT
         PRINT "This program is free software; you can redistribute it and/or"
         PRINT "modify it under the terms of the GNU General Public License as"
@@ -1541,8 +1560,21 @@ PUBLIC SUB GetSettings()
   sOpenThermTemperatureOverride = rResult!temperatureoverride
   bOpenThermSyncClock = rResult!syncclock
 
+  ' SmartMeter
+  rResult = GetSettingTable("nta8130")
+  bSmartMeterEnabled = rResult!enabled
+  sSmartMeterTCPHost = rResult!tcphost
+  iSmartMeterTCPPort = rResult!tcpport
+  sSmartMeterType = rResult!type
+  sSmartMeterSerialPort = rResult!serialport
+  sSmartMeterBaudrate = rResult!baudrate
+  iSmartMeterDatabits = rResult!databits
+  iSmartMeterStopbits = rResult!stopbits
+  iSmartMeterParity = rResult!parity
+  bSmartMeterDebug = rResult!debug
+
 CATCH
-  Main.WriteLog(("Error: " & Error.Text & " " & Error.Code & " while loading settings! Is your database version correct?"))
+  Main.WriteLog(("Error: " & Error.Text & " " & Error.Code & " while loading settings at ") & Error.Where & ("!\nIs your database version correct?"))
   CloseAll()
   QUIT
 
@@ -1612,7 +1644,10 @@ PUBLIC SUB WriteDebugLog(sText AS String, OPTIONAL bStrip AS Boolean)
   IF NOT bStrip THEN sText &= "\n"
   sText = Format$(Now, "yyyy/mm/dd hh:nn:ss") & " " & sText
   PRINT sText;
-  IF hDebugLogFile THEN PRINT #hDebugLogFile, sText;
+  IF hDebugLogFile THEN
+    PRINT #hDebugLogFile, sText;
+    FLUSH #hDebugLogFile
+  ENDIF
   Main.BroadcastEvent("[DebugLog]" & sLogPrefix & sText)
 
 END
@@ -1624,7 +1659,10 @@ PUBLIC SUB WriteRFXDebugLog(sText AS String, OPTIONAL bStrip AS Boolean)
 
   IF NOT bStrip THEN sText = Format$(Now, "yyyy/mm/dd hh:nn:ss") & " " & sText
   PRINT sText;
-  IF hDebugLogFile THEN PRINT #hDebugLogFile, sText;
+  IF hDebugLogFile THEN
+    PRINT #hDebugLogFile, sText;
+    FLUSH #hDebugLogFile
+  ENDIF
   Main.BroadcastEvent("[DebugLog]" & sText)
 
 END
@@ -1676,6 +1714,8 @@ PUBLIC SUB CloseAll()
   StopTimers()
   ' save all globalvars in db
   IF bServer THEN SaveGlobalVars()
+  ' SmartMeter
+  TRY hSmartMeter.Disconnect
   ' OpenTherm gateway close
   TRY hOpenTherm.Disconnect
   ' telnetserver close
@@ -1861,6 +1901,7 @@ PUBLIC SUB Setup()
   Setup_RFXComTRX() ' RFXCom Tranceiver support
   Setup_HomeMatic() ' HMLAN support
   Setup_OpenTherm() ' OpenTherm support
+  Setup_SmartMeter() ' NTA8130 smart meter support
   WriteLog(("Done with setup ..."))
 
 END
@@ -2927,14 +2968,18 @@ END
 PRIVATE SUB Setup_RRDTool()
 
     IF bRRDToolEnabled THEN
-      IF ProgramExist("rrdtool") THEN
-        IF bServer THEN RRDTool.Run()
-        WriteLog(("RRDTool support enabled."))
+      IF bServer THEN
+        IF ProgramExist("rrdtool") THEN
+          RRDTool.Run()
+          WriteLog(("RRDTool support enabled."))
+        ELSE
+          WriteLog(("ERROR: RRDTool command 'rrdtool' not found, did you install it?"))
+          bRRDToolEnabled = FALSE
+          WriteLog(("RRDTool support disabled."))
+        END IF
       ELSE
-        WriteLog(("ERROR: RRDTool command 'rrdtool' not found, did you install it?"))
-        bRRDToolEnabled = FALSE
-        WriteLog(("RRDTool support disabled."))
-      END IF
+        WriteLog(("RRDTool support enabled."))
+      ENDIF
     ELSE
       TRY RRDTool.tRRDTool.Stop
       IF bMainDebug THEN WriteLog(("RRDTool support disabled."))
@@ -4678,6 +4723,66 @@ PUBLIC SUB Restart_HomeMatic()
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with NTA8130 smart meter tcp host:port or serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_SmartMeter()
+
+  IF bSmartMeterEnabled THEN
+    WriteLog(("SmartMeter support enabled."))
+    IF bServer THEN
+      ' create a new SmartMeter class instance
+      hSmartMeter = NEW CSmartMeter
+      ' set the properties
+      WITH hSmartMeter
+        .TCPHost = sSmartMeterTCPHost
+        .TCPPort = iSmartMeterTCPPort
+        .Interface = sSmartMeterType
+        .Baud = sSmartMeterBaudrate
+        .SerPort = sSmartMeterSerialPort
+        .Databits = iSmartMeterDatabits
+        .Stopbits = iSmartMeterStopbits
+        .Parity = iSmartMeterParity
+        .SmartMeterDebug = bSmartMeterDebug
+      END WITH
+      IF InStr(sSmartMeterType, "tcp") THEN
+        ' connect to the SmartMeter host:port
+        IF hRFXComTX.ConnectTCP() THEN
+          WriteLog(("SmartMeter TCP interface connecting to ") & sSmartMeterTCPHost & ":" & iSmartMeterTCPPort)
+        ELSE
+          WriteLog(("ERROR: SmartMeter TCP interface FAILED to connect to ") & sSmartMeterTCPHost & ":" & iSmartMeterTCPPort)
+          hSmartMeter = NULL
+        END IF
+      ELSE
+        ' connect to the SmartMeter serial interface
+        IF hSmartMeter.ConnectSerial() THEN
+          WriteLog(("SmartMeter serial interface connected to Port ") & sSmartMeterSerialPort)
+        ELSE
+          WriteLog(("ERROR: SmartMeter serial interface FAILED to connect to Port ") & sSmartMeterSerialPort)
+          hSmartMeter = NULL
+        END IF
+      END IF
+    END IF
+  ELSE
+    hSmartMeter = NULL
+    IF bMainDebug THEN WriteLog(("SmartMeter support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart SmartMeter after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_SmartMeter()
+
+  IF hSmartMeter THEN
+    hSmartMeter.Disconnect
+    hSmartMeter = NULL
+  END IF
+  Setup_SmartMeter()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open OpenTherm gateway serial port and initialize
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PRIVATE SUB Setup_OpenTherm()
@@ -5098,16 +5203,6 @@ PUBLIC SUB SaveGlobalVars()
   DIM vValue AS Variant
   DIM rResult AS Result
 
-  ' ' delete complete history
-  ' TRY Main.hDB.Tables.Remove("globalvars")
-  ' ' recreate empty one
-  ' tableGlobalVars = Main.hDB.Tables.Add("globalvars")
-  ' tableGlobalVars.Fields.Add("id", db.Serial)
-  ' tableGlobalVars.Fields.Add("var", db.String, 64)
-  ' tableGlobalVars.Fields.Add("value", db.String, 0)
-  ' tableGlobalVars.PrimaryKey = ["id"]
-  ' tableGlobalVars.Update()
-
   ' erase table contents only
   TRY Main.hDB.Exec("TRUNCATE TABLE globalvars")
 
@@ -5356,7 +5451,7 @@ PUBLIC SUB Setup_IPAddr()
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' get broadcast addresses of this machine
+' determine broadcast address(es) of this machine
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB Setup_BroadcastAddrs()
 
@@ -5369,7 +5464,23 @@ PUBLIC SUB Setup_BroadcastAddrs()
     athisIP = Split(sIP, ".")
     IF CInt(athisIP[0]) = 127 THEN CONTINUE
     aBroadcastAddrs.Add(athisIP[0] & "." & athisIP[1] & "." & athisIP[2] & "." & athisIP[3])
+    Main.WriteLog(("Found broadcast address '") & Trim(sHost) & "'")
   NEXT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' init udp broadcast
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Setup_BroadcastUDP()
+
+  ' init early
+  hBroadcastEvent = NEW UdpSocket AS "BroadcastUDP"
+  hBroadcastEvent.Broadcast = TRUE
+  ' [GB2:BIND] hBroadcastEvent.Bind(0)
+  hBroadcastEvent.Port = 0
+  hBroadcastEvent.Bind()
+  hBroadcastEvent.TargetPort = iXMLRPCHTTPPort + 10000
 
 END
 
@@ -5380,21 +5491,13 @@ PUBLIC SUB BroadcastEvent(sMessage AS String)
 
   DIM sIP AS String
 
-  ' sent it to all computers on this network
-  hBroadcastEvent = NEW UdpSocket AS "BroadcastUDP"
-  hBroadcastEvent.Broadcast = TRUE
-  ' [GB2:BIND] hBroadcastEvent.Bind(0)
-  hBroadcastEvent.Port = 0
-  hBroadcastEvent.Bind()
-  hBroadcastEvent.TargetPort = iXMLRPCHTTPPort + 10000
-
+  ' not ready yet
+  IF hBroadcastEvent = NULL THEN RETURN
+  ' broadcast msg on network(s)
   FOR EACH sIp IN aBroadcastAddrs
     hBroadcastEvent.TargetHost = sIp
-    WRITE #hBroadcastEvent, sMessage, Len(sMessage)
+    TRY WRITE #hBroadcastEvent, sMessage, Len(sMessage)
   NEXT
-
-CATCH
-  ' Main.WriteLog(("ERROR: Cannot broadcast UDP message! ") & ERROR.Text & (" at ") & ERROR.Where)
 
 END
 
@@ -5413,6 +5516,8 @@ PUBLIC SUB BroadcastUDP_Error()
     CASE Net.CannotWrite
       Main.WriteDebugLog(("[BroadcastUDP] Error sending data."))
   END SELECT
+
+CATCH
 
 END
 
