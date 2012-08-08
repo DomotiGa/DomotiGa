@@ -301,6 +301,10 @@ void RPC_ChangeValue( int homeID, int nodeID, ValueID valueID, bool add )
 				{
 					strcpy(dev_value, "On");
 				}
+				else if ( strcmp(dev_value, "99") == 0 ) 
+				{
+					strcpy(dev_value, "On");
+				}
 				else if ( strcmp(dev_value, "1") == 0 ) 
 				{
 					strcpy(dev_value, "On");
