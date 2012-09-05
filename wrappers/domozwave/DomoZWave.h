@@ -1,21 +1,25 @@
+//-----------------------------------------------------------------------------
+//
 // DomoZWave a C++/C-wrapper to add open-zwave support to DomotiGa.
 // Special thanks to Jaren for creating the wrapper.
-
+//
 // DomotiGa - an open source home automation program
 // Copyright(C) 2008-2012 Ron Klinkien
-
+//
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
 // the Free Software Foundation, either version 3 of the License, or
 // (at your option) any later version.
-
+//
 // This program is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. See the
 // GNU General PUBLIC License for more details.
-
+//
 // You should have received a copy of the GNU General PUBLIC License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
+//
+//-----------------------------------------------------------------------------
 
 #define COMMAND_CLASS_NO_OPERATION 0x00
 #define COMMAND_CLASS_BASIC 0x20
@@ -100,8 +104,8 @@
 #define COMMAND_CLASS_NON_INTEROPERABLE 0xF0
 
 extern "C" {
-extern const char *cclasstoStr( uint8 );
-extern const char *cgenretoStr( uint8 );
+int DomoZWave_Version();
+bool DomoZWave_HomeIdPresent( const char* _param );
 void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir, const char* zwdir, bool enableLog, int polltime );
 void DomoZWave_EnablePolling( int node, int polltime );
 void DomoZWave_DisablePolling( int node );
@@ -126,4 +130,7 @@ const char* DomoZWave_GetNodeProductType( int node );
 const char* DomoZWave_GetNodeProductId( int node );
 const char* DomoZWave_GetLibraryVersion();
 const char* DomoZWave_GetLibraryTypeName();
+
+const char* DomoZWave_CommandClassIdName(uint8 class_value);
+const char* DomoZWave_GenreIdName(uint8 genre);
 }
