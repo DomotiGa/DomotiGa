@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-PUBLIC sProgramVersion AS String = "0.1.209"
+PUBLIC sProgramVersion AS String = "1.0.000"
 PUBLIC sBaseDir AS String
 PUBLIC sSettings AS String = "server-domotiga.conf"
 PUBLIC bMainDebug AS Boolean
@@ -226,6 +226,10 @@ PUBLIC iGLatitudeRangeType AS Integer
 PUBLIC iGLatitudeRange AS Integer
 PUBLIC iGLatitudePollTime AS Integer
 PUBLIC bGLatitudeDebug AS Boolean
+
+' Google Translate
+PUBLIC bGTranslateEnabled AS Boolean = FALSE ' use Google Translate
+PUBLIC sGTranslateAPIKey AS String ' Google Translate (paid) API key
 
 ' Webserver
 PUBLIC bWebserverEnabled AS Boolean
@@ -530,6 +534,16 @@ PUBLIC sDenonBaudrate AS String
 PUBLIC sDenonType AS String
 PUBLIC bDenonDebug AS Boolean
 PUBLIC hDenon AS CDenon
+
+' Pioneer
+PUBLIC bPioneerEnabled AS Boolean
+PUBLIC sPioneerTCPHost AS String
+PUBLIC iPioneerTCPPort AS Integer
+PUBLIC sPioneerSerialPort AS String
+PUBLIC sPioneerBaudrate AS String
+PUBLIC sPioneerType AS String
+PUBLIC bPioneerDebug AS Boolean
+PUBLIC hPioneer AS CPioneer
 
 ' IRTrans
 PUBLIC bIRTransEnabled AS Boolean
@@ -862,6 +876,31 @@ CATCH ' some errors
 
 END
 
+'-------------------------------------------------------
+' update the mysql database
+'-------------------------------------------------------
+PUBLIC FUNCTION UpdateDatabase() AS Boolean
+
+  DIM rResult AS Result
+  DIM sSalt, sMD5 AS String
+
+  rResult = Main.hDB.Exec("SELECT username, password FROM users WHERE NOT ISNULL(password) AND (length(password) != 33 OR (length(password) = 33 AND substring(password,1,3) != 'MD5'))")
+  ' update the 'users' table in database: set all passwords to an md5 hash
+  FOR EACH rResult
+    sMD5 = Crypt.MD5(rResult!password)
+    sSalt = Right$(Left$(sMD5, 11), 8)
+    sMD5 = Right$(sMD5, 22)
+    Main.hDB.Exec("UPDATE users SET password = &1 WHERE username = &2", "MD5" & sSalt & sMD5, rResult!username)
+    Main.WriteLog(("MySQL users table password changed to MD5 hash for user '") & rResult!username & "'")
+  NEXT
+  RETURN TRUE
+
+CATCH ' some errors in update db
+  Main.WriteLog(("MySQL update error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' display startup information
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -882,6 +921,11 @@ PUBLIC SUB DisplayProgramInfo()
   WriteLog(("Active logfiles are '") & sMainLogFile & "', '" & sSpeakLogFile & ("' and '") & sDebugLogFile & "'.")
   WriteLog(("Running on Gambas version ") & GetGambasVersion())
   WriteLog(("Server uptime is ") & Left$(Replace$(sUptime, "  ", " "), -1))
+
+  ' check if started as superuser
+  IF System.User.Id = 0 THEN
+    WriteLog(("******* You have started DomotiGaServer as superuser/root!\nDoing this imposes a huge security risk!\nSo you have been warned! *******"))
+  ENDIF
 
 END
 
@@ -1399,6 +1443,16 @@ PUBLIC SUB GetSettings()
   sDenonBaudrate = rResult!baudrate
   bDenonDebug = rResult!debug
 
+  ' Pioneer
+  rResult = GetSettingTable("pioneer")
+  bPioneerEnabled = rResult!enabled
+  sPioneerTCPHost = rResult!tcphost
+  iPioneerTCPPort = rResult!tcpport
+  sPioneerType = rResult!type
+  sPioneerSerialPort = rResult!serialport
+  sPioneerBaudrate = rResult!baudrate
+  bPioneerDebug = rResult!debug
+  
   ' IRTrans
   rResult = GetSettingTable("irtrans")
   bIRTransEnabled = rResult!enabled
@@ -1578,7 +1632,7 @@ PUBLIC SUB GetSettings()
   bSmartMeterDebug = rResult!debug
 
 CATCH
-  Main.WriteLog(("Error: " & Error.Text & " " & Error.Code & " while loading settings at ") & Error.Where & ("!\nIs your database version correct?"))
+  WriteLog(("Error: " & Error.Text & " " & Error.Code & " while loading settings at ") & Error.Where & ("!\nIs your database version correct?"))
   CloseAll()
   QUIT
 
@@ -1788,6 +1842,8 @@ PUBLIC SUB CloseAll()
   TRY hDSC.Disconnect
   ' denon close
   TRY hDenon.Disconnect
+  ' Pioneer close
+  TRY hPioneer.Disconnect
   ' onkyo close
   TRY hOnkyo.Disconnect
   ' irtrans close
@@ -1885,6 +1941,7 @@ PUBLIC SUB Setup()
   Setup_EZcontrol() ' EZcontrol support
   Setup_CurrentCost() ' Current Cost support
   Setup_Denon() ' Denon support
+  Setup_Pioneer() ' Pioneer support
   Setup_IRTrans() ' IRTrans support
   Setup_Onkyo() ' Onkyo/Integra support
   Setup_PwrCtrl() ' Anel PwrCtrl support
@@ -3945,6 +4002,62 @@ PUBLIC SUB Restart_Denon()
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect with pioneer receiver tcp host:port or serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_Pioneer()
+
+  IF bPioneerEnabled THEN
+    WriteLog(("Pioneer receiver support enabled."))
+    IF bServer THEN
+      ' create a new Pioneer class instance
+      hPioneer = NEW CPioneer
+      ' set the properties
+      WITH hPioneer
+        .TCPHost = sPioneerTCPHost
+        .TCPPort = iPioneerTCPPort
+        .Interface = sPioneerType
+        .Baud = sPioneerBaudrate
+        .SerPort = sPioneerSerialPort
+        .PioneerDebug = bPioneerDebug
+      END WITH
+      IF InStr(sPioneerType, "tcp") THEN
+        ' connect to the pioneer host:port
+        IF hPioneer.ConnectTCP() THEN
+          WriteLog(("Pioneer receiver TCP interface connecting to ") & sPioneerTCPHost & ":" & iPioneerTCPPort)
+        ELSE
+          WriteLog(("ERROR: Pioneer receiver TCP interface FAILED to connect to ") & sPioneerTCPHost & ":" & iPioneerTCPPort)
+          hPioneer = NULL
+        END IF
+      ELSE
+        ' connect to the Pioneer serial interface
+        IF hPioneer.ConnectSerial() THEN
+          WriteLog(("Pioneer receiver serial interface connected to Port ") & sPioneerSerialPort)
+        ELSE
+          WriteLog(("ERROR: Pioneer receiver serial interface FAILED to connect to Port ") & sPioneerSerialPort)
+          hPioneer = NULL
+        END IF
+      END IF
+    END IF
+  ELSE
+    IF bMainDebug THEN WriteLog(("Pioneer receiver support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart pioneer after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_Pioneer()
+
+  IF hPioneer THEN
+    hPioneer.Disconnect
+    hPioneer = NULL
+  END IF
+  Setup_Pioneer()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect with irtrans receiver tcp host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PRIVATE SUB Setup_IRTrans()
@@ -5549,6 +5662,8 @@ PRIVATE SUB CheckDatabaseVersion()
         IF bAllowAutoUpgrade THEN
           IF Main.ProgramExist("mysql") THEN
             sToVersion = Format(Str(iDBVersion + 1), "00000")
+            ' make the jump to version 1.0.000
+            IF sToVersion = "01210" THEN sToVersion = "10000"
             sDumpFile = "upgrade/" & Replace(sDBVersion, ".", "") & "to" & sToVersion & ".sql"
             IF Exist(sBaseDir &/ sDumpFile) THEN
               hMysql = SHELL "mysql --host=" & sSQLHost & " --user=" & sSQLUser & " --password=" & sSQLPass & " --database=" & sSQLDatabase & " --execute='SOURCE " & sBaseDir &/ sDumpFile & "'" WAIT

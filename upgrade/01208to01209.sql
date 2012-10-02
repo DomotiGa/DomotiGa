@@ -55,7 +55,7 @@ ALTER TABLE `devices` ADD COLUMN `poll` tinyint(1) DEFAULT NULL AFTER resetvalue
 
 ALTER TABLE `contacts` ADD COLUMN `firstname` varchar(32) DEFAULT NULL AFTER comments;
 ALTER TABLE `contacts` ADD COLUMN `surname` varchar(32) DEFAULT NULL AFTER firstname;
-ALTER TABLE `contacts` ADD COLUMN `callnr` int(11) DEFAULT NULL AFTER surname;
+ALTER TABLE `contacts` ADD COLUMN `callnr` int(11) DEFAULT 0 AFTER surname;
 ALTER TABLE `contacts` ADD COLUMN `type` int(11) DEFAULT NULL AFTER callnr;
 ALTER TABLE `contacts` ADD COLUMN `firstseen` datetime DEFAULT NULL AFTER type;
 ALTER TABLE `contacts` ADD COLUMN `lastseen` datetime DEFAULT NULL AFTER firstseen;

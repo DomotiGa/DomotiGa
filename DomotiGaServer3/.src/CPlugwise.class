@@ -13,7 +13,7 @@
 ' http://www.maartendamen.com/?p=359
 
 ' DomotiGa - an open source home automation program.
-' Copyright(C) 2008-2012 Ron Klinkien
+' Copyright (C) Ron Klinkien, The Netherlands.
 
 ' Read file called COPYING for license details.
 
@@ -140,6 +140,8 @@ PUBLIC SUB CheckPlugs()
       GetPowerInfo(rResult!address, rResult!id)
       IF Main.bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] Checking relay state of device '") & rResult!name & ("' with address ") & rResult!address)
       GetDeviceInfo(rResult!address, rResult!id)
+      IF Main.bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] Reading power history of Device '") & rResult!name & ("' with address ") & rResult!address)
+      GetPowerLogs(rResult!address, rResult!id)
     NEXT
   ENDIF
 
@@ -203,9 +205,14 @@ PUBLIC SUB GetDeviceInfo(sAddress AS String, iDeviceId AS Integer)
       IF iFirmware > 2008 THEN
         sSeq = Mid(sResult, 1, 4)
         sLogAddress = Mid(sResult, 29, 8)
-        iLogAddress = (HexToInt(sLogAddress) - 278528) / 32
+        'iLogAddress = (HexToInt(sLogAddress) - 278528) / 32
+        iLogAddress = (Val("&H" & sLogAddress & "&") - 278528) / 32
         Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & sSeq)
         Main.WriteDebugLog(("[Plugwise] Log Address: ") & iLogAddress & " (" & sLogAddress & ")")
+        Main.WriteDebugLog(("[Plugwise] Time in Circle: ") & Val("&H" & Mid(sResult, 21, 4) & "&") & " " & HexToInt(Mid(sResult, 23, 2)) & " " & HexToInt(Mid(sResult, 25, 4)))
+        Main.WriteDebugLog(("[Plugwise] Frequency: ") & GetFreq(Mid(sResult, 39, 2)) & "Hz")
+        Main.WriteDebugLog(("[Plugwise] Hardware version: ") & Mid(sResult, 41, 4) & "-" & Mid(sResult, 45, 4) & "-" & Mid(sResult, 49, 4))
+        Main.WriteDebugLog(("[Plugwise] Firmware: ") & TimeSinceEpoch(Mid(sResult, 53, 8)))
       ENDIF
       Main.WriteDebugLog(("[Plugwise] RelayState: ") & sRelay & " " & sState)
     ENDIF
@@ -313,6 +320,106 @@ PUBLIC SUB GetPowerInfo(sAddress AS String, iDeviceId AS Integer)
 
 END
 
+PRIVATE SUB GetPowerLogs(sAddress AS String, iDeviceId AS Integer)
+
+  DIM sHeader, sString, sCRC, sComplete, sResult, sHour1, sHour2, sHour3, sHour4, sPulses, sPulses1Sec, sMAC, sSeq AS String
+  DIM iPulses1, iPulses2, iPulses3, iPulses4, iBuffernumber, iBufferaddress AS Integer
+
+  sMac = Replace(sAddress, ":", "")
+  iBuffernumber = 77
+  iBufferaddress = LOGADDRESSOFFSET + (iBuffernumber * 32)
+  ' <ENQ><ENQ><ETX><ETX>0048000D6F0001A59F6000044000<CR><LF>
+  sHeader = Chr(5) & Chr(5) & Chr(3) & Chr(3)
+  sString = LOGINFOCODE & sMAC & Hex(iBufferaddress, 8)
+  sCRC = CalculateCRC(sString)
+  sComplete = sHeader & sString & sCRC & Chr(13) & Chr(10)
+
+  Send(sComplete)
+  sResult = GetResult(POWERLOGRESPONSECODE, sComplete)
+  IF sResult <> NULL
+    IF bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] GetPowerLog Result: ") & sResult)
+
+    sHour1 = Mid$(sResult, 21, 8)
+    sHour2 = Mid$(sResult, 37, 8)
+    sHour3 = Mid$(sResult, 53, 8)
+    sHour4 = Mid$(sResult, 69, 8)
+    IF bPlugwiseDebug THEN
+      Main.WriteDebugLog(CalcLogDate(sHour1))
+      Main.WriteDebugLog(CalcLogDate(sHour2))
+      Main.WriteDebugLog(CalcLogDate(sHour3))
+      Main.WriteDebugLog(CalcLogDate(sHour4))
+    ENDIF
+    sHour1 = Mid$(sResult, 21, 16)
+    sHour2 = Mid$(sResult, 37, 16)
+    sHour3 = Mid$(sResult, 53, 16)
+    sHour4 = Mid$(sResult, 69, 16)
+
+    iPulses1 = Val("&H" & Mid$(sHour1, 9, 8) & "&")
+    iPulses2 = Val("&H" & Mid$(sHour2, 9, 8) & "&")
+    iPulses3 = Val("&H" & Mid$(sHour3, 9, 8) & "&")
+    iPulses4 = Val("&H" & Mid$(sHour4, 9, 8) & "&")
+    IF bPlugwiseDebug THEN
+      Main.WriteDebugLogDateHour(Left(shour1, 8) & iPulses1)
+      Main.WriteDebugLogDateHour(Left(shour2, 8) & iPulses2)
+      Main.WriteDebugLogDateHour(Left(shour3, 8) & iPulses3)
+      Main.WriteDebugLogDateHour(Left(shour4, 8) & iPulses4)
+    ENDIF
+  ENDIF
+
+END
+
+PRIVATE FUNCTION GetFreq(sByte AS String) AS String
+
+  IF sByte = "85" THEN
+    RETURN "50"
+  ELSE IF sByte = "C5" THEN
+    RETURN "60"
+  ELSE
+    RETURN "??"
+  ENDIF
+
+END
+
+PRIVATE FUNCTION TimeSinceEpoch(sTime AS String) AS String
+
+  DIM gTime AS Date
+
+  IF Len(sTime) <> 8 THEN RETURN
+
+  ' calculate time since epoch
+  gTime = DateAdd(Date(1970, 1, 1), gb.Second, Val("&H" & sTime & "&"))
+
+  RETURN Format$(gTime, "yyyy/mm/dd hh:nn:ss")
+
+END
+
+PRIVATE FUNCTION CalcLogDate(sTime AS String) AS String
+
+  DIM gTime AS Date
+
+  IF Len(sTime) <> 8 THEN RETURN
+
+  ' calculate time since epoch
+  gTime = DateAdd(Date(2007, 6, 1), gb.Hour, Val("&H" & sTime & "&"))
+
+  RETURN Format$(gTime, "yyyy/mm/dd hh:nn:ss")
+
+END
+
+PRIVATE FUNCTION DateHour(sPeriod AS String) AS String
+
+  DIM iYear, iMonth, iDays, iHours, iMinutes AS Integer
+
+  iYear = 2000 + Val("&H" & (Left$(sPeriod, 2)))
+  iMonth = Val(Mid$(sPeriod, 3, 2))
+  iMinutes = Val("&H" & (Mid$(sPeriod, 5, 4)))
+  iDays = iMinutes DIV 1440
+  iHours = (iMinutes MOD 1440) / 60
+
+  RETURN (iDays + 1) & "-" & iMonth & "-" & iYear & " " & iHours & ":00:00"
+
+END
+
 PRIVATE FUNCTION HexToFloat(sHex AS String) AS Float
 
   DIM iSign AS Integer
@@ -399,7 +506,9 @@ PRIVATE FUNCTION GetResult(sType AS String, sCommand AS String) AS String
       ENDIF
     CASE STICKINITRESPONSECODE
       IF iBegin THEN sResult = Mid(sData, iBegin + 8, 72)
-  END SELECT
+    CASE POWERLOGRESPONSECODE
+      sResult = Mid(sData, iBegin + 8, 99)
+   END SELECT
 
   IF (iAttempts > 1) AND IF (Len(sResult) > 0) THEN
     Main.WriteDebugLog(("[Plugwise] Needed to interrogate the stick more then once!"))
