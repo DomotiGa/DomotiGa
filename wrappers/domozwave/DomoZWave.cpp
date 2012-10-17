@@ -79,28 +79,6 @@ static pthread_mutex_t g_criticalSection;
 //       for us. Maybe in the future this is possible? 
 std::map<string, int> MapCommandClassBasic;
 
-// Define map/hash to store unknown manufacturers/products, because the guys
-// of the Open-ZWave library are slow in adding them
-std::map<string, string> ListManufacturer;
-std::map<string, string> ListProduct;
-
-// http://www.cprogramming.com/tutorial/stl/stlmap.html
-//
-// Adds a value:
-// ListManufacturer["0000"] = "GreenWave";
-//
-// Deletes a value:
-// ListManufacturer.erase("0000");
-//
-// Deletes ALL:
-// ListManufacturer.clear();
-
-// if(ListManufacturer.find("0000") == ListManufacturer.end())
-// {
-//   std::cout<<"not in the map!"<<endl;
-// }
-//
-
 ///////////////////////////////////////////////////////////////////////////////
 
 // To enable polling we need a nodeId->ValueID mapping. 
@@ -112,6 +90,7 @@ typedef struct
 {
 	uint32		m_homeId;
 	uint8		m_nodeId;
+	uint8		basicmapping;
 	list<ValueID>	m_values;
 } NodeInfo;
 
@@ -157,6 +136,58 @@ NodeInfo* GetNodeInfo
 ///////////////////////////////////////////////////////////////////////////////
 // Generic Functions
 ///////////////////////////////////////////////////////////////////////////////
+
+//-----------------------------------------------------------------------------
+// <InitVars>
+// Initialize the map/arrays to be used by the Open Z-wave Wrapper
+//-----------------------------------------------------------------------------
+
+void InitVars()
+{
+	// List of the CommandClass Basic mapping to a specific one
+	MapCommandClassBasic.clear();
+	MapCommandClassBasic["0x03|0x11"] = 0x94;
+	MapCommandClassBasic["0x03|0x12"] = 0x30;
+	MapCommandClassBasic["0x08|0x01"] = 0x43;
+	MapCommandClassBasic["0x08|0x02"] = 0x40;
+	MapCommandClassBasic["0x08|0x03"] = 0x46;
+	MapCommandClassBasic["0x08|0x04"] = 0x43;
+	MapCommandClassBasic["0x08|0x05"] = 0x40;
+	MapCommandClassBasic["0x08|0x06"] = 0x40;
+	MapCommandClassBasic["0x09|0x01"] = 0x50;
+	MapCommandClassBasic["0x10|0x01"] = 0x25;
+	MapCommandClassBasic["0x10|0x03"] = 0x25;
+	MapCommandClassBasic["0x11|0x01"] = 0x26;
+	MapCommandClassBasic["0x11|0x03"] = 0x26;
+	MapCommandClassBasic["0x11|0x04"] = 0x26;
+	MapCommandClassBasic["0x11|0x05"] = 0x26;
+	MapCommandClassBasic["0x11|0x06"] = 0x26;
+	MapCommandClassBasic["0x11|0x07"] = 0x26;
+	MapCommandClassBasic["0x12|0x01"] = 0x25;
+	MapCommandClassBasic["0x12|0x02"] = 0x26;
+	MapCommandClassBasic["0x12|0x03"] = 0x28;
+	MapCommandClassBasic["0x12|0x04"] = 0x29;
+	MapCommandClassBasic["0x13|0x01"] = 0x28;
+	MapCommandClassBasic["0x13|0x02"] = 0x29;
+	MapCommandClassBasic["0x16|0x01"] = 0x39;
+	MapCommandClassBasic["0x20|0x01"] = 0x30;
+	MapCommandClassBasic["0x21|0x01"] = 0x31;
+	MapCommandClassBasic["0x31|0x01"] = 0x32;
+	MapCommandClassBasic["0x40|0x01"] = 0x62;
+	MapCommandClassBasic["0x40|0x02"] = 0x62;
+	MapCommandClassBasic["0x40|0x03"] = 0x62;
+	MapCommandClassBasic["0xa1|0x01"] = 0x71;
+	MapCommandClassBasic["0xa1|0x02"] = 0x71;
+	MapCommandClassBasic["0xa1|0x03"] = 0x71;
+	MapCommandClassBasic["0xa1|0x04"] = 0x71;
+	MapCommandClassBasic["0xa1|0x05"] = 0x71;
+	MapCommandClassBasic["0xa1|0x06"] = 0x71;
+	MapCommandClassBasic["0xa1|0x07"] = 0x71;
+	MapCommandClassBasic["0xa1|0x08"] = 0x71;
+	MapCommandClassBasic["0xa1|0x09"] = 0x71;
+	MapCommandClassBasic["0xa1|0x0a"] = 0x71;
+
+}
 
 //-----------------------------------------------------------------------------
 // Returns current date/time in readable format, used for cout
@@ -275,19 +306,11 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 	string decimal_value;
 	string list_value;
 	string string_value;
-	vector<string> list_strs;
 	int int_value;
 	int16 short_value;
 	int value_no = 0;
 
-	if ( add )
-	{
-		WriteLog(LogLevel_Debug, true, "ValueAdded: HomeId=%d Node=%d", homeID, nodeID);
-	}
-	else
-	{
-		WriteLog(LogLevel_Debug, true, "ValueChanged: HomeId=%d Node=%d", homeID, nodeID);
-	}	
+	WriteLog(LogLevel_Debug, true, "%s: HomeId=%d Node=%d", (add)?"ValueAdded":"ValueChanged", homeID, nodeID);
 	WriteLog(LogLevel_Debug, false, "Genre=%d", genre);
 	WriteLog(LogLevel_Debug, false, "GenreName=%s", DomoZWave_GenreIdName(genre));
 	WriteLog(LogLevel_Debug, false, "CommandClassId=%d", id);
@@ -307,69 +330,188 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 	{
 		case ValueID::ValueType_Bool:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=Bool");
 			Manager::Get()->GetValueAsBool(valueID, &bool_value );
 			snprintf(dev_value, 64, "%i", bool_value);
+			WriteLog(LogLevel_Debug, false, "Type=Bool (raw value=%s)", dev_value);
 			break;
 		}
 		case ValueID::ValueType_Byte:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=Byte");
 			Manager::Get()->GetValueAsByte(valueID, &byte_value );
 			snprintf(dev_value, 64, "%i", byte_value);
+			WriteLog(LogLevel_Debug, false, "Type=Byte (raw value=%s)", dev_value);
 			break;
 		}
 		case ValueID::ValueType_Decimal:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=Decimal");
 			Manager::Get()->GetValueAsString(valueID, &decimal_value );
 			snprintf(dev_value, 64, "%s", strdup(decimal_value.c_str()));
+			WriteLog(LogLevel_Debug, false, "Type=Decimal (raw value=%s)", dev_value);
 			break;
 		}
 		case ValueID::ValueType_Int:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=Integer");
 			Manager::Get()->GetValueAsInt(valueID, &int_value );
 			snprintf(dev_value, 64, "%d", int_value);
+			WriteLog(LogLevel_Debug, false, "Type=Integer (raw value=%s)", dev_value);
 			break;
 		}
 		case ValueID::ValueType_Short:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=Short");
 			Manager::Get()->GetValueAsShort(valueID, &short_value );
 			snprintf(dev_value, 64, "%d.h", short_value);
+			WriteLog(LogLevel_Debug, false, "Type=Short (raw value=%s)", dev_value);
 			break;
 		}
 		case ValueID::ValueType_Schedule:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=Schedule");
+			WriteLog(LogLevel_Debug, false, "Type=Schedule (not implemented)");
 			return;
 			//break;
 		}
 		case ValueID::ValueType_String:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=String");
 			Manager::Get()->GetValueAsString(valueID, &string_value );
 			snprintf(dev_value, 64, "%s", strdup(string_value.c_str()));
+			WriteLog(LogLevel_Debug, false, "Type=String (raw value=%s)", dev_value);
 			break;
 		}
 		case ValueID::ValueType_Button:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=Button");
+			WriteLog(LogLevel_Debug, false, "Type=Button (not implemented)");
 			return;
 			//break;
 		}
 		case ValueID::ValueType_List:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=List");
 			Manager::Get()->GetValueListSelection(valueID, &list_value );
 			snprintf(dev_value, 64, "%s", strdup(list_value.c_str()));
+			WriteLog(LogLevel_Debug, false, "Type=List (raw value=%s)", dev_value);
 			break;
 		}
 		default:
 		WriteLog(LogLevel_Debug, false, "Type=Unknown");
 		return;
 	}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////
+
+	// Most devices map their COMMAND_CLASS_BASIC to another COMMAND_CLASS_*. In the following code
+	// we do this mapping, because else it is possible we get different values e.g. "255", "Dim 99",
+	// "Open" for the EXACT same event on the device. This is ofcourse not what we want in DomotiGa,
+	// because every value change is recorded and displayed.
+
+	// Get NodeInfo information
+	if ( NodeInfo* nodeInfo = GetNodeInfo( homeID, nodeID ) )
+	{
+		// If we are CommandClass Basic and mapping is enabled for this device
+		if (( id == COMMAND_CLASS_BASIC ) && (nodeInfo->basicmapping > 0 )) {
+
+			// We have a mapping, we report it to the logfile
+			WriteLog(LogLevel_Debug, false, "Mapping=COMMAND_CLASS_BASIC mapped to %s", DomoZWave_CommandClassIdName(nodeInfo->basicmapping));
+
+
+			// Check if the COMMAND_CLASS_BASIC has ValueType=Byte, otherwise our code doesn't work properly
+			if ( type != ValueID::ValueType_Byte ) {
+				WriteLog(LogLevel_Error, false, "ERROR: %s: HomeId=%d Node=%d - Node doesn't have Type=Byte for COMMAND_CLASS_BASIC (most likely Z-Wave device doesn't comply to the standards) - Please report this as a BUG/FEATURE", (add)?"ValueAdded":"ValueChanged", homeID, nodeID);
+
+				// We don't exit, because *maybe* the following code can make something usefull of the none-standard
+			}
+
+			// Find ValueID
+			for( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+			{
+				ValueID v = *it;
+
+				// We only support index=0, because a basic mapping can't support multiple indexes
+				if ( ( nodeInfo->basicmapping == v.GetCommandClassId() ) && ( instanceID == v.GetInstance() ) && ( v.GetIndex() == 0 ) )
+				{
+					// We found it, now do some magic to map basic to the special CommandClass
+
+					// Overrule the CommandClass
+					id = nodeInfo->basicmapping;
+
+					// We also need to overrule the label, else the other code breaks
+					label = Manager::Get()->GetValueLabel( v );
+					WriteLog(LogLevel_Debug, false, "Mapping=Label=%s", label.c_str());
+
+					// CommandClass Basic is always a Byte value, but we need to convert 
+					// to the "right" value type Bool, Decimal, Int or Short
+					switch ( v.GetType() )
+					{
+						case ValueID::ValueType_Bool:
+						{
+							if ( strcmp(dev_value, "0" ) == 0 )
+							{
+								strcpy(dev_value, "0");
+							} else {
+								strcpy(dev_value, "1");
+							}
+
+							WriteLog(LogLevel_Debug, false, "Mapping=Type=Bool (raw value=%s)", dev_value);
+							break;
+						}
+						case ValueID::ValueType_Byte:
+						{
+							// Don't need to do anything, possible other scenario 
+							// are fixed later
+
+							WriteLog(LogLevel_Debug, false, "Mapping=Type=Byte (raw value=%s)", dev_value);
+							break;
+						}
+						case ValueID::ValueType_Decimal:
+						{
+							WriteLog(LogLevel_Debug, false, "Mapping=Type=Decimal (raw value=%s)", dev_value);
+							break;
+						}
+						case ValueID::ValueType_Int:
+						{
+							WriteLog(LogLevel_Debug, false, "Mapping=Type=Integer (raw value=%s)", dev_value);
+							break;
+						}
+						case ValueID::ValueType_Short:
+						{
+							WriteLog(LogLevel_Debug, false, "Mapping=Type=Short (raw value=%s)", dev_value);
+							break;
+						}
+						case ValueID::ValueType_String:
+						{
+							WriteLog(LogLevel_Debug, false, "Mapping=Type=String (raw value=%s)", dev_value);
+							break;
+						}
+						default:
+						WriteLog(LogLevel_Error, true, "ERROR: HomeId=%d Node=%d - BasicMapping - Unknown ValueType=%d", homeID, nodeID, v.GetType() );
+						return;
+					}
+
+
+					if ( label == "Level" ) {
+
+						// If we map Basic to Level, 255 -> Dim 99
+						if ( strcmp(dev_value, "255" ) == 0 )
+						{
+							strcpy(dev_value, "99");
+						}
+					}
+
+					break;
+				} 
+			}
+
+		} else {
+			WriteLog(LogLevel_Debug, false, "Mapping=None");
+		}
+
+	} else {
+		WriteLog(LogLevel_Error, false, "ERROR: %s: HomeId=%d Node=%d - Node exists in Z-Wave Network, but not in internal Open-ZWave wrapper list - Please report this as a BUG", (add)?"ValueAdded":"ValueChanged", homeID, nodeID);
+		return;
+	}
+
+//////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////
 
 	switch ( id )
 	{
@@ -402,6 +544,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 				}
 */
 			}
+
 			break;
 		}
 		case COMMAND_CLASS_SWITCH_BINARY:
@@ -412,12 +555,11 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 				if ( strcmp(dev_value, "1") == 0 ) 
 				{
 					strcpy(dev_value, "On");
-				}
-				else
-				{
+				} else {
 					strcpy(dev_value, "Off");
 				}
 			}
+
 			break;
 		}
 		case COMMAND_CLASS_SWITCH_MULTILEVEL:
@@ -427,7 +569,21 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 				value_no = 1;
 				sprintf(tmp_dev_value, "Dim %s", dev_value);
 				strcpy(dev_value, tmp_dev_value);
+
+				if ( strcmp(dev_value, "Dim 0") == 0 )
+				{
+					strcpy(dev_value, "Off");
+				}
+				else if ( strcmp(dev_value, "Dim 99") == 0 )
+				{
+					strcpy(dev_value, "On");
+				}
+				else if ( strcmp(dev_value, "Dim 100") == 0 )
+				{
+					strcpy(dev_value, "On");
+				}
 			}
+
 			break;
 		}
 		case COMMAND_CLASS_METER:
@@ -440,6 +596,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 			{
 				value_no = 3;
 			}
+
 			break;
 		}
 		case COMMAND_CLASS_SENSOR_BINARY:
@@ -449,32 +606,26 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 				value_no = 1;
 				if ( strcmp(dev_value, "1") == 0 )
 				{
-					strcpy(dev_value, "Closed");
+					strcpy(dev_value, "Off");
+				} else {
+					strcpy(dev_value, "On");
 				}
-				else
-				{
-					strcpy(dev_value, "Open");
-				}
-
 			}
+
+			break;
 		}
 		case COMMAND_CLASS_BATTERY:
-		case COMMAND_CLASS_ALARM:
-		case COMMAND_CLASS_SENSOR_MULTILEVEL:
 		{
-			if (label == "Temperature" )
-			{
-				value_no = 1;
-			}
-			else if (label == "Luminance" )
-			{
-				value_no = 3;
-			}
-			else if (label == "Battery Level" )
+			if (label == "Battery Level" )
 			{
 				value_no = 255;
 			}
-			else if (label == "Alarm Level" )
+
+			break;
+		}
+		case COMMAND_CLASS_ALARM:
+		{
+			if (label == "Alarm Level" )
 			{
 				value_no = 2;
 				if ( strcmp(dev_value, "0") == 0 )
@@ -486,6 +637,21 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 					strcpy(dev_value, "Tamper");
 				}
 			}
+
+			break;
+		}
+		case COMMAND_CLASS_SENSOR_MULTILEVEL:
+		{
+			if (label == "Temperature" )
+			{
+				value_no = 1;
+			}
+			else if (label == "Luminance" )
+			{
+				value_no = 3;
+			}
+
+			break;
 		}
 	}
 
@@ -497,11 +663,21 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 	WriteLog(LogLevel_Debug, false, "Value=%s", dev_value);
 
 	// Display help if it is stored in the zwcfg*.xml
-	if ( Manager::Get()->GetValueHelp( valueID ) != "" )
+	if ( ( Manager::Get()->GetValueHelp( valueID ) != "" ) && ( add ) )
 	{
 		WriteLog(LogLevel_Debug, false, "Help=%s", Manager::Get()->GetValueHelp( valueID ).c_str());
 	}
 
+	// We want to skip "add" values, because they are coming from the content of the zwcfg*xml. Normally
+	// only previously stored values are giving. DomotiGa is the only one using that file, thus all the
+	// known values are already in the DomotiGa DB. Also if you do a start and directly restart and the
+	// value hasn't been refreshed, after the restart the value is empty == GARBAGE
+	if ( add ) {
+		WriteLog(LogLevel_Debug, false, "Note=Value not send to DomotiGa to with ValueAdd (values are unreliable at startup)");
+		return;
+	}
+
+	// Only send it to DomotiGa if the value is >0 (1, 2, 3, 4 or 255)
 	if ( value_no > 0 )
 	{
 		xmlrpc_value* resultP = NULL;
@@ -510,6 +686,8 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 			xmlrpc_DECREF(resultP);
 		}
+	} else {
+		WriteLog(LogLevel_Debug, false, "Note=Value not send to DomotiGa, CommandClassId & label combination isn't supported by DomotiGa");
 	}
 }
 
@@ -563,6 +741,24 @@ void RPC_NodeProtocolInfo( int homeID, int nodeID )
 	const char* name = Manager::Get()->GetNodeName( homeID, nodeID).c_str();
 	const char* location = Manager::Get()->GetNodeLocation( homeID, nodeID).c_str();
 	uint8 version = Manager::Get()->GetNodeVersion( homeID, nodeID); 
+	uint8 basicmapping = 0;
+	char buffer[50];
+
+	// Get NodeInfo information
+	if ( NodeInfo* nodeInfo = GetNodeInfo( homeID, nodeID ) )
+	{
+		// Convert Generic+Specific to string
+		snprintf(buffer,20, "0x%02X|0x%02X", generic, specific);
+
+		// Check if we have a mapping in our map table
+		if ( MapCommandClassBasic.find(buffer) != MapCommandClassBasic.end() )
+		{
+			nodeInfo->basicmapping = MapCommandClassBasic[buffer];
+			basicmapping = MapCommandClassBasic[buffer];
+		} else {
+			nodeInfo->basicmapping = 0;
+		}
+	}
 
 	// Following parameters are kept for backwards compatibility
 	xmlrpc_bool sleeping = !listening;
@@ -574,6 +770,9 @@ void RPC_NodeProtocolInfo( int homeID, int nodeID )
 	WriteLog(LogLevel_Debug, false, "Generic=%d", generic);
 	WriteLog(LogLevel_Debug, false, "Specific=%d", specific);
 	WriteLog(LogLevel_Debug, false, "Type=%s", nodetype);
+	if ( basicmapping > 0 ) {
+		WriteLog(LogLevel_Debug, false, "Mapping=COMMAND_CLASS_BASIC maps to %s", DomoZWave_CommandClassIdName(basicmapping));
+	}
 	WriteLog(LogLevel_Debug, false, "Listening=%s", (listening)?"true":"false");
 	WriteLog(LogLevel_Debug, false, "FrequentListening=%s", (frequentlistening)?"true":"false");
 	WriteLog(LogLevel_Debug, false, "Beaming=%s", (beaming)?"true":"false");
@@ -615,9 +814,18 @@ void RPC_NodeEvent( int homeID, int nodeID, int value )
 	char dev_value[64];
 
 	WriteLog(LogLevel_Debug, true, "NodeEvent: HomeId=%d Node=%d", homeID, nodeID);
-	WriteLog(LogLevel_Debug, false, "Value=%d", value);
-
+	WriteLog(LogLevel_Debug, false, "Type=Byte (raw value=%d)", value);
 	snprintf(dev_value, 64, "%d", value);
+
+	if ( strcmp(dev_value, "255" ) == 0 )
+	{
+		strcpy(dev_value, "On");
+	}
+	else { 
+		strcpy(dev_value, "Off");
+	}
+
+	WriteLog(LogLevel_Debug, false, "Value=%d", value);
 
 	xmlrpc_value* resultP = NULL;
 	xmlrpc_client_call2f(&env, clientP, url, "zwave.setvalue", &resultP, "(iiiis)", homeID, nodeID, instanceID, value_no, dev_value );
@@ -656,10 +864,10 @@ void RPC_NodeNaming( int homeID, int nodeID )
 {
 	WriteLog(LogLevel_Debug, true, "NodeNaming: HomeId=%d Node=%d", homeID, nodeID);
 	WriteLog(LogLevel_Debug, false, "ManufacturerId=%s", Manager::Get()->GetNodeManufacturerId( homeID, nodeID ).c_str());
-	WriteLog(LogLevel_Debug, false, "ManufacturerName=%s", Manager::Get()->GetNodeManufacturerName( homeID, nodeID ).c_str());
+	WriteLog(LogLevel_Debug, false, "ManufacturerName=%s", DomoZWave_GetNodeManufacturerName( nodeID ));
 	WriteLog(LogLevel_Debug, false, "ProductType=%s", Manager::Get()->GetNodeProductType( homeID, nodeID ).c_str());
 	WriteLog(LogLevel_Debug, false, "ProductId=%s", Manager::Get()->GetNodeProductId( homeID, nodeID ).c_str());
-	WriteLog(LogLevel_Debug, false, "ProductName=%s", Manager::Get()->GetNodeProductName( homeID, nodeID ).c_str());
+	WriteLog(LogLevel_Debug, false, "ProductName=%s", DomoZWave_GetNodeProductName( nodeID ));
 }
 
 //-----------------------------------------------------------------------------
@@ -806,8 +1014,8 @@ void OnNotification
 		case Notification::Type_AllNodesQueried:
 		case Notification::Type_AwakeNodesQueried:
 		{
-			if ( data->GetType() == Notification::Type_AllNodesQueried ) WriteLog(LogLevel_Debug, true, "AllNodesQueried: Done!");
-			if ( data->GetType() == Notification::Type_AwakeNodesQueried ) WriteLog(LogLevel_Debug, true, "AwakeNodesQueried: Done!");
+			if ( data->GetType() == Notification::Type_AllNodesQueried ) WriteLog(LogLevel_Debug, true, "AllNodesQueried: HomeId=%d", home);
+			if ( data->GetType() == Notification::Type_AwakeNodesQueried ) WriteLog(LogLevel_Debug, true, "AwakeNodesQueried: HomeId=%d", home);
 
 			Manager::Get()->WriteConfig( home );
 
@@ -846,12 +1054,12 @@ void OnNotification
 		}	
 		case Notification::Type_DriverFailed:
 		{
-			WriteLog(LogLevel_Error, true, "DriverFailed !");
+			WriteLog(LogLevel_Error, true, "ERROR: DriverFailed !");
 			break;
 		}
 		case Notification::Type_DriverReset:
 		{
-			WriteLog(LogLevel_Error, true, "DriverReset !");
+			WriteLog(LogLevel_Error, true, "ERROR: DriverReset !");
 			break;
 		}
 		case Notification::Type_EssentialNodeQueriesComplete:
@@ -932,6 +1140,9 @@ bool DomoZWave_HomeIdPresent( const char* _param )
 
 void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir, const char* zwdir, bool enableLog, int polltime )
 {
+	// Call the InitVars procedure to initialize all local variables
+	InitVars();
+
 	debugging = enableLog;
 
 	WriteLog(LogLevel_Debug, true, "Initializing Open-ZWave Wrapper");
@@ -1297,11 +1508,16 @@ void DomoZWave_SetValue( int node, int instance, int value )
 
 const char* DomoZWave_GetNodeManufacturerName( int node )
 {
+	string ManufacturerName;
+
         if ( DomoZWave_HomeIdPresent("GetNodeManufacturerName") == false ) return "";
 
 	WriteLog(LogLevel_Debug, true, "GetNodeManufacturerName for HomeId=%d Node=%d", home, node);
 
-	return Manager::Get()->GetNodeManufacturerName( home, node ).c_str();
+	ManufacturerName = Manager::Get()->GetNodeManufacturerName( home, node );
+
+	return ManufacturerName.c_str();
+
 }
 
 //-----------------------------------------------------------------------------
@@ -1311,11 +1527,15 @@ const char* DomoZWave_GetNodeManufacturerName( int node )
 
 const char* DomoZWave_GetNodeProductName( int node )
 {
+	string ProductName;
+
         if ( DomoZWave_HomeIdPresent("GetNodeProductName") == false ) return "";
 
 	WriteLog(LogLevel_Debug, true, "GetNodeProductName for HomeId=%d Node=%d", home, node);
 
-	return Manager::Get()->GetNodeProductName( home, node ).c_str();
+	ProductName = Manager::Get()->GetNodeProductName( home, node );
+
+	return ProductName.c_str();
 }
 
 //-----------------------------------------------------------------------------
