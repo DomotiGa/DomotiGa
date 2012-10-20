@@ -1,7 +1,7 @@
 <?php
 
 // DomotiGa - an open source home automation program
-// Copyright(C) 2008-2011 Ron Klinkien
+// Copyright (C) Ron Klinkien, The Netherlands.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -55,6 +55,29 @@ function get_device_list($view) {
 // Get device list switch
 function get_device_listswitch($view) {
    $request = xmlrpc_encode_request("device.listswitch",null);
+   $response = do_xmlrpc($request);
+
+   if (is_array($response) && xmlrpc_is_fault($response)) {
+       trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");
+   } else {
+      $index=0;
+      foreach($response AS $item) {
+         list( $retarr[$index]['id'], $retarr[$index]['deviceicon'], $retarr[$index]['devicename'], $retarr[$index]['devicevalue']) = explode (';;', $item);
+         if ($retarr[$index]['deviceicon']) { $retarr[$index]['deviceicon'] = "<img src='images/icons/".$retarr[$index]['deviceicon']."' height='16' width='16' alt='icon' />"; } else { $retarr[$index]['deviceicon'] = ""; }
+         if (strlen($retarr[$index]['devicevalue'])) { $retarr[$index]['devicevalue'] = $retarr[$index]['devicevalue']; }
+         $index++;
+      }
+      if (isset($retarr)) {
+         return $retarr;
+      } else {
+         return FALSE;
+      }
+   }
+}
+
+// Get device list dim
+function get_device_listdim($view) {
+   $request = xmlrpc_encode_request("device.listdim",null);
    $response = do_xmlrpc($request);
 
    if (is_array($response) && xmlrpc_is_fault($response)) {

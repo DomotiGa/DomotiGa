@@ -1,7 +1,7 @@
 <?php
 
 // DomotiGa - an open source home automation program
-// Copyright(C) 2008-2012 Ron Klinkien
+// Copyright (C) Ron Klinkien, The Netherlands.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -50,8 +50,10 @@ if (is_array($data)) {
 } else {
    $data=array();
 }
-// Get list of devices switchable
+// Get list of switchable devices
 $datas=get_device_listswitch();
+// Get list of dimmable devices
+$datad=get_device_listdim();
 echo "<style type=\"text/css\">\n";
 foreach ($data AS $item) {
    foreach ($datas AS $items) {	
@@ -64,6 +66,18 @@ foreach ($data AS $item) {
 	echo "left: 0;\n";
 	echo "right: 0;\n";
 	echo "bottom: 0;\n}\n";
+      }
+   }
+   foreach ($datad AS $itemd) {
+      if ($item['id'] == $itemd['id']) {
+        echo "div#optionpanel".$item['id']." {\n";
+        echo "background: url(images/blackbg.png) top left repeat-x;\n";
+        echo "text-align: center;\n";
+        echo "padding: 20px 10px 15px 10px;\n";
+        echo "position: absolute;\n";
+        echo "left: 0;\n";
+        echo "right: 0;\n";
+        echo "bottom: 0;\n}\n";
       }
    } 	
 }
@@ -105,9 +119,13 @@ echo "<ul>\n";
 foreach ($data AS $item) {
    echo "<li";	
    foreach ($datas AS $items) {	
-      if ($item['id'] == $items['id']) { echo " class=\"arrow\"><a href=\"#\" onclick=\"showhide('optionpanel".$item['id']."');\"";}} 	
-      echo "><small>".$item['devicevalue']."</small>".$item['deviceicon'].$item['devicename']."</a></li>\n";
+      if ($item['id'] == $items['id']) { echo " class=\"arrow\"><a href=\"#\" onclick=\"showhide('optionpanel".$item['id']."');\"";}
    }
+   foreach ($datad AS $itemd) {
+      if ($item['id'] == $itemd['id']) { echo " class=\"arrow\"><a href=\"#\" onclick=\"showhide('optionpanel".$item['id']."');\"";}
+   }
+   echo "><small>".$item['devicevalue']."</small>".$item['deviceicon'].$item['devicename']."</a></li>\n";
+}
 echo "</ul>\n";
 ?>
 <p><strong>Best enjoyed on a real iPhone</strong><br />This iPhone UI Framework kit is licenced under GNU Affero General Public License (<a href="http://www.gnu.org/licenses/agpl.html">GNU AGPL 3</a>)</p>
@@ -116,10 +134,17 @@ foreach ($data AS $item) {
    foreach ($datas AS $items) {	
       if ($item['id'] == $items['id']) { 
          echo "<div id=\"optionpanel".$item['id']."\" style=\"display: none\">\n";
-	 echo "<p><a class=\"white button\" href=\"change_device.php?device=".$item['devicename']."&value=On\">On</a> <a href=\"change_device.php?device=".$item['devicename']."&value=off\" class=\"red button\">Off</a><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
+         echo "<p><a class=\"white button\" href=\"change_device.php?device=".$item['devicename']."&value=On\">On</a> <a href=\"change_device.php?device=".$item['devicename']."&value=Off\" class=\"red button\">Off</a><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
 	 echo "</div>\n";
       }
-   } 	
+   }
+   foreach ($datad AS $itemd) {
+      if ($item['id'] == $itemd['id']) {
+         echo "<div id=\"optionpanel".$item['id']."\" style=\"display: none\">\n";
+         echo "<p><a class=\"white button\" href=\"change_device.php?device=".$item['devicename']."&value=On\">On</a> <a href=\"change_device.php?device=".$item['devicename']."&value=Off\" class=\"red button\">Off</a><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
+         echo "</div>\n";
+      }
+   }
 }
 ?>
 </body>
