@@ -606,9 +606,9 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 				value_no = 1;
 				if ( strcmp(dev_value, "1") == 0 )
 				{
-					strcpy(dev_value, "Off");
-				} else {
 					strcpy(dev_value, "On");
+				} else {
+					strcpy(dev_value, "Off");
 				}
 			}
 
