@@ -18,12 +18,30 @@
 
 function do_xmlrpc($request) {
    global $rpc_connect;
-   $context = stream_context_create(array('http' => array('method' => "POST",'header' =>"Content-Type: text/xml",'content' => $request)));
-   if ($file = @file_get_contents($rpc_connect, false, $context)) {
-      $file=str_replace("i8","double",$file);
-      return xmlrpc_decode($file, "UTF-8");
+   global $use_curl;
+
+   if ( $use_curl == "yes" ) {
+      $ch = curl_init($rpc_connect);
+      curl_setopt($ch, CURLOPT_POST, 1);
+      curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: text/xml'));
+      curl_setopt($ch, CURLOPT_POSTFIELDS, "$request");
+      curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+      $context = curl_exec($ch);
+      if ( $context == "" ) {
+         curl_close($ch);
+         die ("<h2>Cannot connect to the DomotiGa server!</h2>");
+      } else {
+         curl_close($ch);
+         return xmlrpc_decode($context);
+      }
    } else {
-      die ("<h2>Cannot connect to the DomotiGa server!</h2>");
+      $context = stream_context_create(array('http' => array('method' => "POST",'header' =>"Content-Type: text/xml",'content' => $request)));
+      if ($file = @file_get_contents($rpc_connect, false, $context)) {
+         $file=str_replace("i8","double",$file);
+         return xmlrpc_decode($file, "UTF-8");
+      } else {
+         die ("<h2>Cannot connect to the DomotiGa server!</h2>");
+      }
    }
 }
 
