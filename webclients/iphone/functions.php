@@ -27,12 +27,12 @@ function do_xmlrpc($request) {
       curl_setopt($ch, CURLOPT_POSTFIELDS, "$request");
       curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
       $context = curl_exec($ch);
-      if ( $context == "" ) {
+      if ( curl_error($ch) == "" ) {
          curl_close($ch);
-         die ("<h2>Cannot connect to the DomotiGa server!</h2>");
+         return xmlrpc_decode($context,"UTF-8");
       } else {
          curl_close($ch);
-         return xmlrpc_decode($context);
+         die ("<h2>Cannot connect to the DomotiGa server!</h2>");
       }
    } else {
       $context = stream_context_create(array('http' => array('method' => "POST",'header' =>"Content-Type: text/xml",'content' => $request)));

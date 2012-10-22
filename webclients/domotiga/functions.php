@@ -1,7 +1,7 @@
 <?php
 
 // DomotiGa - an open source home automation program
-// Copyright(C) 2008-2011 Ron Klinkien
+// Copyright (C) Ron Klinkien, The Netherlands.
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -27,12 +27,12 @@ function do_xmlrpc($request) {
       curl_setopt($ch, CURLOPT_POSTFIELDS, "$request");
       curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
       $context = curl_exec($ch);
-      if ( $context == "" ) {
+      if ( curl_error($ch) == "" ) {
          curl_close($ch);
-         die ("<h2>Cannot connect to the DomotiGa server!</h2>");
+         return xmlrpc_decode($context,"UTF-8");
       } else {
          curl_close($ch);
-         return xmlrpc_decode($context);
+         die ("<h2>Cannot connect to the DomotiGa server!</h2>");
       }
    } else {
       $context = stream_context_create(array('http' => array('method' => "POST",'header' =>"Content-Type: text/xml",'content' => $request)));
