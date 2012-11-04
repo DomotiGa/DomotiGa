@@ -16,6 +16,7 @@
 ' Read file called COPYING for license details.
 
 LIBRARY "libdomozwave"
+EXTERN DomoZWave_Version() AS Integer
 EXTERN DomoZWave_Init(serialPort AS String, rpcPort AS Integer, deviceConfigPath AS String, zwConfigPath AS String, enableLog AS Boolean, polltime AS Integer)
 EXTERN DomoZWave_Destroy()
 EXTERN DomoZWave_EnablePolling(node AS Integer, polltime AS Integer)
@@ -41,6 +42,10 @@ EXTERN DomoZWave_GetNodeProductType(node AS Integer) AS String
 EXTERN DomoZWave_GetNodeProductId(node AS Integer) AS String
 EXTERN DomoZWave_GetLibraryVersion() AS String
 EXTERN DomoZWave_GetLibraryTypeName() AS String
+EXTERN DomoZWave_ControllerType() AS String
+EXTERN DomoZWave_GetNodeNeighborsList(node AS Integer) AS String
+EXTERN DomoZWave_GetNodeCommandClassList(node AS Integer) AS String
+EXTERN DomoZWave_GetSendQueueCount() AS Long
 
 PROPERTY UseOZW AS Boolean
 PROPERTY Port AS String
@@ -70,6 +75,9 @@ PRIVATE bEnableUpdateNeighbor AS Boolean
 PRIVATE bOZWInitialized AS Boolean = FALSE
 PUBLIC hZWaveSer AS NEW SerialPort
 PUBLIC tZWaveLED AS NEW Timer
+PUBLIC tOZWKeepAlive AS NEW Timer
+PUBLIC bOZWKeepAliveState AS Boolean
+PUBLIC bOZWKeepAlivePrevState AS Boolean
 
 PUBLIC sZWaveAPIVersion AS String
 PUBLIC sZWaveZDKVersion AS String
@@ -192,6 +200,8 @@ PUBLIC FUNCTION Connect() AS Boolean
   ' try to close the port
   TRY hZWaveSer.Close
 
+  Main.WriteLog(("NOTE: *** Native Z-Wave support will be removed soon ***"))
+
   ' get a new one
   hZWaveSer = NEW Serialport AS "ZWaveSer"
 
@@ -260,6 +270,11 @@ PUBLIC SUB InitZWave()
 
   ' We (re)start the Z-Wave, set OZW initialized to FALSE
   bOZWInitialized = FALSE
+
+  ' Reset home ID & controller ID to 0 after a (re)start
+  sHomeID = ""
+  iControllerID = 0
+  Main.ControlLed("ZWave", "Off")
 
   IF bUseOZW
     OZW_Init()
@@ -759,7 +774,7 @@ PUBLIC SUB ExpandVersion(sVersion AS String) AS String
     CASE "2.40"
       RETURN "4.27"
     DEFAULT
-      RETURN "?"
+      RETURN "Unknown"
     END SELECT
 
 END
@@ -1472,6 +1487,40 @@ PUBLIC SUB UpdateClassesNode(iNodeId AS Integer, sClasses AS String) AS Boolean
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Timer for checking Open Z-Wave library connectivity
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PUBLIC SUB tOZWKeepAlive_Timer()
+
+  IF iControllerID = 0 THEN
+    Main.WriteLog(("ERROR: Z-Wave interface FAILED to connect to Port ") & Main.sZWaveSerialPort & (" (retrying)"))
+    tOZWKeepAlive.Stop
+  ELSE
+
+    IF bOZWKeepAliveState = FALSE THEN
+
+       IF bOZWKeepAlivePrevState = TRUE THEN
+          'Main.WriteLog(("ERROR: Z-Wave interface FAILED to respond in the polltime interval"))
+          'Main.ControlLed("ZWave", "Off")
+       ENDIF
+       
+    ELSE
+
+       IF bOZWKeepAlivePrevState = FALSE THEN
+          'Main.WriteLog(("Z-Wave interface responded again in the polltime interval"))
+          'Main.ControlLed("ZWave", "On")
+       ENDIF
+
+    ENDIF
+
+    bOZWKeepAlivePrevState = bOZWKeepAliveState
+    bOZWKeepAliveState = FALSE
+
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' reset led status in main status bar
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB tZWaveLED_Timer()
@@ -1511,6 +1560,15 @@ PRIVATE FUNCTION OZW_Init()
 
   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Initialising open-zwave wrapper."))
   DomoZWave_Init(sPort, Main.hXMLRPC.HTTPPort, Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ "wrappers/domozwave/", bZWaveDebug, iPollTime)
+
+  ' start timer for Z-Wave keepalive of when using the Open Z-Wave library
+  ' We will wait 15 seconds to receive the controllerid, because this should happen within 1-2 seconds
+  ' After we received the controllerid, we set the timer 60 seconds and we will send a DynamicReport request to the controllerid
+  tOZWKeepAlive = NEW Timer AS "tOZWKeepAlive"
+  tOZWKeepAlive.Delay = 10000
+  tOZWKeepAlive.Start
+  bOZWKeepAliveState = FALSE
+  bOZWKeepAlivePrevState = FALSE
 
 CATCH ' some errors
   Main.WriteLog(("Z-Wave Error: ") & ERROR.Text & (" at ") & ERROR.Where)
@@ -1574,7 +1632,7 @@ PUBLIC SUB OZW_RequestAllNodeStates()
   DIM rResultNodes AS Result
 
   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Searching for nodes to request status for."))
-  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE")
+  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE ORDER  BY nodeid")
   IF rResultNodes THEN
     IF (rResultNodes.Count >= 1) THEN
       FOR EACH rResultNodes
@@ -1593,7 +1651,7 @@ PUBLIC SUB OZW_RequestAllListeningNodeDynamics()
   DIM rResultNodes AS Result
 
   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger listening nodes to update their values."))
-  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE")
+  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE ORDER BY nodeid")
   IF rResultNodes THEN
     IF (rResultNodes.Count >= 1) THEN
       FOR EACH rResultNodes
@@ -1612,7 +1670,7 @@ PUBLIC SUB OZW_RequestAllSleepingNodeDynamics()
   DIM rResultNodes AS Result
 
   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger sleeping nodes to update their values, when they wake-up."))
-  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is TRUE")
+  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is TRUE ORDER BY nodeid")
   IF rResultNodes THEN
     IF (rResultNodes.Count >= 1) THEN
       FOR EACH rResultNodes
@@ -1631,7 +1689,7 @@ PUBLIC SUB OZW_RequestAllNodeUpdateNeighbor()
   DIM rResultNodes AS Result
 
   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger nodes to update their neighbor routing."))
-  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE")
+  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE ORDER BY nodeid")
   IF rResultNodes THEN
     IF (rResultNodes.Count >= 1) THEN
       FOR EACH rResultNodes
@@ -1650,7 +1708,30 @@ PUBLIC SUB OZW_SetIds(homeId AS Integer, controllerId AS Integer)
   sHomeID = homeId
   iControllerID = controllerId
 
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Received response from Z-Wave controller: homeid=" & homeId & ", nodeid=" & controllerId & "."))
+  ' Now we can write to the main logfile that we are connected
+  Main.WriteLog(("Z-Wave interface successfully connected to Port ") & Main.sZWaveSerialPort)
+
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Z-Wave interface successfully connected to Port ") & Main.sZWaveSerialPort)
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Received response from Z-Wave controller: homeid=" & homeId & ", nodeid=" & iControllerID & "."))
+
+  sControllerType = DomoZWave_ControllerType()
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Z-Wave controller type: " & sControllerType & "."))
+
+  OZW_GetLibraryVersion()
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Z-Wave API version: " & sZWaveAPIVersion & ", SDK version: " & sZWaveZDKVersion & "."))
+
+  ' Enable LED if we got a response from the Open Z-Wave library
+  Main.ControlLed("ZWave", "On")
+
+  ' Set the timer to Open Z-Wave PollTime milliseconds polling now
+  tOZWKeepAlive.Stop
+
+  IF iPollTime <> 0 THEN
+    tOZWKeepAlive.Delay = iPollTime
+    tOZWKeepAlive.Start
+    bOZWKeepAliveState = TRUE
+    bOZWKeepAlivePrevState = TRUE
+  ENDIF
 
 END
 
@@ -1681,6 +1762,9 @@ PUBLIC SUB OZW_SetValue(iHomeId AS Integer, iNodeId AS String, iInstanceId AS In
     ENDIF
   ENDIF
 
+  ' We got a status update from the Z-Wave network, update the KeepAlive variable
+  bOZWKeepAliveState = TRUE
+
 END
 
 PUBLIC SUB OZW_AllQueried()
@@ -1694,7 +1778,7 @@ PUBLIC SUB OZW_AllQueried()
   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] All Z-Wave devices are Queried. Z-Wave devices can be used now."))
 
   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Searching for nodes to enable/disable poll."))
-  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE")
+  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE ORDER BY nodeid")
   IF rResultNodes THEN
     IF (rResultNodes.Count >= 1) THEN
       FOR EACH rResultNodes

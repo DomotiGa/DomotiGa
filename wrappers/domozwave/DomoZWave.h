@@ -130,6 +130,10 @@ const char* DomoZWave_GetNodeProductType( int node );
 const char* DomoZWave_GetNodeProductId( int node );
 const char* DomoZWave_GetLibraryVersion();
 const char* DomoZWave_GetLibraryTypeName();
+const char* DomoZWave_ControllerType();
+const char* DomoZWave_GetNodeNeighborsList( int node );
+const char* DomoZWave_GetNodeCommandClassList( int node );
+long DomoZWave_GetSendQueueCount();
 
 const char* DomoZWave_CommandClassIdName(uint8 class_value);
 const char* DomoZWave_GenreIdName(uint8 genre);
