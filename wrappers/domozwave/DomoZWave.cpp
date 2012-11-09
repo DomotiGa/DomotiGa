@@ -1612,14 +1612,30 @@ void DomoZWave_RequestAllConfigParams( int node )
 //
 //-----------------------------------------------------------------------------
 
-void DomoZWave_AddAssociation( int node, int group )
+void DomoZWave_AddAssociation( int node, int group, int otherNode )
 {
         if ( DomoZWave_HomeIdPresent("AddAssociation") == false ) return;
 
 	WriteLog(LogLevel_Debug, true, "AddAssociation for HomeId=%d Node=%d", home, node);
-	WriteLog(LogLevel_Debug, false, "Group=%d", group);
+	WriteLog(LogLevel_Debug, false, "Group=%d, Node=%d", group, otherNode);
 
-        Manager::Get()->AddAssociation( home, 1, group, node);
+        Manager::Get()->AddAssociation( home, node, group, otherNode);
+        Manager::Get()->RefreshNodeInfo( home, node);
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RemoveAssociation>
+//
+//-----------------------------------------------------------------------------
+
+void DomoZWave_RemoveAssociation( int node, int group, int otherNode )
+{
+        if ( DomoZWave_HomeIdPresent("RemoveAssociation") == false ) return;
+
+	WriteLog(LogLevel_Debug, true, "RemoveAssociation for HomeId=%d Node=%d", home, node);
+	WriteLog(LogLevel_Debug, false, "Group=%d, Node=%d", group, otherNode);
+
+        Manager::Get()->RemoveAssociation( home, node, group, otherNode);
         Manager::Get()->RefreshNodeInfo( home, node);
 }
 
