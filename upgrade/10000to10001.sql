@@ -71,7 +71,7 @@ CREATE TABLE `settings_elvmax` (
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
-INSERT INTO `settings_elvmax` VALUES (0,0,'192.168.99.17',62910,0),(1,-1,'192.168.99.17',62910,-1);
+INSERT INTO `settings_elvmax` VALUES (0,0,'192.168.99.17',62910,0),(1,0,'192.168.99.17',62910,0);
 
 --
 -- Table structure for table 'settings_mqtt'
