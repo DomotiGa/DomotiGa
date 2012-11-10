@@ -1,0 +1,463 @@
+' Gambas class file
+
+' Description:
+' CELVMAX.class
+' Support for ELV MAX!.
+
+' Development Status:
+' Beta. Needs Testing.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' This module was written by Wouter Wolkers in 2012.
+
+' Read file called COPYING for license details.
+
+PROPERTY TCPHost AS String
+PROPERTY TCPPort AS Integer
+PROPERTY ELVMAXDebug AS Boolean
+
+PRIVATE sTCPHost AS String
+PRIVATE iTCPPort AS Integer
+PRIVATE bELVMAXDebug AS Boolean
+
+PUBLIC hELVMAX AS NEW Socket
+PUBLIC sBuffer AS String
+
+' Converts a character to the relevant index
+' See http://en.wikipedia.org/wiki/Base64
+' This is used in decoding
+PRIVATE FUNCTION charToIndex(char AS String) AS Integer
+
+  IF char >= "A" AND char <= "Z" THEN
+    RETURN Asc(char) - 65
+  ELSE IF char >= "a" AND char <= "z" THEN
+    RETURN Asc(char) - 71
+  ELSE IF char >= "0" AND char <= "9" THEN
+    RETURN Asc(char) + 4
+  ELSE IF char = "+" THEN
+    RETURN 62
+  ELSE IF char = "/" THEN
+    RETURN 63
+  END IF
+  RETURN -1
+
+END
+
+' Converts a 'unit' of base64 (4 characters) into a Byte array (contains up to 3 bytes)
+PRIVATE FUNCTION fourEncToBytes(fourEnc AS String) AS String
+
+  DIM idx, fourVal, aByteVal, charIdx AS Integer
+  DIM aChar, threeChars AS String
+
+  ' Ensure our value accumulator is always zero to start
+  fourVal = 0
+  ' Knock off the padding '=' signs from the end if required
+  DO WHILE Right$(fourEnc, 1) = "="
+    fourEnc = Right$(fourEnc, -1)
+  LOOP
+  ' For each character in the base64 unit (now may be less than 4 characters)
+  FOR idx = 1 TO Len(fourEnc)
+    achar = Mid$(fourEnc, idx, 1)
+    ' Use the conversion table for base64 (see for example http://en.wikipedia.org/wiki/Base64 and look for...  The Base64 index table:)
+    charIdx = charToIndex(aChar)
+    ' Accumulate the values, multiplying by 64 to the power 3 for the first character index, 64 to the power 2 for the second character index etc.
+    fourVal = fourVal + (charIdx * 64 ^ (4 - idx))
+  NEXT
+  ' Ensure our result is always empty to start with
+  FOR idx = 1 TO Len(fourEnc) - 1
+    threeChars &= Chr$(fourVal / (256 ^ (3 - idx)))
+    aByteVal = Int(fourVal / (256 ^ (3 - idx)))
+    fourVal = fourVal - aByteVal * (256 ^ (3 - idx))
+  NEXT
+  RETURN threeChars
+
+END
+
+PRIVATE FUNCTION Base64Decode(sBase64 AS String) AS String
+
+  DIM idx, idy AS Integer
+  DIM aChar, fourEnc, result, threeChars AS String
+
+  ' Step through the complete base64 string character by character
+  FOR idx = 1 TO Len(sBase64)
+    aChar = Mid$(sBase64, idx, 1)
+    ' Only include what is not whitespace
+    IF Asc(aChar) > 31 THEN
+      ' Build up a 4-character string
+      fourEnc = fourEnc & aChar
+      ' Once we have 4 characters in our string (it can include padding consisting of '=' signs)
+      IF Len(fourEnc) = 4 THEN
+        ' Convert a unit (4 characters) of base64 to ascii (3 characters)
+        threeChars = fourEncToBytes(fourEnc)
+        result &= threeChars
+        ' Be sure to clear out fourEnc for the next unit of base64
+        fourEnc = ""
+      END IF
+    END IF
+  NEXT
+  RETURN result
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectTCP() AS Boolean
+
+  ' try to close the connection
+  TRY hELVMAX.Close
+
+  ' get a new one
+  hELVMAX = NEW Socket AS "ELVMAX"
+  hELVMAX.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("ELV MAX! TCP Connect Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB ELVMAX_Ready()
+
+  Main.WriteLog(("ELV MAX! TCP socket connected."))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is closed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB ELVMAX_Closed()
+
+  Main.WriteLog(("ELV MAX! TCP socket closed."))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hELVMAX.Close
+  Main.WriteLog(("ELV MAX! TCP socket close."))
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("ELV MAX! Disconnect Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB ELVMAX_Error()
+
+  ' handle error
+  SELECT CASE hELVMAX.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog(("ELV MAX!: The system does not allow to create a socket."))
+    CASE Net.HostNotFound
+      Main.WriteLog(("ELV MAX!: Host '") & sTCPHost & ("' not found."))
+    CASE Net.ConnectionRefused
+      Main.WriteLog(("ELV MAX!: Unable to connect. Connection refused."))
+    CASE Net.CannotRead
+      Main.WriteLog(("ELV MAX!: Error reading data."))
+    CASE Net.CannotWrite
+      Main.WriteLog(("ELV MAX: Error writing data."))
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send command to tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendCmd(sCmd AS String)
+
+  IF Main.bELVMAXDebug THEN Main.WriteDebugLog(("[ELVMAX] Sending '") & sCmd)
+  TRY WRITE #hELVMAX, sCmd & Chr$(13), Len(sCmd) + 1
+  IF ERROR THEN Main.WriteDebugLog(("[ELVMAX] Error writing data to the TCP port! -> ") & ERROR.Text)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send command to device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendCommand(sAddress AS String, sValue AS String)
+
+  SELECT CASE LCase(sValue)
+    CASE "on"
+      ' SendCmd("PWSTANDBY")
+    CASE "off"
+      ' SendCmd("PWON")
+    CASE ELSE
+      IF Main.bELVMAXDebug THEN Main.WriteDebugLog(("[ELVMAX] Unsupported command received: ") & sValue)
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' data received on tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB ELVMax_Read()
+
+  DIM sData AS String
+
+  TRY READ #hELVMAX, sData, 1
+  IF ERROR THEN Main.WriteDebugLog(("[ELVMAX] Error reading data from the TCP port! -> ") & Error.Text)
+  IF sData = Chr$(13) THEN ' buffer until linefeed then parse
+    IF Len(sBuffer) > 1 THEN ParseLine(sBuffer)
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  END IF
+
+END
+
+PUBLIC SUB ELVMAX_Found()
+
+  Main.WriteLog(("ELV MAX! IP address resolved."))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB ParseLine(sStr AS String)
+
+  DIM sMaincat, sDecoded, sItem, sValue, sTemp, sMessage, sDeviceSerial, sComfortTemp, sRoomName, sRoomAddress, sDeviceType, sDeviceAddress, sSerialNumber, sDeviceName, MaxCommand, s_roomc, s_mode, s_enddt, sCubeURL AS String
+  DIM aArray AS String[]
+  DIM iDeviceId, iRooms, iReadlen, iPos, iDataLength, iEcoTemp, iMaxSetpointTemp, iMinSetpointTemp, iTempOffset, iWindowOpenTemp, iWindowOpenDuration, iBoost, iRoomNumber AS Integer
+  DIM i, iDeviceCount, iNameLength, iRoomID, iPortalEnabled, Name_Length, M_pointer, M_R_count, M_D_count, M_Rooms, M_Devices, Mi AS Integer
+  DIM Counter AS Integer = 0
+  DIM Tcnt AS Integer = 20
+
+  sMaincat = sStr
+
+  ' Remove all CR and LF
+  IF Left(sMaincat, 1) = Chr$(10) THEN sMaincat = Right(sMaincat, -1)
+  IF Left(sMaincat, 1) = Chr$(13) THEN sMaincat = Right(sMaincat, -1)
+  sMessage = Left(sMaincat, 2)
+  IF Main.bELVMAXDebug THEN Main.WriteDebugLog(("[ELVMAX] Received: ") & sMaincat)
+
+  SELECT CASE sMessage
+
+    CASE "H:"
+      ' Hello
+      aArray = Split(Right$(sMaincat, -2))
+
+      Main.WriteDebugLog(("[ELVMAX] SerialNumber: '") & aArray[0] & "'")
+      '     $data["sys"]["Date"] = hexdec(Mid$(aArray[7],4,2)).".".hexdec(Mid$(aArray[7],2,2)).".".hexdec(Mid$(aArray[7],0,2));
+      '     $data["sys"]["Time"] = hexdec(substr($arr2[8],0,2)).":".hexdec(substr($arr2[8],2,2));
+      '     $data["sys"]["Timestamp"] = mktime(hexdec(substr($arr2[8],0,2)),hexdec(substr($arr2[8],2,2)),0,hexdec(substr($arr2[7],2,2)),hexdec(substr($arr2[7],4,2));
+      ' try to find device with address, and correct interface type.
+      iDeviceId = Devices.Find(aArray[1], Devices.FindInterface("ELV MAX! Interface"), "ELVCube")
+      ' if found then update it's value
+      IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, aArray[0], aArray[2], "", "")
+
+    CASE "M:"
+      ' Metadata: Rooms, Device names
+      aArray = Split(Right$(sMaincat, -2))
+      iPos = 1 ' Start reading at 1
+
+      sDecoded = Base64Decode(aArray[2])
+      IF Main.bELVMAXDebug THEN Main.WriteDebugLog(("[ELVMAX] M: ") & sDecoded)
+
+      FOR Mi = 1 TO Len(sDecoded)
+        sRoomName = sRoomName & Hex$(Asc(Mid$(sDecoded, Mi, 1)), 2)
+      NEXT
+      Main.WriteDebugLog(sRoomName)
+
+      iPos += 2 ' first 2 bytes are unknown still.
+      iRooms = Asc(Mid(sDecoded, iPos, 1))
+      iPos += 1
+      IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] Found '" & iRooms & "' rooms.")
+
+      FOR Mi = 1 TO iRooms
+        iRoomNumber = Asc(Mid(sDecoded, iPos, 2))
+        iPos += 1
+        Name_Length = Asc(Mid(sDecoded, iPos, 2))
+        iPos += 1
+        sRoomName = Mid(sDecoded, iPos, Name_Length)
+        iPos += Name_Length
+        sRoomAddress = ""
+        FOR i = iPos TO iPos + 2 ' read 3 bytes
+          sRoomAddress = sRoomAddress & Hex$(Asc(Mid(sDecoded, i, 1)), 2)
+        NEXT
+        iPos += 3
+        IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] M: #rooms: '" & CStr(iRooms) & "' RoomNumber: '" & CStr(iRoomNumber) & "' RoomName: '" & sRoomName & "' 1stAddressInRoom: '" & sRoomAddress & "'")
+      NEXT
+
+      iDeviceCount = Asc(Mid(sDecoded, iPos, 1))
+      iPos += 1
+
+      IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] Found " & iDeviceCount & " devices.")
+
+      FOR Mi = 1 TO iDeviceCount
+        sDeviceType = Asc(Mid(sDecoded, iPos, 1))
+        iPos += 1
+        sDeviceAddress = ""
+        FOR i = iPos TO iPos + 2 ' read 3 bytes
+          sDeviceAddress = sDeviceAddress & Hex$(Asc(Mid(sDecoded, i, 1)), 2)
+        NEXT
+        iPos += 3
+        FOR i = iPos TO iPos + 9 ' read 10 bytes
+          sSerialNumber = Asc(Mid(sDecoded, i, 1))
+        NEXT
+        iPos += 10
+        iNameLength = Asc(Mid(sDecoded, iPos, 1))
+        iPos += 1
+        sDeviceName = Mid(sDecoded, iPos, iNameLength)
+        iPos += iNameLength
+        iRoomID = Asc(Mid(sDecoded, iPos, 1))
+        iPos += 1
+        IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] M: DeviceType: '" & sDeviceType & "' DeviceAddress: '" & sDeviceAddress & "' DeviceName: '" & sDeviceName & "'")
+
+        ' Update this device info in DomotiGa
+        SELECT CASE sDeviceType
+          CASE "0"
+            ' Cube
+            sDeviceType = "ELVCube"
+          CASE "1"
+            ' Radiator thermostat
+            sDeviceType = "ELVRadThermo"
+          CASE "4"
+            ' Door/window sensor
+            sDeviceType = "ELVDOOR"
+          CASE ELSE
+            sDeviceType = "Unknown"
+            Main.WriteDebugLog("[ELVMAX] Unknown device type '" & sDeviceType & "' Please report this to support.")
+        END SELECT
+        ' try to find device with address, and correct interface type.
+        iDeviceId = Devices.Find(sDeviceAddress, Devices.FindInterface("ELV MAX! Interface"), sDeviceType)
+        ' if found then update it's value
+        IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sDeviceName, sSerialNumber, "", "")
+      NEXT
+
+    CASE "C:"
+      IF Main.bELVMAXDebug THEN Main.WriteDebugLog(("[ELVMax] C: ") & sMaincat)
+
+      aArray = Split(Right$(sMaincat, -2))
+
+      sDeviceAddress = aArray[0]
+      sDecoded = Base64Decode(aArray[1])
+
+      iPos = 1   ' Start reading at 1
+      iDataLength = Asc(Mid(sDecoded, iPos, 1))
+      iPos += 1
+      FOR i = iPos TO iPos + 2             ' read 3 bytes, RF Address of device
+        sRoomAddress = sRoomAddress & Hex$(Asc(Mid(sDecoded, i, 1)), 2)
+      NEXT
+      iPos += 3
+      sDeviceType = Asc(Mid(sDecoded, iPos, 1))    ' Device Type
+      iPos += 1
+      iPos += 3    ' Unknown bytes
+      FOR i = iPos TO iPos + 9             ' read 10 bytes, Serial of device
+        sDeviceSerial = sDeviceSerial & Mid(sDecoded, i, 1)
+      NEXT
+      iPos += 10
+      IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] C:Header Len: '" & iDataLength & "' Address: '" & sRoomAddress & "' Serial: '" & sDeviceSerial & "'")
+
+      SELECT CASE sDeviceType
+        CASE "0" ' Cube
+          IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] CASE 0 Data: " & sDecoded & "'")
+          iPortalEnabled = Asc(Mid(sDecoded, iPos, 1))
+          iPos += 1
+          iPos += 66 ' Unknown
+          FOR i = iPos TO iPos + 36             ' read 10 bytes, URL for portal
+            sCubeURL = sCubeURL & Mid(sDecoded, i, 1)
+          NEXT
+          IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] CubeURL: '" & sCubeURL & "'")
+
+        CASE "1" ' Radiator Thermostat
+          IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] CASE 1")
+          SComfortTemp = Asc(Mid(sDecoded, iPos, 1)) / 2
+          iPos += 1
+          iEcoTemp = Asc(Mid(sDecoded, iPos, 1)) / 2
+          iPos += 1
+          iMaxSetpointTemp = Asc(Mid(sDecoded, iPos, 1)) / 2
+          iPos += 1
+          iMinsetpointTemp = Asc(Mid(sDecoded, iPos, 1)) / 2
+          iPos += 1
+          itempOffset = Asc(Mid(sDecoded, iPos, 1)) / 2 - 3.5
+          iPos += 1
+          iWindowOpenTemp = Asc(Mid(sDecoded, iPos, 1)) / 2
+          iPos += 1
+          iWindowOpenDuration = Hex$(Asc(Mid(sDecoded, iPos, 1)))
+          iPos += 1
+          iBoost = Asc(Mid(sDecoded, iPos, 1))
+          iPos += 1
+
+          IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] '" & sComfortTemp & "' '" & iEcoTemp & "' '" & itempOffset & "'")
+
+        CASE "4" ' Door / window sensor
+          IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] Found C: for Door / Window sensor. No further data.")
+
+        CASE ELSE
+          Main.WriteDebugLog("[ELVMAX] Unknown device type '" & sDeviceType & "', please report this to support.")
+      END SELECT
+
+    CASE "L:"
+      Main.WriteDebugLog("[ELVMAX] L:" & sMaincat)
+
+    CASE ELSE
+      IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] Not implemented yet!")
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' save received values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB ELVMaxSetValue(sItem AS String, vValue AS Variant)
+
+  Main.SetGlobalVar("ELVMax_" & sItem, vValue)
+  IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] Received Item: " & sItem & " Value: " & vValue)
+
+END
+
+' implement properties
+PRIVATE FUNCTION TCPHost_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB TCPHost_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION TCPPort_Read() AS Integer
+
+  RETURN iTCPPort
+
+END
+
+PRIVATE SUB TCPPort_Write(Value AS Integer)
+
+  iTCPPort = Value
+
+END
+
+PRIVATE FUNCTION ELVMAXDebug_Read() AS Boolean
+
+  RETURN bELVMAXDebug
+
+END
+
+PRIVATE SUB ELVMAXDebug_Write(Value AS Boolean)
+
+  bELVMAXDebug = Value
+
+END

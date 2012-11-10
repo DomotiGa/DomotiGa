@@ -1,0 +1,375 @@
+' Gambas class file
+
+' Description:
+' CMQTT.class
+' Connect to a MQTT broker.
+
+' Development Status:
+' Just started, not working yet!
+
+' Resources:
+' http://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+PROPERTY Host AS String
+PROPERTY Port AS Integer
+PROPERTY Username AS String
+PROPERTY Password AS String
+PROPERTY PubTopic AS String
+PROPERTY SubTopic AS String
+PROPERTY HeartBeat AS Integer
+PROPERTY MQTTDebug AS Boolean
+
+PRIVATE sTCPHost AS String
+PRIVATE iTCPPort AS Integer
+PRIVATE sUsername AS String
+PRIVATE sPassword AS String
+PRIVATE sPubTopic AS String
+PRIVATE sSubTopic AS String
+PRIVATE iHeartBeat AS Integer
+PRIVATE bMQTTDebug AS Boolean
+
+PUBLIC hMQTT AS NEW Socket
+PRIVATE bFirstByte AS Byte
+PRIVATE RecBuf AS Byte[30]
+PRIVATE RecBytes AS Byte
+
+' message types
+CONST MQTTCONNECT AS Byte = &H10
+CONST MQTTCONNACK AS Byte = &H20
+CONST MQTTPUBLISH AS Byte = &H30
+CONST MQTTSUBSCRIBE AS Byte = &H80 ' 8<<4
+
+CONST KEEPALIVE AS Integer = 15000
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the connection
+  TRY hMQTT.Close
+
+  ' get a new one
+  hMQTT = NEW Socket AS "MQTT"
+  hMQTT.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("MQTT Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' first tell MQTT broker that we want to disconnect
+  SendDisconnect()
+
+  ' try to close the connection
+  TRY hMQTT.Close
+  Main.WriteLog(("MQTT socket close."))
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("MQTT Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB MQTT_Error()
+
+  ' handle error
+  SELECT CASE hMQTT.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog(("MQTT: The system does not allow to create a socket."))
+    CASE Net.HostNotFound
+      Main.WriteLog(("MQTT: Host '") & sTCPHost & ("' not found."))
+    CASE Net.ConnectionRefused
+      Main.WriteLog(("MQTT: Unable to connect. Connection refused."))
+    CASE Net.CannotRead
+      Main.WriteLog(("MQTT: Error reading data."))
+    CASE Net.CannotWrite
+      Main.WriteLog(("MQTT: Error writing data."))
+  END SELECT
+
+END
+
+PUBLIC SUB MQTT_Read()
+
+  DIM bByte AS Byte
+
+  TRY READ #hMQTT, bByte, 1
+  IF ERROR THEN Main.WriteDebugLog(("[MQTT] Error reading data from network socket! -> ") & Error.Text)
+
+  ParseMessage(bByte)
+
+END
+
+PUBLIC SUB MQTT_Ready()
+
+  Main.WriteLog(("MQTT socket connected."))
+  SendConnect("DomotiGa")
+  SendSubscribe(sSubTopic &/ "device/0/temp")
+  'SendPublish("/device/0/temp", "10.5")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send connect message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendConnect(sId AS String)
+
+  DIM bBuf AS Byte[128]
+  DIM iCnt AS Integer
+
+  ' fixed header
+  bBuf[0] = MQTTCONNECT ' connect
+  bBuf[1] = 12 + Len(sId) + 2 ' remaining length
+
+  ' var header
+  bBuf[2] = &H0   ' 0
+  bBuf[3] = &H6   ' 6
+  bBuf[4] = &H4D  ' M
+  bBuf[5] = &H51  ' Q
+  bBuf[6] = &H49  ' I
+  bBuf[7] = &H73  ' s
+  bBuf[8] = &H64  ' d
+  bBuf[9] = &H70  ' p
+  bBuf[10] = &H3  ' protocol version = 3
+  bBuf[11] = &H2  ' clean session only
+  bBuf[12] = &H0  ' keepalive MSB
+  bBuf[13] = KEEPALIVE / 500 ' keepalive LSB = 60
+  bBuf[14] = &H0  ' ID string length MSB
+  bBuf[15] = Len(sId)  ' ID string length LSB
+
+  ' id
+  FOR iCnt = 1 TO Len(sId)
+    bBuf.Add(Asc(Mid(sId, iCnt, 1)), 15 + iCnt)
+  NEXT
+
+  IF bMQTTDebug THEN Main.WriteDebugLog(("[MQTT] Sending CONNECT message."))
+  WriteMessage(bBuf, 2 + bBuf[1])
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send disconnect message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendDisconnect()
+
+  DIM bBuf AS Byte[2]
+
+  bBuf[0] = -&H7F + &5F ' disconnect
+  bBuf[1] = &H0
+
+  IF bMQTTDebug THEN Main.WriteDebugLog(("[MQTT] Sending DISCONNECT message."))
+  WriteMessage(bBuf, 2)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' subscribe message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendSubscribe(sTopic AS String)
+
+  DIM bBuf AS Byte[128]
+  DIM iCnt AS Integer
+
+  ' fixed header
+  bBuf[0] = MQTTSUBSCRIBE     ' subscribe
+  bBuf[1] = &H5 + Len(sTopic) ' remaining length
+  bBuf[2] = &H0   ' MSB
+  bBuf[3] = &HA   ' message id
+  bBuf[4] = &H0   ' MSB
+  bBuf[5] = Len(sTopic) ' # bytes of topic
+
+  FOR iCnt = 1 TO Len(sTopic)
+    bBuf.Add(Asc(sTopic, iCnt), 5 + iCnt)
+  NEXT
+
+  bBuf.Add(&H0, 5 + Len(sTopic) + iCnt + 1)
+
+  IF bMQTTDebug THEN
+    Main.WriteDebugLog(("[MQTT] Sending SUBSCRIBE message."))
+    Main.WriteDebugLog(("[MQTT] To topic '") & sTopic & "'")
+  ENDIF
+  WriteMessage(bBuf, &H7 + Len(sTopic))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' publish data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendPublish(sTopic AS String, sMsg AS String)
+
+  DIM bBuf AS Byte[255]
+  DIM iCnt AS Integer
+
+  RETURN ' not finisched yet!
+
+  sTopic = sPubTopic &/ sTopic
+
+  ' fixed header
+  bBuf[0] = MQTTPUBLISH      ' publish as QoS 0
+
+  IF bMQTTDebug THEN
+    Main.WriteDebugLog(("[MQTT] Sending PUBLISH message."))
+    Main.WriteDebugLog(("[MQTT] To topic '") & sTopic & "' message '" & sMsg & "'")
+  ENDIF
+  WriteMessage(bBuf, &H3 + Len(sTopic) + Len(sMsg))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' writes the packets
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB WriteMessage(bBuffer AS Byte[], iLength AS Integer)
+
+  DIM iCnt AS Integer
+  DIM bByte AS Byte
+
+  IF NOT bMQTTDebug THEN
+    bBuffer.Write(hMQTT, 0, iLength)
+    RETURN
+  ENDIF
+
+  Main.WriteDebugLog("[MQTT] >", TRUE)
+  FOR EACH bByte IN bBuffer
+    IF iCnt >= iLength THEN BREAK
+    WRITE #hMQTT, CByte(bByte)
+    Main.WriteRFXDebugLog(" " & Hex(bByte, 2), TRUE)
+    INC iCnt
+  NEXT
+  Main.WriteRFXDebugLog("\n", TRUE)
+
+END
+
+PUBLIC SUB ParseMessage(bByte AS Byte)
+
+  IF RecBytes = 0 THEN ' 1st byte of a packet received
+    IF bByte <> 0 THEN
+      IF bMQTTDebug THEN Main.WriteRFXDebugLog("[MQTT] < ", 0)
+    ENDIF
+  ENDIF
+
+  TRY RecBuf[RecBytes] = bByte ' store received byte
+  INC RecBytes  ' increment byte counter
+
+  IF RecBuf[0] = &H20 AND IF RecBytes = 4 THEN ' all bytes of connack packet received
+    IF bMQTTDebug THEN Main.WriteRFXDebugLog(Hex(bByte, 2) & "\n", 1)
+    'Decode_Messages()  ' decode message
+    RecBytes = 0  ' set to zero to receive next message
+  ELSE
+    IF bMQTTDebug THEN Main.WriteRFXDebugLog(Hex(bByte, 2), 1) ' write the output to the screen
+  ENDIF
+
+END
+
+' implement properties
+PRIVATE FUNCTION Host_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB Host_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION Port_Read() AS Integer
+
+  RETURN iTCPPort
+
+END
+
+PRIVATE SUB Port_Write(Value AS Integer)
+
+  iTCPPort = Value
+
+END
+
+PRIVATE FUNCTION MQTTDebug_Read() AS Boolean
+
+  RETURN bMQTTDebug
+
+END
+
+PRIVATE SUB MQTTDebug_Write(Value AS Boolean)
+
+  bMQTTDebug = Value
+
+END
+
+PRIVATE FUNCTION Username_Read() AS String
+
+  RETURN sUsername
+
+END
+
+PRIVATE SUB Username_Write(Value AS String)
+
+  sUsername = Value
+
+END
+
+PRIVATE FUNCTION Password_Read() AS String
+
+  RETURN sPassword
+
+END
+
+PRIVATE SUB Password_Write(Value AS String)
+
+  sPassword = Value
+
+END
+
+PRIVATE FUNCTION PubTopic_Read() AS String
+
+  RETURN sPubTopic
+
+END
+
+PRIVATE SUB PubTopic_Write(Value AS String)
+
+  sPubTopic = Value
+
+END
+
+PRIVATE FUNCTION SubTopic_Read() AS String
+
+  RETURN sSubTopic
+
+END
+
+PRIVATE SUB SubTopic_Write(Value AS String)
+
+  sSubTopic = VALUE
+
+END
+
+PRIVATE FUNCTION HeartBeat_Read() AS Integer
+
+  RETURN iHeartBeat
+
+END
+
+PRIVATE SUB HeartBeat_Write(Value AS Integer)
+
+  iHeartBeat = Value
+
+END
