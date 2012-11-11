@@ -134,6 +134,7 @@ const char* DomoZWave_GetLibraryTypeName();
 const char* DomoZWave_ControllerType();
 const char* DomoZWave_GetNodeNeighborsList( int node );
 const char* DomoZWave_GetNodeCommandClassList( int node );
+const char* DomoZWave_GetNodeGroupList( int node );
 long DomoZWave_GetSendQueueCount();
 
 const char* DomoZWave_CommandClassIdName(uint8 class_value);

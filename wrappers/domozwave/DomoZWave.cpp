@@ -21,6 +21,13 @@
 //
 //-----------------------------------------------------------------------------
 
+//-----------------------------------------------------------------------------
+// Define and get version numbers of DomoZWave and the open-zwave (vers.c)
+//-----------------------------------------------------------------------------
+char domozwave_vers[] = "DomoZWave version r1023";
+#include <vers.c>
+//-----------------------------------------------------------------------------
+
 // system
 #include <iostream>
 #include <stdio.h>
@@ -1334,6 +1341,8 @@ void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir,
 	debugging = enableLog;
 
 	WriteLog(LogLevel_Debug, true, "Initializing Open-ZWave Wrapper");
+	WriteLog(LogLevel_Debug, false,"%s",domozwave_vers);
+	WriteLog(LogLevel_Debug, false,"%s",ozw_vers);
 
 	pthread_mutexattr_t mutexattr;
 
@@ -1620,7 +1629,8 @@ void DomoZWave_AddAssociation( int node, int group, int otherNode )
 	WriteLog(LogLevel_Debug, false, "Group=%d, Node=%d", group, otherNode);
 
         Manager::Get()->AddAssociation( home, node, group, otherNode);
-        Manager::Get()->RefreshNodeInfo( home, node);
+	// Refresh isn't required anymore with r564
+        //Manager::Get()->RefreshNodeInfo( home, node);
 }
 
 //-----------------------------------------------------------------------------
@@ -1636,7 +1646,8 @@ void DomoZWave_RemoveAssociation( int node, int group, int otherNode )
 	WriteLog(LogLevel_Debug, false, "Group=%d, Node=%d", group, otherNode);
 
         Manager::Get()->RemoveAssociation( home, node, group, otherNode);
-        Manager::Get()->RefreshNodeInfo( home, node);
+	// Refresh isn't required anymore with r564
+        //Manager::Get()->RefreshNodeInfo( home, node);
 }
 
 //-----------------------------------------------------------------------------
@@ -1880,7 +1891,7 @@ const char* DomoZWave_ControllerType()
 //-----------------------------------------------------------------------------
 // <DomoZWave_GetNodeNeighborsList>
 // Retrieves the list of neigbors and it will be displayed in the example format:
-// 2, 3, 4, 6, 7
+// 2|3|4|6|7
 //-----------------------------------------------------------------------------
 
 const char* DomoZWave_GetNodeNeighborsList( int node )
@@ -1899,16 +1910,14 @@ const char* DomoZWave_GetNodeNeighborsList( int node )
 		// Convert integer to char
 		snprintf(dev_value, 64, "%d", neighbors[i]);
 
-		// Format the string with ", " and " and "
+		// Format the string with "|"
 		if ( i != 0 )
 		{
-			neighborslist += ", ";
+			neighborslist += "|";
 		}
 
 		neighborslist += dev_value;
 	}
-
-	return neighborslist.c_str();
 
 	// We convert from string to char*, because else garbage is reported to gambas
 	char *tneighborslist;
@@ -1920,8 +1929,7 @@ const char* DomoZWave_GetNodeNeighborsList( int node )
 //-----------------------------------------------------------------------------
 // <DomoZWave_GetNodeCommandClassList>
 // Retrieves the list of supported COMMAND_CLASS'es for a node.
-// The "COMMAND_CLASS_" string will not be included in the name.
-// An example list is: BASIC, SWITCH_BINARY, NODE_NAMING, VERSION
+// An example list is: COMMAND_CLASS_BASIC|COMMAND_CLASS_SWITCH_BINARY
 //-----------------------------------------------------------------------------
 
 const char* DomoZWave_GetNodeCommandClassList( int node )
@@ -1934,36 +1942,16 @@ const char* DomoZWave_GetNodeCommandClassList( int node )
 	{
 		commandclass = nodeInfo->commandclass;
 
-		if ( commandclass != "" )
+		// Remove first "|" character
+		if ( commandclass.length() >= 1 )
 		{
+			commandclass.replace(0, 1, "");
+		}
 
-			size_t start_pos = 0;
-			string from = "COMMAND_CLASS_";
-			string to = "";
-
-			while((start_pos = commandclass.find(from, start_pos)) != string::npos) {
-				commandclass.replace(start_pos, from.length(), to);
-				start_pos += to.length();
-			}
-
-			start_pos = 0;
-			from = "|";
-			to = ", ";
-
-			if ( commandclass.length() >= 1 )
-			{
-				commandclass.replace(0, 1, "");
-			}
-
-			while((start_pos = commandclass.find(from, start_pos)) != string::npos) {
-				commandclass.replace(start_pos, from.length(), to);
-				start_pos += to.length();
-			}
-
-			if ( commandclass.length() >= 2 )
-			{
-				commandclass.replace(commandclass.length() - 2, 2, "");
-			}
+		// Remove last "|" character
+		if ( commandclass.length() >= 1 )
+		{
+			commandclass.replace(commandclass.length() - 1, 1, "");
 		}
 	}
 
@@ -1982,6 +1970,71 @@ long DomoZWave_GetSendQueueCount()
 {
 	if ( DomoZWave_HomeIdPresent("GetSendQueueCount") == false ) return 0;
 	return Manager::Get()->GetSendQueueCount( home );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeGroupList>
+// Retrieve the node group (association). An example output is:
+// 4|1-4|2,3,4|2-1||3-1||4-1|
+// Where "4|" is 4 groups. "1-4|2,3,4" is group 1, max association is 4 and nodes
+//  2,3,4 are associated
+// "3-1||" means a group 3, max association is 1, but no nodes associated
+// NOTE: GetGroupLabel isn't supported (yet?)
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeGroupList( int node )
+{
+	string grouplist;
+	uint32 numGroups;
+	uint32 numAssociations;
+	uint32 maxAssociations;
+	uint8* associations;
+	char dev_value[64];
+
+	if ( DomoZWave_HomeIdPresent("DomoZWave_GetNodeGroupList") == false ) return "";
+
+        numGroups = Manager::Get()->GetNumGroups( home, node );
+
+	// If there are no groups, we return an empty string
+	if ( numGroups == 0 )
+	{
+		return "";
+	}
+
+	snprintf(dev_value, 64, "%d|", numGroups );
+	grouplist = dev_value;
+
+	for( uint32 i=1; i<=numGroups; ++i )
+	{
+		maxAssociations = Manager::Get()->GetMaxAssociations(home, node, i );
+
+		snprintf(dev_value, 64, "%d-%d|", i, maxAssociations );
+		grouplist += dev_value;
+
+		numAssociations = Manager::Get()->GetAssociations(home, node, i, &associations );
+
+		for( uint32 j=0; j<numAssociations; ++j )
+		{
+                	snprintf(dev_value, 64, "%d", associations[j]);
+			grouplist += dev_value;
+
+			if ( ( j + 1 ) != numAssociations )
+			{
+				grouplist += ",";
+			}
+		}
+
+		if ( i != numGroups )
+		{
+			grouplist += "|";
+		}
+	}
+
+	// We convert from string to char*, because else garbage is reported to gambas
+	char *tgrouplist;
+	tgrouplist=new char [grouplist.size()+1];
+	strcpy(tgrouplist,grouplist.c_str());
+	return tgrouplist;
 }
 
 //-----------------------------------------------------------------------------
