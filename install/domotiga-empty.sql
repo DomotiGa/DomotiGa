@@ -1780,7 +1780,7 @@ CREATE TABLE `settings_elvmax` (
 
 LOCK TABLES `settings_elvmax` WRITE;
 /*!40000 ALTER TABLE `settings_elvmax` DISABLE KEYS */;
-INSERT INTO `settings_elvmax` VALUES (0,0,'192.168.99.17',62910,0),(1,-1,'192.168.99.17',62910,-1);
+INSERT INTO `settings_elvmax` VALUES (0,0,'192.168.99.17',62910,0),(1,0,'192.168.99.17',62910,0);
 /*!40000 ALTER TABLE `settings_elvmax` ENABLE KEYS */;
 UNLOCK TABLES;
 
