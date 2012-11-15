@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-PUBLIC sProgramVersion AS String = "1.0.001"
+PUBLIC sProgramVersion AS String = "1.0.002"
 PUBLIC sBaseDir AS String
 PUBLIC sSettings AS String = "server-domotiga.conf"
 PUBLIC bMainDebug AS Boolean
@@ -750,6 +750,13 @@ PUBLIC sELVMAXTCPHost AS String
 PUBLIC iELVMAXTCPPort AS Integer
 PUBLIC bELVMAXDebug AS Boolean
 PUBLIC hELVMAX AS CELVMAX
+
+' YouLess
+PUBLIC bYouLessEnabled AS Boolean
+PUBLIC sYouLessFetchURL AS String
+PUBLIC iYouLessPolltime AS Integer
+PUBLIC bYouLessDebug AS Boolean
+PUBLIC hYouLess AS CYouLess
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' this is where domotiga starts
@@ -1697,6 +1704,13 @@ PUBLIC SUB GetSettings()
   iELVMAXTCPPort = rResult!tcpport
   bELVMAXDebug = rResult!debug
 
+  ' YouLess
+  rResult = GetSettingTable("youless")
+  bYouLessEnabled = rResult!enabled
+  sYouLessFetchURL = rResult!fetchurl
+  iYouLessPolltime = rResult!polltime
+  bYouLessDebug = rResult!debug
+
 CATCH
   WriteLog(("Error: " & Error.Text & " " & Error.Code & " while loading settings at ") & Error.Where & ("!\nIs your database version correct?"))
   CloseAll()
@@ -1838,6 +1852,8 @@ PUBLIC SUB CloseAll()
   StopTimers()
   ' save all globalvars in db
   IF bServer THEN SaveGlobalVars()
+  ' YouLess close
+  TRY hYouLess.Disconnect
   ' ELV MAX! close
   TRY hELVMAX.Disconnect
   ' Meteohub close
@@ -2041,6 +2057,7 @@ PUBLIC SUB Setup()
   Setup_MQTT() ' MQTT client support
   Setup_Meteohub() ' Meteohub support
   Setup_ELVMAX() ' ELV MAX! support
+  Setup_YouLess() ' YouLess support
   WriteLog(("Done with setup ..."))
 
 END
@@ -5218,6 +5235,45 @@ PUBLIC SUB Restart_ELVMAX()
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' initialize YouLess
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB Setup_YouLess()
+
+  IF bYouLessEnabled THEN
+    WriteLog(("YouLess support enabled."))
+    IF bServer THEN
+      ' create a new YouLess class instance
+      hYouLess = NEW CYouLess
+      ' set the properties
+      WITH hYouLess
+        .FetchURL = sYouLessFetchURL
+        .Polltime = iYouLessPolltime
+        .YouLessDebug = bYouLessDebug
+      END WITH
+      ' start fetch timer
+      hYouLess.Connect()
+    END IF
+  ELSE
+    IF bMainDebug THEN WriteLog(("YouLess support disabled."))
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' restart YouLess after settings change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Restart_YouLess()
+
+  IF hYouLess THEN
+    TRY hYouLess.tYouLess.Stop
+    hYouLess.Disconnect
+    hYouLess = NULL
+  END IF
+  Setup_YouLess()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' main loop checking for action and acted upon
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB Check_for_Action()
@@ -5451,28 +5507,27 @@ PRIVATE SUB SetGlobalVars()
     ' new second
     IF (iPrev_Sec <> GlobalVar["Second"]) THEN
       bNew_Second = 1
-      SetGlobalVar("Minute", Minute(dTime))
 
       iPrev_Sec = GlobalVar["Second"]
       GlobalVar["Program_Uptime"] = UptimeString(DateDiff(GlobalVar["Program_Start"], Now(), gb.Second))
     ENDIF
 
     ' new minute
-    IF (iPrev_Min <> GlobalVar["Minute"]) THEN
+    IF (iPrev_Min <> Minute(dTime)) THEN
       bNew_Minute = 1
-
-      SetGlobalVar("Hour", Hour(dTime))
-      SetGlobalVar("Day", Day(dTime))
-      SetGlobalVar("Month", Month(dTime))
-      SetGlobalVar("Weekday", WeekDay(dTime))
-
+      SetGlobalVar("Minute", Minute(dTime))
+      GlobalVar["Hour"] = Hour(dTime)
+      GlobalVar["Day"] = Day(dTime)
+      GlobalVar["Month"] = Month(dTime)
       iPrev_Min = GlobalVar["Minute"]
 
       ' check if it's dark or light
       IF (Time_Less_Than(GlobalVar["Sunrise"]) OR Time_Greater_Than(GlobalVar["Sunset"])) THEN
-        SetGlobalVar("Dark", TRUE)
+        GlobalVar["Dark"] = TRUE
+        'SetGlobalVar("Dark", TRUE)
       ELSE
-        SetGlobalVar("Dark", FALSE)
+        GlobalVar["Dark"] = FALSE
+        'SetGlobalVar("Dark", FALSE)
       END IF
       ' new hour
       IF (iPrev_Hour <> GlobalVar["Hour"]) THEN
@@ -5481,20 +5536,20 @@ PRIVATE SUB SetGlobalVars()
         SaveGlobalVars()
         iPrev_Hour = GlobalVar["Hour"]
         IF (Time_Less_Than("5:00")) THEN
-          SetGlobalVar("Time_Of_Day", ("night"))
+          GlobalVar["Time_Of_Day"] = ("night")
         ELSE IF (Time_Less_Than("11:59")) THEN
-          SetGlobalVar("Time_Of_Day", ("morning"))
+          GlobalVar["Time_Of_Day"] = ("morning")
         ELSE IF (Time_Less_Than("17:00")) THEN
-          SetGlobalVar("Time_Of_Day", ("afternoon"))
+          GlobalVar["Time_Of_Day"] = ("afternoon")
         ELSE IF (Time_Less_Than("23:59")) THEN
-          SetGlobalVar("Time_Of_Day", ("evening"))
+          GlobalVar["Time_Of_Day"] = ("evening")
         ELSE
-          SetGlobalVar("Time_Of_Day", ("night"))
+          GlobalVar["Time_Of_Day"] = ("night")
         END IF
         IF bServer THEN
-          WriteLog("The Time of Day is " & Main.GlobalVar["Time_Of_Day"] & ".")
+          WriteLog("The Time of Day is " & GlobalVar["Time_Of_Day"] & ".")
           WriteLog("It's " & IIf(GlobalVar["Dark"], ("dark"), ("light")) & " outside.")
-          WriteLog(("DomotiGa is running for ") & Main.GlobalVar["Program_Uptime"])
+          WriteLog(("DomotiGa is running for ") & GlobalVar["Program_Uptime"])
         ENDIF
         ' new day
         IF (iPrev_Mday <> GlobalVar["Day"]) THEN
@@ -5502,14 +5557,14 @@ PRIVATE SUB SetGlobalVars()
           bNew_Day = 1
           iPrev_Mday = GlobalVar["Day"]
           IF (GlobalVar["Weekday"] = 0 OR GlobalVar["Weekday"] = 6) THEN
-            SetGlobalVar("Weekend", TRUE)
+            GlobalVar["Weekend"] = TRUE
           ELSE
-            SetGlobalVar("Weekend", FALSE)
+            GlobalVar["Weekend"] = FALSE
           END IF
           IF (GlobalVar["Weekday"] = 0) THEN
             bNew_Week = 1
           END IF
-          SetGlobalVar("Year", Year(Now))
+          GlobalVar["Year"] = Year(Now)
 
           Setup_Astro()
 
@@ -5565,7 +5620,7 @@ END
 PUBLIC SUB SetGlobalVar(sVar AS String, vValue AS Variant, OPTIONAL bBroadcast AS Boolean = FALSE) AS Boolean
 
   IF bServer AND IF Events.CheckCondition(Main.GlobalVar[sVar], "<>", vValue, TRUE) THEN
-    Main.GlobalVar[sVar] = vValue
+    GlobalVar[sVar] = vValue
     Events.CheckGlobalVarEvents(sVar, vValue)
     BroadcastEvent("[GlobalVar]" & sVar & "|" & vValue)
   ENDIF
