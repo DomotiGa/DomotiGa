@@ -25,6 +25,8 @@ PRIVATE bELVMAXDebug AS Boolean
 PUBLIC hELVMAX AS NEW Socket
 PUBLIC sBuffer AS String
 
+PUBLIC iDeviceCount AS Integer
+
 ' Converts a character to the relevant index
 ' See http://en.wikipedia.org/wiki/Base64
 ' This is used in decoding
@@ -237,9 +239,8 @@ PRIVATE SUB ParseLine(sStr AS String)
   DIM sMaincat, sDecoded, sItem, sValue, sTemp, sMessage, sDeviceSerial, sComfortTemp, sRoomName, sRoomAddress, sDeviceType, sDeviceAddress, sSerialNumber, sDeviceName, MaxCommand, s_roomc, s_mode, s_enddt, sCubeURL AS String
   DIM aArray AS String[]
   DIM iDeviceId, iRooms, iReadlen, iPos, iDataLength, iEcoTemp, iMaxSetpointTemp, iMinSetpointTemp, iTempOffset, iWindowOpenTemp, iWindowOpenDuration, iBoost, iRoomNumber AS Integer
-  DIM i, iDeviceCount, iNameLength, iRoomID, iPortalEnabled, Name_Length, M_pointer, M_R_count, M_D_count, M_Rooms, M_Devices, Mi AS Integer
-  DIM Counter AS Integer = 0
-  DIM Tcnt AS Integer = 20
+  DIM i, iNameLength, iRoomID, iPortalEnabled, Name_Length, M_pointer, M_R_count, M_D_count, M_Rooms, M_Devices, Mi AS Integer
+  DIM iBoostDuration, iBoostValue, iDecalc, iDecalcDay, iDecalcTime, iMaximumValveSetting, iValveOffset, iData1, iData2, iTemperature, iValvePosition, iTimeUntil AS Integer
 
   sMaincat = sStr
 
@@ -270,10 +271,15 @@ PRIVATE SUB ParseLine(sStr AS String)
       iPos = 1 ' Start reading at 1
 
       sDecoded = Base64Decode(aArray[2])
-      IF Main.bELVMAXDebug THEN Main.WriteDebugLog(("[ELVMAX] M: ") & sDecoded)
+      ' Print the decoded string in printable chars. Abuse sDeviceType to save some memory on vars :)
+      FOR i = 1 TO Len(sDecoded)
+        sDeviceType &= Hex$(Asc(Mid$(sDecoded, i, 1)), 2)
+      NEXT
+      IF Main.bELVMAXDebug THEN Main.WriteDebugLog(("[ELVMAX] M: ") & sDeviceType)
+      sDeviceType = ""
 
       FOR Mi = 1 TO Len(sDecoded)
-        sRoomName = sRoomName & Hex$(Asc(Mid$(sDecoded, Mi, 1)), 2)
+        sRoomName &= Hex$(Asc(Mid$(sDecoded, Mi, 1)), 2)
       NEXT
       Main.WriteDebugLog(sRoomName)
 
@@ -291,7 +297,7 @@ PRIVATE SUB ParseLine(sStr AS String)
         iPos += Name_Length
         sRoomAddress = ""
         FOR i = iPos TO iPos + 2 ' read 3 bytes
-          sRoomAddress = sRoomAddress & Hex$(Asc(Mid(sDecoded, i, 1)), 2)
+          sRoomAddress &= Hex$(Asc(Mid(sDecoded, i, 1)), 2)
         NEXT
         iPos += 3
         IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] M: #rooms: '" & CStr(iRooms) & "' RoomNumber: '" & CStr(iRoomNumber) & "' RoomName: '" & sRoomName & "' 1stAddressInRoom: '" & sRoomAddress & "'")
@@ -307,7 +313,7 @@ PRIVATE SUB ParseLine(sStr AS String)
         iPos += 1
         sDeviceAddress = ""
         FOR i = iPos TO iPos + 2 ' read 3 bytes
-          sDeviceAddress = sDeviceAddress & Hex$(Asc(Mid(sDecoded, i, 1)), 2)
+          sDeviceAddress &= Hex$(Asc(Mid(sDecoded, i, 1)), 2)
         NEXT
         iPos += 3
         FOR i = iPos TO iPos + 9 ' read 10 bytes
@@ -355,7 +361,7 @@ PRIVATE SUB ParseLine(sStr AS String)
       iDataLength = Asc(Mid(sDecoded, iPos, 1))
       iPos += 1
       FOR i = iPos TO iPos + 2             ' read 3 bytes, RF Address of device
-        sRoomAddress = sRoomAddress & Hex$(Asc(Mid(sDecoded, i, 1)), 2)
+        sRoomAddress &= Hex$(Asc(Mid(sDecoded, i, 1)), 2)
       NEXT
       iPos += 3
       sDeviceType = Asc(Mid(sDecoded, iPos, 1))    ' Device Type
@@ -374,13 +380,13 @@ PRIVATE SUB ParseLine(sStr AS String)
           iPos += 1
           iPos += 66 ' Unknown
           FOR i = iPos TO iPos + 36             ' read 10 bytes, URL for portal
-            sCubeURL = sCubeURL & Mid(sDecoded, i, 1)
+            sCubeURL &= Mid(sDecoded, i, 1)
           NEXT
           IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] CubeURL: '" & sCubeURL & "'")
 
         CASE "1" ' Radiator Thermostat
           IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] CASE 1")
-          SComfortTemp = Asc(Mid(sDecoded, iPos, 1)) / 2
+          sComfortTemp = Asc(Mid(sDecoded, iPos, 1)) / 2
           iPos += 1
           iEcoTemp = Asc(Mid(sDecoded, iPos, 1)) / 2
           iPos += 1
@@ -396,6 +402,26 @@ PRIVATE SUB ParseLine(sStr AS String)
           iPos += 1
           iBoost = Asc(Mid(sDecoded, iPos, 1))
           iPos += 1
+          ' Boost Duration and Boost Valve Value
+          ' The 3 MSB bits gives the duration, the 5 LSB bits the Valve Value%.
+          ' Duration: With 3 bits, the possible values (Dec) are 0 to 7, 0 is not used.
+          ' The duration in Minutes is: if Dec value = 7, then 30 minutes, else Dec value * 5 minutes
+          ' Valve Value: dec value 5 LSB bits * 5 gives Valve Value in %
+          iBoostDuration = Lsr(iBoost, 5) ' 3 MSB
+          iBoostValue = iBoost AND 31
+          iPos += 1
+          ' Decalcification: Day of week and Time
+          ' In bits: DDDHHHHH
+          ' The three most significant bits (MSB) are presenting the day, Saturday = 1, Friday = 7
+          ' The five least significant bits (LSB) are presenting the time (in hours)
+          iDecalc = Asc(Mid(sDecoded, iPos, 1))
+          iDecalcDay = Lsr(iDecalc, 5)
+          iDecalcTime = iDecalc AND 31
+          iPos += 1
+          iMaximumValveSetting = Asc(Mid(sDecoded, iPos, 1)) * (100 / 255)
+          iPos += 1
+          iValveOffset = Asc(Mid(sDecoded, iPos, 1)) * (100 / 255)
+          iPos += 1
 
           IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] '" & sComfortTemp & "' '" & iEcoTemp & "' '" & itempOffset & "'")
 
@@ -407,7 +433,42 @@ PRIVATE SUB ParseLine(sStr AS String)
       END SELECT
 
     CASE "L:"
-      Main.WriteDebugLog("[ELVMAX] L:" & sMaincat)
+      Main.WriteDebugLog("[ELVMAX] L:" & Right$(sMaincat, -2))
+      sDecoded = Base64Decode(Right$(sMaincat, -2))
+
+      ' Print the decoded string in printable chars. Abuse sDeviceType to save some memory on vars :)
+      FOR i = 1 TO Len(sDecoded)
+        sDeviceType &= Hex$(Asc(Mid$(sDecoded, i, 1)), 2)
+      NEXT
+      Main.WriteDebugLog("[ELVMAX] L: (decoded) " & sDeviceType)
+      sDeviceType = ""
+
+      iPos = 1
+
+      FOR iPortalEnabled = 1 TO iDeviceCount
+        iDataLength = Asc(Mid(sDecoded, iPos, 1))
+        iPos += 1
+        FOR i = iPos TO iPos + 2              ' read 3 bytes
+          sDeviceAddress &= Hex$(Asc(Mid(sDecoded, i, 1)), 2)
+        NEXT
+        iPos += 3
+        iPos += 1 ' Unknown byte
+        iData1 = Asc(Mid(sDecoded, iPos, 1))
+        iPos += 1
+        iData2 = Asc(Mid(sDecoded, iPos, 1))
+        iPos += 1
+        IF iDataLength > 11 THEN
+          iValvePosition = Asc(Mid(sDecoded, iPos, 1))
+          iPos += 1
+          iTemperature = Asc(Mid(sDecoded, iPos, 1)) / 2
+          iPos += 1
+          ' DateUntil  ' 2 bytes
+          iTimeUntil = Asc(Mid(sDecoded, iPos, 1)) * 0.5
+        ENDIF
+        Main.WriteDebugLog("[ELVMAX] len: " & iDataLength & " Deviceadd: " & sDeviceAddress)
+        ' Do something with the values here, before we clear them.
+        sDeviceAddress = ""
+      NEXT
 
     CASE ELSE
       IF Main.bELVMAXDebug THEN Main.WriteDebugLog("[ELVMAX] Not implemented yet!")
