@@ -3,8 +3,8 @@
 // DomoZWave a C++/C-wrapper to add open-zwave support to DomotiGa.
 // Special thanks to Jaren for creating the wrapper.
 //
-// DomotiGa - an open source home automation program
-// Copyright(C) 2008-2012 Ron Klinkien
+// DomotiGa - an open source home automation program.
+// Copyright (C) Ron Klinkien, The Netherlands.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -24,12 +24,13 @@
 //-----------------------------------------------------------------------------
 // Define and get version numbers of DomoZWave and the open-zwave (vers.c)
 //-----------------------------------------------------------------------------
-char domozwave_vers[] = "DomoZWave version r1023";
+char domozwave_vers[] = "DomoZWave version r1048";
 #include <vers.c>
 //-----------------------------------------------------------------------------
 
 // system
 #include <iostream>
+#include <fstream>
 #include <stdio.h>
 #include <pthread.h>
 #include <ctime>
@@ -66,8 +67,18 @@ using namespace OpenZWave;
 //-----------------------------------------------------------------------------
 
 // the HomeId for our controller, needs fix if people use multiple home id's.
-int home;
-int controllerid;
+typedef struct
+{
+	uint32		m_homeId;
+	uint8		m_nodeId;
+} structcontroller;
+
+list<structcontroller>	controllers;
+
+// We need to store globally the logfile stream and filename
+string logfile_prefix;
+string logfile_name;
+ofstream logfile;
 
 // Define serialport string, we require the serialport if we want to stop the
 //  Open Z-Wave library properly
@@ -99,8 +110,10 @@ typedef struct
 	uint32		m_homeId;
 	uint8		m_nodeId;
 	uint8		basicmapping;
-	std::map<int,string> instanceLabel;
+	uint8		instancecount;
 	string		commandclass;
+	std::map<int,string> instancecommandclass;
+	std::map<int,string> instanceLabel;
 	list<ValueID>	m_values;
 } NodeInfo;
 
@@ -228,16 +241,63 @@ void WriteLog
 {
 	char buffer[1024];
 	va_list args;
+	string tfilename;
 
 	if ( ( _log == LogLevel_Error ) || ( ( _log == LogLevel_Debug ) && ( debugging ) ) ) 
 	{
-		va_start (args, _format);
-		vsnprintf (buffer, 1023, _format, args);
+		va_start( args, _format );
+		vsnprintf( buffer, 1023, _format, args );
 
-		if ( _newline == true ) cout << endl;
-		cout << OZW_datetime << " [DomoZwave] " << buffer << endl;
+		if ( logfile.is_open() )
+		{
+			// Get a timestamp for Year and Month
+			struct timeval tv;
+			gettimeofday(&tv, NULL);
+			struct tm *tm;
+			tm = localtime( &tv.tv_sec );
 
-		va_end (args);
+			// create a timestamp string with Year and Month
+			char localt[100];
+			snprintf( localt, sizeof(localt), "%04d-%02d", tm->tm_year + 1900, tm->tm_mon + 1 );
+
+			tfilename = logfile_prefix;
+			tfilename.append(localt);
+			tfilename.append(".log");
+
+			// If the year/month changed, close and re-open
+			if ( logfile_name != tfilename )
+			{
+				logfile_name = tfilename;
+
+				logfile.close();
+				logfile.open( logfile_name.c_str(), ios::app );
+
+				// Catch an error during the re-open
+				if ( ! logfile.is_open() )
+				{
+					cout << OZW_datetime << " [DomoZwave] " << "***FATAL*** Unable to write to \"" << logfile_name << "\"" << endl;
+					if ( _newline == true ) cout << endl;
+					cout << OZW_datetime << " [DomoZwave] " << buffer << endl;
+				}
+				else
+				{
+					if ( _newline == true ) logfile << endl;
+					logfile << OZW_datetime << " [DomoZwave] " << buffer << endl;
+				}
+			}
+			else
+			{
+				if ( _newline == true ) logfile << endl;
+				logfile << OZW_datetime << " [DomoZwave] " << buffer << endl;
+			}
+		}
+		else
+		{
+			if ( _newline == true ) cout << endl;
+			cout << OZW_datetime << " [DomoZwave] " << buffer << endl;
+		}
+
+		va_end( args );
 	}
 }
 
@@ -250,11 +310,12 @@ void WriteLog
 //
 //-----------------------------------------------------------------------------
 
-bool fault_occurred(xmlrpc_env* env)
+bool fault_occurred( const char* funct, xmlrpc_env* env )
 {
 	if ( env->fault_occurred )
 	{
-		WriteLog(LogLevel_Error, true, "ERROR: XML-RPC Fault: %s (%d)", env->fault_string, env->fault_code); 
+		WriteLog( LogLevel_Error, true, "ERROR: In call \"%s\"", funct );
+		WriteLog( LogLevel_Error, false, "ERROR: XML-RPC Fault: %s (%d)", env->fault_string, env->fault_code ); 
 		return true;
 	}
 	return false; 
@@ -291,11 +352,11 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 {
 	int id = valueID.GetCommandClassId();
 	int genre = valueID.GetGenre();
-	string label =  Manager::Get()->GetValueLabel( valueID );
+	string label = Manager::Get()->GetValueLabel( valueID );
 	int instanceID = valueID.GetInstance();
 	int type = valueID.GetType();
-	char dev_value[64];
-	char tmp_dev_value[64];
+	char dev_value[1024];
+	char tmp_dev_value[1024];
 	uint8 byte_value;
 	bool bool_value;
 	string decimal_value;
@@ -305,16 +366,24 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 	int16 short_value;
 	int value_no = 0;
 	string str_tmp;
+	NodeInfo* nodeInfo;
 
-	WriteLog(LogLevel_Debug, true, "%s: HomeId=%d Node=%d", (add)?"ValueAdded":"ValueChanged", homeID, nodeID);
-	WriteLog(LogLevel_Debug, false, "Genre=%d", genre);
-	WriteLog(LogLevel_Debug, false, "GenreName=%s", DomoZWave_GenreIdName(genre));
-	WriteLog(LogLevel_Debug, false, "CommandClassId=%d", id);
-	WriteLog(LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id));
-	WriteLog(LogLevel_Debug, false, "Instance=%d", instanceID);
-	WriteLog(LogLevel_Debug, false, "Index=%d", valueID.GetIndex());
-	WriteLog(LogLevel_Debug, false, "Label=%s", label.c_str());
-	WriteLog(LogLevel_Debug, false, "Units=%s",Manager::Get()->GetValueUnits( valueID ).c_str());
+	WriteLog( LogLevel_Debug, true, "%s: HomeId=%d Node=%d", (add)?"ValueAdded":"ValueChanged", homeID, nodeID );
+	WriteLog( LogLevel_Debug, false, "Genre=%d", genre );
+	WriteLog( LogLevel_Debug, false, "GenreName=%s", DomoZWave_GenreIdName( genre ) );
+	WriteLog( LogLevel_Debug, false, "CommandClassId=%d", id );
+	WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName( id ) );
+	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
+	WriteLog( LogLevel_Debug, false, "Index=%d", valueID.GetIndex() );
+	WriteLog( LogLevel_Debug, false, "Label=%s", label.c_str() );
+	WriteLog( LogLevel_Debug, false, "Units=%s", Manager::Get()->GetValueUnits( valueID ).c_str() );
+
+	nodeInfo = GetNodeInfo( homeID, nodeID );
+	if ( nodeInfo == NULL )
+	{
+		WriteLog( LogLevel_Error, false, "ERROR: %s: HomeId=%d Node=%d - Node exists in Z-Wave Network, but not in internal Open-ZWave wrapper list - Please report this as a BUG", (add)?"ValueAdded":"ValueChanged", homeID, nodeID );
+		return;
+	}
 
 /*
 	if ( add )
@@ -322,71 +391,73 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 		Manager::Get()->SetChangeVerified( valueID, true );
 	}
 */
+
+	// We need to check which ValueType it is, before we can output it as a string
 	switch ( type )
 	{
 		case ValueID::ValueType_Bool:
 		{
-			Manager::Get()->GetValueAsBool(valueID, &bool_value );
-			snprintf(dev_value, 64, "%i", bool_value);
-			WriteLog(LogLevel_Debug, false, "Type=Bool (raw value=%s)", dev_value);
+			Manager::Get()->GetValueAsBool( valueID, &bool_value );
+			snprintf( dev_value, 1024, "%i", bool_value );
+			WriteLog( LogLevel_Debug, false, "Type=Bool (raw value=%s)", dev_value );
 			break;
 		}
 		case ValueID::ValueType_Byte:
 		{
-			Manager::Get()->GetValueAsByte(valueID, &byte_value );
-			snprintf(dev_value, 64, "%i", byte_value);
-			WriteLog(LogLevel_Debug, false, "Type=Byte (raw value=%s)", dev_value);
+			Manager::Get()->GetValueAsByte( valueID, &byte_value );
+			snprintf( dev_value, 1024, "%i", byte_value );
+			WriteLog( LogLevel_Debug, false, "Type=Byte (raw value=%s)", dev_value );
 			break;
 		}
 		case ValueID::ValueType_Decimal:
 		{
-			Manager::Get()->GetValueAsString(valueID, &decimal_value );
-			snprintf(dev_value, 64, "%s", strdup(decimal_value.c_str()));
-			WriteLog(LogLevel_Debug, false, "Type=Decimal (raw value=%s)", dev_value);
+			Manager::Get()->GetValueAsString( valueID, &decimal_value );
+			snprintf( dev_value, 1024, "%s", strdup( decimal_value.c_str() ) );
+			WriteLog( LogLevel_Debug, false, "Type=Decimal (raw value=%s)", dev_value );
 			break;
 		}
 		case ValueID::ValueType_Int:
 		{
-			Manager::Get()->GetValueAsInt(valueID, &int_value );
-			snprintf(dev_value, 64, "%d", int_value);
-			WriteLog(LogLevel_Debug, false, "Type=Integer (raw value=%s)", dev_value);
+			Manager::Get()->GetValueAsInt( valueID, &int_value );
+			snprintf( dev_value, 1024, "%d", int_value );
+			WriteLog( LogLevel_Debug, false, "Type=Integer (raw value=%s)", dev_value );
 			break;
 		}
 		case ValueID::ValueType_Short:
 		{
-			Manager::Get()->GetValueAsShort(valueID, &short_value );
-			snprintf(dev_value, 64, "%d.h", short_value);
-			WriteLog(LogLevel_Debug, false, "Type=Short (raw value=%s)", dev_value);
+			Manager::Get()->GetValueAsShort( valueID, &short_value );
+			snprintf( dev_value, 1024, "%d.h", short_value );
+			WriteLog( LogLevel_Debug, false, "Type=Short (raw value=%s)", dev_value );
 			break;
 		}
 		case ValueID::ValueType_Schedule:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=Schedule (not implemented)");
+			WriteLog( LogLevel_Debug, false, "Type=Schedule (not implemented)" );
 			return;
 			//break;
 		}
 		case ValueID::ValueType_String:
 		{
-			Manager::Get()->GetValueAsString(valueID, &string_value );
-			snprintf(dev_value, 64, "%s", strdup(string_value.c_str()));
-			WriteLog(LogLevel_Debug, false, "Type=String (raw value=%s)", dev_value);
+			Manager::Get()->GetValueAsString( valueID, &string_value );
+			snprintf( dev_value, 1024, "%s", strdup( string_value.c_str() ) );
+			WriteLog( LogLevel_Debug, false, "Type=String (raw value=%s)", dev_value );
 			break;
 		}
 		case ValueID::ValueType_Button:
 		{
-			WriteLog(LogLevel_Debug, false, "Type=Button (not implemented)");
+			WriteLog( LogLevel_Debug, false, "Type=Button (not implemented)" );
 			return;
 			//break;
 		}
 		case ValueID::ValueType_List:
 		{
-			Manager::Get()->GetValueListSelection(valueID, &list_value );
-			snprintf(dev_value, 64, "%s", strdup(list_value.c_str()));
-			WriteLog(LogLevel_Debug, false, "Type=List (raw value=%s)", dev_value);
+			Manager::Get()->GetValueListSelection( valueID, &list_value );
+			snprintf( dev_value, 1024, "%s", strdup( list_value.c_str() ) );
+			WriteLog( LogLevel_Debug, false, "Type=List (raw value=%s)", dev_value );
 			break;
 		}
 		default:
-		WriteLog(LogLevel_Debug, false, "Type=Unknown");
+		WriteLog( LogLevel_Debug, false, "Type=Unknown" );
 		return;
 	}
 
@@ -399,111 +470,102 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 	// "Open" for the EXACT same event on the device. This is ofcourse not what we want in DomotiGa,
 	// because every value change is recorded and displayed.
 
-	// Get NodeInfo information
-	if ( NodeInfo* nodeInfo = GetNodeInfo( homeID, nodeID ) )
+	// If we are CommandClass Basic and mapping is enabled for this device
+	if ( ( id == COMMAND_CLASS_BASIC ) && (nodeInfo->basicmapping > 0 ) )
 	{
-		// If we are CommandClass Basic and mapping is enabled for this device
-		if ( ( id == COMMAND_CLASS_BASIC ) && (nodeInfo->basicmapping > 0 ) )
+
+		// We have a mapping, we report it to the logfile
+		WriteLog( LogLevel_Debug, false, "Mapping=COMMAND_CLASS_BASIC mapped to %s", DomoZWave_CommandClassIdName( nodeInfo->basicmapping ) );
+
+		// Check if the COMMAND_CLASS_BASIC has ValueType=Byte, otherwise our code doesn't work properly
+		if ( type != ValueID::ValueType_Byte ) {
+			WriteLog(LogLevel_Error, false, "ERROR: %s: HomeId=%d Node=%d - Node doesn't have Type=Byte for COMMAND_CLASS_BASIC (most likely Z-Wave device doesn't comply to the standards) - Please report this as a BUG/FEATURE", (add)?"ValueAdded":"ValueChanged", homeID, nodeID );
+
+			// We don't exit, because *maybe* the following code can make something usefull of the none-standard
+		}
+
+		// Find ValueID
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
 		{
+			ValueID v = *it;
 
-			// We have a mapping, we report it to the logfile
-			WriteLog(LogLevel_Debug, false, "Mapping=COMMAND_CLASS_BASIC mapped to %s", DomoZWave_CommandClassIdName(nodeInfo->basicmapping));
-
-
-			// Check if the COMMAND_CLASS_BASIC has ValueType=Byte, otherwise our code doesn't work properly
-			if ( type != ValueID::ValueType_Byte ) {
-				WriteLog(LogLevel_Error, false, "ERROR: %s: HomeId=%d Node=%d - Node doesn't have Type=Byte for COMMAND_CLASS_BASIC (most likely Z-Wave device doesn't comply to the standards) - Please report this as a BUG/FEATURE", (add)?"ValueAdded":"ValueChanged", homeID, nodeID);
-
-				// We don't exit, because *maybe* the following code can make something usefull of the none-standard
-			}
-
-			// Find ValueID
-			for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+			// We only support index=0, because a basic mapping can't support multiple indexes
+			if ( ( nodeInfo->basicmapping == v.GetCommandClassId() ) && ( instanceID == v.GetInstance() ) && ( v.GetIndex() == 0 ) )
 			{
-				ValueID v = *it;
+				// We found it, now do some magic to map basic to the special CommandClass
 
-				// We only support index=0, because a basic mapping can't support multiple indexes
-				if ( ( nodeInfo->basicmapping == v.GetCommandClassId() ) && ( instanceID == v.GetInstance() ) && ( v.GetIndex() == 0 ) )
+				// Overrule the CommandClass
+				id = nodeInfo->basicmapping;
+
+				// We also need to overrule the label, else the other code breaks
+				label = Manager::Get()->GetValueLabel( v );
+				WriteLog( LogLevel_Debug, false, "Mapping=Label=%s", label.c_str() );
+
+				// CommandClass Basic is always a Byte value, but we need to convert 
+				// to the "right" value type Bool, Decimal, Int or Short
+				switch ( v.GetType() )
 				{
-					// We found it, now do some magic to map basic to the special CommandClass
-
-					// Overrule the CommandClass
-					id = nodeInfo->basicmapping;
-
-					// We also need to overrule the label, else the other code breaks
-					label = Manager::Get()->GetValueLabel( v );
-					WriteLog(LogLevel_Debug, false, "Mapping=Label=%s", label.c_str());
-
-					// CommandClass Basic is always a Byte value, but we need to convert 
-					// to the "right" value type Bool, Decimal, Int or Short
-					switch ( v.GetType() )
+					case ValueID::ValueType_Bool:
 					{
-						case ValueID::ValueType_Bool:
+						if ( strcmp( dev_value, "0" ) == 0 )
 						{
-							if ( strcmp(dev_value, "0" ) == 0 )
-							{
-								strcpy(dev_value, "0");
-							} else {
-								strcpy(dev_value, "1");
-							}
+							strcpy( dev_value, "0" );
+						}
+						else
+						{
+							strcpy( dev_value, "1" );
+						}
 
-							WriteLog(LogLevel_Debug, false, "Mapping=Type=Bool (raw value=%s)", dev_value);
-							break;
-						}
-						case ValueID::ValueType_Byte:
-						{
-							// Don't need to do anything, possible other scenario 
-							// are fixed later
-
-							WriteLog(LogLevel_Debug, false, "Mapping=Type=Byte (raw value=%s)", dev_value);
-							break;
-						}
-						case ValueID::ValueType_Decimal:
-						{
-							WriteLog(LogLevel_Debug, false, "Mapping=Type=Decimal (raw value=%s)", dev_value);
-							break;
-						}
-						case ValueID::ValueType_Int:
-						{
-							WriteLog(LogLevel_Debug, false, "Mapping=Type=Integer (raw value=%s)", dev_value);
-							break;
-						}
-						case ValueID::ValueType_Short:
-						{
-							WriteLog(LogLevel_Debug, false, "Mapping=Type=Short (raw value=%s)", dev_value);
-							break;
-						}
-						case ValueID::ValueType_String:
-						{
-							WriteLog(LogLevel_Debug, false, "Mapping=Type=String (raw value=%s)", dev_value);
-							break;
-						}
-						default:
-						WriteLog(LogLevel_Error, true, "ERROR: HomeId=%d Node=%d - BasicMapping - Unknown ValueType=%d", homeID, nodeID, v.GetType() );
-						return;
+						WriteLog( LogLevel_Debug, false, "Mapping=Type=Bool (raw value=%s)", dev_value );
+						break;
 					}
-
-
-					if ( label == "Level" ) {
-
-						// If we map Basic to Level, 255 -> Dim 99
-						if ( strcmp(dev_value, "255" ) == 0 )
-						{
-							strcpy(dev_value, "99");
-						}
+					case ValueID::ValueType_Byte:
+					{
+						// Don't need to do anything, possible other scenario are fixed later
+						WriteLog( LogLevel_Debug, false, "Mapping=Type=Byte (raw value=%s)", dev_value );
+						break;
 					}
+					case ValueID::ValueType_Decimal:
+					{
+						WriteLog( LogLevel_Debug, false, "Mapping=Type=Decimal (raw value=%s)", dev_value );
+						break;
+					}
+					case ValueID::ValueType_Int:
+					{
+						WriteLog( LogLevel_Debug, false, "Mapping=Type=Integer (raw value=%s)", dev_value );
+						break;
+					}
+					case ValueID::ValueType_Short:
+					{
+						WriteLog( LogLevel_Debug, false, "Mapping=Type=Short (raw value=%s)", dev_value );
+						break;
+					}
+					case ValueID::ValueType_String:
+					{
+						WriteLog( LogLevel_Debug, false, "Mapping=Type=String (raw value=%s)", dev_value );
+						break;
+					}
+					default:
+					WriteLog( LogLevel_Error, true, "ERROR: HomeId=%d Node=%d - BasicMapping - Unknown ValueType=%d", homeID, nodeID, v.GetType() );
+					return;
+				}
 
-					break;
-				} 
-			}
 
-		} else {
-			WriteLog(LogLevel_Debug, false, "Mapping=None");
+				if ( label == "Level" ) {
+
+					// If we map Basic to Level, 255 -> Dim 99
+					if ( strcmp( dev_value, "255" ) == 0 )
+					{
+						strcpy( dev_value, "99" );
+					}
+				}
+
+				break;
+			} 
 		}
 
 	} else {
-		WriteLog(LogLevel_Error, false, "ERROR: %s: HomeId=%d Node=%d - Node exists in Z-Wave Network, but not in internal Open-ZWave wrapper list - Please report this as a BUG", (add)?"ValueAdded":"ValueChanged", homeID, nodeID);
-		return;
+		WriteLog( LogLevel_Debug, false, "Mapping=None" );
 	}
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -521,27 +583,27 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 				// Store the label, because it is a known one
 				value_no = 1;
 
-				if ( strcmp(dev_value, "255" ) == 0 ) 
+				if ( strcmp( dev_value, "255" ) == 0 ) 
 				{
-					strcpy(dev_value, "On");
+					strcpy(dev_value, "On" );
 				}
-				else if ( strcmp(dev_value, "99" ) == 0 ) 
+				else if ( strcmp( dev_value, "99" ) == 0 ) 
 				{
-					strcpy(dev_value, "On");
+					strcpy( dev_value, "On" );
 				}
-				else if ( strcmp(dev_value, "1" ) == 0 ) 
+				else if ( strcmp( dev_value, "1" ) == 0 ) 
 				{
-					strcpy(dev_value, "On");
+					strcpy( dev_value, "On");
 				}
-				else if ( strcmp(dev_value, "0" ) == 0 ) 
+				else if ( strcmp( dev_value, "0" ) == 0 ) 
 				{
-					strcpy(dev_value, "Off");
+					strcpy( dev_value, "Off" );
 				}
 /*
 				else
 				{
-					sprintf(tmp_dev_value, "Dim %s", dev_value);
-					strcpy(dev_value, tmp_dev_value);
+					sprintf( tmp_dev_value, "Dim %s", dev_value );
+					strcpy( dev_value, tmp_dev_value );
 				}
 */
 			}
@@ -554,11 +616,11 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 			{
 				value_no = 1;
 
-				if ( strcmp(dev_value, "1") == 0 ) 
+				if ( strcmp( dev_value, "1" ) == 0 ) 
 				{
-					strcpy(dev_value, "On");
+					strcpy( dev_value, "On" );
 				} else {
-					strcpy(dev_value, "Off");
+					strcpy( dev_value, "Off" );
 				}
 			}
 
@@ -570,20 +632,20 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 			{
 				value_no = 1;
 
-				sprintf(tmp_dev_value, "Dim %s", dev_value);
-				strcpy(dev_value, tmp_dev_value);
+				sprintf( tmp_dev_value, "Dim %s", dev_value );
+				strcpy( dev_value, tmp_dev_value );
 
-				if ( strcmp(dev_value, "Dim 0") == 0 )
+				if ( strcmp( dev_value, "Dim 0" ) == 0 )
 				{
-					strcpy(dev_value, "Off");
+					strcpy( dev_value, "Off" );
 				}
-				else if ( strcmp(dev_value, "Dim 99") == 0 )
+				else if ( strcmp( dev_value, "Dim 99" ) == 0 )
 				{
-					strcpy(dev_value, "On");
+					strcpy( dev_value, "On" );
 				}
-				else if ( strcmp(dev_value, "Dim 100") == 0 )
+				else if ( strcmp( dev_value, "Dim 100" ) == 0 )
 				{
-					strcpy(dev_value, "On");
+					strcpy( dev_value, "On" );
 				}
 			}
 
@@ -608,15 +670,15 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 			{
 				value_no = 1;
 
-				if ( strcmp(dev_value, "1") == 0 )
+				if ( strcmp( dev_value, "1" ) == 0 )
 				{
 					// Closed
-					strcpy(dev_value, "On");
+					strcpy( dev_value, "On" );
 				}
 				else
 				{
 					// Open
-					strcpy(dev_value, "Off");
+					strcpy( dev_value, "Off" );
 				}
 			}
 
@@ -637,13 +699,13 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 			{
 				value_no = 2;
 
-				if ( strcmp(dev_value, "0") == 0 )
+				if ( strcmp( dev_value, "0" ) == 0 )
 				{
-					strcpy(dev_value, "Secure");
+					strcpy( dev_value, "Secure" );
 				}
 				else
 				{
-					strcpy(dev_value, "Tamper");
+					strcpy( dev_value, "Tamper" );
 				}
 			}
 
@@ -672,117 +734,143 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 	// only previously stored values are giving. DomotiGa is the only one using that file, thus all the
 	// known values are already in the DomotiGa DB. Also if you do a start and directly restart and the
 	// value hasn't been refreshed, after the restart the value is empty == GARBAGE
+
+	// We will store the COMMAND_CLASS_ information (for the device and per instance)
+	// We will store the number of instances
+	// We will store the configuration items available 
 	if ( add )
 	{
-		WriteLog(LogLevel_Debug, false, "Min=%d", Manager::Get()->GetValueMin( valueID ));
-		WriteLog(LogLevel_Debug, false, "Max=%d", Manager::Get()->GetValueMax( valueID ));
+		WriteLog( LogLevel_Debug, false, "ValueKnown=%s, ReadOnly=%s, WriteOnly=%s", ( Manager::Get()->IsValueSet( valueID ) )?"true":"false", ( Manager::Get()->IsValueReadOnly( valueID ) )?"true":"false", ( Manager::Get()->IsValueWriteOnly( valueID ) )?"true":"false" );
+		WriteLog( LogLevel_Debug, false, "Min=%d", Manager::Get()->GetValueMin( valueID ) );
+		WriteLog( LogLevel_Debug, false, "Max=%d", Manager::Get()->GetValueMax( valueID ) );
 
 		if ( value_no > 0 )
 		{
-			WriteLog(LogLevel_Debug, false, "Value%d=%s", value_no, dev_value);
+			WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
 		}
 		else
 		{
-			WriteLog(LogLevel_Debug, false, "Value=%s", dev_value);
+			WriteLog( LogLevel_Debug, false, "Value=%s", dev_value );
 		}
 
 		if ( ( Manager::Get()->GetValueHelp( valueID ) != "" ) && ( add ) )
 		{
-			WriteLog(LogLevel_Debug, false, "Help=%s", Manager::Get()->GetValueHelp( valueID ).c_str());
+			WriteLog( LogLevel_Debug, false, "Help=%s", Manager::Get()->GetValueHelp( valueID ).c_str() );
 		}
 
-		if ( NodeInfo* nodeInfo = GetNodeInfo( homeID, nodeID ) )
+		// Check how many instance we got per node, if we got a higher instanceID, store it
+		if ( instanceID > nodeInfo->instancecount )
 		{
-			// Add to the nodeInfo commandclass list
-			str_tmp = string(DomoZWave_CommandClassIdName(id));
-			str_tmp.append("|");
+			nodeInfo->instancecount = instanceID;
+		}
 
-			if ( nodeInfo->commandclass == "" )
+		// Add to the nodeInfo commandclass list
+		str_tmp = string( DomoZWave_CommandClassIdName( id ) );
+		str_tmp.append( "|" );
+
+		if ( nodeInfo->commandclass == "" )
+		{
+			nodeInfo->commandclass = "|";
+			nodeInfo->commandclass.append( str_tmp );
+		}
+		else
+		{
+			if ( nodeInfo->commandclass.find(str_tmp) == string::npos )
 			{
-				nodeInfo->commandclass = "|";
 				nodeInfo->commandclass.append(str_tmp);
+			}
+		}
+
+		// We also need to store it per instance. This information can be used to
+		// determine if an issues is a Switch/Dim device
+		if ( nodeInfo->instancecommandclass.find(instanceID) != nodeInfo->instancecommandclass.end() )
+		{
+			if ( nodeInfo->instancecommandclass[instanceID].find(str_tmp) == string::npos )
+			{
+				nodeInfo->instancecommandclass[instanceID].append(str_tmp);
+			}
+		}
+		else
+		{
+			nodeInfo->instancecommandclass[instanceID] = "";
+			nodeInfo->instancecommandclass[instanceID].append("|");
+			nodeInfo->instancecommandclass[instanceID].append(str_tmp);
+		}
+
+		// We need to skip the "Basic" label if we got a basicmapping
+		if ( ( id == COMMAND_CLASS_BASIC ) && (nodeInfo->basicmapping > 0 ) )
+		{
+			value_no = 0;
+		}
+
+		// Lets store the instance & known labels (variable)
+		// When a ValueChange happens, we need to try to map them to Value1 - 4
+		if ( ( value_no >= 1  ) && ( value_no <= 254 ) )
+		{
+
+			// All possible labels (sorted in priority):
+			// Basic, Switch, Level, Sensor, Power, Energy, Temperature, Luminance, Relative Humidity, Alarm Level
+
+			// NOTE: Basic+Switch+Level are normally same the for a switch/dimmer
+
+			// Known and supported combinations:
+			// Switch + Power + Energy + Alarm Level (e.g. GreenWave PowerNode 1)
+			// Sensor + Alarm Level (e.g. Everspring SP103) 
+			// Sensor + Temperature + Luminance + Humidity (e.g. Aeon 4in1)
+			// Sensor + Temperature + Alarm Level? (e.g. Digital Home System DHS-ZW-SNMT-01)
+
+			// Following code concats the label to the string, also adds a "|" delimiter
+			// After it is added, we need re-sort the string to make it useable in ValueChanged
+			if ( nodeInfo->instanceLabel.find( instanceID ) != nodeInfo->instanceLabel.end() )
+			{
+				nodeInfo->instanceLabel[instanceID].append(label);
+				nodeInfo->instanceLabel[instanceID].append("|");
+
+				str_tmp = "|";
+				if ( nodeInfo->instanceLabel[instanceID].find("|Basic|") != string::npos ) { str_tmp.append("Basic|"); }
+
+				// Normally a dimmer has Switch+Level, so we need to combine in the same value
+				if ( ( nodeInfo->instanceLabel[instanceID].find("|Switch|") != string::npos ) &&  ( nodeInfo->instanceLabel[instanceID].find("|Level|") != string::npos ) )
+				{
+					str_tmp.append("Switch-Level|");
+				}
+				else if ( nodeInfo->instanceLabel[instanceID].find("|Switch-Level|") != string::npos )
+				{
+					str_tmp.append("Switch-Level|");
+				}
+				else if ( nodeInfo->instanceLabel[instanceID].find("|Switch|") != string::npos )
+				{
+					str_tmp.append("Switch|");
+				}
+				else if ( nodeInfo->instanceLabel[instanceID].find("|Level|") != string::npos )
+				{
+					str_tmp.append("Level|");
+				}
+
+				if ( nodeInfo->instanceLabel[instanceID].find("|Sensor|") != string::npos ) { str_tmp.append("Sensor|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("|Power|") != string::npos ) { str_tmp.append("Power|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("|Energy|") != string::npos ) { str_tmp.append("Energy|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("|Temperature|") != string::npos ) { str_tmp.append("Temperature|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("Relative Humidity") != string::npos ) { str_tmp.append("Relative Humidity|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("|Luminance|") != string::npos ) { str_tmp.append("Luminance|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("Alarm Level") != string::npos ) { str_tmp.append("Alarm Level|"); }
+
+				// Replace the previous string with the newly generated
+				nodeInfo->instanceLabel[instanceID] = str_tmp;
+
 			}
 			else
 			{
-				if ( nodeInfo->commandclass.find(str_tmp) == string::npos )
-				{
-					nodeInfo->commandclass.append(str_tmp);
-				}
+				nodeInfo->instanceLabel[instanceID] = "";
+				nodeInfo->instanceLabel[instanceID].append("|");
+				nodeInfo->instanceLabel[instanceID].append(label);
+				nodeInfo->instanceLabel[instanceID].append("|");
 			}
+		} 
 
-			// We need to skip the "Basic" label if we got a basicmapping
-			if ( ( id == COMMAND_CLASS_BASIC ) && (nodeInfo->basicmapping > 0 ) )
-			{
-				value_no = 0;
-			}
-
-			// Lets store the instance & known labels (variable)
-			// When a ValueChange happens, we need to try to map them to Value1 - 4
-			if ( ( value_no >= 1  ) && ( value_no <= 254 ) )
-			{
-
-				// All possible labels (sorted in priority):
-				// Basic, Switch, Level, Sensor, Power, Energy, Temperature, Luminance, Relative Humidity, Alarm Level
-
-				// NOTE: Basic+Switch+Level are normally same the for a switch/dimmer
-
-				// Known and supported combinations:
-				// Switch + Power + Energy + Alarm Level (e.g. GreenWave PowerNode 1)
-				// Sensor + Alarm Level (e.g. Everspring SP103) 
-				// Sensor + Temperature + Luminance + Humidity (e.g. Aeon 4in1)
-				// Sensor + Temperature + Alarm Level? (e.g. Digital Home System DHS-ZW-SNMT-01)
-
-				// Following code concats the label to the string, also adds a "|" delimiter
-				// After it is added, we need re-sort the string to make it useable in ValueChanged
-				if ( nodeInfo->instanceLabel.find(instanceID) != nodeInfo->instanceLabel.end() )
-				{
-					nodeInfo->instanceLabel[instanceID].append(label);
-					nodeInfo->instanceLabel[instanceID].append("|");
-
-					str_tmp = "|";
-					if ( nodeInfo->instanceLabel[instanceID].find("|Basic|") != string::npos ) { str_tmp.append("Basic|"); }
-
-					// Normally a dimmer has Switch+Level, so we need to combine in the same value
-					if ( ( nodeInfo->instanceLabel[instanceID].find("|Switch|") != string::npos ) &&  ( nodeInfo->instanceLabel[instanceID].find("|Level|") != string::npos ) )
-					{
-						str_tmp.append("Switch-Level|");
-					}
-					else if ( nodeInfo->instanceLabel[instanceID].find("|Switch-Level|") != string::npos )
-					{
-						str_tmp.append("Switch-Level|");
-					}
-					else if ( nodeInfo->instanceLabel[instanceID].find("|Switch|") != string::npos )
-					{
-						str_tmp.append("Switch|"); 
-					}
-					else if ( nodeInfo->instanceLabel[instanceID].find("|Level|") != string::npos )
-					{
-						str_tmp.append("Level|");
-					}
-
-					if ( nodeInfo->instanceLabel[instanceID].find("|Sensor|") != string::npos ) { str_tmp.append("Sensor|"); }
-					if ( nodeInfo->instanceLabel[instanceID].find("|Power|") != string::npos ) { str_tmp.append("Power|"); }
-					if ( nodeInfo->instanceLabel[instanceID].find("|Energy|") != string::npos ) { str_tmp.append("Energy|"); }
-					if ( nodeInfo->instanceLabel[instanceID].find("|Temperature|") != string::npos ) { str_tmp.append("Temperature|"); }
-					if ( nodeInfo->instanceLabel[instanceID].find("Relative Humidity") != string::npos ) { str_tmp.append("Relative Humidity|"); }
-					if ( nodeInfo->instanceLabel[instanceID].find("|Luminance|") != string::npos ) { str_tmp.append("Luminance|"); }
-					if ( nodeInfo->instanceLabel[instanceID].find("Alarm Level") != string::npos ) { str_tmp.append("Alarm Level|"); }
-
-					// Replace the previous string with the newly generated
-					nodeInfo->instanceLabel[instanceID] = str_tmp;
-
-				}
-				else
-				{
-					nodeInfo->instanceLabel[instanceID] = "";
-					nodeInfo->instanceLabel[instanceID].append("|");
-					nodeInfo->instanceLabel[instanceID].append(label);
-					nodeInfo->instanceLabel[instanceID].append("|");
-				}
-			} 
-		}
-
-		WriteLog(LogLevel_Debug, false, "Note=Value not send to DomotiGa to with ValueAdd (values are unreliable at startup)");
+		// We will not send the ValueAdd to DomotiGa, because they are in general unreliable and open-zwave in most cases
+		// during a restart send empty values
+		WriteLog( LogLevel_Debug, false, "Note=Value not send to DomotiGa to with ValueAdd (values are unreliable at startup)" );
 		return;
 	}
 
@@ -790,68 +878,81 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 	if ( value_no > 0 )
 	{
 		// If we have a list of instanceLabels, write it to the debug logfile
-		if ( NodeInfo* nodeInfo = GetNodeInfo( homeID, nodeID ) )
+		if ( nodeInfo->instanceLabel.find(instanceID) != nodeInfo->instanceLabel.end() )
 		{
-			if ( nodeInfo->instanceLabel.find(instanceID) != nodeInfo->instanceLabel.end() )
+			//WriteLog(LogLevel_Debug, false, "Node=%d, Instance=%d, InstanceLabel=%s", nodeID, instanceID, nodeInfo->instanceLabel[instanceID].c_str());
+			WriteLog( LogLevel_Debug, false, "InstanceLabel=%s", nodeInfo->instanceLabel[instanceID].c_str() );
+
+			// Only overrule the value_no if the node and labels are known for this instance
+			// So if an error or unknown device happens, it falls back to the old mapping
+
+			string next = "";
+			string tnext;
+			int delimitercount = 0;
+
+			for ( string::const_iterator it = nodeInfo->instanceLabel[instanceID].begin(); it != nodeInfo->instanceLabel[instanceID].end(); it++ )
 			{
-				//WriteLog(LogLevel_Debug, false, "Node=%d, Instance=%d, InstanceLabel=%s", nodeID, instanceID, nodeInfo->instanceLabel[instanceID].c_str());
-				WriteLog(LogLevel_Debug, false, "InstanceLabel=%s", nodeInfo->instanceLabel[instanceID].c_str());
-
-				// Only overrule the value_no if the node and labels are known for this instance
-				// So if an error or unknown device happens, it falls back to the old mapping
-
-				string next = "";
-				string tnext;
-				int delimitercount = 0;
-
-				for ( string::const_iterator it = nodeInfo->instanceLabel[instanceID].begin(); it != nodeInfo->instanceLabel[instanceID].end(); it++ )
+				tnext = *it;
+				if ( tnext == "|" )
 				{
-					tnext = *it;
-					if ( tnext == "|" )
+					delimitercount++;
+
+					if ( next.length() > 0 )
 					{
-						delimitercount++;
 
-						if ( next.length() > 0 )
+						if ( label == next )
 						{
+							value_no = delimitercount - 1;
+							break;
+						}
 
-							if ( label == next )
+						// Captures the special Switch-Level case
+						if ( ( label == "Switch" ) || ( label == "Level" ) )
+						{
+							if ( next == "Switch-Level" )
 							{
 								value_no = delimitercount - 1;
 								break;
 							}
-
-							// Captures the special Switch-Level case
-							if ( ( label == "Switch" ) || ( label == "Level" ) )
-							{
-								if ( next == "Switch-Level" )
-								{
-									value_no = delimitercount - 1;
-									break;
-								}
-							}
-
-							next = "";
 						}
+
+						next = "";
 					}
-					else
-					{
-						next += *it;
-					}
+				}
+				else
+				{
+					next += *it;
 				}
 			}
 		}
 
-		WriteLog(LogLevel_Debug, false, "Value%d=%s", value_no, dev_value);
+		WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
 
+		// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
+		xmlrpc_env_init( &env );
 		xmlrpc_value* resultP = NULL;
-		xmlrpc_client_call2f(&env, clientP, url, "zwave.setvalue", &resultP, "(iiiis)", homeID, nodeID, instanceID, value_no, dev_value );
+		xmlrpc_client_call2f( &env, clientP, url, "zwave.setvalue", &resultP, "(iiiis)", homeID, nodeID, instanceID, value_no, dev_value );
+
+		// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
+		if ( ! fault_occurred ( "zwave.setvalue", &env ) )
+		{
+			xmlrpc_bool bvalue;
+			
+			xmlrpc_read_bool( &env, resultP, &bvalue );
+
+			if ( ! bvalue )
+			{
+				WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.setvalue\" returned FALSE" );
+			}
+		}
+
 		if ( resultP )
 		{
-			xmlrpc_DECREF(resultP);
+			xmlrpc_DECREF( resultP );
 		}
 	} else {
-		WriteLog(LogLevel_Debug, false, "Value=%s", dev_value);
-		WriteLog(LogLevel_Debug, false, "Note=Value not send to DomotiGa, CommandClassId & label combination isn't supported by DomotiGa");
+		WriteLog( LogLevel_Debug, false, "Value=%s", dev_value );
+		WriteLog( LogLevel_Debug, false, "Note=Value not send, CommandClassId & label combination isn't supported by DomotiGa (this is not an issue)" );
 	}
 }
 
@@ -862,7 +963,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 
 void RPC_NodeAdded( int homeID, int nodeID )
 {
-	WriteLog(LogLevel_Debug, true, "NodeAdd: HomeId=%d Node=%d", homeID, nodeID);
+	WriteLog( LogLevel_Debug, true, "NodeAdd: HomeId=%d Node=%d", homeID, nodeID );
 }
 
 //-----------------------------------------------------------------------------
@@ -872,7 +973,7 @@ void RPC_NodeAdded( int homeID, int nodeID )
 
 void RPC_NodeRemoved( int homeID, int nodeID )
 {
-	WriteLog(LogLevel_Debug, true, "NodeRemoved: HomeId=%d Node=%d", homeID, nodeID);
+	WriteLog( LogLevel_Debug, true, "NodeRemoved: HomeId=%d Node=%d", homeID, nodeID );
 }
 
 //-----------------------------------------------------------------------------
@@ -882,7 +983,7 @@ void RPC_NodeRemoved( int homeID, int nodeID )
 
 void RPC_NodeNew( int homeID, int nodeID )
 {
-	WriteLog(LogLevel_Debug, true, "NodeNew: HomeId=%d Node=%d", homeID, nodeID);
+	WriteLog( LogLevel_Debug, true, "NodeNew: HomeId=%d Node=%d", homeID, nodeID );
 }
 
 //-----------------------------------------------------------------------------
@@ -904,7 +1005,7 @@ void RPC_NodeProtocolInfo( int homeID, int nodeID )
 	const char* nodetype = Manager::Get()->GetNodeType( homeID, nodeID).c_str();
 	const char* name = Manager::Get()->GetNodeName( homeID, nodeID).c_str();
 	const char* location = Manager::Get()->GetNodeLocation( homeID, nodeID).c_str();
-	uint8 version = Manager::Get()->GetNodeVersion( homeID, nodeID); 
+	uint8 version = Manager::Get()->GetNodeVersion( homeID, nodeID ); 
 	uint8 basicmapping = 0;
 	char buffer[50];
 
@@ -915,7 +1016,7 @@ void RPC_NodeProtocolInfo( int homeID, int nodeID )
 		nodeInfo->basicmapping = 0;
 
 		// Convert Generic+Specific to string
-		snprintf(buffer,20, "0x%02X|0x%02X", generic, specific);
+		snprintf( buffer,20, "0x%02X|0x%02X", generic, specific );
 
 		// Check if we have a mapping in our map table
 		if ( MapCommandClassBasic.find(buffer) != MapCommandClassBasic.end() )
@@ -926,7 +1027,7 @@ void RPC_NodeProtocolInfo( int homeID, int nodeID )
 
 			// We didn't find a Generic+Specifc in the table, now we check
 			// for Generic only
-			snprintf(buffer,20, "0x%02X", generic);
+			snprintf( buffer,20, "0x%02X", generic );
 
 			// Check if we have a mapping in our map table
 			if ( MapCommandClassBasic.find(buffer) != MapCommandClassBasic.end() )
@@ -942,30 +1043,45 @@ void RPC_NodeProtocolInfo( int homeID, int nodeID )
 	xmlrpc_int32 capabilities = 0; // Caps is broken into Version, BaudRate, listening, routing
 	xmlrpc_int32 isecurity = 0;
 
-	WriteLog(LogLevel_Debug, true, "NodeProtocolInfo: HomeId=%d Node=%d", homeID, nodeID);
-	WriteLog(LogLevel_Debug, false, "Basic=%d", basic);
-	WriteLog(LogLevel_Debug, false, "Generic=%d", generic);
-	WriteLog(LogLevel_Debug, false, "Specific=%d", specific);
-	WriteLog(LogLevel_Debug, false, "Type=%s", nodetype);
+	WriteLog( LogLevel_Debug, true, "NodeProtocolInfo: HomeId=%d Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, false, "Basic=%d", basic );
+	WriteLog( LogLevel_Debug, false, "Generic=%d", generic );
+	WriteLog( LogLevel_Debug, false, "Specific=%d", specific );
+	WriteLog( LogLevel_Debug, false, "Type=%s", nodetype );
 	if ( basicmapping > 0 ) {
-		WriteLog(LogLevel_Debug, false, "Mapping=COMMAND_CLASS_BASIC maps to %s", DomoZWave_CommandClassIdName(basicmapping));
+		WriteLog( LogLevel_Debug, false, "Mapping=COMMAND_CLASS_BASIC maps to %s", DomoZWave_CommandClassIdName( basicmapping ) );
 	}
-	WriteLog(LogLevel_Debug, false, "Listening=%s", (listening)?"true":"false");
-	WriteLog(LogLevel_Debug, false, "FrequentListening=%s", (frequentlistening)?"true":"false");
-	WriteLog(LogLevel_Debug, false, "Beaming=%s", (beaming)?"true":"false");
-	WriteLog(LogLevel_Debug, false, "Routing=%s", (routing)?"true":"false");
-	WriteLog(LogLevel_Debug, false, "MaxBaudRate=%d", maxbaudrate);
-	WriteLog(LogLevel_Debug, false, "Version=%d", version);
-	WriteLog(LogLevel_Debug, false, "Security=%s", (security)?"true":"false");
-	WriteLog(LogLevel_Debug, false, "Name=%s", name);
-	WriteLog(LogLevel_Debug, false, "Location=%s", location);
+	WriteLog( LogLevel_Debug, false, "Listening=%s", (listening)?"true":"false" );
+	WriteLog( LogLevel_Debug, false, "FrequentListening=%s", (frequentlistening)?"true":"false" );
+	WriteLog( LogLevel_Debug, false, "Beaming=%s", (beaming)?"true":"false" );
+	WriteLog( LogLevel_Debug, false, "Routing=%s", (routing)?"true":"false" );
+	WriteLog( LogLevel_Debug, false, "MaxBaudRate=%d", maxbaudrate );
+	WriteLog( LogLevel_Debug, false, "Version=%d", version );
+	WriteLog( LogLevel_Debug, false, "Security=%s", (security)?"true":"false" );
+	WriteLog( LogLevel_Debug, false, "Name=%s", name );
+	WriteLog( LogLevel_Debug, false, "Location=%s", location );
 
+	// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
+	xmlrpc_env_init( &env );
 	xmlrpc_value* resultP = NULL;
  	xmlrpc_client_call2f(&env, clientP, url, "zwave.createnode", &resultP, "(iiiiiib)", nodeID, basic, generic, specific, capabilities, isecurity, sleeping );
 
+	// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
+	if ( ! fault_occurred ( "zwave.createnode", &env ) )
+	{
+		xmlrpc_bool bvalue;
+
+		xmlrpc_read_bool( &env, resultP, &bvalue );
+
+		if ( ! bvalue )
+		{
+			WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.createnode\" returned FALSE" );
+		}
+	}
+
 	if ( resultP )
 	{
-		xmlrpc_DECREF(resultP);
+		xmlrpc_DECREF( resultP );
 	}
 }
 
@@ -976,7 +1092,7 @@ void RPC_NodeProtocolInfo( int homeID, int nodeID )
 
 void RPC_Group( int homeID, int nodeID )
 {
-	WriteLog(LogLevel_Debug, true, "GroupEvent: HomeId=%d Node=%d", homeID, nodeID);
+	WriteLog( LogLevel_Debug, true, "GroupEvent: HomeId=%d Node=%d", homeID, nodeID );
 }
 
 //-----------------------------------------------------------------------------
@@ -988,33 +1104,48 @@ void RPC_NodeEvent( int homeID, int nodeID, ValueID valueID, int value )
 {
 	int instanceID = valueID.GetInstance();
 	int value_no = 1;
-	char dev_value[64];
+	char dev_value[1024];
 
 	// Instance can never be zero, we need to be backwards compatible
 	if ( instanceID == 0 ) {
 		instanceID = 1;
 	}
 
-	WriteLog(LogLevel_Debug, true, "NodeEvent: HomeId=%d Node=%d", homeID, nodeID);
-	WriteLog(LogLevel_Debug, false, "Instance=%d", instanceID);
-	WriteLog(LogLevel_Debug, false, "Type=Byte (raw value=%d)", value);
-	snprintf(dev_value, 64, "%d", value);
+	WriteLog( LogLevel_Debug, true, "NodeEvent: HomeId=%d Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
+	WriteLog( LogLevel_Debug, false, "Type=Byte (raw value=%d)", value );
+	snprintf( dev_value, 1024, "%d", value );
 
-	if ( strcmp(dev_value, "255" ) == 0 )
+	if ( strcmp( dev_value, "255" ) == 0 )
 	{
-		strcpy(dev_value, "On");
+		strcpy( dev_value, "On" );
 	}
 	else { 
-		strcpy(dev_value, "Off");
+		strcpy( dev_value, "Off" );
 	}
 
-	WriteLog(LogLevel_Debug, false, "Value%d=%s", value_no, dev_value);
+	WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
 
+	// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
+	xmlrpc_env_init( &env );
 	xmlrpc_value* resultP = NULL;
-	xmlrpc_client_call2f(&env, clientP, url, "zwave.setvalue", &resultP, "(iiiis)", homeID, nodeID, instanceID, value_no, dev_value );
+	xmlrpc_client_call2f( &env, clientP, url, "zwave.setvalue", &resultP, "(iiiis)", homeID, nodeID, instanceID, value_no, dev_value );
+
+	if ( ! fault_occurred ( "zwave.setvalue", &env ) )
+	{
+		xmlrpc_bool bvalue;
+
+		xmlrpc_read_bool( &env, resultP, &bvalue );
+
+		if ( ! bvalue )
+		{
+			WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.setvalue\" returned FALSE" );
+		}
+	}
+
 	if ( resultP )
 	{
-		xmlrpc_DECREF(resultP);
+		xmlrpc_DECREF( resultP );
 	}
 }
 
@@ -1025,7 +1156,7 @@ void RPC_NodeEvent( int homeID, int nodeID, ValueID valueID, int value )
 
 void RPC_PollingEnabled( int homeID, int nodeID )
 {
-	WriteLog(LogLevel_Debug, true, "PollingEnabled: HomeId=%d Node=%d", homeID, nodeID);
+	WriteLog( LogLevel_Debug, true, "PollingEnabled: HomeId=%d Node=%d", homeID, nodeID );
 }
 
 //-----------------------------------------------------------------------------
@@ -1035,7 +1166,7 @@ void RPC_PollingEnabled( int homeID, int nodeID )
 
 void RPC_PollingDisabled( int homeID, int nodeID )
 {
-	WriteLog(LogLevel_Debug, true, "PollingDisabled: HomeId=%d Node=%d", homeID, nodeID);
+	WriteLog( LogLevel_Debug, true, "PollingDisabled: HomeId=%d Node=%d", homeID, nodeID );
 }
 
 //-----------------------------------------------------------------------------
@@ -1045,11 +1176,11 @@ void RPC_PollingDisabled( int homeID, int nodeID )
 
 void RPC_NodeNaming( int homeID, int nodeID )
 {
-	WriteLog(LogLevel_Debug, true, "NodeNaming: HomeId=%d Node=%d", homeID, nodeID);
-	WriteLog(LogLevel_Debug, false, "ManufacturerId=%s", Manager::Get()->GetNodeManufacturerId( homeID, nodeID ).c_str());
-	WriteLog(LogLevel_Debug, false, "ManufacturerName=%s", Manager::Get()->GetNodeManufacturerName( homeID, nodeID ).c_str());
-	WriteLog(LogLevel_Debug, false, "ProductType=%s, ProductId=%s", Manager::Get()->GetNodeProductType( homeID, nodeID ).c_str(), Manager::Get()->GetNodeProductId( homeID, nodeID ).c_str());
-	WriteLog(LogLevel_Debug, false, "ProductName=%s", Manager::Get()->GetNodeProductName( homeID, nodeID ).c_str());
+	WriteLog( LogLevel_Debug, true, "NodeNaming: HomeId=%d Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, false, "ManufacturerId=%s", Manager::Get()->GetNodeManufacturerId( homeID, nodeID ).c_str() );
+	WriteLog( LogLevel_Debug, false, "ManufacturerName=%s", Manager::Get()->GetNodeManufacturerName( homeID, nodeID ).c_str() );
+	WriteLog( LogLevel_Debug, false, "ProductType=%s, ProductId=%s", Manager::Get()->GetNodeProductType( homeID, nodeID ).c_str(), Manager::Get()->GetNodeProductId( homeID, nodeID ).c_str() );
+	WriteLog( LogLevel_Debug, false, "ProductName=%s", Manager::Get()->GetNodeProductName( homeID, nodeID ).c_str() );
 }
 
 //-----------------------------------------------------------------------------
@@ -1059,23 +1190,60 @@ void RPC_NodeNaming( int homeID, int nodeID )
 
 void RPC_DriverReady( int homeID, int nodeID )
 {
-	home = homeID;
-	controllerid = nodeID;
+	//home = homeID;
+	//controllerid = nodeID;
+	structcontroller c;
 
-	WriteLog(LogLevel_Debug, true, "DriverReady: HomeId=%d Node=%d", homeID, nodeID);
+	c.m_homeId = homeID;
+	c.m_nodeId = nodeID;
+	controllers.push_back( c );
 
+	WriteLog( LogLevel_Debug, true, "DriverReady: HomeId=%d Node=%d", homeID, nodeID );
+
+	// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
+	xmlrpc_env_init( &env );
 	xmlrpc_value* resultP = NULL;
- 	xmlrpc_client_call2f(&env, clientP, url, "zwave.setids", &resultP, "(ii)", homeID, nodeID );
-	if ( resultP )
+ 	xmlrpc_client_call2f( &env, clientP, url, "zwave.setids", &resultP, "(ii)", homeID, nodeID );
+
+	// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
+	if ( ! fault_occurred ( "zwave.setids", &env ) )
 	{
-		xmlrpc_DECREF(resultP);
+		xmlrpc_bool bvalue;
+
+		xmlrpc_read_bool( &env, resultP, &bvalue );
+
+		if ( ! bvalue )
+		{
+			WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.setids\" returned FALSE" );
+		}
 	}
 
-	resultP = NULL;
- 	xmlrpc_client_call2f(&env, clientP, url, "zwave.removenodes", &resultP, "()" );
 	if ( resultP )
 	{
-		xmlrpc_DECREF(resultP);
+		xmlrpc_DECREF( resultP );
+	}
+
+	// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
+	xmlrpc_env_init( &env );
+	resultP = NULL;
+ 	xmlrpc_client_call2f( &env, clientP, url, "zwave.removenodes", &resultP, "()" );
+
+	// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
+	if ( ! fault_occurred ( "zwave.removenodes", &env ) )
+	{
+		xmlrpc_bool bvalue;
+
+		xmlrpc_read_bool( &env, resultP, &bvalue );
+
+		if ( ! bvalue )
+		{
+			WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.removenodes\" returned FALSE" );
+		}
+	}
+
+	if ( resultP )
+	{
+		xmlrpc_DECREF( resultP );
 	}
 }
 
@@ -1197,62 +1365,78 @@ void OnNotification
 		case Notification::Type_AllNodesQueried:
 		case Notification::Type_AwakeNodesQueried:
 		{
-			if ( data->GetType() == Notification::Type_AllNodesQueried ) WriteLog(LogLevel_Debug, true, "AllNodesQueried: HomeId=%d", home);
-			if ( data->GetType() == Notification::Type_AwakeNodesQueried ) WriteLog(LogLevel_Debug, true, "AwakeNodesQueried: HomeId=%d", home);
+			if ( data->GetType() == Notification::Type_AllNodesQueried ) WriteLog( LogLevel_Debug, true, "AllNodesQueried: HomeId=%d", (int)data->GetHomeId() );
+			if ( data->GetType() == Notification::Type_AwakeNodesQueried ) WriteLog( LogLevel_Debug, true, "AwakeNodesQueried: HomeId=%d", (int)data->GetHomeId() );
 
-			Manager::Get()->WriteConfig( home );
+			Manager::Get()->WriteConfig( (int)data->GetHomeId() );
 
+			// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
+			xmlrpc_env_init( &env );
 			xmlrpc_value* resultP = NULL;
 			pthread_mutex_unlock( &g_criticalSection );
- 			xmlrpc_client_call2f(&env, clientP, url, "zwave.allqueried", &resultP, "()" );
+ 			xmlrpc_client_call2f( &env, clientP, url, "zwave.allqueried", &resultP, "()" );
+
+			// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
+			if ( ! fault_occurred ( "zwave.allqueried", &env ) )
+			{
+				xmlrpc_bool bvalue;
+
+				xmlrpc_read_bool( &env, resultP, &bvalue );
+
+				if ( ! bvalue )
+				{
+					WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.allqueried\" returned FALSE" );
+				}
+			}
+
 			if ( resultP )
 			{
-				xmlrpc_DECREF(resultP);
+				xmlrpc_DECREF( resultP );
 			}
 			break;
 		}
 		case Notification::Type_CreateButton:
 		{
-			WriteLog(LogLevel_Debug, true, "CreateButton: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId());
-			WriteLog(LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId());
+			WriteLog( LogLevel_Debug, true, "CreateButton: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId() );
 			break;
 		}	
 		case Notification::Type_DeleteButton:
 		{
-			WriteLog(LogLevel_Debug, true, "DeleteButton: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId());
-			WriteLog(LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId() );
+			WriteLog( LogLevel_Debug, true, "DeleteButton: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId() );
 			break;
 		}	
 		case Notification::Type_ButtonOn:
 		{
-			WriteLog(LogLevel_Debug, true, "ButtonOn: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId());
-			WriteLog(LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId());
+			WriteLog( LogLevel_Debug, true, "ButtonOn: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId() );
 			break;
 		}	
 		case Notification::Type_ButtonOff:
 		{
-			WriteLog(LogLevel_Debug, true, "ButtonOff: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId());
-			WriteLog(LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId());
+			WriteLog( LogLevel_Debug, true, "ButtonOff: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId() );
 			break;
 		}	
 		case Notification::Type_DriverFailed:
 		{
-			WriteLog(LogLevel_Error, true, "ERROR: DriverFailed !");
+			WriteLog( LogLevel_Error, true, "ERROR: DriverFailed !" );
 			break;
 		}
 		case Notification::Type_DriverReset:
 		{
-			WriteLog(LogLevel_Error, true, "ERROR: DriverReset !");
+			WriteLog( LogLevel_Error, true, "ERROR: DriverReset !" );
 			break;
 		}
 		case Notification::Type_EssentialNodeQueriesComplete:
 		{
-			WriteLog(LogLevel_Debug, true, "EssentialNodeQueriesComplete: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId());
+			WriteLog( LogLevel_Debug, true, "EssentialNodeQueriesComplete: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_MsgComplete:
 		{
-			WriteLog(LogLevel_Debug, true, "MsgComplete: HomeId=%d", (int)data->GetHomeId());
+			WriteLog( LogLevel_Debug, true, "MsgComplete: HomeId=%d", (int)data->GetHomeId() );
 			break;
 		}
 		case Notification::Type_NodeNew:
@@ -1262,30 +1446,23 @@ void OnNotification
 		}
 		case Notification::Type_NodeQueriesComplete:
 		{
-			WriteLog(LogLevel_Debug, true, "NodeQueriesComplete: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId());
+			WriteLog( LogLevel_Debug, true, "NodeQueriesComplete: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_ValueRefreshed:
 		{
-			WriteLog(LogLevel_Debug, true, "ValueRefreshed: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId());
+			WriteLog( LogLevel_Debug, true, "ValueRefreshed: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
-/*
-	========== Type_SceneEvent ===========
-	Added in Open Z-Wave revision 556
-	Currently DomotiGa doesn't need it yet
-	======================================
-
 		case Notification::Type_SceneEvent:
 		{
-			WriteLog(LogLevel_Debug, true, "SceneEvent: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId());
+			WriteLog( LogLevel_Debug, true, "SceneEvent: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
-*/
 		case Notification::Type_Error:
 		{
-			WriteLog(LogLevel_Error, true, "ERROR: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId());
-			WriteLog(LogLevel_Error, false, "ErrorCode=%d", (int)data->GetErrorCode());
+			WriteLog( LogLevel_Error, true, "ERROR: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Error, false, "ErrorCode=%d", (int)data->GetErrorCode() );
 			break;
 		}
 		default:
@@ -1302,28 +1479,23 @@ void OnNotification
 extern "C" {
 
 //-----------------------------------------------------------------------------
-// <DomoZWave_Version>
-// Function to get the DomoZWave version, to determine if the user need to
-// recompile his/her wrapper. If we just call the wrapper, this can cause
-// segmentation fault #11.
-//-----------------------------------------------------------------------------
-
-int DomoZWave_Version()
-{
-	return 1;
-}
-
-//-----------------------------------------------------------------------------
 // <DomoZWave_HomeIdPresent>
 //
 //-----------------------------------------------------------------------------
 
-bool DomoZWave_HomeIdPresent( const char* _param )
+bool DomoZWave_HomeIdPresent( int32 home, const char* _param )
 {
+	// home has to be none-zero
 	if ( home == 0 ) {
 		WriteLog(LogLevel_Error, false, "ERROR: %s - HomeId=0, can't continue", _param);
 		return false;
 	} else {
+
+		// home also has to be in the known homeid list
+		//if ( xxx )
+		//{
+		//}
+
 		return true;
 	}
 }
@@ -1331,16 +1503,51 @@ bool DomoZWave_HomeIdPresent( const char* _param )
 //-----------------------------------------------------------------------------
 // <DomoZWave_Init>
 // Initializes the Open-Zwave Wrapper
+// configdir = ~/domotiga/wrappers/domozwave/open-zwave/config (default)
+// zwdir = ~/domotiga/wrappers/domozwave (default)
+// logname = ~/domotiga/logs/domozwave- or ~/domotiga/logs/server-domozwave- (default)
+// rpcPort = 9009 (default)
+// enableLog = True/False
+// enableOZWLog = True/False
+// polltime = <integer>
+//
+// NOTE: You need to call DomoZWave_AddSerialPort to complete the initialization
 //-----------------------------------------------------------------------------
 
-void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir, const char* zwdir, bool enableLog, int polltime )
+void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logname, int rpcPort, bool enableLog, bool enableOZWLog, int polltime )
 {
-	// Call the InitVars procedure to initialize all local variables
-	InitVars();
+	// Get a timestamp for Year and Month
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	struct tm *tm;
+	tm = localtime( &tv.tv_sec );
 
+	// Clear the current list of controllers
+	controllers.clear();
+
+	// create a timestamp string with Year and Month
+	char localt[100];
+	snprintf( localt, sizeof(localt), "%04d-%02d", tm->tm_year + 1900, tm->tm_mon + 1 );
+
+	logfile_prefix = logname;
+	logfile_name = logfile_prefix;
+	logfile_name.append(localt);
+	logfile_name.append(".log");
+
+	// Call the InitVars procedure to initialize all local variables
+	InitVars( );
+
+	// Store debugging option, this only is valid for the wrapper. The open-zwave has its own configuration
 	debugging = enableLog;
 
-	WriteLog(LogLevel_Debug, true, "Initializing Open-ZWave Wrapper");
+	// Open the logfile, required for errors and debug
+	logfile.open( logfile_name.c_str(), ios::app );
+	if ( ! logfile.is_open() )
+	{
+		cout << OZW_datetime << " [DomoZwave] " << "***FATAL*** Unable to write to \"" << logfile_name << "\"" << endl;
+	}
+
+	WriteLog(LogLevel_Debug, true, "DomoZWave_Init: Initializing Open-ZWave Wrapper");
 	WriteLog(LogLevel_Debug, false,"%s",domozwave_vers);
 	WriteLog(LogLevel_Debug, false,"%s",ozw_vers);
 
@@ -1354,19 +1561,19 @@ void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir,
 	sprintf( url, "http://localhost:%d", rpcPort ); 
 
 	Options::Create( configdir, zwdir, "" );
-	Options::Get()->AddOptionBool("AppendLogFile", false);
-	Options::Get()->AddOptionBool("ConsoleOutput", false);
+	Options::Get()->AddOptionBool( "AppendLogFile", false );
+	Options::Get()->AddOptionBool( "ConsoleOutput", false );
 
-	if ( enableLog )
+	if ( enableOZWLog )
 	{
-		Options::Get()->AddOptionInt("SaveLogLevel", LogLevel_Detail );
-	  	Options::Get()->AddOptionInt("QueueLogLevel", LogLevel_Debug);
-	   	Options::Get()->AddOptionInt("DumpTriggerLevel", LogLevel_Error);
+		Options::Get()->AddOptionInt( "SaveLogLevel", LogLevel_Detail );
+	  	Options::Get()->AddOptionInt( "QueueLogLevel", LogLevel_Debug );
+	   	Options::Get()->AddOptionInt( "DumpTriggerLevel", LogLevel_Error );
 	}
 
-	Options::Get()->AddOptionInt("PollInterval", polltime);
-	Options::Get()->AddOptionBool("IntervalBetweenPolls", true);
-	Options::Get()->AddOptionBool("SuppressValueRefresh", false);
+	Options::Get()->AddOptionInt( "PollInterval", polltime );
+	Options::Get()->AddOptionBool( "IntervalBetweenPolls", true );
+	Options::Get()->AddOptionBool( "SuppressValueRefresh", false );
 
 	Options::Get()->Lock();
 
@@ -1374,16 +1581,27 @@ void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir,
 	Log::SetLoggingState( debugging );
 
 	Manager::Get()->AddWatcher( OnNotification, NULL );
-	Manager::Get()->AddDriver( serialPort );
-
-	// Store the serialPort used
-	serialPortName = serialPort; 
 
  	// Initialize our error-handling environment.
- 	xmlrpc_env_init(&env);
- 	xmlrpc_client_setup_global_const(&env);
- 	xmlrpc_client_create(&env, XMLRPC_CLIENT_NO_FLAGS, "DomoZWaveClient", "1.0", NULL, 0, &clientP);
-	if ( fault_occurred(&env) ) return;
+ 	xmlrpc_env_init( &env );
+ 	xmlrpc_client_setup_global_const( &env );
+ 	xmlrpc_client_create( &env, XMLRPC_CLIENT_NO_FLAGS, "DomoZWaveClient", "1.0", NULL, 0, &clientP );
+	if ( fault_occurred( "xml_create", &env ) )
+	{
+		return;
+	}
+}
+
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_AddSerialPort>
+//-----------------------------------------------------------------------------
+
+void DomoZWave_AddSerialPort( const char* serialPort )
+{
+	Manager::Get()->AddDriver( serialPort );
+	// Store the serialPort used
+	serialPortName = serialPort; 
 }
 
 //-----------------------------------------------------------------------------
@@ -1391,7 +1609,7 @@ void DomoZWave_Init( const char* serialPort, int rpcPort, const char* configdir,
 // Stops the Open-Zwave wrapper
 //-----------------------------------------------------------------------------
 
-void DomoZWave_Destroy()
+void DomoZWave_Destroy( )
 {
 	pthread_mutex_lock( &g_criticalSection );
 
@@ -1413,414 +1631,53 @@ void DomoZWave_Destroy()
 	serialPortName = "";
 
 	// Clean up our error-handling environment. 
-	xmlrpc_env_clean(&env);
+	xmlrpc_env_clean( &env );
 
-	xmlrpc_client_destroy(clientP);
+	xmlrpc_client_destroy( clientP );
 
-	WriteLog(LogLevel_Debug, true, "Destroyed Open-ZWave Wrapper");
-}
+	WriteLog( LogLevel_Debug, true, "DomoZWave_Destroy: Destroyed Open-ZWave Wrapper" );
 
-//-----------------------------------------------------------------------------
-// <DomoZWave_EnablePolling>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_EnablePolling( int node, int32 polltime )
-{
-	if ( DomoZWave_HomeIdPresent("EnablePolling") == false ) return;
-
-	if ( Manager::Get()->GetNodeBasic( home, node ) < 0x03 )
-	{	
-		return;
+	// Close the logfile now
+	if ( logfile.is_open() )
+	{
+		logfile.close();
 	}
 
-	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
-	{
-	   	// Mark the basic command class values for polling
-		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
-		{
- 			ValueID v = *it;
-			if ( v.GetCommandClassId() == 0x20 )
-			{
-				Manager::Get()->EnablePoll( *it, 2 );
-
-				WriteLog(LogLevel_Debug, true, "Enabled Polling for HomeId=%d Node=%d", home, node);
-
-				break;
-			}
-		}
-	}
+	// Clear the current list of controllers
+	controllers.clear();
 }
 
 //-----------------------------------------------------------------------------
-// <DomoZWave_DisablePolling>
-//
+// <DomoZWave_Version>
+// Returns the readable open-zwave wrapper revision
 //-----------------------------------------------------------------------------
 
-void DomoZWave_DisablePolling( int node )
+const char* DomoZWave_Version( )
 {
-	if ( DomoZWave_HomeIdPresent("DisablePolling") == false ) return;
-
-	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
-	{
-	   	// disable polling for all values of this node
-		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
-		{
-			Manager::Get()->DisablePoll( *it );	
-			WriteLog(LogLevel_Debug, true, "Disabled Polling for HomeId=%d Node=%d", home, node);
-		}
-	}
+	return domozwave_vers;
 }
 
 //-----------------------------------------------------------------------------
-// <DomoZWave_RequestNodeState>
-//
+// <DomoZWave_OZWVersion>
+// Returns the readable open-zwave revision
 //-----------------------------------------------------------------------------
 
-void DomoZWave_RequestNodeState( int node )
+const char* DomoZWave_OZWVersion( )
 {
-	if ( DomoZWave_HomeIdPresent("RequestNodeState") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "RequestNodeState for HomeId=%d Node=%d", home, node);
-
-	Manager::Get()->RequestNodeState( home, node );
+	return ozw_vers;
 }
 
 //-----------------------------------------------------------------------------
-// <DomoZWave_RequestNodeDynamic>
-//
+// <DomoZWave_WriteConfig>
+// Write the zwcfg*xml. Normally not required, because it is written when all
+// the nodes are queried and when wrapper exits
 //-----------------------------------------------------------------------------
 
-void DomoZWave_RequestNodeDynamic( int node )
+void DomoZWave_WriteConfig( int32 home )
 {
-	if ( DomoZWave_HomeIdPresent("RequestNodeDynamic") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "RequestNodeDynamic for HomeId=%d Node=%d", home, node);
-
-	Manager::Get()->RequestNodeDynamic( home, node );
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_RequestNetworkUpdate>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_RequestNetworkUpdate( )
-{
-	if ( DomoZWave_HomeIdPresent("RequestNetworkUpdate") == false ) return;
-
-	WriteLog(LogLevel_Debug,true,"RequestNetworkUpdate All nodes HomeId=%d", home);
-
-	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNetworkUpdate, NULL, NULL, false, 0xff );
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_RequestNodeNeighborUpdate>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_RequestNodeNeighborUpdate( int node )
-{
-	if ( DomoZWave_HomeIdPresent("RequestNodeNeighborUpdate") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "RequestNodeNeighborUpdate for HomeId=%d Node=%d", home, node);
-
-	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNodeNeighborUpdate, NULL, NULL, false, node );
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_AddDevice>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_AddDevice( )
-{
-	if ( DomoZWave_HomeIdPresent("Controller AddDevice") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "Controller AddDevice for HomeId=%d", home);
-
-	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_AddDevice, NULL, NULL, true, 0xff );
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_RemoveDevice>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_RemoveDevice( int node )
-{
-	if ( DomoZWave_HomeIdPresent("Controller RemoveDevice") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "Controller RemoveDevice for HomeId=%d Node=%d", home, node);
-
-	Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RemoveDevice, NULL, NULL, false, node );
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_CancelControllerCommand>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_CancelControllerCommand( )
-{
-	if ( DomoZWave_HomeIdPresent("Controller CancelCommand") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "Controller CancelCommand for HomeId=%d", home);
-
-	Manager::Get()->CancelControllerCommand( home );
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_SetConfigParam>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_SetConfigParam( int node, int param, int value, int size )
-{
-	if ( DomoZWave_HomeIdPresent("SetConfigParam") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "SetConfigParam for HomeId=%d Node=%d", home, node);
-	WriteLog(LogLevel_Debug, false, "Parameter=%d", param);
-	WriteLog(LogLevel_Debug, false, "Value=%d", value);
-	WriteLog(LogLevel_Debug, false, "Size=%d", size);
-
-	Manager::Get()->SetConfigParam( home, node, param, value, size);
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_RequestConfigParam>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_RequestConfigParam( int node, int param ) 
-{
-	if ( DomoZWave_HomeIdPresent("RequestConfigParam") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "RequestConfigParam for HomeId=%d Node=%d", home, node);
-	WriteLog(LogLevel_Debug, false, "Parameter=%d", param);
-
-	Manager::Get()->RequestConfigParam( home, node, param );
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_RequestAllConfigParams>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_RequestAllConfigParams( int node )
-{
-	if ( DomoZWave_HomeIdPresent("RequestAllConfigParams") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "RequestAllConfigParam for HomeId=%d Node=%d", home, node);
-
-	Manager::Get()->RequestAllConfigParams( home, node );
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_AddAssociation>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_AddAssociation( int node, int group, int otherNode )
-{
-        if ( DomoZWave_HomeIdPresent("AddAssociation") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "AddAssociation for HomeId=%d Node=%d", home, node);
-	WriteLog(LogLevel_Debug, false, "Group=%d, Node=%d", group, otherNode);
-
-        Manager::Get()->AddAssociation( home, node, group, otherNode);
-	// Refresh isn't required anymore with r564
-        //Manager::Get()->RefreshNodeInfo( home, node);
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_RemoveAssociation>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_RemoveAssociation( int node, int group, int otherNode )
-{
-        if ( DomoZWave_HomeIdPresent("RemoveAssociation") == false ) return;
-
-	WriteLog(LogLevel_Debug, true, "RemoveAssociation for HomeId=%d Node=%d", home, node);
-	WriteLog(LogLevel_Debug, false, "Group=%d, Node=%d", group, otherNode);
-
-        Manager::Get()->RemoveAssociation( home, node, group, otherNode);
-	// Refresh isn't required anymore with r564
-        //Manager::Get()->RefreshNodeInfo( home, node);
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_SetValue>
-//
-//-----------------------------------------------------------------------------
-
-void DomoZWave_SetValue( int node, int instance, int value )
-{
-	bool bool_value;
-	int int_value;
-	uint8 uint8_value;
-	uint16 uint16_value;
-
-        if ( DomoZWave_HomeIdPresent("SetValue") == false ) return;
-
-	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
-	{
-		// Find the correct instance
-		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
-		{
-			int id = (*it).GetCommandClassId();
-			int inst = (*it).GetInstance();
-
-			if ( id == COMMAND_CLASS_SWITCH_MULTILEVEL || id == COMMAND_CLASS_SWITCH_BINARY )
-			{
-				if ( inst == instance )
-				{
-			        	if ( ValueID::ValueType_Bool == (*it).GetType() )
-                                	{
-						bool_value = (bool)value;
-						Manager::Get()->SetValue( *it, bool_value );
-         	                       	}
-                                	else if ( ValueID::ValueType_Byte == (*it).GetType() )
-                                	{
-						uint8_value = (uint8)value;
-						Manager::Get()->SetValue( *it, uint8_value );
-               		                }
-               		                else if ( ValueID::ValueType_Short == (*it).GetType() )
-                                	{
-						uint16_value = (uint16)value;
-						Manager::Get()->SetValue( *it, uint16_value );
-                               		}
-                                	else if ( ValueID::ValueType_Int == (*it).GetType() )
-                                	{
-						int_value = value;
-						Manager::Get()->SetValue( *it, int_value );
-                                	}
-                                	else if ( ValueID::ValueType_List == (*it).GetType() )
-                                	{
-						Manager::Get()->SetValue( *it, value );
-                                	}
-                                	else
-                                	{
-						return;
-                        		}
-
-					WriteLog(LogLevel_Debug, true, "SetValue for HomeId=%d Node=%d", home, node);
-					WriteLog(LogLevel_Debug, false, "CommandClassId=%d", id);
-					WriteLog(LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id));
-					WriteLog(LogLevel_Debug, false, "Instance=%d", instance);
-					WriteLog(LogLevel_Debug, false, "Value=%d", value);
-                        	}
-			}
-                }
-        }
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_GetNodeManufacturerName>
-//
-//-----------------------------------------------------------------------------
-
-const char* DomoZWave_GetNodeManufacturerName( int node )
-{
-	string ManufacturerName;
-
-        if ( DomoZWave_HomeIdPresent("GetNodeManufacturerName") == false ) return "";
-
-	WriteLog(LogLevel_Debug, true, "GetNodeManufacturerName for HomeId=%d Node=%d", home, node);
-
-	ManufacturerName = Manager::Get()->GetNodeManufacturerName( home, node );
-
-	return ManufacturerName.c_str();
-
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_GetNodeProductName>
-//
-//-----------------------------------------------------------------------------
-
-const char* DomoZWave_GetNodeProductName( int node )
-{
-	string ProductName;
-
-        if ( DomoZWave_HomeIdPresent("GetNodeProductName") == false ) return "";
-
-	WriteLog(LogLevel_Debug, true, "GetNodeProductName for HomeId=%d Node=%d", home, node);
-
-	ProductName = Manager::Get()->GetNodeProductName( home, node );
-
-	return ProductName.c_str();
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_GetNodeName>
-//
-//-----------------------------------------------------------------------------
-
-const char* DomoZWave_GetNodeName( int node )
-{
-        if ( DomoZWave_HomeIdPresent("GetNodeName") == false ) return "";
-
-	WriteLog(LogLevel_Debug, true, "GetNodeName for HomeId=%d Node=%d", home, node);
-
-	return Manager::Get()->GetNodeName( home, node ).c_str();
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_GetNodeLocation>
-//
-//-----------------------------------------------------------------------------
-
-const char* DomoZWave_GetNodeLocation( int node )
-{
-        if ( DomoZWave_HomeIdPresent("GetNodeLocation") == false ) return "";
-
-	WriteLog(LogLevel_Debug, true, "GetNodeLocation for HomeId=%d Node=%d", home, node);
-
-	return Manager::Get()->GetNodeLocation( home, node ).c_str();
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_GetNodeManufacturerId>
-//
-//-----------------------------------------------------------------------------
-
-const char* DomoZWave_GetNodeManufacturerId( int node )
-{
-        if ( DomoZWave_HomeIdPresent("GetNodeManufacturerId") == false ) return "";
-
-	WriteLog(LogLevel_Debug, true, "GetNodeManufacturerId for HomeId=%d Node=%d", home, node);
-
-	return Manager::Get()->GetNodeManufacturerId( home, node ).c_str();
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_GetNodeProductType>
-//
-//-----------------------------------------------------------------------------
-
-const char* DomoZWave_GetNodeProductType( int node )
-{
-        if ( DomoZWave_HomeIdPresent("GetNodeProductType") == false ) return "";
-
-	WriteLog(LogLevel_Debug, true, "GetNodeProductType for HomeId=%d Node=%d", home, node);
-
-	return Manager::Get()->GetNodeProductType( home, node ).c_str();
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_GetNodeProductId>
-//
-//-----------------------------------------------------------------------------
-
-const char* DomoZWave_GetNodeProductId( int node )
-{
-        if ( DomoZWave_HomeIdPresent("GetNodeProductId") == false ) return "";
-
-	WriteLog(LogLevel_Debug, true, "GetNodeProductId for HomeId=%d Node=%d", home, node);
-
-	return Manager::Get()->GetNodeProductId( home, node ).c_str();
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_WriteConfig" ) == false ) return;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_WriteConfig: HomeId=%d", home );
+	Manager::Get()->WriteConfig( home );
 }
 
 //-----------------------------------------------------------------------------
@@ -1828,13 +1685,15 @@ const char* DomoZWave_GetNodeProductId( int node )
 //
 //-----------------------------------------------------------------------------
 
-const char* DomoZWave_GetLibraryVersion()
+const char* DomoZWave_GetLibraryVersion( int32 home )
 {
-        if ( DomoZWave_HomeIdPresent("GetLibraryVersion") == false ) return "";
+	string LibraryVersion;
 
-	WriteLog(LogLevel_Debug, true, "GetLibraryVersion for HomeId=%d", home);
-
-	return Manager::Get()->GetLibraryVersion( home ).c_str();
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetLibraryVersion" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetLibraryVersion: HomeId=%d", home );
+	LibraryVersion =  Manager::Get()->GetLibraryVersion( home );
+	WriteLog( LogLevel_Debug, false, "LibraryVersion=%s", LibraryVersion.c_str() );
+	return LibraryVersion.c_str();
 }
 
 //-----------------------------------------------------------------------------
@@ -1842,13 +1701,15 @@ const char* DomoZWave_GetLibraryVersion()
 //
 //-----------------------------------------------------------------------------
 
-const char* DomoZWave_GetLibraryTypeName()
+const char* DomoZWave_GetLibraryTypeName( int32 home )
 {
-        if ( DomoZWave_HomeIdPresent("GetLibraryTypeName") == false ) return "";
+	string LibraryTypeName;
 
-	WriteLog(LogLevel_Debug, true, "GetLibraryType for HomeId=%d", home);
-
-	return Manager::Get()->GetLibraryTypeName( home ).c_str();
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetLibraryTypeName" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetLibraryTypeName: HomeId=%d", home );
+	LibraryTypeName = Manager::Get()->GetLibraryTypeName( home );
+	WriteLog( LogLevel_Debug, false, "LibraryTypeName=%s", LibraryTypeName.c_str() );
+	return LibraryTypeName.c_str();
 }
 
 //-----------------------------------------------------------------------------
@@ -1857,11 +1718,12 @@ const char* DomoZWave_GetLibraryTypeName()
 // Primary or Secondary and possible SUC and/or Bridge mode
 //-----------------------------------------------------------------------------
 
-const char* DomoZWave_ControllerType()
+const char* DomoZWave_ControllerType( int32 home )
 {
 	string ctype;
 
-        if ( DomoZWave_HomeIdPresent("ControllerType") == false ) return "";
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_ControllerType" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_ControllerType: HomeId=%d", home );
 
 	if ( Manager::Get()->IsPrimaryController ( home ) )
 	{
@@ -1885,7 +1747,925 @@ const char* DomoZWave_ControllerType()
 		ctype.append(" (Bridge)");
 	}
 
+	WriteLog( LogLevel_Debug, false, "ControllerType=%s", ctype.c_str() );
 	return ctype.c_str();
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_EnablePolling>
+// Enable polling of the devices by open-zwave. This only works for basic values,
+// values like kWh, Temperature, etc this doesn't work (then DynamicState need
+// to be used)
+//-----------------------------------------------------------------------------
+
+void DomoZWave_EnablePolling( int32 home, int32 node, int32 polltime )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_EnablePolling" ) == false ) return;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_EnablePolling: HomeId=%d Node=%d", home, node );
+
+	if ( Manager::Get()->GetNodeBasic( home, node ) < 0x03 )
+	{	
+		WriteLog( LogLevel_Debug, false, "Polltime=None (node is a controller)" );
+		return;
+	}
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+	   	// Mark the basic command class values for polling
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+ 			ValueID v = *it;
+			if ( v.GetCommandClassId() == COMMAND_CLASS_BASIC )
+			{
+				Manager::Get()->EnablePoll( *it, 2 );
+
+				WriteLog( LogLevel_Debug, false, "Polltime=%d", polltime );
+
+				return;
+			}
+		}
+
+		WriteLog( LogLevel_Debug, false, "Polltime=None (node doesn't have COMMAND_CLASS_BASIC)" );
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Polltime=None (node doesn't exist)" );
+	}
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_DisablePolling>
+// Disable automatic polling of basic values from a node
+//-----------------------------------------------------------------------------
+
+void DomoZWave_DisablePolling( int32 home, int32 node )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_DisablePolling" ) == false ) return;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_DisablePolling: HomeId=%d Node=%d", home, node );
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+	   	// disable polling for all values of this node
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			Manager::Get()->DisablePoll( *it );	
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeManufacturerName>
+// Retrieves the manufacturer name of a device
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeManufacturerName( int32 home, int32 node )
+{
+	string ManufacturerName;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeManufacturerName" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeManufacturerName: HomeId=%d Node=%d", home, node );
+	ManufacturerName = Manager::Get()->GetNodeManufacturerName( home, node );
+	WriteLog( LogLevel_Debug, false, "ManufacturerName=%s", ManufacturerName.c_str() );
+	return ManufacturerName.c_str();
+
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeProductName>
+// Retrieves the product name of a device
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeProductName( int32 home, int32 node )
+{
+	string ProductName;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeProductName" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductName: HomeId=%d Node=%d", home, node );
+	ProductName = Manager::Get()->GetNodeProductName( home, node );
+	WriteLog( LogLevel_Debug, false, "ProductName=%s", ProductName.c_str() );
+	return ProductName.c_str();
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeName>
+// Get the node name, this value isn't retrieved from the device itself. This can
+// be set in the zwcfg*xml. We aren't using it (yet)
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeName( int32 home, int32 node )
+{
+	string NodeName;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeName" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeName: HomeId=%d Node=%d", home, node );
+	NodeName = Manager::Get()->GetNodeName( home, node );
+	WriteLog( LogLevel_Debug, false, "NodeName=%s", NodeName.c_str() );
+	return NodeName.c_str();
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeLocation>
+// Get the node location information, this is also not retrieved from the device.
+// This can be set in the zwcfg*xml. We aren't using it.
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeLocation( int32 home, int32 node )
+{
+	string NodeLocation;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeLocation" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeLocation: HomeId=%d Node=%d", home, node );
+	NodeLocation = Manager::Get()->GetNodeLocation( home, node );
+	WriteLog( LogLevel_Debug, false, "NodeLocation=%s", NodeLocation.c_str() );
+	return NodeLocation.c_str();
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeManufacturerId>
+// Get the manufacturer id of the device, normally not too interesting
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeManufacturerId( int32 home, int32 node )
+{
+	string ManufacturerId;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeManufacturerId" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeManufacturerId: HomeId=%d Node=%d", home, node );
+	ManufacturerId = Manager::Get()->GetNodeManufacturerId( home, node );
+	WriteLog( LogLevel_Debug, false, "ManufacturerId=%s", ManufacturerId.c_str() );
+	return ManufacturerId.c_str();
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeProductType>
+// Get the product type id of the device
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeProductType( int32 home, int32 node )
+{
+	string ProductType;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeProductType" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductType: HomeId=%d Node=%d", home, node );
+	ProductType = Manager::Get()->GetNodeProductType( home, node );
+	WriteLog( LogLevel_Debug, false, "ProductType=%s", ProductType.c_str() );
+	return ProductType.c_str();
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeProductId>
+// Get the product id of the device
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeProductId( int32 home, int32 node )
+{
+	string ProductId;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeProductId" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductId: HomeId=%d Node=%d", home, node );
+	ProductId = Manager::Get()->GetNodeProductId( home, node );
+	WriteLog( LogLevel_Debug, false, "ProductId=%s",ProductId.c_str() );
+	return ProductId.c_str();
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetNodeManufacturerName>
+//
+//-----------------------------------------------------------------------------
+
+void DomoZWave_SetNodeManufacturerName( int32 home, int32 node, const char* manufacturerName )
+{
+	string NewManufacturerName(manufacturerName);
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetNodeManufacturerName" ) == false ) return;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetNodeManufacturerName: HomeId=%d Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "New ManufacturerName=%s", manufacturerName );
+	Manager::Get()->SetNodeManufacturerName( home, (uint8)node, NewManufacturerName );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetNodeProductName>
+//
+//-----------------------------------------------------------------------------
+
+void DomoZWave_SetNodeProductName( int32 home, int32 node, const char* productName )
+{
+	string NewProductName(productName);
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetNodeProductName" ) == false ) return;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetNodeProductName: HomeId=%d Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "New ProductName=%s", productName );
+	Manager::Get()->SetNodeProductName( home, (uint8)node, NewProductName );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetNodeName>
+//
+//-----------------------------------------------------------------------------
+
+void DomoZWave_SetNodeName( int32 home, int32 node, const char* nodeName )
+{
+	string NewNodeName(nodeName);
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetNodeName" ) == false ) return;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetNodeName: HomeId=%d Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "New NodeName=%s", nodeName );
+	Manager::Get()->SetNodeName( home, (uint8)node, NewNodeName );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetNodeLocation>
+//
+//-----------------------------------------------------------------------------
+
+void DomoZWave_SetNodeLocation( int32 home, int32 node, const char* nodeLocation )
+{
+	string NewNodeLocation(nodeLocation);
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetNodeLocation" ) == false ) return;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetNodeLocation: HomeId=%d Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "New NodeLocation=%s", nodeLocation );
+	Manager::Get()->SetNodeLocation( home, (uint8)node, NewNodeLocation );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeLibraryVersion>
+// Retrieves the Library Version information of the node (if available)
+// NOTE: It can be required to first poll the version information before it is returned here
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeLibraryVersion( int32 home, int32 node )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeLibraryVersion" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeLibraryVersion: HomeId=%d Node=%d", home, node );
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		// Find the COMMAND_CLASS_VERSION
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			if ( v.GetCommandClassId() == COMMAND_CLASS_VERSION )
+			{
+				if ( Manager::Get()->GetValueLabel( v ) == "Library Version" )
+				{
+					string string_value;
+					Manager::Get()->GetValueAsString( v, &string_value );
+					return string_value.c_str();
+				}
+			}
+		}
+
+		return "";
+	}
+	else
+	{
+		return "";
+	}
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeProtocolVersion>
+// Retrieves the Protocol Version information of the node (if available)
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeProtocolVersion( int32 home, int32 node )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeProtocolVersion" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProtocolVersion: HomeId=%d Node=%d", home, node );
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		// Find the COMMAND_CLASS_VERSION
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			if ( v.GetCommandClassId() == COMMAND_CLASS_VERSION )
+			{
+				if ( Manager::Get()->GetValueLabel( v ) == "Protocol Version" )
+				{
+					string string_value;
+					Manager::Get()->GetValueAsString( v, &string_value );
+					return string_value.c_str();
+				}
+			}
+		}
+
+		return "";
+	}
+	else
+	{
+		return "";
+	}
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeApplicationVersion>
+// Retrieves the Application Version information of the node (if available)
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeApplicationVersion( int32 home, int32 node )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeApplicationVersion" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeApplicationVersion: HomeId=%d Node=%d", home, node );
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		// Find the COMMAND_CLASS_VERSION
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			if ( v.GetCommandClassId() == COMMAND_CLASS_VERSION )
+			{
+				if ( Manager::Get()->GetValueLabel( v ) == "Application Version" )
+				{
+					string string_value;
+					Manager::Get()->GetValueAsString( v, &string_value );
+					return string_value.c_str();
+				}
+			}
+		}
+
+		return "";
+	}
+	else
+	{
+		return "";
+	}
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RequestNodeState>
+//
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_RequestNodeState( int32 home, int32 node )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RequestNodeState" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNodeState: HomeId=%d Node=%d", home, node );
+	return Manager::Get()->RequestNodeState( home, node );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RequestNodeDynamic>
+//
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_RequestNodeDynamic( int32 home, int32 node )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RequestNodeDynamic" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNodeDynamic: HomeId=%d Node=%d", home, node );
+	return Manager::Get()->RequestNodeDynamic( home, node );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RequestNodeNeighborUpdate>
+// Request the node to update its neighborhood, to optimize z-wave commands
+// through the network (mash network)
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_RequestNodeNeighborUpdate( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RequestNodeNeighborUpdate" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNodeNeighborUpdate: HomeId=%d Node=%d", home, node );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNodeNeighborUpdate, NULL, NULL, false, node );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RefreshNodeInfo>
+// Triggers the open-zwave to refresh the node information, like it has been
+// added just to the z-wave network. Normally not required to be executed.
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_RefreshNodeInfo( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RefreshNodeInfo" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RefreshNodeInfo: HomeId=%d Node=%d", home, node );
+	response = Manager::Get()->RefreshNodeInfo( home, node );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RequestNodeVersion>
+// Request the open-zwave to update the node version information (if applicable)
+// Library, Protocol and Application version can be updated
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_RequestNodeVersion( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RequestNodeVersion" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNodeVersion: HomeId=%d Node=%d", home, node );
+	// TBD
+	response = true;
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RequestNodeMeter>
+// Request the open-zwave to update the node meter (Watt/kWh) information (if applicable)
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_RequestNodeMeter( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RequestNodeMeter" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNodeMeter: HomeId=%d Node=%d", home, node );
+	// TBD
+	response = true;
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetValue>
+// Set the On, Off or Dim xyz of a device and instance
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_SetValue( int32 home, int32 node, int32 instance, int32 value )
+{
+	bool bool_value;
+	int int_value;
+	uint8 uint8_value;
+	uint16 uint16_value;
+	bool response;
+
+        if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetValue" ) == false ) return false;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetValue: HomeId=%d Node=%d", home, node );
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		// Find the correct instance
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			int id = (*it).GetCommandClassId();
+			int inst = (*it).GetInstance();
+
+			if ( id == COMMAND_CLASS_SWITCH_MULTILEVEL || id == COMMAND_CLASS_SWITCH_BINARY )
+			{
+				if ( inst == instance )
+				{
+			        	if ( ValueID::ValueType_Bool == (*it).GetType() )
+						{
+							bool_value = (bool)value;
+							response = Manager::Get()->SetValue( *it, bool_value );
+						}
+						else if ( ValueID::ValueType_Byte == (*it).GetType() )
+						{
+							uint8_value = (uint8)value;
+							response = Manager::Get()->SetValue( *it, uint8_value );
+						}
+						else if ( ValueID::ValueType_Short == (*it).GetType() )
+						{
+							uint16_value = (uint16)value;
+							response = Manager::Get()->SetValue( *it, uint16_value );
+						}
+						else if ( ValueID::ValueType_Int == (*it).GetType() )
+						{
+							int_value = value;
+							response = Manager::Get()->SetValue( *it, int_value );
+						}
+						else if ( ValueID::ValueType_List == (*it).GetType() )
+						{
+							response = Manager::Get()->SetValue( *it, value );
+        				}
+            			else
+						{
+							WriteLog(LogLevel_Debug, false, "Return=false (unknown ValueType)");
+							return false;
+						}
+
+						WriteLog( LogLevel_Debug, true, "DomoZWave_SetValue: HomeId=%d Node=%d", home, node );
+						WriteLog( LogLevel_Debug, false, "CommandClassId=%d", id );
+						WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id) );
+						WriteLog( LogLevel_Debug, false, "Instance=%d", instance );
+						WriteLog( LogLevel_Debug, false, "Value=%d", value );
+						WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+					}
+				}
+      	  }
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Return=false (node doesn't exist)" );
+	}
+
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetConfigParam>
+//
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_SetConfigParam( int32 home, int32 node, int32 param, int32 value, int32 size )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetConfigParam" ) == false ) return false;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetConfigParam: HomeId=%d Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "Parameter=%d", param );
+	WriteLog( LogLevel_Debug, false, "Value=%d", value );
+	WriteLog( LogLevel_Debug, false, "Size=%d", size );
+
+	response = Manager::Get()->SetConfigParam( home, node, param, value, size );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RequestConfigParam>
+//
+//-----------------------------------------------------------------------------
+
+void DomoZWave_RequestConfigParam( int32 home, int32 node, int32 param ) 
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RequestConfigParam" ) == false ) return;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RequestConfigParam: HomeId=%d Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "Parameter=%d", param );
+	Manager::Get()->RequestConfigParam( home, node, param );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RequestAllConfigParams>
+//
+//-----------------------------------------------------------------------------
+
+void DomoZWave_RequestAllConfigParams( int32 home, int32 node )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RequestAllConfigParams" ) == false ) return;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RequestAllConfigParams: HomeId=%d Node=%d", home, node );
+	Manager::Get()->RequestAllConfigParams( home, node );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeConfigList>
+// The output will be in the format "1|2|3", then it has 3 parameters to be configure
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeConfigList( int32 home, int32 node )
+{
+	char dev_value[1024];
+	string configlist;
+	string str_tmp;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeConfigList" ) == false ) return "";
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeConfigList: HomeId=%d Node=%d", home, node );
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the configuration items of this node 
+			if ( ( v.GetCommandClassId() == COMMAND_CLASS_CONFIGURATION  ) && ( v.GetGenre() == ValueID::ValueGenre_Config ) && ( v.GetInstance() == 1 ) )
+			{
+				snprintf( dev_value, 100, "%d", v.GetIndex() );
+				str_tmp = string ( dev_value );
+
+				if ( configlist.length() >= 1 )
+				{
+					configlist.append( "|" );
+				}
+
+				configlist.append( str_tmp );
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "ConfigurationList==None (node doesn't exist)" );
+		return "";
+	}
+
+	WriteLog( LogLevel_Debug, false, "ConfigurationList=%s", configlist.c_str() );
+
+	// We convert from string to char*, because else garbage is reported to gambas
+	char *tconfiglist;
+	tconfiglist=new char [configlist.size() + 1];
+	strcpy( tconfiglist, configlist.c_str() );
+	return tconfiglist;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeConfigLabel>
+// Get configuration item's label
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeConfigLabel( int32 home, int32 node, int32 item )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeConfigLabel" ) == false ) return "";
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the configuration items of this node 
+			if ( ( v.GetCommandClassId() == COMMAND_CLASS_CONFIGURATION  ) && ( v.GetGenre() == ValueID::ValueGenre_Config ) && ( v.GetInstance() == 1 ) )
+			{
+				// Check the index, only if this matches, get the Label
+				if ( v.GetIndex() == item )
+				{
+					string valuelabel;
+					valuelabel = Manager::Get()->GetValueLabel( v );
+
+					// We convert from string to char*, because else garbage is reported to gambas
+					char *tvaluelabel;
+					tvaluelabel=new char [valuelabel.size()+1];
+					strcpy( tvaluelabel, valuelabel.c_str() );
+					return tvaluelabel;
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Label=None (node doesn't exist)" );
+		return "";
+	}
+
+	WriteLog( LogLevel_Debug, false, "Label=<doesn't exist>" );
+	return "";
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeConfigHelp>
+// Get configuration item's help description
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeConfigHelp( int32 home, int32 node, int32 item )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeConfigHelp" ) == false ) return "";
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the configuration items of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_CONFIGURATION  ) && ( v.GetGenre() == ValueID::ValueGenre_Config ) && ( v.GetInstance() == 1 ))
+			{
+				// Check the index, only if this matches, get the Label
+				if ( v.GetIndex() == item )
+				{
+					string valuehelp;
+					valuehelp = Manager::Get()->GetValueHelp( v );
+
+					// We convert from string to char*, because else garbage is reported to gambas
+					char *tvaluehelp;
+					tvaluehelp=new char [valuehelp.size()+1];
+					strcpy( tvaluehelp, valuehelp.c_str() );
+					return tvaluehelp;
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Help=None (node doesn't exist)" );
+		return "";
+	}
+
+	WriteLog( LogLevel_Debug, false, "Help=<doesn't exist>" );
+	return "";
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeConfigValue>
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeConfigValue( int32 home, int32 node, int32 item )
+{
+	char dev_value[1024];
+	uint8 byte_value;
+	bool bool_value;
+	string decimal_value;
+	string list_value;
+	string string_value;
+	int int_value;
+	int16 short_value;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeConfigValue" ) == false ) return "";
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the configuration items of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_CONFIGURATION  ) && ( v.GetGenre() == ValueID::ValueGenre_Config ) && ( v.GetInstance() == 1 ))
+			{
+				// Check the index, only if this matches, get the Label
+				if ( v.GetIndex() == item )
+				{
+					switch ( v.GetType() )
+					{
+						case ValueID::ValueType_Bool:
+						{
+							Manager::Get()->GetValueAsBool( v, &bool_value );
+							snprintf( dev_value, 1024, "%i", bool_value );
+							break;
+						}
+						case ValueID::ValueType_Byte:
+						{
+							Manager::Get()->GetValueAsByte( v, &byte_value );
+							snprintf( dev_value, 1024, "%i", byte_value );
+							break;
+						}
+						case ValueID::ValueType_Decimal:
+						{
+							Manager::Get()->GetValueAsString( v, &decimal_value );
+							snprintf( dev_value, 1024, "%s", strdup( decimal_value.c_str() ) );
+							break;
+						}
+						case ValueID::ValueType_Int:
+						{
+							Manager::Get()->GetValueAsInt( v, &int_value );
+							snprintf( dev_value, 1024, "%d", int_value );
+							break;
+						}
+						case ValueID::ValueType_Short:
+						{
+							Manager::Get()->GetValueAsShort( v, &short_value );
+							snprintf( dev_value, 1024, "%d.h", short_value );
+							break;
+						}
+						case ValueID::ValueType_Schedule:
+						{
+							return "";
+						}
+						case ValueID::ValueType_String:
+						{
+							Manager::Get()->GetValueAsString( v, &string_value );
+							snprintf( dev_value, 1024, "%s", strdup( string_value.c_str() ) );
+							break;
+						}
+						case ValueID::ValueType_Button:
+						{
+							return "";
+						}
+						case ValueID::ValueType_List:
+						{
+							Manager::Get()->GetValueListSelection( v, &list_value );
+							snprintf( dev_value, 1024, "%s", strdup( list_value.c_str() ) );
+							break;
+						}
+						default:
+							return "";
+					}
+
+					char *tvalue;
+					tvalue = dev_value;
+					return tvalue;
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Value=None (node doesn't exist)" );
+	}
+
+	return "";
+
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeConfigValueType>
+// Returns the type of value for the configuration item. Normally we should only
+// give Byte of List
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeConfigValueType( int32 home, int32 node, int32 item )
+{
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeConfigValueType" ) == false ) return "";
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the configuration items of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_CONFIGURATION  ) && ( v.GetGenre() == ValueID::ValueGenre_Config ) && ( v.GetInstance() == 1 ))
+			{
+				// Check the index, only if this matches, get the Label
+				if ( v.GetIndex() == item )
+				{
+					switch ( v.GetType() )
+					{
+						case ValueID::ValueType_Bool: return "Bool";
+						case ValueID::ValueType_Byte: return "Byte";
+						case ValueID::ValueType_Decimal: return "Decimal";
+						case ValueID::ValueType_Int: return "Int";
+						case ValueID::ValueType_Short: return "Short";
+						case ValueID::ValueType_Schedule: return "Schedule";
+						case ValueID::ValueType_String: return "String";
+						case ValueID::ValueType_Button: return "Button";
+						case ValueID::ValueType_List: return "List";
+						default: return "";
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "ValueType=None (node doesn't exist)" );
+	}
+
+	return "";
+
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeConfigValueList>
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeConfigValueList( int32 home, int32 node, int32 item )
+{
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeConfigValueList" ) == false ) return "";
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the configuration items of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_CONFIGURATION  ) && ( v.GetGenre() == ValueID::ValueGenre_Config ) && ( v.GetInstance() == 1 ))
+			{
+				// Check the index, only if this matches, get the Label
+				if ( v.GetIndex() == item )
+				{
+					if ( v.GetType() == ValueID::ValueType_List )
+					{
+						vector<string> strs;
+						string str;
+
+						Manager::Get()->GetValueListItems( v, &strs );
+
+						for (vector<string>::iterator it = strs.begin(); it != strs.end(); it++)
+						{
+							if ( str.length() >= 1 )
+							{
+								str.append( "|" );
+							}
+
+							str.append( (*it) );
+						}
+
+						// We convert from string to char*, because else garbage is reported to gambas
+						char *tvalue;
+						tvalue=new char [str.size()+1];
+						strcpy( tvalue, str.c_str() );
+						return tvalue;
+
+					}
+					else
+					{
+						return "";
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Value=None (node doesn't exist)" );
+	}
+
+	return "";
 }
 
 //-----------------------------------------------------------------------------
@@ -1894,21 +2674,25 @@ const char* DomoZWave_ControllerType()
 // 2|3|4|6|7
 //-----------------------------------------------------------------------------
 
-const char* DomoZWave_GetNodeNeighborsList( int node )
+const char* DomoZWave_GetNodeNeighborsList( int32 home, int32 node )
 {
 	string neighborslist;
 	uint8* neighbors;
 	uint32 numNeighbors;
-	char dev_value[64];
+	char dev_value[1024];
 
-	if ( DomoZWave_HomeIdPresent("GetNodeNeighborsList") == false ) return "";
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeNeighborsList" ) == false ) return "";
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeNeighborsList: HomeId=%d Node=%d", home, node );
 
 	numNeighbors = Manager::Get()->GetNodeNeighbors( home, node, &neighbors );
+
+	WriteLog( LogLevel_Debug, false, "NumberOfNeighbors=%d", numNeighbors );
 
 	for( uint32 i=0; i<numNeighbors; ++i )
 	{
 		// Convert integer to char
-		snprintf(dev_value, 64, "%d", neighbors[i]);
+		snprintf(dev_value, 1024, "%d", neighbors[i]);
 
 		// Format the string with "|"
 		if ( i != 0 )
@@ -1919,10 +2703,12 @@ const char* DomoZWave_GetNodeNeighborsList( int node )
 		neighborslist += dev_value;
 	}
 
+	WriteLog( LogLevel_Debug, false, "NeighborsList=%s", neighborslist.c_str() );
+
 	// We convert from string to char*, because else garbage is reported to gambas
 	char *tneighborslist;
 	tneighborslist=new char [neighborslist.size()+1];
-	strcpy(tneighborslist,neighborslist.c_str());
+	strcpy( tneighborslist, neighborslist.c_str() );
 	return tneighborslist;
 }
 
@@ -1930,18 +2716,32 @@ const char* DomoZWave_GetNodeNeighborsList( int node )
 // <DomoZWave_GetNodeCommandClassList>
 // Retrieves the list of supported COMMAND_CLASS'es for a node.
 // An example list is: COMMAND_CLASS_BASIC|COMMAND_CLASS_SWITCH_BINARY
+// Default instance=0 - ALL CommandClasses of the device are reported
+// If e.g. instance=1, only the CommandClasses of that specific instance are reported
 //-----------------------------------------------------------------------------
 
-const char* DomoZWave_GetNodeCommandClassList( int node )
+const char* DomoZWave_GetNodeCommandClassList( int32 home, int32 node, int32 instance = 0 )
 {
 	string commandclass;
 
-	if ( DomoZWave_HomeIdPresent("GetNodeCommandClassList") == false ) return "";
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeCommandClassList" ) == false ) return "";
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeCommandClassList: HomeId=%d Node=%d Instance=%d", home, node, instance );
 
 	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
 	{
+		if ( instance == 0 )
+		{
 		commandclass = nodeInfo->commandclass;
-
+		}
+		else
+		{
+			if ( nodeInfo->instancecommandclass.find(instance) != nodeInfo->instancecommandclass.end() )
+			{
+				commandclass = nodeInfo->instancecommandclass[instance];
+			}
+		}
+		
 		// Remove first "|" character
 		if ( commandclass.length() >= 1 )
 		{
@@ -1951,90 +2751,499 @@ const char* DomoZWave_GetNodeCommandClassList( int node )
 		// Remove last "|" character
 		if ( commandclass.length() >= 1 )
 		{
-			commandclass.replace(commandclass.length() - 1, 1, "");
+			commandclass.replace( commandclass.length() - 1, 1, "" );
 		}
 	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "CommandClassList=None (node doesn't exist)" );
+		return "";
+	}
+
+	WriteLog( LogLevel_Debug, false, "CommandClassList=%s", commandclass.c_str() );
 
 	// We convert from string to char*, because else garbage is reported to gambas
 	char *tcommandclass;
-	tcommandclass=new char [commandclass.size()+1];
-	strcpy(tcommandclass,commandclass.c_str());
+	tcommandclass=new char [commandclass.size() + 1];
+	strcpy( tcommandclass, commandclass.c_str() );
 	return tcommandclass;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeGroupCount>
+// Retrieves the number of group of this node
+//-----------------------------------------------------------------------------
+
+int DomoZWave_GetNodeGroupCount( int32 home, int32 node )
+{
+	int32 count;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeGroupCount" ) == false ) return 0;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeGroupCount: HomeId=%d Node=%d", home, node );
+	count = Manager::Get()->GetNumGroups( home, node );
+	WriteLog( LogLevel_Debug, false, "Count=%d", count );
+	return count;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeGroupList>
+// Retrieves the nodes assigned to a group
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeGroupList(int32 home, int32 node, int32 ogroup )
+{
+	uint32 group;
+	uint32 numGroups;
+	string grouplist;
+	char dev_value[1024];
+	uint32 numAssociations;
+	uint8* associations;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeGroupList" ) == false ) return "";
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeGroupList: HomeId=%d Node=%d Group=%d", home, node, ogroup );
+
+	group = ogroup;
+        numGroups = Manager::Get()->GetNumGroups( home, node );
+
+	// Only try to retrieve a list, if it is a valid group number
+	if (( group >= 1) && ( group <= numGroups ))
+	{
+
+		numAssociations = Manager::Get()->GetAssociations(home, node, group, &associations );
+
+		for( uint32 i=0; i<numAssociations; ++i )
+		{
+			snprintf(dev_value, 1024, "%d", associations[i]);
+			grouplist += dev_value;
+
+			if ( ( i + 1 ) != numAssociations )
+			{
+				grouplist += ",";
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "GroupList=None (group doesn't exist)" );
+		return "";
+	}
+
+	WriteLog( LogLevel_Debug, false, "GroupList=%s", grouplist.c_str() );
+
+	// We convert from string to char*, because else garbage is reported to gambas
+	char *tgrouplist;
+	tgrouplist=new char [grouplist.size() + 1];
+	strcpy( tgrouplist, grouplist.c_str() );
+	return tgrouplist;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeGroupMax>
+// Retrieves the maximum number of nodes per group
+//-----------------------------------------------------------------------------
+
+int DomoZWave_GetNodeGroupMax( int32 home, int32 node, int32 ogroup )
+{
+	uint32 group;
+	uint32 numGroups;
+	int32 count;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeGroupMax" ) == false ) return 0;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeGroupMax: HomeId=%d Node=%d Group=%d", home, node, ogroup );
+
+	group = ogroup;
+        numGroups = Manager::Get()->GetNumGroups( home, node );
+
+	// Only try to retrieve a list, if it is a valid group number
+	if (( group >= 1) && ( group <= numGroups ))
+	{
+		count = Manager::Get()->GetMaxAssociations(home, node, group );
+		WriteLog( LogLevel_Debug, false, "GroupMax=%d", count );
+		return count;
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "GroupMax=None (group doesn't exist)" );
+		return 0;
+	}
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeGroupLabel>
+// Retrieves the label text of a group
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeGroupLabel( int32 home, int32 node, int32 ogroup )
+{
+	uint32 numGroups;
+	uint32 group;
+	string grouplabel;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeGroupLabel" ) == false ) return "";
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeGroupLabel: HomeId=%d Node=%d Group=%d", home, node, ogroup );
+
+	group = ogroup;
+        numGroups = Manager::Get()->GetNumGroups( home, node );
+
+	// Only try to retrieve a list, if it is a valid group number
+	if (( group >= 1) && ( group <= numGroups ))
+	{
+		grouplabel = Manager::Get()->GetGroupLabel(home, node, group );
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "GroupLabel=None (group doesn't exist)" );
+		return "";
+	}
+
+	WriteLog( LogLevel_Debug, false, "GroupLabel=%s", grouplabel.c_str() );
+
+	// We convert from string to char*, because else garbage is reported to gambas
+	char *tgrouplabel;
+	tgrouplabel=new char [grouplabel.size() + 1];
+	strcpy( tgrouplabel, grouplabel.c_str() );
+	return tgrouplabel;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_AddAssociation>
+// Adds a node association to a group of a node
+//-----------------------------------------------------------------------------
+
+void DomoZWave_AddAssociation( int32 home, int32 node, int32 group, int32 otherNode )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_AddAssociation" ) == false ) return;
+	
+	WriteLog( LogLevel_Debug, true, "DomoZWave_AddAssociation: HomeId=%d Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "Group=%d, Node=%d", group, otherNode );
+
+	Manager::Get()->AddAssociation( home, node, group, otherNode );
+	// Refresh isn't required anymore with r564
+	//Manager::Get()->RefreshNodeInfo( home, node);
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RemoveAssociation>
+// Remove a group assocation
+//-----------------------------------------------------------------------------
+
+void DomoZWave_RemoveAssociation( int32 home, int32 node, int32 group, int32 otherNode )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RemoveAssociation" ) == false ) return;
+
+	WriteLog( LogLevel_Debug, true, "RemoveAssociation for HomeId=%d Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "Group=%d, Node=%d", group, otherNode );
+
+	Manager::Get()->RemoveAssociation( home, node, group, otherNode );
+	// Refresh isn't required anymore with r564
+	//Manager::Get()->RefreshNodeInfo( home, node);
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_ControllerSoftReset>
+//-----------------------------------------------------------------------------
+
+void DomoZWave_ControllerSoftReset( int32 home )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_ControllerSoftReset" ) == false ) return;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_ControllerSoftReset: HomeId=%d", home );
+	Manager::Get()->SoftReset( home );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_ControllerHardReset>
+// Resets the Controller HARD - it will loose *all* configuration, only do it
+// when you're really-really-really sure
+//-----------------------------------------------------------------------------
+
+void DomoZWave_ControllerHardReset( int32 home )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_ControllerHardReset" ) == false ) return;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_ControllerHardReset: HomeId=%d", home );
+	Manager::Get()->ResetController( home );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_CancelControllerCommand>
+//
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_CancelControllerCommand( int32 home )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_CancelControllerCommand" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_CancelControllerCommand: HomeId=%d", home );
+	response = Manager::Get()->CancelControllerCommand( home );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_AddDevice>
+//
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_AddDevice( int32 home )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_AddDevice" ) == false ) return false;
+	WriteLog(LogLevel_Debug, true, "DomoZWave_AddDevice: HomeId=%d", home );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_AddDevice, NULL, NULL, true, 0xff );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RemoveDevice>
+//
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_RemoveDevice( int32 home )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RemoveDevice" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RemoveDevice: HomeId=%d", home );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RemoveDevice, NULL, NULL, true );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_AddController>
+//
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_AddController( int32 home )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_AddController" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_AddController: HomeId=%d", home );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_AddController, NULL, NULL, true );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RemoveController>
+//
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_RemoveController( int32 home )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RemoveController" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RemoveController: HomeId=%d", home );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RemoveController, NULL, NULL, true );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_AssignReturnRoute>
+//
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_AssignReturnRoute( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_AssignReturnRoute" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_AssignReturnRoute: HomeId=%d Node=%d", home, node );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_AssignReturnRoute, NULL, NULL, true, node );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_DeleteAllReturnRoutes>
+//
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_DeleteAllReturnRoutes( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_DeleteAllReturnRoutes" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_DeleteAllReturnRoutes: HomeId=%d Node=%d", home, node );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_DeleteAllReturnRoutes, NULL, NULL, true, node );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RequestNetworkUpdate>
+// Request network information from the SUC/SIS
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_RequestNetworkUpdate( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RequestNetworkUpdateFromPrimary" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNetworkUpdateFromPrimary: HomeId=%d", home );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNetworkUpdate, NULL, NULL, false, node );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_CreateNewPrimary>
+// Add a new controller to the Z-Wave network. The new controller will be the
+// primary, and the current primary will become a secondary controller
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_CreateNewPrimary( int32 home )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_CreateNewPrimary" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_CreateNewPrimary: HomeId=%d", home );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_CreateNewPrimary, NULL, NULL, true );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_TransferPrimaryRole>
+// Make a different controller the primary
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_TransferPrimaryRole( int32 home )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_TransferPrimaryRole" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_TransferPrimaryRole: HomeId=%d", home );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_TransferPrimaryRole, NULL, NULL, true );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_ReceiveConfiguration>
+// Receive Z-Wave network configuration information from another controller
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_ReceiveConfiguration( int32 home )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_ReceiveConfiguration" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_ReceiveConfiguration: HomeId=%d", home );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_ReceiveConfiguration, NULL, NULL, true );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_HasNodeFailed>
+// Check whether a node is in the controller's failed nodes list
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_HasNodeFailed( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_HasNodeFailed" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_HasNodeFailed: HomeId=%d Node=%d", home, node );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_HasNodeFailed, NULL, NULL, true, node );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RemoveFailedNode>
+// move a node to the controller's list of failed nodes.  The node must actually
+// have failed or have been disabled since the command will fail if it responds.
+// A node must be in the controller's failed nodes list for 
+// ControllerCommand_ReplaceFailedNode to work.
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_RemoveFailedNode( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RemoveFailedNode" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_RemoveFailedNode: HomeId=%d Node=%d", home, node );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RemoveFailedNode, NULL, NULL, true, node );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_ReplaceFailedNode>
+// replace a failed device with another. If the node is not in the controller's/
+// failed nodes list, or the node responds, this command will fail.
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_ReplaceFailedNode( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_ReplaceFailedNode" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_ReplaceFailedNode: HomeId=%d Node=%d", home, node );
+	response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_ReplaceFailedNode, NULL, NULL, true, node );
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetDriverStatistics>
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetDriverStatistics( int32 home )
+{
+	char dev_value[1024];
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetDriverStatistics" ) == false ) return "";
+
+	// Driver::DriverData contains (r570):
+	// s_SOFCnt             - Number of SOF bytes received
+	// s_ACKWaiting         - Number of unsolicited messages while waiting for an ACK
+	// s_readAborts         - Number of times read were aborted due to timeouts
+	// s_badChecksum        - Number of bad checksums   
+	// s_readCnt            - Number of messages successfully read
+	// s_writeCnt           - Number of messages successfully sent
+	// s_CANCnt             - Number of CAN bytes received
+	// s_NAKCnt             - Number of NAK bytes received
+	// s_ACKCnt             - Number of ACK bytes received
+	// s_OOFCnt             - Number of bytes out of framing
+	// s_dropped            - Number of messages dropped & not delivered
+	// s_retries            - Number of messages retransmitted
+	// s_controllerReadCnt  - Number of controller messages read
+	// s_controllerWriteCnt - Number of controller messages sent
+
+	Driver::DriverData data;
+	Manager::Get()->GetDriverStatistics( home, &data );
+
+	snprintf( dev_value, 1024, "%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d|%d", data.s_SOFCnt, data.s_ACKWaiting, data.s_readAborts, data.s_badChecksum, data.s_readCnt, data.s_writeCnt, data.s_CANCnt, data.s_NAKCnt, data.s_ACKCnt, data.s_OOFCnt, data.s_dropped, data.s_retries, data.s_controllerReadCnt, data.s_controllerWriteCnt );
+
+	char *tdev_value;
+	tdev_value = dev_value;
+	return tdev_value;
 }
 
 //-----------------------------------------------------------------------------
 // <DomoZWave_GetSendQueueCount>
 //-----------------------------------------------------------------------------
 
-long DomoZWave_GetSendQueueCount()
+long DomoZWave_GetSendQueueCount( int32 home )
 {
-	if ( DomoZWave_HomeIdPresent("GetSendQueueCount") == false ) return 0;
-	return Manager::Get()->GetSendQueueCount( home );
-}
+	long count;
 
-//-----------------------------------------------------------------------------
-// <DomoZWave_GetNodeGroupList>
-// Retrieve the node group (association). An example output is:
-// 4|1-4|2,3,4|2-1||3-1||4-1|
-// Where "4|" is 4 groups. "1-4|2,3,4" is group 1, max association is 4 and nodes
-//  2,3,4 are associated
-// "3-1||" means a group 3, max association is 1, but no nodes associated
-// NOTE: GetGroupLabel isn't supported (yet?)
-//-----------------------------------------------------------------------------
-
-const char* DomoZWave_GetNodeGroupList( int node )
-{
-	string grouplist;
-	uint32 numGroups;
-	uint32 numAssociations;
-	uint32 maxAssociations;
-	uint8* associations;
-	char dev_value[64];
-
-	if ( DomoZWave_HomeIdPresent("DomoZWave_GetNodeGroupList") == false ) return "";
-
-        numGroups = Manager::Get()->GetNumGroups( home, node );
-
-	// If there are no groups, we return an empty string
-	if ( numGroups == 0 )
-	{
-		return "";
-	}
-
-	snprintf(dev_value, 64, "%d|", numGroups );
-	grouplist = dev_value;
-
-	for( uint32 i=1; i<=numGroups; ++i )
-	{
-		maxAssociations = Manager::Get()->GetMaxAssociations(home, node, i );
-
-		snprintf(dev_value, 64, "%d-%d|", i, maxAssociations );
-		grouplist += dev_value;
-
-		numAssociations = Manager::Get()->GetAssociations(home, node, i, &associations );
-
-		for( uint32 j=0; j<numAssociations; ++j )
-		{
-                	snprintf(dev_value, 64, "%d", associations[j]);
-			grouplist += dev_value;
-
-			if ( ( j + 1 ) != numAssociations )
-			{
-				grouplist += ",";
-			}
-		}
-
-		if ( i != numGroups )
-		{
-			grouplist += "|";
-		}
-	}
-
-	// We convert from string to char*, because else garbage is reported to gambas
-	char *tgrouplist;
-	tgrouplist=new char [grouplist.size()+1];
-	strcpy(tgrouplist,grouplist.c_str());
-	return tgrouplist;
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetSendQueueCount" ) == false ) return 0;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetSendQueueCount: HomeId=%d", home );
+	count = Manager::Get()->GetSendQueueCount( home );
+	WriteLog( LogLevel_Debug, false, "Count=%d", count );
+	return count;
 }
 
 //-----------------------------------------------------------------------------
@@ -2043,11 +3252,11 @@ const char* DomoZWave_GetNodeGroupList( int node )
 // display "UNKNOWN"
 //-----------------------------------------------------------------------------
 
-const char* DomoZWave_CommandClassIdName(uint8 class_value)
+const char* DomoZWave_CommandClassIdName(int class_value)
 {
 	char str_tmp[100];
 
-	switch (class_value)
+	switch ( class_value )
 	{
 		case 0x00: return "COMMAND_CLASS_NO_OPERATION";
 		case 0x20: return "COMMAND_CLASS_BASIC";
@@ -2133,7 +3342,7 @@ const char* DomoZWave_CommandClassIdName(uint8 class_value)
 		default:
 		{
 			// We report UNKNOWN including the 0xYY hexcode
-			snprintf(str_tmp,20, "UNKNOWN (0x%02X)", class_value);
+			snprintf( str_tmp, 100, "UNKNOWN (0x%02X)", class_value );
 			return string(str_tmp).c_str();
 		}
 	}
@@ -2144,11 +3353,11 @@ const char* DomoZWave_CommandClassIdName(uint8 class_value)
 //
 //-----------------------------------------------------------------------------
 
-const char* DomoZWave_GenreIdName(uint8 genre)
+const char* DomoZWave_GenreIdName( int genre )
 {
 	char str_tmp[100];
 
-	switch (genre)
+	switch ( genre )
 	{
 		case ValueID::ValueGenre_Basic:
 			return "basic";
@@ -2163,10 +3372,104 @@ const char* DomoZWave_GenreIdName(uint8 genre)
 		default:
 		{
 			// We report UNKNOWN including the 0xYY hexcode
-			snprintf(str_tmp,20, "UNKNOWN (0x%02X)", genre);
+			snprintf( str_tmp, 100, "UNKNOWN (0x%02X)", genre );
 			return string(str_tmp).c_str();
 		}
   }
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_BasicTypeName>
+//
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_BasicTypeName( int basictype )
+{
+	char str_tmp[100];
+
+	switch ( basictype )
+	{
+		case BASIC_TYPE_CONTROLLER:
+			return "Controller";
+		case BASIC_TYPE_STATIC_CONTROLLER:
+			return "Static Controller";
+		case BASIC_TYPE_SLAVE:
+			return "Slave";
+		case BASIC_TYPE_ROUTING_SLAVE:
+			return "Routing Slave";
+		default:
+		{
+			// We report UNKNOWN including the 0xYY hexcode
+			snprintf( str_tmp, 100, "UNKNOWN (0x%02X)", basictype );
+			return string(str_tmp).c_str();
+		}
+	}
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GenericTypeName>
+//
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GenericTypeName( int generictype )
+{
+	char str_tmp[100];
+
+	switch ( generictype )
+	{
+		case GENERIC_TYPE_GENERIC_CONTROLLER:
+			return "Generic Controller";
+		case GENERIC_TYPE_STATIC_CONTROLLER:
+			return "Static Controller";
+		case GENERIC_TYPE_AV_CONTROL_POINT:
+			return "AV Control Point";
+		case GENERIC_TYPE_DISPLAY:
+			return "Display";
+		case GENERIC_TYPE_GARAGE_DOOR:
+			return "Garage Door";
+		case GENERIC_TYPE_THERMOSTAT:
+			return "Thermostat";
+		case GENERIC_TYPE_WINDOW_COVERING:
+			return "Window Covering";
+		case GENERIC_TYPE_REPEATER_SLAVE:
+			return "Repeating Slave";
+		case GENERIC_TYPE_SWITCH_BINARY:
+			return "Binary Switch";
+		case GENERIC_TYPE_SWITCH_MULTILEVEL:
+			return "Multilevel Switch";
+		case GENERIC_TYPE_SWITCH_REMOTE:
+			return "Remote Switch";
+		case GENERIC_TYPE_SWITCH_TOGGLE:
+			return "Toggle Switch";
+		case GENERIC_TYPE_ZIP_GATEWAY:
+			return "Zip Gateway";
+		case GENERIC_TYPE_ZIP_NODE:
+			return "Zip Node";
+		case GENERIC_TYPE_SENSOR_BINARY:
+			return "Binary Sensor";
+		case GENERIC_TYPE_SENSOR_MULTILEVEL:
+			return "Multilevel Sensor";
+		case GENERIC_TYPE_WATER_CONTROL:
+			return "Water Control";
+		case GENERIC_TYPE_METER_PULSE:
+			return "Pulse Meter";
+		case GENERIC_TYPE_METER:
+			return "Meter";
+		case GENERIC_TYPE_ENTRY_CONTROL:
+			return "Entry Control";
+		case GENERIC_TYPE_SEMI_INTEROPERABLE:
+			return "Semi Interoperable";
+		case GENERIC_TYPE_SENSOR_ALARM:
+			return "Alarm Sensor";
+		case GENERIC_TYPE_NON_INTEROPERABLE:
+			return "Non Interoperable";			
+		default:
+		{
+			// We report UNKNOWN including the 0xYY hexcode
+			snprintf( str_tmp, 100, "UNKNOWN (0x%02X)", generictype );
+			return string(str_tmp).c_str();
+		}
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////

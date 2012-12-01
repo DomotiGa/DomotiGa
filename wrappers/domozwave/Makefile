@@ -23,14 +23,14 @@ LDFLAGS	:= $(DEBUG_LDFLAGS)
 
 INCLUDES	:= -I open-zwave/cpp/src -I open-zwave/cpp/src/command_classes/ -I open-zwave/cpp/src/value_classes/ \
 	-I open-zwave/cpp/src/platform/ -I open-zwave/cpp/tinyxml/ -I open-zwave/cpp/build/linux/ -I default/
-LIBS := $(wildcard open-zwave/cpp/lib/linux/*.a) -lxmlrpc -lxmlrpc_client -lxmlrpc_xmlparse -lxmlrpc_util -lxmlrpc_xmltok 
+LIBS := $(wildcard open-zwave/cpp/lib/linux/*.a) -lxmlrpc -lxmlrpc_client -lxmlrpc_xmlparse -lxmlrpc_util -lxmlrpc_xmltok
 
 %.o : %.cpp
 	$(CXX) $(CFLAGS) $(INCLUDES) -o $@ $<
 
 all: libdomozwave.so
 
-libdomozwave.so:	DomoZWave.o $(LIBS)
+libdomozwave.so:	DomoZWave.o
 	$(LD) -o $@ $(LDFLAGS) $< $(LIBS) -pthread -shared -ludev
 
 clean:
