@@ -259,7 +259,7 @@ CREATE TABLE `conditions` (
 
 LOCK TABLES `conditions` WRITE;
 /*!40000 ALTER TABLE `conditions` DISABLE KEYS */;
-INSERT INTO `conditions` VALUES (1,'It\'s Dark Outside','','Var_Dark = \"True\"');
+INSERT INTO `conditions` VALUES (1,'It\'s Dark Outside','','Var_Dark=True');
 /*!40000 ALTER TABLE `conditions` ENABLE KEYS */;
 UNLOCK TABLES;
 
