@@ -18,6 +18,9 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 LIBRARY "libdomozwave"
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+PUBLIC sLibDomoZwave AS String = "DomoZWave version r1054"
+
 ' Initialize and destroy the wrapper - no HomeId required
 EXTERN DomoZWave_Init(deviceConfigPath AS String, zwConfigPath AS String, logname AS String, rpcPort AS Integer, enableLog AS Boolean, enableOZWLog AS Boolean, polltime AS Integer)
 EXTERN DomoZWave_AddSerialPort(serialPort AS String)
@@ -51,7 +54,7 @@ EXTERN DomoZWave_GetNodeApplicationVersion(home AS Integer, node AS Integer) AS 
 ' Request or update node state
 EXTERN DomoZWave_RequestNodeState(home AS Integer, node AS Integer) AS Boolean
 EXTERN DomoZWave_RequestNodeDynamic(home AS Integer, node AS Integer) AS Boolean
-EXTERN DomoZWave_RequestNodeNeighborUpdate(home AS Integer, node AS Integer) AS Boolean
+EXTERN DomoZWave_RequestNodeNeighborUpdate(home AS Integer, node AS Integer, OPTIONAL addqueue AS Boolean = FALSE) AS Boolean
 EXTERN DomoZWave_RefreshNodeInfo(home AS Integer, node AS Integer) AS Boolean
 EXTERN DomoZWave_RequestNodeVersion(home AS Integer, node AS Integer) AS Boolean
 EXTERN DomoZWave_RequestNodeMeter(home AS Integer, node AS Integer) AS Boolean
@@ -80,17 +83,18 @@ EXTERN DomoZWave_RemoveAssociation(home AS Integer, node AS Integer, group AS In
 EXTERN DomoZWave_ControllerSoftReset(home AS Integer)
 EXTERN DomoZWave_ControllerHardReset(home AS Integer)
 ' Controller commands
+EXTERN DomoZWave_ControllerState(home AS Integer) AS Integer
 EXTERN DomoZWave_CancelControllerCommand(home AS Integer) AS Boolean
 EXTERN DomoZWave_AddDevice(home AS Integer) AS Boolean
 EXTERN DomoZWave_RemoveDevice(home AS Integer) AS Boolean
 EXTERN DomoZWave_AddController(home AS Integer) AS Boolean
 EXTERN DomoZWave_RemoveController(home AS Integer) AS Boolean
-EXTERN DomoZWave_AssignReturnRoute(home AS Integer) AS Boolean
-EXTERN DomoZWave_DeleteAllReturnRoutes(home AS Integer) AS Boolean
+EXTERN DomoZWave_AssignReturnRoute(home AS Integer, node AS Integer, destnode AS Integer) AS Boolean
+EXTERN DomoZWave_DeleteAllReturnRoutes(home AS Integer, node AS Integer) AS Boolean
 EXTERN DomoZWave_RequestNetworkUpdateFromPrimary(home AS Integer) AS Boolean
 EXTERN DomoZWave_CreateNewPrimary() AS Boolean
 EXTERN DomoZWave_TransferPrimaryRole() AS Boolean
-EXTERN DomoZWave_HasNodeFailed(home AS Integer, node AS Integer) AS Boolean
+EXTERN DomoZWave_HasNodeFailed(home AS Integer, node AS Integer, OPTIONAL addqueue AS Boolean = FALSE) AS Boolean
 EXTERN DomoZWave_RemoveFailedNode(home AS Integer, node AS Integer) AS Boolean
 EXTERN DomoZWave_ReplaceFailedNode(home AS Integer, node AS Integer) AS Boolean
 ' Statistical information
@@ -151,7 +155,7 @@ PUBLIC SUB RunTasks()
         RETURN
       ENDIF
 
-      OZW_RequestAllNodeUpdateNeighbor()
+      RequestNodeNeighborUpdate(0)
     ENDIF
   ENDIF
 
@@ -164,7 +168,7 @@ PUBLIC SUB RunTasks()
         RETURN
       ENDIF
 
-      OZW_RequestAllListeningNodeDynamics()
+      RequestNodeDynamicReport(0)
     ENDIF
   ENDIF
 
@@ -177,7 +181,7 @@ PUBLIC SUB RunTasks()
         RETURN
       ENDIF
 
-      OZW_RequestAllSleepingNodeDynamics()
+      RequestNodeDynamicReport(0, TRUE)
     ENDIF
   ENDIF
 
@@ -196,7 +200,26 @@ PUBLIC SUB Connect()
   iControllerID = 0
   Main.ControlLed("ZWave", "Off")
 
-  OZW_Init()
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Initialising open-zwave wrapper."))
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] " & DomoZWave_Version()))
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] " & DomoZWave_OZWVersion()))
+
+  ' First we initialize the open-zwave wrapper, but we also need to add 1 or more
+  ' serialports to really allow it to function
+  DomoZWave_Init(Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ "wrappers/domozwave/", Main.sBaseDir &/ "logs" &/ Main.sDomoZWaveFile, Main.hXMLRPC.HTTPPort, bZWaveDebug, bZWaveDebug, iPollTime)
+  DomoZWave_AddSerialPort(sPort)
+
+  ' start timer for Z-Wave keepalive of when using the Open Z-Wave library
+  ' We will wait 10 seconds to receive the controllerid, because this should happen within 1-2 seconds
+  ' After we received the controllerid, we set the timer 60 seconds and we will send a DynamicReport request to the controllerid
+  tOZWKeepAlive = NEW Timer AS "tOZWKeepAlive"
+  tOZWKeepAlive.Delay = 10000
+  tOZWKeepAlive.Start
+  bOZWKeepAliveState = FALSE
+  bOZWKeepAlivePrevState = FALSE
+
+CATCH ' some errors
+  Main.WriteLog(("Z-Wave Error: ") & ERROR.Text & (" at ") & ERROR.Where)
 
 END
 
@@ -212,14 +235,20 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Request or update node state
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC SUB RequestBasicReport(iNodeId AS Integer) AS Boolean
+PUBLIC SUB RequestBasicReport(iNodeId AS Integer, OPTIONAL Sleeping AS Boolean = FALSE) AS Boolean
 
   DIM rResultNodes AS Result
 
   IF iNodeId == 0 THEN
 
-    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Searching for nodes to request status for."))
-    rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    IF Sleeping THEN
+      IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger sleeping nodes to update their basic values."))
+      rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is TRUE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    ELSE
+      IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger listening nodes to update their basic values."))
+      rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    ENDIF
+
     IF rResultNodes THEN
       IF (rResultNodes.Count >= 1) THEN
         FOR EACH rResultNodes
@@ -241,14 +270,20 @@ PUBLIC SUB RequestBasicReport(iNodeId AS Integer) AS Boolean
 
 END
 
-PUBLIC SUB RequestNodeDynamicReport(iNodeId AS Integer) AS Boolean
+PUBLIC SUB RequestNodeDynamicReport(iNodeId AS Integer, OPTIONAL Sleeping AS Boolean = FALSE) AS Boolean
 
   DIM rResultNodes AS Result
 
   IF iNodeId == 0 THEN
 
-    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Searching for nodes to request dynamic for."))
-    rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    IF Sleeping THEN
+      IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger sleeping nodes to update their dynamic values."))
+      rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is TRUE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    ELSE
+      IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger listening nodes to update their dynamic values."))
+      rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    ENDIF
+
     IF rResultNodes THEN
       IF (rResultNodes.Count >= 1) THEN
         FOR EACH rResultNodes
@@ -270,14 +305,20 @@ PUBLIC SUB RequestNodeDynamicReport(iNodeId AS Integer) AS Boolean
 
 END
 
-PUBLIC SUB RequestNodeVersionReport(iNodeId AS Integer) AS Boolean
+PUBLIC SUB RequestNodeVersionReport(iNodeId AS Integer, OPTIONAL Sleeping AS Boolean = FALSE) AS Boolean
 
   DIM rResultNodes AS Result
 
   IF iNodeId == 0 THEN
 
-    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Searching for nodes to request version for."))
-    rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    IF Sleeping THEN
+      IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger sleeping nodes to update their version values."))
+      rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is TRUE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    ELSE
+      IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger listening nodes to update their verion values."))
+      rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    ENDIF
+
     IF rResultNodes THEN
       IF (rResultNodes.Count >= 1) THEN
         FOR EACH rResultNodes
@@ -299,14 +340,20 @@ PUBLIC SUB RequestNodeVersionReport(iNodeId AS Integer) AS Boolean
 
 END
 
-PUBLIC SUB RequestNodeMeterReport(iNodeId AS Integer) AS Boolean
+PUBLIC SUB RequestNodeMeterReport(iNodeId AS Integer, OPTIONAL Sleeping AS Boolean = FALSE) AS Boolean
 
   DIM rResultNodes AS Result
 
   IF iNodeId == 0 THEN
 
-    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Searching for nodes to request meter for."))
-    rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    IF Sleeping THEN
+      IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger sleeping nodes to update their meter values."))
+      rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is TRUE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    ELSE
+      IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger listening nodes to update their meter values."))
+      rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    ENDIF
+
     IF rResultNodes THEN
       IF (rResultNodes.Count >= 1) THEN
         FOR EACH rResultNodes
@@ -328,21 +375,30 @@ PUBLIC SUB RequestNodeMeterReport(iNodeId AS Integer) AS Boolean
 
 END
 
-PUBLIC SUB RequestNodeNeighborUpdate(iNodeId AS Integer) AS Boolean
+PUBLIC SUB RequestNodeNeighborUpdate(iNodeId AS Integer, OPTIONAL Sleeping AS Boolean = FALSE) AS Boolean
 
   DIM rResultNodes AS Result
 
   IF iNodeId == 0 THEN
 
-    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Searching for nodes to request neighbor update for."))
-    rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    IF Sleeping THEN
+      IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger sleeping nodes to update their neighbor routing."))
+      rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is TRUE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    ELSE
+      IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger listening nodes to update their neighbor routing."))
+      rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
+    ENDIF
+
     IF rResultNodes THEN
       IF (rResultNodes.Count >= 1) THEN
         FOR EACH rResultNodes
           ' We can't query a controller or static controller
           IF rResultNodes!typebasic >= 3 THEN
             IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting neighbor update for node id " & rResultNodes!nodeid & "."))
-            DomoZWave_RequestNodeNeighborUpdate(iHomeID, rResultNodes!nodeid)
+
+            ' Has to be TRUE, but the open-zwave has a bug ...
+            'DomoZWave_RequestNodeNeighborUpdate(iHomeID, rResultNodes!nodeid, TRUE)
+            DomoZWave_RequestNodeNeighborUpdate(iHomeID, rResultNodes!nodeid, FALSE)
           ENDIF
         NEXT
       ENDIF
@@ -352,7 +408,7 @@ PUBLIC SUB RequestNodeNeighborUpdate(iNodeId AS Integer) AS Boolean
 
   ELSE
     IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting node id " & iNodeId & " to update it's neighbors."))
-    RETURN DomoZWave_RequestNodeNeighborUpdate(iHomeID, iNodeId)
+    RETURN DomoZWave_RequestNodeNeighborUpdate(iHomeID, iNodeId, FALSE)
   ENDIF
 
 END
@@ -419,7 +475,7 @@ PUBLIC SUB GetNodeNeighborsList(iNodeId AS Integer) AS String
 
   DIM NList AS String
 
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting neighborslist for node id " & iNodeId & "."))
+  'IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting neighborslist for node id " & iNodeId & "."))
   NList = DomoZWave_GetNodeNeighborsList(iHomeID, iNodeId)
 
   ' Replace the "|" with ", " to make it more human readable
@@ -431,7 +487,7 @@ PUBLIC SUB GetNodeCommandClassList(iNodeId AS Integer, OPTIONAL Instance AS Inte
 
   DIM NList AS String
 
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting commandclasslist for node id " & iNodeId & IIf(Instance >= 1, " instance " & Instance, "") & "."))
+  'IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting commandclasslist for node id " & iNodeId & IIf(Instance >= 1, " instance " & Instance, "") & "."))
   NList = DomoZWave_GetNodeCommandClassList(iHomeID, iNodeId, Instance)
 
   ' Replace the "COMMAND_CLASS_", because it is in each value (makes the string too long)
@@ -594,6 +650,48 @@ PUBLIC SUB RequestNetworkUpdate()
 
   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting network update."))
   DomoZWave_RequestNetworkUpdateFromPrimary()
+
+END
+
+PUBLIC SUB HasNodeFailed(iNodeId AS Integer) AS Boolean
+
+  DIM bResult AS Boolean
+
+  bResult = DomoZWave_HasNodeFailed(iHomeID, iNodeId)
+
+  IF bResult THEN
+    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Check if node has failed, call X to check the response"))
+  ELSE
+    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Check if node has failed can't be executed. The controller isn't in normal mode"))
+  ENDIF
+
+END
+
+PUBLIC SUB RemoveFailedNode(iNodeId AS Integer) AS Boolean
+
+  DIM bResult AS Boolean
+
+  bResult = DomoZWave_RemoveFailedNode(iHomeID, iNodeId)
+
+  IF bResult THEN
+    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Remove failed node executed (only works if the node is on the failed list)"))
+  ELSE
+    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Remove failed node can't be executed. The controller isn't in normal mode"))
+  ENDIF
+
+END
+
+PUBLIC SUB ReplaceFailedNode(iNodeId AS Integer) AS Boolean
+
+  DIM bResult AS Boolean
+
+  bResult = DomoZWave_ReplaceFailedNode(iHomeID, iNodeId)
+
+  IF bResult THEN
+    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Replace failed node executed, press button the new node now (only works if the node is on the failed list)"))
+  ELSE
+    IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Replace failed node, can't be executed. The controller isn't in normal mode"))
+  ENDIF
 
 END
 
@@ -862,38 +960,24 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC FUNCTION Disconnect() AS Boolean
 
-  OZW_Disconnect()
+  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Destroyed open-zwave wrapper."))
+  DomoZWave_Destroy()
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' OpenZWave Interface Functions
+' Retrieves the OpenZWave library version
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PRIVATE FUNCTION OZW_Init()
 
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Initialising open-zwave wrapper."))
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] " & DomoZWave_Version()))
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] " & DomoZWave_OZWVersion()))
+PUBLIC FUNCTION Version() AS String
 
-  ' First we initialize the open-zwave wrapper, but we also need to add 1 or more
-  ' serialports to really allow it to function
-  DomoZWave_Init(Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ "wrappers/domozwave/", Main.sBaseDir &/ "logs" &/ Main.sDomoZWaveFile, Main.hXMLRPC.HTTPPort, bZWaveDebug, bZWaveDebug, iPollTime)
-  DomoZWave_AddSerialPort(sPort)
-
-  ' start timer for Z-Wave keepalive of when using the Open Z-Wave library
-  ' We will wait 10 seconds to receive the controllerid, because this should happen within 1-2 seconds
-  ' After we received the controllerid, we set the timer 60 seconds and we will send a DynamicReport request to the controllerid
-  tOZWKeepAlive = NEW Timer AS "tOZWKeepAlive"
-  tOZWKeepAlive.Delay = 10000
-  tOZWKeepAlive.Start
-  bOZWKeepAliveState = FALSE
-  bOZWKeepAlivePrevState = FALSE
-
-CATCH ' some errors
-  Main.WriteLog(("Z-Wave Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+  RETURN DomoZWave_Version()
 
 END
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Open Z-Wave functions
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB OZW_SendCommand(sAddress AS String, sCmd AS String)
 
   DIM iBrightness AS Integer
@@ -929,66 +1013,6 @@ PUBLIC SUB SetValue(iNodeId AS Integer, iInstance AS Integer, iValue AS Integer)
 
   IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Set value for node " & iNodeId & " and instance " & iInstance & " to " & iValue))
   DomoZWave_SetValue(iHomeID, iNodeId, iInstance, iValue)
-
-END
-
-PUBLIC SUB OZW_RequestAllListeningNodeDynamics()
-
-  DIM rResultNodes AS Result
-
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger listening nodes to update their values."))
-  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
-  IF rResultNodes THEN
-    IF (rResultNodes.Count >= 1) THEN
-      FOR EACH rResultNodes
-        ' We can't query a controller or static controller
-        IF rResultNodes!typebasic >= 3 THEN
-          IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting node dynamic of listening node id " & rResultNodes!nodeid & "."))
-          DomoZWave_RequestNodeDynamic(iHomeID, rResultNodes!nodeid)
-        ENDIF
-      NEXT
-    ENDIF
-  ENDIF
-
-END
-
-PUBLIC SUB OZW_RequestAllSleepingNodeDynamics()
-
-  DIM rResultNodes AS Result
-
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger sleeping nodes to update their values, when they wake-up."))
-  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is TRUE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
-  IF rResultNodes THEN
-    IF (rResultNodes.Count >= 1) THEN
-      FOR EACH rResultNodes
-        ' We can't query a controller or static controller
-        IF rResultNodes!typebasic >= 3 THEN
-          IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting node dynamic of sleeping node id " & rResultNodes!nodeid & "."))
-          DomoZWave_RequestNodeDynamic(iHomeID, rResultNodes!nodeid)
-        ENDIF
-      NEXT
-    ENDIF
-  ENDIF
-
-END
-
-PUBLIC SUB OZW_RequestAllNodeUpdateNeighbor()
-
-  DIM rResultNodes AS Result
-
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Trigger nodes to update their neighbor routing."))
-  rResultNodes = Main.hDB.Exec("SELECT * from devices_zwave WHERE sleeping is FALSE AND nodeid NOT LIKE '%:%' ORDER BY length(nodeid), nodeid")
-  IF rResultNodes THEN
-    IF (rResultNodes.Count >= 1) THEN
-      FOR EACH rResultNodes
-        ' We can't query a controller or static controller
-        IF rResultNodes!typebasic >= 3 THEN
-          IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Requesting node id " & rResultNodes!nodeid & " to update it's neighbors."))
-          DomoZWave_RequestNodeNeighborUpdate(iHomeID, rResultNodes!nodeid)
-        ENDIF
-      NEXT
-    ENDIF
-  ENDIF
 
 END
 
@@ -1088,13 +1112,6 @@ PUBLIC SUB OZW_AllQueried()
       NEXT
     ENDIF
   ENDIF
-
-END
-
-PUBLIC FUNCTION OZW_Disconnect() AS Boolean
-
-  IF bZWaveDebug THEN Main.WriteDebugLog(("[Z-Wave] Destroyed open-zwave wrapper."))
-  DomoZWave_Destroy()
 
 END
 

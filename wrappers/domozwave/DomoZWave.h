@@ -143,6 +143,7 @@ void DomoZWave_Destroy( );
 void DomoZWave_WriteConfig( int32 home );
 
 // Retrieve wrapper and controller information
+bool DomoZWave_ControllerBusy( int32 home );
 const char* DomoZWave_Version( );
 const char* DomoZWave_OZWVersion( );
 const char* DomoZWave_GetLibraryVersion( int32 home );
@@ -172,7 +173,7 @@ const char* DomoZWave_GetNodeApplicationVersion( int32 home, int32 node );
 // Request or update node state
 bool DomoZWave_RequestNodeState( int32 home, int32 node );
 bool DomoZWave_RequestNodeDynamic( int32 home, int32 node );
-bool DomoZWave_RequestNodeNeighborUpdate( int32 home, int32 node );
+bool DomoZWave_RequestNodeNeighborUpdate( int32 home, int32 node, bool addqueue );
 bool DomoZWave_RefreshNodeInfo(int32 home, int32 node );
 bool DomoZWave_RequestNodeVersion( int32 home, int32 node );
 bool DomoZWave_RequestNodeMeter( int32 home, int32 node );
@@ -212,13 +213,13 @@ bool DomoZWave_AddDevice( int32 home );
 bool DomoZWave_RemoveDevice( int32 home );
 bool DomoZWave_AddController( int32 home );
 bool DomoZWave_RemoveController( int32 home );
-bool DomoZWave_AssignReturnRoute( int32 home, int32 node );
+bool DomoZWave_AssignReturnRoute( int32 home, int32 node, int32 destnode );
 bool DomoZWave_DeleteAllReturnRoutes( int32 home, int32 node );
 bool DomoZWave_RequestNetworkUpdate( int32 home, int32 node );
 bool DomoZWave_CreateNewPrimary( int32 home );
 bool DomoZWave_TransferPrimaryRole( int32 home );
 bool DomoZWave_ReceiveConfiguration( int32 home );
-bool DomoZWave_HasNodeFailed( int32 home, int32 node );
+bool DomoZWave_HasNodeFailed( int32 home, int32 node, bool addqueue );
 bool DomoZWave_RemoveFailedNode( int32 home, int32 node );
 bool DomoZWave_ReplaceFailedNode( int32 home, int32 node );
 
