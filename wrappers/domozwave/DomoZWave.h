@@ -211,8 +211,6 @@ void DomoZWave_ControllerHardReset( int32 home );
 bool DomoZWave_CancelControllerCommand( int32 home );
 bool DomoZWave_AddDevice( int32 home );
 bool DomoZWave_RemoveDevice( int32 home );
-bool DomoZWave_AddController( int32 home );
-bool DomoZWave_RemoveController( int32 home );
 bool DomoZWave_AssignReturnRoute( int32 home, int32 node, int32 destnode );
 bool DomoZWave_DeleteAllReturnRoutes( int32 home, int32 node );
 bool DomoZWave_RequestNetworkUpdate( int32 home, int32 node );

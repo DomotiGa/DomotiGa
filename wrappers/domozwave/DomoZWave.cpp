@@ -24,7 +24,7 @@
 //-----------------------------------------------------------------------------
 // Define and get version numbers of DomoZWave and the open-zwave (vers.c)
 //-----------------------------------------------------------------------------
-char domozwave_vers[] = "DomoZWave version r1054";
+char domozwave_vers[] = "DomoZWave version r1055";
 #include <vers.c>
 //-----------------------------------------------------------------------------
 
@@ -1447,12 +1447,16 @@ void OnNotification
 // Open-ZWave calls this whenever the controller state changes.
 //-----------------------------------------------------------------------------
 
-void OnControllerUpdate( Driver::ControllerState cs, void *ct )
+void OnControllerUpdate( Driver::ControllerState cs, Driver::ControllerError err, void *ct )
 {
 	m_structCtrl *ctrl = (m_structCtrl *)ct;
 
 	// Possible ControllerState values:
 	// ControllerState_Normal     - No command in progress.
+	// ControllerState_Starting   - The command is starting.
+	// ControllerState_Cancel     - The command was cancelled.
+	// ControllerState_Error      - Command invocation had error(s) and was aborted.
+	// ControllerState_Sleeping   - Controller command is on a sleep queue wait for device.
 	// ControllerState_Waiting    - Controller is waiting for a user action.
 	// ControllerState_InProgress - The controller is communicating with the other device to carry out the command.
 	// ControllerState_Completed  - The command has completed successfully.
@@ -1465,35 +1469,55 @@ void OnControllerUpdate( Driver::ControllerState cs, void *ct )
 	switch (cs) {
 		case Driver::ControllerState_Normal:
 		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - no command in progress", ctrl->m_homeId );
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - Normal - no command in progress", ctrl->m_homeId );
 			ctrl->m_controllerBusy = false;
+			break;
+		}
+		case Driver::ControllerState_Starting:
+		{
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - Starting - the command is starting", ctrl->m_homeId );
+			break;
+		}
+		case Driver::ControllerState_Cancel:
+		{
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - Cancel - the command was cancelled", ctrl->m_homeId );
+			break;
+		}
+		case Driver::ControllerState_Error:
+		{
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - Error - command invocation had error(s) and was aborted", ctrl->m_homeId );
+			break;
+		}
+		case Driver::ControllerState_Sleeping:
+		{
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - Sleeping - controller command is on a sleep queue wait for device", ctrl->m_homeId );
 			break;
 		}
 		case Driver::ControllerState_Waiting:
 		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - waiting for a user action", ctrl->m_homeId );
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - Waiting - waiting for a user action", ctrl->m_homeId );
 			break;
 		}
 		case Driver::ControllerState_InProgress:
 		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - communicating with the other device", ctrl->m_homeId );
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - InProgress - communicating with the other device", ctrl->m_homeId );
 			break;
 		}
 		case Driver::ControllerState_Completed:
 		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - command has completed successfully", ctrl->m_homeId );
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - Completed - command has completed successfully", ctrl->m_homeId );
 			ctrl->m_controllerBusy = false;
 			break;
 		}
 		case Driver::ControllerState_Failed:
 		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - command has failed", ctrl->m_homeId );
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - Failed - command has failed", ctrl->m_homeId );
 			ctrl->m_controllerBusy = false;
 			break;
 		}
 		case Driver::ControllerState_NodeOK:
 		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - the node is OK", ctrl->m_homeId );
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - NodeOK - the node is OK", ctrl->m_homeId );
 			ctrl->m_controllerBusy = false;
 
 			// Store Node State
@@ -1502,7 +1526,7 @@ void OnControllerUpdate( Driver::ControllerState cs, void *ct )
 		}
 		case Driver::ControllerState_NodeFailed:
 		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - the node has failed", ctrl->m_homeId );
+			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - NodeFailed - the node has failed", ctrl->m_homeId );
 			ctrl->m_controllerBusy = false;
 
 			// Store Node State
@@ -1513,6 +1537,80 @@ void OnControllerUpdate( Driver::ControllerState cs, void *ct )
 		{
 			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=%d - unknown response", ctrl->m_homeId );
 			ctrl->m_controllerBusy = false;
+			break;
+		}
+	}
+
+	// Additional possible error information
+	switch (err) {
+		case Driver::ControllerError_None:
+		{
+			//WriteLog( LogLevel_Debug, false, "Error=None" );
+			break;
+		}
+		case Driver::ControllerError_ButtonNotFound:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Button Not Found" );
+			break;
+		}
+		case Driver::ControllerError_NodeNotFound:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Node Not Found" );
+			break;
+		}
+		case Driver::ControllerError_NotBridge:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Not a Bridge" );
+			break;
+		}
+		case Driver::ControllerError_NotPrimary:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Not Primary Controller" );
+			break;
+		}
+		case Driver::ControllerError_IsPrimary:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Is Primary Controller" );
+			break;
+		}
+		case Driver::ControllerError_NotSUC:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Not Static Update Controller" );
+			break;
+		}
+		case Driver::ControllerError_NotSecondary:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Not Secondary Controller" );
+			break;
+		}
+		case Driver::ControllerError_NotFound:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Not Found" );
+			break;
+		}
+		case Driver::ControllerError_Busy:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Controller Busy" );
+			break;
+		}
+		case Driver::ControllerError_Failed:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Failed" );
+			break;
+		}
+		case Driver::ControllerError_Disabled:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Disabled" );
+			break;
+		}
+		case Driver::ControllerError_Overflow:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Overflow" );
+			break;
+		}
+		default:
+		{
+			WriteLog( LogLevel_Debug, false, "Error=Unknown error (%d)", err );
 			break;
 		}
 	}
@@ -2374,7 +2472,6 @@ bool DomoZWave_RequestNodeVersion( int32 home, int32 node )
 			{
 				Manager::Get()->RefreshValue( v );
 				response = true;
-				break;
 			}
 		}
 	}
@@ -2408,7 +2505,6 @@ bool DomoZWave_RequestNodeMeter( int32 home, int32 node )
 			{
 				Manager::Get()->RefreshValue( v );
 				response = true;
-				break;
 			}
 		}
 	}
@@ -2765,10 +2861,8 @@ const char* DomoZWave_GetNodeConfigValue( int32 home, int32 node, int32 item )
 							return "";
 					}
 
-					// We convert from string to char*, because else garbage is reported to gambas
 					char *tvalue;
-					tvalue = new char [sizeof(dev_value) + 1];
-					strcpy( tvalue, dev_value );
+					tvalue = dev_value;
 					return tvalue;
 				}
 			}
@@ -3307,67 +3401,6 @@ bool DomoZWave_RemoveDevice( int32 home )
 }
 
 //-----------------------------------------------------------------------------
-// <DomoZWave_AddController>
-//
-//-----------------------------------------------------------------------------
-
-bool DomoZWave_AddController( int32 home )
-{
-	bool response;
-
-	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_AddController" ) == false ) return false;
-	m_structCtrl* ctrl = GetControllerInfo( home );
-
-	WriteLog( LogLevel_Debug, true, "DomoZWave_AddController: HomeId=%d", home );
-
-	if ( ctrl->m_controllerBusy == false )
-	{
-		ctrl->m_nodeId = 0;
-		ctrl->m_controllerBusy = true;
-
-		WriteLog( LogLevel_Debug, true, "DomoZWave_AddController: HomeId=%d", home );
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_AddController, OnControllerUpdate, ctrl, true );
-	}
-	else
-	{
-		response = false;
-	}
-
-	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
-	return response;
-}
-
-//-----------------------------------------------------------------------------
-// <DomoZWave_RemoveController>
-//
-//-----------------------------------------------------------------------------
-
-bool DomoZWave_RemoveController( int32 home )
-{
-	bool response;
-
-	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RemoveController" ) == false ) return false;
-	m_structCtrl* ctrl = GetControllerInfo( home );
-
-	WriteLog( LogLevel_Debug, true, "DomoZWave_RemoveController: HomeId=%d", home );
-
-	if ( ctrl->m_controllerBusy == false )
-	{
-		ctrl->m_nodeId = 0;
-		ctrl->m_controllerBusy = true;
-
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RemoveController, OnControllerUpdate, ctrl, true );
-	}
-	else
-	{
-		response = false;
-	}
-
-	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
-	return response;
-}
-
-//-----------------------------------------------------------------------------
 // <DomoZWave_AssignReturnRoute>
 //
 //-----------------------------------------------------------------------------
@@ -3729,11 +3762,9 @@ const char* DomoZWave_GetDriverStatistics( int32 home )
 
 	snprintf( dev_value, 1024, "sofcnt: %d|ackwaiting: %d|readaborts: %d|badchecksum: %d|readcnt: %d|writecnt: %d|cancnt: %d|nakcnt: %d|ackcnt: %d|oofcnt: %d|dropped: %d|retries: %d|callbacks: %d|badroutes: %d|noack: %d|netbusy: %d|nondelivery: %d|routedbusy: %d|broadcastreadcnt: %d|broascastwritecnt: %d", data.m_SOFCnt, data.m_ACKWaiting, data.m_readAborts, data.m_badChecksum, data.m_readCnt, data.m_writeCnt, data.m_CANCnt, data.m_NAKCnt, data.m_ACKCnt, data.m_OOFCnt, data.m_dropped, data.m_retries, data.m_callbacks, data.m_badroutes, data.m_noack, data.m_netbusy, data.m_nondelivery, data.m_routedbusy, data.m_broadcastReadCnt, data.m_broadcastWriteCnt );
 
-	// We convert from string to char*, because else garbage is reported to gambas
-	char *tvalue;
-	tvalue = new char [sizeof(dev_value) + 1];
-	strcpy( tvalue, dev_value );
-	return tvalue;
+	char *tdev_value;
+	tdev_value = dev_value;
+	return tdev_value;
 }
 
 //-----------------------------------------------------------------------------
