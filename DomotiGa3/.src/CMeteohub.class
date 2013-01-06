@@ -1,0 +1,219 @@
+' Gambas class file
+
+' Description:
+' Meteohub.class
+' Provide support for fetching logged data of a Meteohub.
+
+' Development Status:
+' Just started to build this one.
+
+' Links:
+' http://wiki.meteohub.de
+' http://www.meteohub.de/files/HTTP-Data-Logging-Protocol-v1.4.pdf
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+PROPERTY FetchURL AS String
+PROPERTY Polltime AS Integer
+PROPERTY MeteohubDebug AS Boolean
+
+PRIVATE sFetchURL AS String
+PRIVATE iPolltime AS Integer
+PRIVATE bMeteohubDebug AS Boolean
+
+PRIVATE hMeteohub AS NEW HttpClient
+PRIVATE tMeteohub AS Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start the poll timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the connection
+  TRY hMeteohub.Close
+
+  ' start poll timer for Meteohub
+  tMeteohub = NEW Timer AS "tMeteohub"
+  tMeteohub.Delay = iPolltime * 1000 ' multiply for seconds
+  tMeteohub.Start
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("Meteohub Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' stop timer and close handle
+  TRY tMeteohub.Stop
+  TRY hMeteohub.Close
+  Main.WriteLog(("Meteohub closed."))
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("Meteohub Weather Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tMeteohub_Timer()
+
+  hMeteohub = NEW HttpClient AS "hMeteohub"
+  hMeteohub.URL = sFetchURL
+  hMeteohub.TimeOut = 8
+  hMeteohub.Async = TRUE
+  hMeteohub.Get()
+  IF Main.bMeteohubDebug THEN Main.WriteDebugLog("[Meteohub] Fetching '" & sFetchUrl & "'")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' meteohub data fetched
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB hMeteohub_Finished()
+
+  DIM sBuffer AS String
+
+  SELECT hMeteohub.Code
+    CASE 200
+      IF Lof(hMeteohub) THEN READ #hMeteohub, sBuffer, Lof(hMeteohub)
+      IF Main.bMeteohubDebug THEN Main.WriteDebugLog("[Meteohub] Received '" & sBuffer & "'")
+      ParseData(sBuffer)
+    CASE ELSE
+      Main.WriteDebugLog(("[Meteohub] Unknown error occured while trying to get Meteohub data!"))
+  END SELECT
+  TRY hMeteohub.Close
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse raw data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB ParseData(sData AS String)
+
+  DIM sLine, sSensor, sValues, sForecast AS String
+  DIM aLines, aValues, aEachValue AS String[]
+  DIM aForecast AS String[] = ["Rainy", "Cloudy", "Some Clouds", "Sunny", "Snowy", "Clouds at Night", "Clear Night"]
+  DIM iDeviceId AS Integer
+
+  ' 20121108170502 rain0 0.0 329.7 0.0
+  ' 20121108170502 th0 10.5 94 9.6
+  ' 20121108170502 thb0 19.6 66 13.1 1015.5 1015.5 -1
+  ' 20121108170502 wind0 135 2.0 0.3 9.8
+
+  ' split per line
+  aLines = Split(sData, "\n")
+  FOR EACH sLine IN aLines
+    ' parse each line
+    aValues = Scan(sLine, "* * *")
+
+    IF aValues.Count = 3 THEN
+      sSensor = aValues[1]
+      sValues = aValues[2]
+        IF Left(sSensor, 3) = "thb" THEN ' thb0 - thb19
+          aEachValue = Scan(sValues, "* * * * * *")
+          IF aEachValue.Count = 6 THEN
+            IF aEachValue[5] = "-1" THEN ' not available
+              sForecast = ""
+            ELSE
+              sForecast = aForecast[Val(aEachValue[5])]
+            ENDIF
+            iDeviceId = Devices.Find(sSensor, Devices.FindInterface("Meteohub Interface"), UCase(Left(sSensor, 3)))
+            IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, aEachValue[0], aEachValue[1], aEachValue[3], sForecast)
+          ENDIF
+        ELSE IF Left(sSensor, 2) = "th" THEN ' th0 - th39
+          aEachValue = Scan(sValues, "* * *")
+          IF aEachValue.Count = 3 THEN
+            iDeviceId = Devices.Find(sSensor, Devices.FindInterface("Meteohub Interface"), UCase(Left(sSensor, 2)))
+            IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, aEachValue[0], aEachValue[1], aEachValue[2], "")
+          ENDIF
+        ELSE IF Left(sSensor, 1) = "t" THEN ' t0 - t39
+          iDeviceId = Devices.Find(sSensor, Devices.FindInterface("Meteohub Interface"), Left(sSensor, 1))
+          IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sValues, "", "", "")
+        ELSE IF Left(sSensor, 4) = "wind" THEN ' wind0 - wind19
+          aEachValue = Scan(sValues, "* * * *")
+          IF aEachValue.Count = 4 THEN
+            iDeviceId = Devices.Find(sSensor, Devices.FindInterface("Meteohub Interface"), UCase(Left(sSensor, 4)))
+            IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, aEachValue[0], aEachValue[1], aEachValue[2], aEachValue[3])
+          ENDIF
+        ELSE IF Left(sSensor, 4) = "rain" THEN ' rain0 - rain19
+          aEachValue = Scan(sValues, "* * *")
+          IF aEachValue.Count = 3 THEN
+            iDeviceId = Devices.Find(sSensor, Devices.FindInterface("Meteohub Interface"), UCase(Left(sSensor, 4)))
+            IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, aEachValue[0], aEachValue[1], aEachValue[2], "")
+          ENDIF
+        ELSE IF Left(sSensor, 2) = "uv" THEN ' uv0 - uv19
+          iDeviceId = Devices.Find(sSensor, Devices.FindInterface("Meteohub Interface"), UCase(Left(sSensor, 2)))
+          IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sValues, "", "", "")
+        ELSE IF Left(sSensor, 3) = "sol" THEN ' sol0 - sol19
+          iDeviceId = Devices.Find(sSensor, Devices.FindInterface("Meteohub Interface"), UCase(Left(sSensor, 3)))
+          IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sValues, "", "", "")
+        ELSE
+          IF Main.bMeteohubDebug THEN Main.WriteDebugLog(("[Meteohub] Data from unsupported device type '") & sSensor & ("' received."))
+        ENDIF
+    ENDIF
+  NEXT
+
+CATCH
+  Main.WriteDebugLog("[Meteohub] Error parsing Meteohub data " & ERROR.Text & " at " & ERROR.Where)
+
+END
+
+PUBLIC SUB hMeteohub_Error()
+
+  Main.WriteDebugLog(("[Meteohub] Error fetching meteohub data: ") & hMeteohub.Status)
+  TRY hMeteohub.Close
+
+END
+
+' implement properties
+PRIVATE FUNCTION FetchURL_Read() AS String
+
+  RETURN sFetchURL
+
+END
+
+PRIVATE SUB FetchURL_Write(Value AS String)
+
+  sFetchURL = Value
+
+END
+
+PRIVATE FUNCTION Polltime_Read() AS Integer
+
+  RETURN iPolltime
+
+END
+
+PRIVATE SUB Polltime_Write(Value AS Integer)
+
+  iPolltime = Value
+
+END
+
+PRIVATE FUNCTION MeteohubDebug_Read() AS Boolean
+
+  RETURN bMeteohubDebug
+
+END
+
+PRIVATE SUB MeteohubDebug_Write(Value AS Boolean)
+
+  bMeteohubDebug = Value
+
+END

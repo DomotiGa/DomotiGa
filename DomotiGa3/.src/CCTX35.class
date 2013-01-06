@@ -1,0 +1,530 @@
+' Gambas class file
+
+' Description:
+' CCTX35.class
+' Support for Xanura CTX35 and TI103 X10 interface.
+
+' Development Status:
+' Controlling devices works, with on/off, dim and bright, reading of on/off status works, reading of dim/bright needs to be implemented.
+
+' Links:
+' http://www.hometoys.com/htinews/dec02/articles/kingery16/kingery16.htm
+
+' Credits:
+' Thanks to Pieter from BWired.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.en
+
+' Read file called COPYING for license details.
+
+PROPERTY Port AS String
+PROPERTY Baud AS String
+PROPERTY PollTime AS Integer
+PROPERTY GlobalX10 AS Boolean
+PROPERTY CTX35Debug AS Boolean
+
+PRIVATE sPort AS String
+PRIVATE sBaud AS String
+PRIVATE iPollTime AS Integer
+PRIVATE bGlobalX10 AS Boolean
+PRIVATE bCTX35Debug AS Boolean
+
+PRIVATE RecBuf AS String
+
+PUBLIC hCTX35 AS NEW SerialPort
+PUBLIC tCTX35Poll AS Timer
+PUBLIC tCTX35Led AS Timer
+PUBLIC tCTX35Busy AS Timer
+
+PRIVATE cQueue AS NEW Collection    ' command buffer
+PRIVATE bControllerBusy AS Boolean  ' waiting for delay timer to finish
+PRIVATE aCTX AS NEW String[3, 7]    ' buffer received commands
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the port
+  TRY hCTX35.Close
+
+  ' get a new one
+  hCTX35 = NEW Serialport AS "CTX35"
+
+  WITH hCTX35
+    .PortName = sPort
+    .Speed = sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  END WITH
+
+  ' start poll timer for X10 status LED
+  tCTX35Led = NEW Timer AS "tCTX35LED"
+  tCTX35Led.Delay = 100
+  tCTX35Led.Stop
+
+  ' define timer for CTX35 controller busy
+  tCTX35Busy = NEW Timer AS "tCTX35Busy"
+  tCTX35Busy.Stop
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("CTX35 Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' close port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try stop running timers
+  TRY tCTX35Poll.Stop
+  TRY tCTX35Busy.Stop
+  TRY tCTX35Led.Stop
+
+  ' try to close the connection
+  TRY hCTX35.Close
+
+  Main.WriteLog(("CTX35 serial port close."))
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("CTX35 Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+PUBLIC SUB Run()
+
+  tCTX35Poll = NEW Timer AS "tCTX35Poll"
+  tCTX35Poll.Delay = iPollTime
+  tCTX35Poll.Start
+
+END
+
+PRIVATE SUB ProcessReceivedChar(sData AS String)
+
+  Main.ControlLed("X10", "On")
+  IF Main.bServer THEN tCTX35Led.Start
+
+  IF sdata = "$" THEN ' begin of packet
+    RecBuf = sData
+  ELSE
+    RecBuf &= sData
+  ENDIF
+
+  ' the CTX35 sometimes sends an incomplete packet when sending BOFFBOFF, this fixes the packet so it's valid
+  IF Right$(RecBuf, 9) = "BOFFBOFF8" THEN RecBuf = Left$(RecBuf, -1) & "85#"
+
+  ' received complete packet
+  IF Right$(RecBuf, 1) = "#" THEN
+    ProcessX10(RecBuf)
+  ENDIF
+
+END
+
+PRIVATE SUB ProcessX10(sStr AS String)
+
+  DIM iPos AS Integer = 1
+  DIM sChar AS String
+
+  RecBuf = ""
+  IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] < " & sStr)
+
+  ' process special packets
+  SELECT sStr
+    CASE "$<2800!4B#" ' ack packet
+      IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] < Ack received!")
+      RETURN
+    CASE "$<2800?69#" ' wrong checksum received
+      IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] < Wrong checksum!")
+      RETURN
+    CASE "$<2800!S0CE#" ' interface buffer full
+      IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] < Buffer is full!")
+      RETURN
+  END SELECT
+
+  ' check checksum first
+  IF NOT TestCheckSum(sStr) THEN
+    IF Main.bCTX35Debug THEN Main.WriteDebugLog(("[CTX35] Checksum error!"))
+    RETURN
+  ENDIF
+
+  sStr = LTrim$(Mid$(sStr, 8, Len(sStr) - 10))
+
+  DO
+    IF Mid$(sStr, iPos, 1) = " " THEN INC iPos
+    sChar = Mid$(sStr, iPos, 3)
+    IF Right$(sChar, 1) LIKE "[0-9]" AND Left$(sChar, 1) LIKE "[A-P]" THEN ' code found
+      iPos += 3
+      ProcessCode("Code", sChar)
+    ELSE IF InStr(sChar, "ON") THEN ' status found
+      iPos += 3
+      ProcessCode("Status", sChar)
+    ELSE IF InStr(sChar, "OF") THEN ' status found
+      sChar = Mid$(sStr, iPos, 3)
+      iPos += 4
+      ProcessCode("Status", sChar)
+    ELSE IF InStr(sChar, "SR") THEN ' status request found
+      iPos += 4
+      ProcessCode("Status Request", sChar)
+    ELSE IF Right$(sChar, 2) = "SO" THEN ' status found
+      IF InStr(sStr, "SON") THEN
+        ProcessCode("Status", Left$(sChar, 1) & "ON")
+      ELSE IF InStr(sStr, "SOF") THEN
+        ProcessCode("Status", Left$(sChar, 1) & "OF")
+      ENDIF
+      iPos += 4
+    ELSE
+      INC iPos
+    ENDIF
+  LOOP UNTIL iPos >= Len(sStr)
+
+END
+
+PRIVATE SUB ProcessCode(sType AS String, sValue AS String)
+
+  DIM iCnt, iCnt2 AS Integer
+  DIM bCodefound AS Boolean
+
+  FOR iCnt = 0 TO 2
+    SELECT sType
+      CASE "Code"
+        bCodefound = FALSE
+        IF Main.bCTX35Debug THEN Main.WriteDebugLog("[CTX35] Code: " & sValue)
+        FOR iCnt2 = 0 TO 2
+          IF aCTX[iCnt, 0] = sValue AND NOT aCTX[iCnt, 5] THEN bCodefound = TRUE
+        NEXT
+        IF aCTX[iCnt, 0] = "" AND NOT bCodefound THEN
+          aCTX[iCnt, 0] = sValue
+          aCTX[iCnt, 4] = Time
+          RETURN
+        ELSE IF aCTX[iCnt, 0] = sValue AND aCTX[iCnt, 5] = "" AND bCodefound THEN
+          aCTX[iCnt, 1] = sValue
+          RETURN
+        ELSE IF aCTX[iCnt, 5] = "OK" AND NOT bCodefound THEN ' different value but old one was complete so overwrite
+          aCTX[iCnt, 0] = sValue
+          aCTX[iCnt, 1] = ""
+          aCTX[iCnt, 2] = ""
+          aCTX[iCnt, 3] = ""
+          aCTX[iCnt, 4] = Time
+          aCTX[iCnt, 5] = ""
+          aCTX[iCnt, 6] = ""
+          RETURN
+        ELSE IF DateDiff(Time, aCTX[iCnt, 4], gb.Second) > 10 THEN ' incomplete code/status, overwrite
+          Main.WriteDebugLog(("[CTX35] Received Code without Status : ") & aCTX[iCnt, 0] & " " & aCTX[iCnt, 1] & " " & aCTX[iCnt, 2] & " " & aCTX[iCnt, 3] & " " & aCTX[iCnt, 4] & " " & aCTX[iCnt, 5] & " " & aCTX[iCnt, 6])
+          aCTX[iCnt, 0] = sValue
+          aCTX[iCnt, 1] = ""
+          aCTX[iCnt, 2] = ""
+          aCTX[iCnt, 3] = ""
+          aCTX[iCnt, 4] = Time
+          aCTX[iCnt, 5] = ""
+          aCTX[iCnt, 6] = ""
+          RETURN
+        ENDIF
+      CASE "Status Request"
+        IF Main.bCTX35Debug THEN Main.WriteDebugLog(("[CTX35] Status Request ") & sValue)
+        IF aCTX[iCnt, 0] = "" THEN
+          RETURN
+        ELSE IF Left$(aCTX[iCnt, 0], 1) = Left$(sValue, 1) AND aCTX[iCnt, 5] = "" THEN
+          aCTX[iCnt, 6] = "SRQ" ' status request
+          RETURN
+        ENDIF
+      CASE "Status"
+        IF Main.bCTX35Debug THEN Main.WriteDebugLog(("[CTX35] Status: ") & sValue)
+        IF aCTX[iCnt, 2] = "" AND Left$(aCTX[iCnt, 0], 1) = Left$(sValue, 1) THEN
+          aCTX[iCnt, 5] = "OK"
+          aCTX[iCnt, 4] = Time
+          aCTX[iCnt, 2] = Right$(sValue, 2)
+          UpdateX10(aCTX[iCnt, 0], Right$(sValue, 2))
+          RETURN
+        ELSE IF aCTX[iCnt, 3] = "" AND Left$(aCTX[iCnt, 0], 1) = Left$(sValue, 1) THEN
+          aCTX[iCnt, 3] = Right$(sValue, 2)
+          RETURN
+        ENDIF
+      END SELECT
+  NEXT
+
+END
+
+PRIVATE SUB UpdateX10(sCode AS String, sCommand AS String)
+
+  DIM iDeviceId AS Integer
+
+  IF Main.bCTX35Debug THEN Main.WriteDebugLog(("[CTX35] Received command '") & sCommand & ("' for device '") & sCode & "'")
+
+  IF bGlobalX10 THEN
+    iDeviceId = Devices.FindAll(sCode, 9999, "X10")
+  ELSE
+    iDeviceId = Devices.Find(sCode, Devices.FindInterface("Xanura CTX35"), "X10")
+  ENDIF
+  IF iDeviceId THEN
+    IF sCommand = "ON" THEN
+      Devices.ValueUpdate(iDeviceId, "On", "", "", "")
+    ELSE IF sCommand = "OF" THEN
+      Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
+    ENDIF
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' CTX35 controller busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tCTX35Busy_Timer()
+
+  bControllerBusy = FALSE
+  tCTX35Busy.Stop
+
+  IF cQueue.Count THEN ' if there are more commands left in queue, send next one
+    IF bCTX35Debug THEN Main.WriteDebugLog(("[CTX35] Sending next command from Queue (count = " & cQueue.Count & ")"))
+    DoQueue()
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' ctx35 poll routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tCTX35Poll_Timer()
+
+  ' sent poll command only if no command is already queued
+  IF NOT bControllerBusy THEN QueueCommand("$>2800008C#")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB QueueCommand(sCmd AS String)
+
+  ' add command to queue
+  cQueue.Add(sCmd, Rnd)
+
+  ' if controller is not busy process it
+  IF bControllerBusy = FALSE THEN DoQueue()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB DoQueue()
+
+  DIM sCmd AS String
+
+  FOR EACH sCmd IN cQueue
+    WriteCommand(sCmd, cQueue.Key)
+    BREAK ' only do first one
+  NEXT
+
+END
+
+PUBLIC SUB CTX35_Read()
+
+  DIM bData AS Byte
+
+  TRY READ #hCTX35, bData
+  IF NOT ERROR THEN
+    ProcessReceivedChar(Chr(bData))
+  ELSE
+    Main.WriteDebugLog(("[CTX35] Error reading data from the serial port! ->") & ERROR.Text)
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send packet to CTX35 interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB WriteCommand(sBuffer AS String, sKey AS String)
+
+  Main.ControlLed("X10", "On")
+  IF Main.bServer THEN tCTX35Led.Start
+
+  IF bCTX35Debug THEN Main.WriteDebugLog("[CTX35] > " & sBuffer)
+
+  TRY PRINT #hCTX35, sBuffer
+  IF ERROR THEN Main.WriteDebugLog(("[CTX35] Error writing data to the serial port! ->") & ERROR.Text)
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  ' start timer to wait before sending next command
+  tCTX35Busy.Delay = 100 ' 100mS (initial test value)
+  tCTX35Busy.Start
+  IF bControllerBusy = FALSE THEN bControllerBusy = TRUE
+
+END
+
+PUBLIC SUB tCTX35Led_Timer()
+
+  Main.ControlLed("X10", "Off")
+  IF Main.bServer THEN tCTX35Led.Stop
+
+END
+
+PUBLIC SUB SendCommand(sAddress AS String, sValue AS String)
+
+  DIM sHouseCode, sAddr, sStr AS String
+
+  ' check if it contains a valid address
+  IF NOT (sAddress LIKE "[A-P][0-1][0-9]*") THEN
+    IF Main.bCTX35Debug THEN Main.WriteDebugLog(("[CTX35] Got invalid address " & sAddress & "!"))
+    RETURN
+  ENDIF
+
+  ' get house code from address
+  sHouseCode = Left$(sAddress, 1)
+
+  ' translate to CTX command
+  sStr = X10toCTX(sValue)
+  IF Len(sStr) = 0 THEN ' not valid
+    IF Main.bCTX35Debug THEN Main.WriteDebugLog(("[CTX35] Got invalid command " & sValue & "!"))
+    RETURN
+  ENDIF
+
+  ' todo: check for repeated commands and support extended commands
+  sStr = String$(2, sHouseCode & sStr)
+  sAddr = String$(2, sAddress)
+
+  QueueCommand(CreateWithChecksum((sAddr & " " & sStr)))
+
+END
+
+PRIVATE SUB TestCheckSum(sString AS String) AS Boolean
+
+  DIM sHead, sTail AS String
+  DIM iLoop, iChecksum AS Integer
+
+  ' split string
+  sTail = Right$(sString, 3)
+  sHead = Left$(sString, -3)
+
+  IF NOT sTail AND sHead THEN RETURN FALSE
+
+  FOR iLoop = 1 TO Len(sHead)
+    iCheckSum = iChecksum + Asc(Mid$(sHead, iLoop, 1)) AND 255
+  NEXT
+
+  ' check result
+  IF sTail = Hex$(iChecksum, 2) & "#" THEN RETURN TRUE
+
+  RETURN FALSE
+
+END
+
+PRIVATE SUB CreateWithChecksum(sCommand AS String) AS String
+
+  DIM iChecksum, iLoop AS Integer
+
+  sCommand = "$>28001" & sCommand
+
+  FOR iLoop = 1 TO Len(sCommand)
+    iCheckSum += Asc(Mid$(sCommand, iLoop, 1))
+  NEXT
+
+  RETURN sCommand & Right$(Hex$(iChecksum), 2) & "#"
+
+END
+
+PRIVATE SUB X10toCTX(sCommand AS String) AS String
+
+  SELECT UCase(sCommand)
+    CASE "ALL_UNITS_OFF"
+      RETURN "AUF"
+    CASE "ALL_LIGHTS_ON"
+      RETURN "ALN"
+    CASE "ALL_LIGHTS_OFF"
+      RETURN "ALF"
+    CASE "ON"
+      RETURN "ON"
+    CASE "OFF"
+      RETURN "OFF"
+    CASE "DIM"
+      RETURN "DIM"
+    CASE "BRIGHT"
+      RETURN "BGT"
+    CASE "HAIL_REQ"
+      RETURN "HRQ"
+    CASE "PREDIM1"
+      RETURN "PR0"
+    CASE "PREDIM2"
+      RETURN "PR1"
+    CASE "STATUS"
+      RETURN "SRQ"
+  END SELECT
+
+  RETURN ""
+
+END
+
+' implement properties
+FUNCTION Port_Read() AS String
+
+  RETURN sPort
+
+END
+
+SUB Port_Write(Value AS String)
+
+  sPort = Value
+
+END
+
+PRIVATE FUNCTION Baud_Read() AS String
+
+  RETURN sBaud
+
+END
+
+PRIVATE SUB Baud_Write(Value AS String)
+
+  sBaud = Value
+
+END
+
+PRIVATE FUNCTION CTX35Debug_Read() AS Boolean
+
+  RETURN bCTX35Debug
+
+END
+
+PRIVATE SUB CTX35Debug_Write(Value AS Boolean)
+
+  bCTX35Debug = Value
+
+END
+
+PRIVATE FUNCTION PollTime_Read() AS Integer
+
+  RETURN iPollTime
+
+END
+
+PRIVATE SUB PollTime_Write(Value AS Integer)
+
+  iPollTime = Value
+
+END
+
+PRIVATE FUNCTION GlobalX10_Read() AS Boolean
+
+  RETURN bGlobalX10
+
+END
+
+PRIVATE SUB GlobalX10_Write(Value AS Boolean)
+
+  bGlobalX10 = Value
+
+END

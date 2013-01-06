@@ -1,0 +1,689 @@
+' Gambas class file
+
+' Description:
+' CDSC.class
+' Support for DSC Security Panels.
+
+' Development Status:
+' Beta. Needs Testing.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Credits:
+' Tradiuz for IT100 code.
+
+' This module is written by Timo Sariwating in 2009-2010.
+
+' Read file called COPYING for license details.
+
+PROPERTY Port AS String
+PROPERTY Baud AS String
+PROPERTY Type AS Integer      ' 0 = PC5401, 1 = IT100
+PROPERTY MasterCode AS String ' must be a 4 or 6 digit code
+PROPERTY Partition AS String  ' 1 - 8
+PROPERTY DSCDebug AS Boolean
+
+PRIVATE sPort AS String
+PRIVATE sBaud AS String
+PRIVATE iType AS Integer
+PRIVATE sMasterCode AS String ' master code is required for a few functions, user codes could be used instead for most.
+PRIVATE sPartitionID AS String = 1 ' since a lot of the codes can be applied to any one of the 8 (!) partitions
+PRIVATE bDSCDebug AS Boolean
+
+PUBLIC CONST dscPC5401 AS Integer = 0
+PUBLIC CONST dscIT100 AS Integer = 1
+
+PUBLIC hDSC AS NEW SerialPort
+PUBLIC tDSC AS NEW Timer
+
+PUBLIC sBuffer AS String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Connect() AS Boolean
+
+  ' try to close the port
+  TRY hDSC.Close
+
+  ' get a new one
+  hDSC = NEW Serialport AS "DSC"
+
+  WITH hDSC
+    .PortName = sPort
+    .Speed = sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .EndOfLine = 1
+    .Open()
+  END WITH
+
+  DSC_Descriptive_Arming()
+  DSC_System_Time()
+  DSC_LCDText()
+  TX("001")
+
+   ' start poll timer for DSC status LED
+  tDSC = NEW Timer AS "tDSCLED"
+  tDSC.Delay = 250
+  tDSC.Stop
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("DSC Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Enable Descriptive Arming
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB DSC_Descriptive_Arming()
+
+  IF iType = dscIT100 THEN RETURN ' the IT-100 does not support this
+  TX("0501")
+  IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Descriptive Arming Enabled"))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Send System Time to DSC Panel
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB DSC_System_Time()
+
+  DIM sTime_Now AS String
+
+  sTime_Now = "010" & Format$(Now, "hhnnmmddyy")
+  TX(sTime_Now)
+  IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] System time set to ") & Now & (" on alarm system"))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read Serial Port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB DSC_Read()
+
+  DIM sData AS String
+
+  READ #hDSC, sData, 1
+  IF sData = Chr(10) THEN ' buffer until newline then parse
+    IF Len(sBuffer) > 1 THEN RX(sBuffer)
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  END IF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' RX - Process the Received Data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB RX(sStr AS String)
+
+  DIM sString, sCommand, sData, sChecksum, sCheckSumCalculating, sCheckSumCalculated AS String
+  DIM iCheckSumFloat, iInd, iDeviceId, iVirtDeviceId AS Integer
+
+  ' read rs-232 datastream
+  sCommand = Left$(sStr, 3)
+  sData = Left$(Mid$(sStr, 4, Len(sStr)), -3)
+  sChecksum = Right$(sStr, 3)
+
+  ' calculate checksum
+  FOR iInd = 1 TO Len(sCommand)
+    sCheckSumCalculating = Asc(Mid$(sCommand, iInd, 1))
+    iCheckSumFloat = iCheckSumFloat + sCheckSumCalculating
+  NEXT
+    FOR iInd = 1 TO Len(sData)
+    sCheckSumCalculating = Asc(Mid$(sData, iInd, 1))
+    iCheckSumFloat = iCheckSumFloat + sCheckSumCalculating
+  NEXT
+  sCheckSumCalculated = Right$(Hex$(iCheckSumFloat), 2)
+
+  ' process if checksum is ok
+  IF Val(sChecksum) = Val(sCheckSumCalculated)
+
+    iVirtDeviceId = Devices.FindVirtualDeviceID("securitysystem")
+
+    SELECT CASE sCommand
+      CASE 500
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Command Acknowledge ") & sData)
+      CASE 501
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Bad Checksum [501]"))
+      CASE 502
+        Error_Code(sData)
+      CASE 550
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] System Time ") & sData)
+      CASE 560
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Ring Detected"))                    'IT-100
+      CASE 561
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Indoor Temperature ") & sData)      'Requires a Escort 5580TC and one Enerstat thermostat
+      CASE 562
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Outdoor Temperature ") & sData)     'Requires a Escort 5580TC and one Enerstat thermostat
+      CASE 563
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Thermostat Set Point ") & sData)    'IT-100 - requires a Escort 5580TC and one Enerstat thermostat
+      CASE 570
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Broadcast Labels ") & sData)        'IT-100 - FIXME - This had a LOT of data for use in autogenerating devices
+      CASE 580
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Baud Rate Set ") & sData)           'IT-100 -  0 - 9600, 1 - 19200, 2 - 38400, 3 - 57600, 4 - 115200
+      CASE 601
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & Left$(sData, 1) & (" Zone ") & Right$(sData, -1) & (" !ALARM!"))
+        iDeviceId = Devices.Find(Right$(sData, -1), Devices.FindInterface("DSC Interface"), "DSC DWS")
+        IF iDeviceId THEN
+          TRY Main.hDB.Exec("UPDATE security SET lcd_line1 = &1, lcd_line2 = &2 WHERE id = 0", "System in Alarm <>", Devices.FindNameForDevice(iDeviceId))
+          IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "!ALARM!", "", Devices.FindNameForDevice(iDeviceId), "")
+          IF Main.bSMSEnabled THEN Main.SendSMS(("DomotiGa: Security System is in Alarm! Zone: " & Devices.FindNameForDevice(iDeviceId)), Main.sSMSContact)
+        ELSE
+          TRY Main.hDB.Exec("UPDATE security SET lcd_line1 = &1, lcd_line2 = &2 WHERE id = 0", "System in Alarm <>", ("Zone " & Right$(sData, -1)))
+          IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "!ALARM!", "", "Zone " & Right$(sData, -1), "")
+          IF Main.bSMSEnabled THEN Main.SendSMS(("DomotiGa: Security System is in Alarm! Zone: " & Right$(sData, -1)), Main.sSMSContact)
+        END IF
+        Main.BroadcastEvent("[SecurityUpdate]")
+      CASE 602
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & Left$(sData, 1) & (" Zone ") & Right$(sData, -1) & (" Alarm Restored"))
+      CASE 603
+        iDeviceId = Devices.Find(Right$(sData, -1), Devices.FindInterface("DSC Interface"), "DSC CONTACT")
+        IF iDeviceId THEN
+          IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & Left$(sData, 1) & (" Zone ") & Right$(sData, -1) & " " & Devices.FindNameForDevice(iDeviceId) & (" Tamper"))
+          Devices.ValueUpdate(iDeviceId, "", "Tamper", "", "")
+        END IF
+      CASE 604
+        iDeviceId = Devices.Find(Right$(sData, -1), Devices.FindInterface("DSC Interface"), "DSC CONTACT")
+        IF iDeviceId THEN
+          IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Partition ") & Left$(sData, 1) & (" Zone ") & Right$(sData, -1) & " " & Devices.FindNameForDevice(iDeviceId) & (" Tamper Restored"))
+          Devices.ValueUpdate(iDeviceId, "", "Secure", "", "")
+        END IF
+      CASE 605
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Zone ") & sData & (" Fault"))
+      CASE 606
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Zone ") & sData & (" Fault Restored"))
+      CASE 609
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC Interface"), "DSC PIR")
+        IF bDSCDebug AND iDeviceId THEN
+          IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Zone ") & sData & " " & Devices.FindNameForDevice(iDeviceId) & (" Open"))
+        END IF
+        IF iDeviceId THEN
+          SELECT CASE Devices.FindModuleForDevice(iDeviceId)
+          CASE 40
+            Devices.ValueUpdate(iDeviceId, "Motion", "", "", "")
+          CASE 41
+            Devices.ValueUpdate(iDeviceId, "Open", "", "", "")
+          DEFAULT
+            Devices.ValueUpdate(iDeviceId, "Open", "", "", "")
+          END SELECT
+        END IF
+      CASE 610
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC Interface"), "DSC PIR")
+        IF bDSCDebug AND iDeviceId THEN
+          IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Zone ") & sData & " " & Devices.FindNameForDevice(iDeviceId) & (" Restored"))
+        END IF
+        IF iDeviceId THEN
+          SELECT CASE Devices.FindModuleForDevice(iDeviceId)
+          CASE 40
+            Devices.ValueUpdate(iDeviceId, "No Motion", "", "", "")
+          CASE 41
+            Devices.ValueUpdate(iDeviceId, "Closed", "", "", "")
+          DEFAULT
+            Devices.ValueUpdate(iDeviceId, "Closed", "", "", "")
+          END SELECT
+        ENDIF
+      CASE 620
+        IF bDSCDebug THEN
+          IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Duress Alarm ") & sData)
+        END IF
+      CASE 621
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Fire Alarm Key Activated"))
+      CASE 622
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Fire Alarm Key Restored"))
+      CASE 623
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Key Alarm Key Activated"))
+      CASE 624
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Key Alarm Restored"))
+      CASE 625
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Panic Key Alarm Activated"))
+      CASE 626
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Panel Key Alarm Restored"))
+      CASE 631
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] 2-Wire Smoke Alarm Activated"))
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC Interface"), "DSC SMOKE")
+        IF iDeviceId THEN
+          Devices.ValueUpdate(iDeviceId, "Alarm", "", "", "")
+        END IF
+      CASE 632
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] 2-Wire Smoke Alarm Restored"))
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC Interface"), "DSC SMOKE")
+        IF iDeviceId THEN
+          Devices.ValueUpdate(iDeviceId, "Normal", "", "", "")
+        END IF
+      CASE 650
+        IF bDSCDebug THEN Main.WriteDebugLog("[DSC] Partition " & sData & " Ready")
+        TRY Main.hDB.Exec("UPDATE security SET ready = TRUE WHERE id = 0")
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "Ready", "", "")
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC Interface"), "DSC Partition")
+        IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "", "Ready", "", "")
+        Main.BroadcastEvent("[SecurityUpdate]")
+      CASE 651
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Partition ") & sData & (" Not Ready"))
+        TRY Main.hDB.Exec("UPDATE security SET ready = FALSE WHERE id = 0")
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "Not Ready", "", "")
+        iDeviceId = Devices.Find(Right$(sData, -1), Devices.FindInterface("DSC Interface"), "DSC Partition")
+        IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "", "Not Ready", "", "")
+        Main.BroadcastEvent("[SecurityUpdate]")
+      CASE 652
+        TRY Main.hDB.Exec("UPDATE security SET ready = FALSE, armed = TRUE WHERE id = 0")
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", " ", "", "")
+        iDeviceId = Devices.Find(Left$(sData), Devices.FindInterface("DSC Interface"), "DSC Partition")
+        SELECT CASE Right$(sData)
+          CASE 0
+            IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & Left$(sData) & (" Armed Away"))
+            TRY Main.hDB.Exec("UPDATE security SET lcd_line1 = &1, lcd_line2 = &2 WHERE id = 0", "System Armed", "in Away Mode <>")
+            IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "Armed Away", "", "", "")
+            Main.BroadcastEvent("[SecurityUpdate]")
+          CASE 1
+            IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & Left$(sData) & (" Armed Stay"))
+            TRY Main.hDB.Exec("UPDATE security SET lcd_line1 = &1, lcd_line2 = &2 WHERE id = 0", "System Armed", "in Stay Mode <>")
+            IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "Armed Stay", "", "", "")
+            Main.BroadcastEvent("[SecurityUpdate]")
+          CASE 2
+            IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & Left$(sData) & (" Armed Zero Entry Away"))
+            TRY Main.hDB.Exec("UPDATE security SET lcd_line1 = &1, lcd_line2 = &2 WHERE id = 0", "System Armed", "in Zero Entry Away Mode <>")
+            IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "Armed Zero Entry Away", "", "", "")
+            Main.BroadcastEvent("[SecurityUpdate]")
+          CASE 3
+            IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & Left$(sData) & (" Armed Zero Entry Stay"))
+            TRY Main.hDB.Exec("UPDATE security SET lcd_line1 = &1, lcd_line2 = &2 WHERE id = 0", "System Armed", "in Zero Entry Stay Mode <>")
+            IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "Armed Zero Entry Stay", "", "", "")
+            Main.BroadcastEvent("[SecurityUpdate]")
+        END SELECT
+      CASE 654
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & sData & (" !ALARM!"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "!ALARM!", "Partition " & sData, "", "")
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC Interface"), "DSC Partition")
+        IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "!ALARM!", "", "", "")
+      CASE 655
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & sData & (" Disarmed"))
+        TRY Main.hDB.Exec("UPDATE security SET ready = TRUE, armed = FALSE WHERE id = 0")
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "Disarmed", "Ready", "", "")
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC Interface"), "DSC Partition")
+        IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "Disarmed", "Ready", "", "")
+        DSC_LCDText()
+      CASE 656
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Exit Delay Partition ") & sData)
+        TRY Main.hDB.Exec("UPDATE security SET armed = TRUE, lcd_line1 = &1, lcd_line2 = &2 WHERE id = 0", "Exit Delay in", "Progress")
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "Exit Delay", "Arming", "", "")
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC Interface"), "DSC Partition")
+        IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "Exit Delay", "Arming", "", "")
+        Main.BroadcastEvent("[SecurityUpdate]")
+      CASE 657
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Entry Delay Partition ") & sData)
+        TRY Main.hDB.Exec("UPDATE security SET lcd_line1 = &1, lcd_line2 = &2 WHERE id = 0", "Entry Active", "Enter Your Code")
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "Entry Delay", "", "", "")
+        iDeviceId = Devices.Find(sData, Devices.FindInterface("DSC Interface"), "DSC Partition")
+        IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "Entry Delay", "Pre-Alarm", "", "")
+        Main.BroadcastEvent("[SecurityUpdate] Entry")
+      CASE 658
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Keypad Lock-out Partition ") & sData)
+      CASE 670
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Invalid Acces Code Partition ") & sData)
+        TRY Main.hDB.Exec("UPDATE security SET lcd_line1 = &1, lcd_line2 = &2 WHERE id = 0", "Invalid Access Code", "")
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "Invalid Access Code", "", "", "")
+        Main.BroadcastEvent("[SecurityUpdate]")
+      CASE 671
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Function Not Available Partition ") & sData)
+      CASE 672
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Failure to Arm - Partition " & sData))
+      CASE 673
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Busy - Partition " & sData))
+      CASE 700
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & Left$(sData, 1) & (" armed by user ") & Right$(sData, -1))
+      CASE 701
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Special Closing Partition ") & sData)
+      CASE 702
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Partial Closing Partition ") & sData)
+      CASE 750
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Partition ") & Left$(sData, 1) & (" disarmed by user ") & Right$(sData, -1))
+      CASE 751
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Special Opening Partition ") & sData)
+      CASE 800
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Panel Battery Trouble"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", "Battery Trouble", "")
+      CASE 801
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Panel Battery Trouble Restore"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", " ", "")
+      CASE 802
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Panel AC Trouble"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", "AC Trouble", "")
+      CASE 803
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Panel AC Trouble Restore"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", " ", "")
+      CASE 806
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] System Bell Trouble"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", "Bell Trouble", "")
+      CASE 807
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] System Bell Trouble Restored"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", " ", "")
+      CASE 810
+        Main.WriteLog(("[DSC] TLM Trouble"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", "TLM Trouble", "")
+      CASE 811
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] TLM Trouble Restored"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", " ", "")
+      CASE 812
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] TLM Line 2 Trouble"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", "TLM Line 2 Trouble", "")
+      CASE 813
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] TLM Line 2 Trouble Restored"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", " ", "")
+      CASE 814
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] FTC Trouble"))
+      CASE 816
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Event Buffer Near Full"))
+      CASE 821
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Wireless Low Battery Zone ") & sData)
+      CASE 822
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Wireless Low Battery Restore Zone ") & sData)
+      CASE 825
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Wireless Low Battery Key ") & sData)
+      CASE 826
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Wireless Low Battery Restore Key ") & sData)
+      CASE 827
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Wireless Low Battery Handheld ") & sData)
+      CASE 828
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Wireless Low Battery Restore Handheld ") & sData)
+      CASE 829
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] General System Tamper"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", "System Tamper", "")
+      CASE 830
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] General System Tamper Restored"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", " ", "")
+      CASE 831
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] ESCORT 5580TC Trouble"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", "ESCORT 5580TC Trouble", "")
+      CASE 832
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] ESCORT 5580TC Trouble Restored"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", " ", "")
+      CASE 840
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Trouble Status Partition ") & sData)
+        TRY Main.hDB.Exec("UPDATE security SET trouble = TRUE WHERE id = 0")
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", "Trouble " & sData, "")
+        Main.BroadcastEvent("[SecurityUpdate]")
+      CASE 841
+       IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Trouble Status Partition ") & sData & (" Restored"))
+        TRY Main.hDB.Exec("UPDATE security SET trouble = FALSE WHERE id = 0")
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", " ", "")
+        Main.BroadcastEvent("[SecurityUpdate]")
+      CASE 842
+        IF bDSCDebug THEN Main.WriteLog(("[DSC] Fire Trouble Alarm"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", "Fire Trouble", "")
+      CASE 843
+        IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Fire Trouble Restored"))
+        IF iVirtDeviceId THEN Devices.ValueUpdate(iVirtDeviceId, "", "", " ", "")
+      CASE 900
+        SELECT CASE Len(sMasterCode)
+          CASE 4
+            IF bDSCDebug THEN Main.WriteLog(("[DSC] Sending Master Code"))
+            TX("200" & sPartitionID & sMasterCode)
+          CASE 6
+            TX("200" & sPartitionID & sMasterCode)
+            IF bDSCDebug THEN Main.WriteLog(("[DSC] Sending Master Code"))
+          DEFAULT
+            IF bDSCDebug THEN Main.WriteLog(("[DSC] Code Required"))
+          END SELECT
+        Main.BroadcastEvent("[SecurityUpdate] Entry")
+    END SELECT
+    ' checksum failed
+  ELSE
+    IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Bad CheckSum"))
+  END IF
+
+  Main.ControlLed("DSC", "On")
+  tDSC.Start
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Process Error Codes
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Error_Code(sStr AS String)
+
+  SELECT CASE Val(sStr)
+    CASE 000
+      Main.WriteLog(("[DSC] System Error - No Error"))
+    CASE 001
+      Main.WriteLog(("[DSC] System Error - RS-232 Receive Buffer Overrun"))
+    CASE 002
+      Main.WriteLog(("[DSC] System Error - RS-232 Receive Buffer Overfow"))
+    CASE 003
+      Main.WriteLog(("[DSC] System Error - Keybus Transmit Buffer Overrun"))
+    CASE 010
+      Main.WriteLog(("[DSC] System Error - Keybus Transmit Buffer Overrun"))
+    CASE 011
+      Main.WriteLog(("[DSC] System Error - Keybus Transmit Time Timeout"))
+    CASE 012
+      Main.WriteLog(("[DSC] System Error - Keybus Transmit Mode Timeout"))
+    CASE 013
+      Main.WriteLog(("[DSC] System Error - Keybus Transmit Keystring Timeout"))
+    CASE 014
+      Main.WriteLog(("[DSC] System Error - Keybus Not Functioning"))
+    CASE 015
+      Main.WriteLog(("[DSC] System Error - Keybus Busy (Attempting to Arm / Disarm)"))
+    CASE 016
+      Main.WriteLog(("[DSC] System Error - Keybus Busy (Lockout)"))
+    CASE 017
+      Main.WriteLog(("[DSC] System Error - Keybus Busy (Installers Mode)"))
+    CASE 020
+      Main.WriteLog(("[DSC] System Error - API Command Syntax Error"))
+    CASE 021
+      Main.WriteLog(("[DSC] System Error - API Command Partition Error"))
+    CASE 022
+      Main.WriteLog(("[DSC] System Error - API Command Not Supported"))
+    CASE 023
+      Main.WriteLog(("[DSC] System Error - API System Not Armed"))
+    CASE 024
+      Main.WriteLog(("[DSC] System Error - API System Not Ready to Arm"))
+      TRY Main.hDB.Exec("UPDATE security SET lcd_line1 = &1 WHERE id = 0", "System not Ready to Arm")
+      Main.BroadcastEvent("[SecurityUpdate]")
+    CASE 025
+      Main.WriteLog(("[DSC] System Error - API Command Invalid Length"))
+    CASE 026
+      Main.WriteLog(("[DSC] System Error - API User Code Not Required"))
+    CASE 027
+      Main.WriteLog(("[DSC] System Error - API Invalid Characters in Command"))
+    CASE ELSE
+      Main.WriteLog(("[DSC] System Error - ") & sStr)
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' called from device.setdevice
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String, iDeviceId AS Integer)
+
+  DIM sDeviceType, sCode, sPartition AS String
+
+  IF CInteger(sAddress) < 1 OR CInteger(sAddress) > 8 THEN
+    Main.WriteDebugLog(("[DSC] Partition out of range! (") & sPartition & ")")
+    RETURN
+  ELSE
+    sPartition = sAddress
+  ENDIF
+  IF Len(sMasterCode) = 4 THEN sCode = sMasterCode & "00"
+
+  sDeviceType = Devices.FindTypeNameForDevice(iDeviceId)
+  SELECT CASE sDeviceType
+    CASE "DSC Partition"
+      SELECT CASE Upper$(sCmd)
+        CASE "ARM STAY", "ARMSTAY", "ARMED STAY", "STAY", "AS"
+          IF bDSCDebug THEN Main.WriteDebugLog("[DSC] Arming Stay - Partition " & sPartition)
+          TX("031" & sPartition)
+        CASE "ARM AWAY", "ARMAWAY", "ARMED AWAY", "AWAY", "AA"
+          IF bDSCDebug THEN Main.WriteDebugLog("[DSC] Arming Away - Partition " & sPartition)
+          TX("030" & sPartition)
+        CASE "ARM ZERO DELAY", "ARMZERODELAY", "ARM ZERO", "A0"
+          IF bDSCDebug THEN Main.WriteDebugLog("[DSC] Arming Zero Entry Delay - Partition " & sPartition)
+          TX("032" & sPartition)
+        CASE "ARM"
+          IF bDSCDebug THEN Main.WriteDebugLog("[DSC] Arming - Partition " & sPartition)
+          TX("033" & sPartition & sCode)
+        CASE "DISARM", "DIS ARM", "DISARMED", "DA"
+          IF bDSCDebug THEN Main.WriteDebugLog("[DSC] Disarming - Partition " & sPartition)
+          TX("040" & sPartition & sCode)
+        CASE "PANIC", "PAN"
+          IF bDSCDebug THEN Main.WriteDebugLog("[DSC] [P]ANIC")
+          TX("060P")
+        CASE "FIRE"
+          IF bDSCDebug THEN Main.WriteDebugLog("[DSC] [F]IRE")
+          TX("060F")
+        CASE "AMBULANCE", "AMB"
+          IF bDSCDebug THEN Main.WriteDebugLog("[DSC] [A]MBULANCE")
+          TX("060A")
+        DEFAULT
+          TX("500")
+          IF bDSCDebug THEN Main.WriteDebugLog("Command '" & sCmd & "' not found!")
+      END SELECT
+    CASE "DSC PIR", "DSC Contact", "DSC Smoke"
+      IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] '" & sDeviceType & "' is a read-only device!"))
+    CASE ELSE
+      IF bDSCDebug THEN Main.WriteDebugLog(("[DSC] Unknown DSC device type!"))
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' TX - Calculate the CheckSum and Transmit the data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB TX(sStr AS String)
+
+  DIM sCheckSumCalculating, sCheckSumCalculated AS String
+  DIM iCheckSumFloat, iInd AS Integer
+
+  ' calculate checksum
+  FOR iInd = 1 TO Len(sStr)
+    sCheckSumCalculating = Asc(Mid$(sStr, iInd, 1))
+    iCheckSumFloat = iCheckSumFloat + sCheckSumCalculating
+  NEXT
+  sCheckSumCalculated = Right(Hex$(iCheckSumFloat), 2)
+
+  PRINT #hDSC, sStr & sCheckSumCalculated
+
+END
+
+PUBLIC SUB tDSCLED_Timer()
+
+  Main.ControlLed("DSC", "Off")
+  tDSC.Stop
+
+END
+
+PUBLIC SUB DSC_LCDText()
+
+  DIM sLCDTime AS String = Format$(Now(), "dd/mmmm/yyyy hh:nn")
+
+  TRY Main.hDB.Exec("UPDATE security SET lcd_line1 = &1, lcd_line2 = &2 WHERE id = 0", "DSC Security", sLCDTime)
+  Main.BroadcastEvent("[SecurityUpdate]")
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' close port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try to close the connection
+  TRY hDSC.Close
+  Main.WriteLog(("DSC serial port close."))
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("DSC Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+' implement properties
+PRIVATE FUNCTION Port_Read() AS String
+
+  RETURN sPort
+
+END
+
+SUB Port_Write(Value AS String)
+
+  sPort = Value
+
+END
+
+PRIVATE FUNCTION Baud_Read() AS String
+
+  RETURN sBaud
+
+END
+
+PRIVATE SUB Baud_Write(Value AS String)
+
+  sBaud = Value
+
+END
+
+PRIVATE FUNCTION DSCDebug_Read() AS Boolean
+
+  RETURN bDSCDebug
+
+END
+
+PRIVATE SUB DSCDebug_Write(Value AS Boolean)
+
+  bDSCDebug = Value
+
+END
+
+PRIVATE FUNCTION Type_Read() AS Integer
+
+  RETURN iType
+
+END
+
+PRIVATE SUB Type_Write(Value AS Integer)
+
+  iType = Value
+
+END
+
+PRIVATE FUNCTION MasterCode_Read() AS String
+
+  RETURN sMasterCode
+
+END
+
+PRIVATE SUB MasterCode_Write(Value AS String)
+
+  IF Len(Value) <> 4 OR Len(Value) <> 6 THEN
+    sMasterCode = Value
+  ELSE
+    ERROR "Master Code must be either 4 or 6 characters long!"
+  ENDIF
+
+END
+
+PRIVATE SUB Partition_Read() AS String
+
+  RETURN sPartitionID
+
+END
+
+PRIVATE SUB Partition_Write(Value AS String)
+
+  IF CInteger(Value) >= 1 AND CInteger(Value) <= 8 THEN
+    sPartitionID = Value
+  ELSE
+    ERROR "Partition must be between 1-8. Invalid partition specified!."
+  ENDIF
+
+END

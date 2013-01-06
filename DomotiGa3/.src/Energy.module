@@ -1,0 +1,148 @@
+' Gambas module file
+
+' Description:
+' Energy.module
+' Routines for logging energy usage.
+
+' TO DO: the meter to usage table mapping should have been defined in the database
+' TO DO: only one meter per usage type at this moment; to be extended
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read values from rfxmeter and pulse devices and write values to *_usage tables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Log()
+
+  DIM rDevice, rCounter, rDeviceType, rStore, rValue2 AS Result
+  DIM iMeter, iType AS Integer
+  DIM iUsage, iNewCounter, iPrevCounter, iValue AS Float
+  DIM cMeters AS Collection
+  DIM aTypes AS String[] = ["P1 Meter Power Usage", "P1 Meter Gas Usage", "P1 Meter Water Usage", "P1 Meter Power Exported", "RFXPwr Power", "RFXPulse Gas", "RFXPulse Water", "RFXPulse Power"]
+  DIM sType, sTable AS String
+  DIM cTableUsed AS NEW Collection ' just to check multiple device on one usage logging entry
+
+  ' step through all usage related device types
+  FOR EACH sType IN aTypes
+    ' find devicetype id's
+    TRY rDeviceType = Main.hDB.Exec("SELECT id FROM devicetypes WHERE name = &1 ", sType)
+    IF ERROR THEN
+      Main.WriteDebugLog(("[Energy] Devicetype '") & sType & ("' not found in database!"))
+      CONTINUE
+    ENDIF
+
+    IF rDeviceType.Available THEN
+      IF Main.bEnergyDebug THEN Main.WriteDebugLog(("[Energy] Looking for device(s) of type '") & sType & ("' with id '") & iType & "'.")
+      iType = rDeviceType!id
+      ' find device with this devicetype
+      IF sType = "P1 Meter Power Usage" ' add the low and high tarif from the smart meter
+        rDevice = Main.hDB.Exec("SELECT value2 + value3 AS value, id, name FROM devices WHERE module = &1 AND enabled is TRUE", iType)
+      ELSE ' just get single value
+        rDevice = Main.hDB.Exec("SELECT value, id, name FROM devices WHERE module = &1 AND enabled is TRUE", iType)
+      ENDIF
+
+      ' didn't found one, continue to next
+      IF NOT rDevice.Available THEN
+        IF Main.bEnergyDebug THEN Main.WriteDebugLog(("[Energy] No device(s) found with that devicetype."))
+        CONTINUE
+      ENDIF
+
+      ' found one device get it's value
+      IF rDevice.Count = 1 THEN
+        iMeter = rDevice!id
+        TRY iNewCounter = CFloat(rDevice!value)
+        IF Main.bEnergyDebug THEN Main.WriteDebugLog(("[Energy] Found device called '" & rDevice!name & "' with value ") & iNewCounter)
+
+        ' get table name
+        SELECT sType
+          CASE "RFXPulse Power", "RFXPwr Power", "P1 Meter Power Usage"
+            sTable = "power_usage"
+            IF NOT IsNull(cTableUsed[sTable]) THEN Error.Raise("More as one device for power usage defined!")
+            cTableUsed[sTable] = TRUE
+          CASE "RFXPulse Gas", "P1 Meter Gas Usage"
+            sTable = "gas_usage"
+            IF NOT IsNull(cTableUsed[sTable]) THEN Error.Raise("More as one device for gas usage defined!")
+            cTableUsed[sTable] = TRUE
+          CASE "RFXPulse Water", "P1 Meter Water Usage"
+            sTable = "water_usage"
+            IF NOT IsNull(cTableUsed[sTable]) THEN Error.Raise("More as one device for water usage defined!")
+            cTableUsed[sTable] = TRUE
+          CASE "P1 Meter Power Exported"
+            sTable = "power_exported"
+            IF NOT IsNull(cTableUsed[sTable]) THEN Error.Raise("More as one device for exported power usage defined!")
+            cTableUsed[sTable] = TRUE
+          DEFAULT
+            Error.Raise(("[Energy] Meter usage logging called with unknown devicetype '") & sType & "'")
+            CONTINUE
+        END SELECT
+
+        ' get previous counter value from database
+        rCounter = Main.hDB.Exec(Subst("SELECT id, counter FROM &1 ORDER BY stamp DESC LIMIT 1", sTable))
+        IF rCounter.Available THEN
+          IF Main.bEnergyDebug THEN Main.WriteDebugLog(("[Energy] Fetched last stored usage from table '") & sTable & "'")
+          iPrevCounter = rCounter!counter
+          iUsage = iNewCounter - iPrevCounter
+        ELSE
+          iUsage = 0
+          iValue = 0
+        ENDIF
+
+        ' try to save some records by deleting zero usage ones
+        IF iUsage = 0 THEN
+          TRY Main.hDB.Exec(Subst("DELETE FROM &1 WHERE id = &2", sTable, rCounter!id))
+        ENDIF
+
+        ' calculate usage
+        SELECT sType
+          CASE "RFXPulse Power", "RFXPwr Power"
+            iValue = iUsage * 10 ' every pulse is 0.1 watt
+          CASE "P1 Meter Power Usage", "P1 Meter Power Exported", "P1 Meter Power Exported"
+            iValue = iUsage ' 1 pulse = 1 kwh
+          CASE "RFXPulse Gas"
+            sTable = "gas_usage"
+            iValue = iUsage / 100 ' every pulse is 0.01 m3
+          CASE "P1 Meter Gas Usage"
+            sTable = "gas_usage"
+            iValue = iUsage ' needs work
+          CASE "RFXPulse Water"
+            sTable = "water_usage"
+            iValue = iUsage / 2 ' every pulse is 0.5 liter
+          CASE "P1 Meter Water Usage"
+            sTable = "water_usage"
+            iValue = iUsage 'needs work
+          DEFAULT
+            Error.Raise(("[Energy] Meter usage logging called with unknown devicetype '") & sType & "'")
+            CONTINUE
+        END SELECT
+
+        ' add new value to usage table
+        Main.hDB.Begin()
+        rStore = Main.hDB.Create(sTable)
+        rStore!consumption = iUsage
+        rStore!stamp = Now()
+        rStore!counter = iNewCounter
+        rStore.Update()
+        Main.hDB.Commit()
+
+        ' update value2 field of device with energy usage for RFXmeters
+        IF InStr(sType, "RFX")
+          rValue2 = Main.hDB.Exec("UPDATE devices SET value2 = &1 WHERE id = &2", CStr(iValue), iMeter)
+          IF Main.bEnergyDebug THEN Main.WriteDebugLog(("[Energy] Updated RFXMeter's Value2 of device '") & rDevice!name & "' with '" & CStr(iValue) & "'")
+        ELSE
+          IF Main.bEnergyDebug THEN Main.WriteDebugLog(("[Energy] No RFXMeter so not updating Value2 of device '") & rDevice!name & "'")
+        ENDIF
+
+      ELSE
+        Main.WriteDebugLog(("[Energy] More than one device with devicetype '") & sType & ("' found, skipping."))
+        CONTINUE
+      ENDIF
+    ENDIF
+  NEXT
+
+CATCH
+  Main.WriteDebugLog(("[Energy] Error '") & ERROR.Text & ("' at '") & ERROR.Where)
+
+END
