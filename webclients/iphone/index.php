@@ -73,7 +73,11 @@ echo "<body>\n";
 // Title
 echo "<div id='header'>\n";
 echo "<h1>DomotiGa</h1>\n";
-echo "<a href=\"device.php\" class=\"nav Action\">Devices</a>\n";
+if ( $locations ) {
+       echo "<a href=\"locations.php\" class=\"nav Action\">Locations</a>\n";
+} else {
+       echo "<a href=\"device.php\" class=\"nav Action\">Devices</a>\n";
+}
 echo "</div>\n";
 // Status
 $status=get_status();

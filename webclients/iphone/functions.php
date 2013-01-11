@@ -45,8 +45,28 @@ function do_xmlrpc($request) {
    }
 }
 
+// get location list
+function get_location_list() {
+   $request = xmlrpc_encode_request("device.list",null);
+   $response = do_xmlrpc($request);
+   if (is_array($response) && xmlrpc_is_fault($response)) {
+       trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");
+   } else {
+      $index=0;
+      foreach($response AS $item) {
+         list( , , , $retarr[$index], , , , , , , , , ) = explode (';;', $item);
+         $index++;
+      }
+      if (isset($retarr)) {
+         return $retarr;
+      } else {
+         return FALSE;
+      }
+   }
+}
+
 // Get device list
-function get_device_list($view) {
+function get_device_list($location) {
    $request = xmlrpc_encode_request("device.list",null);
    $response = do_xmlrpc($request);
    if (is_array($response) && xmlrpc_is_fault($response)) {
@@ -55,6 +75,9 @@ function get_device_list($view) {
       $index=0;
       foreach($response AS $item) {
          list( $retarr[$index]['id'], $retarr[$index]['deviceicon'], $retarr[$index]['devicename'], $retarr[$index]['devicelocation'], $retarr[$index]['devicevalue'], $retarr[$index]['devicelabel'], $retarr[$index]['devicevalue2'], $retarr[$index]['devicelabel2'], $retarr[$index]['devicevalue3'], $retarr[$index]['devicelabel3'], $retarr[$index]['devicevalue4'], $retarr[$index]['devicelabel4'], $retarr[$index]['devicelastseen']) = explode (';;', $item);
+                if ( $location != "*" ) {
+                       if ($retarr[$index]['devicelocation'] != $location) { unset($retarr[$index]); continue;}
+               };
          if ($retarr[$index]['deviceicon']) { $retarr[$index]['deviceicon'] = "<img src='images/icons/".$retarr[$index]['deviceicon']."' height='16' width='16' alt='icon' />"; } else { $retarr[$index]['deviceicon'] = ""; }
          if (strlen($retarr[$index]['devicevalue']) && $retarr[$index]['devicelabel']) { $retarr[$index]['devicevalue'] = $retarr[$index]['devicevalue']. " ".$retarr[$index]['devicelabel']; }
          if (strlen($retarr[$index]['devicevalue2']) && $retarr[$index]['devicelabel2']) { $retarr[$index]['devicevalue2'] = $retarr[$index]['devicevalue2']. " ".$retarr[$index]['devicelabel2']; }
@@ -71,7 +94,7 @@ function get_device_list($view) {
 }
 
 // Get device list switch
-function get_device_listswitch($view) {
+function get_device_listswitch() {
    $request = xmlrpc_encode_request("device.listswitch",null);
    $response = do_xmlrpc($request);
 
@@ -94,7 +117,7 @@ function get_device_listswitch($view) {
 }
 
 // Get device list dim
-function get_device_listdim($view) {
+function get_device_listdim() {
    $request = xmlrpc_encode_request("device.listdim",null);
    $response = do_xmlrpc($request);
 

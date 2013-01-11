@@ -38,12 +38,34 @@ extract($_REQUEST, EXTR_PREFIX_ALL|EXTR_REFS, 'r_');
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
 <meta id="viewport" name="viewport" content="width=320; initial-scale=1.0; maximum-scale=1.0; user-scalable=0;" />
 <link rel="shortcut icon" href="images/favicon.ico" />
+<link href="http://ajax.googleapis.com/ajax/libs/jqueryui/1/themes/base/jquery-ui.css" rel="stylesheet" type="text/css" />
+<script src="http://ajax.googleapis.com/ajax/libs/jquery/1/jquery.min.js"></script>
+<script src="http://ajax.googleapis.com/ajax/libs/jqueryui/1.8.0/jquery-ui.min.js"></script>
 <script type="text/javascript" src="domotiga.js"></script>
 <title>DomotiGa</title>
 <link rel="stylesheet" href="stylesheets/iphone.css" />
+       <style>
+               .ui-widget-content {
+                       background:none;
+                       border:1px solid #AAAAAA;
+                       color:#222222; }
+               .ui-corner-all {
+                       -moz-border-radius:11px 11px 11px 11px;
+                       -webkit-border-radius:11px; }
+       </style>
 <?php
 // Get list of devices
-$data=get_device_list();
+if ( $locations ) {
+       if(!isset($_GET["location"])) {
+               $location="*";
+       } else {
+               $location=$_GET["location"];
+       };
+       $data=get_device_list($location);
+} else {
+       $data=get_device_list("*");
+};
+
 if (is_array($data)) {
    $sortkey="devicename";
    usort($data,'sort_matches_asc');
@@ -73,7 +95,7 @@ foreach ($data AS $item) {
         echo "div#optionpanel".$item['id']." {\n";
         echo "background: url(images/blackbg.png) top left repeat-x;\n";
         echo "text-align: center;\n";
-        echo "padding: 20px 10px 15px 10px;\n";
+        //echo "padding: 20px 10px 15px 10px;\n";
         echo "position: absolute;\n";
         echo "left: 0;\n";
         echo "right: 0;\n";
@@ -100,11 +122,20 @@ echo "</style>\n";
       } 
    } 
    //--> 
-   </script>
-   <script type="text/javascript" charset="utf-8">
-      window.onload = function() {
-         setTimeout(function(){window.scrollTo(0, 1);}, 100);
-      }
+   function dim_light(dLocation,dName,dValue) {
+      var actionUrl = "change_device.php?location="+dLocation+"&device="+dName+"&value=Dim "+dValue
+      $.ajax({
+        url: actionUrl,
+        success: function () {
+          window.location.href = "device.php?location="+dLocation;
+        }
+      })
+   }
+</script>
+<script type="text/javascript" charset="utf-8">
+    window.onload = function() {
+    setTimeout(function(){window.scrollTo(0, 1);}, 100);
+  }
 </script>
 </head>
 <?php
@@ -112,9 +143,12 @@ echo "<body id=\"plastic\">\n";
 
 echo "<div id='header'>\n";
 echo "<h1>Devices</h1>\n";
-echo "<a href=\"index.php\" class=\"nav\" id=\"backButton\">Home</a>\n";
+if ( $locations ) {
+  echo "<a href=\"locations.php\" class=\"nav\" id=\"backButton\">Locations</a>\n";
+} else {
+  echo "<a href=\"index.php\" class=\"nav\" id=\"backButton\">Home</a>\n";
+}
 echo "</div>\n";
-
 echo "<ul>\n";
 foreach ($data AS $item) {
    echo "<li";	
@@ -134,18 +168,80 @@ foreach ($data AS $item) {
    foreach ($datas AS $items) {	
       if ($item['id'] == $items['id']) { 
          echo "<div id=\"optionpanel".$item['id']."\" style=\"display: none\">\n";
-         echo "<p><a class=\"white button\" href=\"change_device.php?device=".$item['devicename']."&value=On\">On</a> <a href=\"change_device.php?device=".$item['devicename']."&value=Off\" class=\"red button\">Off</a><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
+         echo "<p><a class=\"green button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['devicename']."&value=On\">On</a> <a href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['devicename']."&value=Off\" class=\"red button\">Off</a><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
 	 echo "</div>\n";
       }
    }
    foreach ($datad AS $itemd) {
+      if ($itemd['devicevalue'] == "Off"){ $dimlevel = "0"; };
+      if ($itemd['devicevalue'] == "On"){ $dimlevel = "100"; };
+      if (substr($itemd['devicevalue'],0,3) == "Dim"){ preg_match_all('!\d+!', $itemd['devicevalue'], $dimlevel); $dimlevel=implode($dimlevel[0]); };
       if ($item['id'] == $itemd['id']) {
          echo "<div id=\"optionpanel".$item['id']."\" style=\"display: none\">\n";
-         echo "<p><a class=\"white button\" href=\"change_device.php?device=".$item['devicename']."&value=On\">On</a> <a href=\"change_device.php?device=".$item['devicename']."&value=Off\" class=\"red button\">Off</a><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
+         echo "<p><a class=\"green button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['devicename']."&value=On\">On</a></p>";
+         echo "<p><a class=\"red button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['devicename']."&value=Off\">Off</a></p>";
+         // Slider to dim lights
+         echo "<p id=\"dimmer".$item['id']."\" class=\"button slider\" style=\"width: 94%; height: 30px; margin-left: 3%;\">".$dimlevel."</p>\n";
+         echo "<p style=\"display: none\" class=\"val_dimmer\" id=\"val_dimmer".$item['id']."\"></p>";
+         echo "<p><a class=\"white button\" onclick=\"dim_light('".$item['devicelocation']."', '".$item['devicename']."', $('#val_dimmer".$item['id']."').text())\">Ok</a></p>";
+         echo "<p><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
          echo "</div>\n";
       }
    }
 }
 ?>
+<script>
+       $(function() {
+               // set up event converters
+               document.addEventListener("touchstart", touchHandler, false);
+               document.addEventListener("touchmove", touchHandler, false);
+               document.addEventListener("touchend", touchHandler, false);
+               document.addEventListener("touchcancel", touchHandler, false);
+               $( ".slider" ).each(function() {
+                       var value = parseInt( $( this ).text(), 10 );
+                       $( this ).empty().slider({
+                               value: value,
+                               orientation: "horizontal",
+                               min: 0,
+                               max: 100,
+                               step: 5,
+                               slide: function(event, ui) {
+                                       m_val = ui.value;
+                                       if (m_val < 0) {
+                                               m_val = 0;
+                                               $(this).slider({ value: 0 });
+                                       }
+                                       $(this).find("a:first").text(m_val);
+                                       $(".val_dimmer").first().text(m_val);
+                               }
+                       });
+               });
+               //$("#amount").val(':' + $(".slider").slider("value"));
+               $('.ui-slider-handle').height(40);
+
+               /*
+               $(".ui-slider-handle").click(function(event) {
+                       //alert(event);
+                       event.preventDefault();
+               });
+               */
+       });
+       // simulation of events
+       function touchHandler(event) {
+               var touches = event.changedTouches,
+                       first = touches[0],
+                       type = "";
+               switch(event.type) {
+                       case "touchstart": type = "mousedown"; break;
+                       case "touchmove" : type="mousemove"; event.preventDefault(); break;
+                       case "touchend"  : type="mouseup"; break;
+                       default: return;
+               }
+               var simulatedEvent = document.createEvent("MouseEvent");
+               simulatedEvent.initMouseEvent(type, true, true, window, 1, first.screenX, first.screenY, first.clientX, first.clientY, false, false, false, false, 0, null);
+               first.target.dispatchEvent(simulatedEvent);
+       }
+
+</script>
 </body>
 </html>

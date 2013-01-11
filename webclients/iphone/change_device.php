@@ -31,10 +31,25 @@ include "functions.php";
 $device=$_GET["device"];
 $value=$_GET["value"];
 
+if ( $locations ) {
+   if(!isset($_GET["location"])) {
+      $location="*";
+   } else {
+      $location=$_GET["location"];
+   };
+   $data=get_device_list($location);
+} else {
+   $data=get_device_list("*");
+};
+
 $request = xmlrpc_encode_request("device.setdevice",array ($device,$value));
 $response = do_xmlrpc($request);
 if (is_array($response) && xmlrpc_is_fault($response)) {
    trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
 
-header('Location: device.php'); 
+if ( $locations ) {
+   header('Location: device.php?location='.$location);
+} else {
+   header('Location: device.php');
+}
 ?>
