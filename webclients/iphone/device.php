@@ -232,9 +232,10 @@ foreach ($data AS $item) {
                        first = touches[0],
                        type = "";
                switch(event.type) {
-                       case "touchstart": type = "mousedown"; break;
-                       case "touchmove" : type="mousemove"; event.preventDefault(); break;
-                       case "touchend"  : type="mouseup"; break;
+                       // Commented out due to a scrolling bug.
+                       // case "touchstart": type = "mousedown"; break;
+                       // case "touchmove" : type="mousemove"; event.preventDefault(); break;
+                       // case "touchend"  : type="mouseup"; break;
                        default: return;
                }
                var simulatedEvent = document.createEvent("MouseEvent");
