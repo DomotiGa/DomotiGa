@@ -155,6 +155,7 @@ void DomoZWave_EnablePolling( int32 home, int32 node, int32 polltime );
 void DomoZWave_DisablePolling( int32 home, int32 node );
 
 // Retrieve or set node information
+const char* DomoZWave_GetNodeQueryStage( int32 home, int32 node );
 const char* DomoZWave_GetNodeManufacturerName( int32 home, int32 node );
 const char* DomoZWave_GetNodeProductName( int32 home, int32 node );
 const char* DomoZWave_GetNodeName( int32 home, int32 node );
@@ -220,6 +221,12 @@ bool DomoZWave_ReceiveConfiguration( int32 home );
 bool DomoZWave_HasNodeFailed( int32 home, int32 node, bool addqueue );
 bool DomoZWave_RemoveFailedNode( int32 home, int32 node );
 bool DomoZWave_ReplaceFailedNode( int32 home, int32 node );
+bool DomoZWave_SendNodeInformation( int32 home, int32 node );
+bool DomoZWave_ReplicationSend( int32 home, int32 node );
+void DomoZWave_HealNetworkNode( int32 home, int32 node, bool doRR );
+void DomoZWave_HealNetwork( int32 home, bool doRR );
+void DomoZWave_TestNetworkNode( int32 home, int32 node, int32 count );
+void DomoZWave_TestNetwork( int32 home, int32 count );
 
 // Statistical information
 const char* DomoZWave_GetDriverStatistics( int32 home );

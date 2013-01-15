@@ -1,7 +1,13 @@
+//uint8 GetSUCNodeId( uint32 const _homeId );
+//uint8 GetControllerNodeId
+//bool IsPrimaryController( uint32 const _homeId );
+//bool IsStaticUpdateController( uint32 const _homeId );
+//bool IsBridgeController( uint32 const _homeId );
+
 //-----------------------------------------------------------------------------
 //
 // DomoZWave a C++/C-wrapper to add open-zwave support to DomotiGa.
-// Special thanks to Jaren for creating the wrapper.
+// Special thanks to Jaren for creating the wrapper and Alexie for updating it.
 //
 // DomotiGa - an open source home automation program.
 // Copyright (C) Ron Klinkien, The Netherlands.
@@ -24,7 +30,7 @@
 //-----------------------------------------------------------------------------
 // Define and get version numbers of DomoZWave and the open-zwave (vers.c)
 //-----------------------------------------------------------------------------
-char domozwave_vers[] = "DomoZWave version r1055";
+char domozwave_vers[] = "DomoZWave version r1101";
 #include <vers.c>
 //-----------------------------------------------------------------------------
 
@@ -108,6 +114,7 @@ typedef struct
 {
 	uint32		m_homeId;
 	uint8		m_controllerId;
+	uint32		m_controllerAllQueried;
 	bool		m_controllerBusy;
 	uint8		m_nodeId;
 	list<m_cmdItem>	m_cmd;
@@ -493,6 +500,14 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 			Manager::Get()->GetValueListSelection( valueID, &list_value );
 			snprintf( dev_value, 1024, "%s", strdup( list_value.c_str() ) );
 			WriteLog( LogLevel_Debug, false, "Type=List (raw value=%s)", dev_value );
+			break;
+		}
+		case ValueID::ValueType_Raw:
+		{
+			// We can use AsString on a Raw
+			Manager::Get()->GetValueAsString( valueID, &string_value );
+			snprintf( dev_value, 1024, "%s", strdup( string_value.c_str() ) );
+			WriteLog( LogLevel_Debug, false, "Type=Raw (raw value=%s)", dev_value );
 			break;
 		}
 		default:
@@ -1146,6 +1161,7 @@ void RPC_DriverReady( int homeID, int nodeID )
 
 	ctrl->m_homeId = homeID;
 	ctrl->m_controllerId = nodeID;
+	ctrl->m_controllerAllQueried = 0;
 	ctrl->m_controllerBusy = false;
 	ctrl->m_nodeId = 0;
 
@@ -1318,34 +1334,49 @@ void OnNotification
 		case Notification::Type_AllNodesQueried:
 		case Notification::Type_AwakeNodesQueried:
 		{
+			m_structCtrl* ctrl = GetControllerInfo( (int)data->GetHomeId() );
+
 			if ( data->GetType() == Notification::Type_AllNodesQueried ) WriteLog( LogLevel_Debug, true, "AllNodesQueried: HomeId=%d", (int)data->GetHomeId() );
 			if ( data->GetType() == Notification::Type_AwakeNodesQueried ) WriteLog( LogLevel_Debug, true, "AwakeNodesQueried: HomeId=%d", (int)data->GetHomeId() );
 
-			Manager::Get()->WriteConfig( (int)data->GetHomeId() );
+			if ( ctrl->m_controllerAllQueried == 0 )
+			{ 
+				Manager::Get()->WriteConfig( (int)data->GetHomeId() );
 
-			// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
-			xmlrpc_env_init( &env );
-			xmlrpc_value* resultP = NULL;
-			pthread_mutex_unlock( &g_criticalSection );
- 			xmlrpc_client_call2f( &env, clientP, url, "zwave.allqueried", &resultP, "()" );
+				// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
+				xmlrpc_env_init( &env );
+				xmlrpc_value* resultP = NULL;
+				pthread_mutex_unlock( &g_criticalSection );
+ 				xmlrpc_client_call2f( &env, clientP, url, "zwave.allqueried", &resultP, "()" );
 
-			// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
-			if ( ! fault_occurred ( "zwave.allqueried", &env ) )
-			{
-				xmlrpc_bool bvalue;
-
-				xmlrpc_read_bool( &env, resultP, &bvalue );
-
-				if ( ! bvalue )
+				// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
+				if ( ! fault_occurred ( "zwave.allqueried", &env ) )
 				{
-					WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.allqueried\" returned FALSE" );
+					xmlrpc_bool bvalue;
+
+					xmlrpc_read_bool( &env, resultP, &bvalue );
+
+					if ( ! bvalue )
+					{
+						WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.allqueried\" returned FALSE" );
+					}
+				}
+
+				if ( resultP )
+				{
+					xmlrpc_DECREF( resultP );
+				}
+			}
+			else
+			{
+				// If we got 2 or more a AllQueried, then there is something really wrong somewhere
+				if ( ctrl->m_controllerAllQueried > 1 )
+				{
+					WriteLog( LogLevel_Error, true, "ERROR: AllNodesQueried happened %d times (max should be 2)", ctrl->m_controllerAllQueried );
 				}
 			}
 
-			if ( resultP )
-			{
-				xmlrpc_DECREF( resultP );
-			}
+			ctrl->m_controllerAllQueried++;
 			break;
 		}
 		case Notification::Type_CreateButton:
@@ -1426,6 +1457,21 @@ void OnNotification
 				case Notification::Code_NoOperation:
 				{
 					WriteLog( LogLevel_Debug, true, "Code_NoOperation: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					break;
+				}
+				case Notification::Code_Awake:
+				{
+					WriteLog( LogLevel_Debug, true, "Code_Awake: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					break;
+				}
+				case Notification::Code_Sleep:
+				{
+					WriteLog( LogLevel_Debug, true, "Code_Sleep: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					break;
+				}
+				case Notification::Code_Dead:
+				{
+					WriteLog( LogLevel_Debug, true, "Code_Dead: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
 					break;
 				}
 				default:
@@ -2036,6 +2082,23 @@ void DomoZWave_DisablePolling( int32 home, int32 node )
 			}
 		}
 	}
+}
+
+//-----------------------------------------------------------------------------
+// <GetNodeQueryStage>
+// Retrieves the query stage of a node
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeQueryStage( int32 home, int32 node )
+{
+	string QueryStage;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeQueryStage" ) == false ) return "";
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeQueryStage: HomeId=%d Node=%d", home, node );
+	QueryStage = Manager::Get()->GetNodeQueryStage( home, node );
+	WriteLog( LogLevel_Debug, false, "QueryStage=%s", QueryStage.c_str() );
+	return QueryStage.c_str();
+
 }
 
 //-----------------------------------------------------------------------------
@@ -2998,7 +3061,7 @@ const char* DomoZWave_GetNodeConfigValueList( int32 home, int32 node, int32 item
 const char* DomoZWave_GetNodeNeighborsList( int32 home, int32 node )
 {
 	string neighborslist;
-	uint8* neighbors;
+	uint8 *neighbors;
 	uint32 numNeighbors;
 	char dev_value[1024];
 
@@ -3118,7 +3181,7 @@ const char* DomoZWave_GetNodeGroupList(int32 home, int32 node, int32 ogroup )
 	string grouplist;
 	char dev_value[1024];
 	uint32 numAssociations;
-	uint8* associations;
+	uint8 *associations;
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeGroupList" ) == false ) return "";
 
@@ -3726,6 +3789,139 @@ bool DomoZWave_ReplaceFailedNode( int32 home, int32 node )
 }
 
 //-----------------------------------------------------------------------------
+// <DomoZWave_SendNodeInformation>
+// Send a node information frame
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_SendNodeInformation( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SendNodeInformation" ) == false ) return false;
+	m_structCtrl* ctrl = GetControllerInfo( home );
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SendNodeInformation: HomeId=%d Node=%d", home, node );
+
+	if ( ctrl->m_controllerBusy == false )
+	{
+		ctrl->m_nodeId = node;
+		ctrl->m_controllerBusy = true;
+
+		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_SendNodeInformation, OnControllerUpdate, ctrl, true, node );
+	}
+	else
+	{
+		response = false;
+	}
+
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_ReplicationSend>
+// Send information from primary to secondary
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_ReplicationSend( int32 home, int32 node )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_ReplicationSend" ) == false ) return false;
+	m_structCtrl* ctrl = GetControllerInfo( home );
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_ReplicationSend: HomeId=%d Node=%d", home, node );
+
+	if ( ctrl->m_controllerBusy == false )
+	{
+		ctrl->m_nodeId = node;
+		ctrl->m_controllerBusy = true;
+
+		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_ReplicationSend, OnControllerUpdate, ctrl, true, node );
+	}
+	else
+	{
+		response = false;
+	}
+
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_HealNetworkNode>
+// Heal a specific network node by updating its neighborhood list
+// Optionally we can do a "doRR" then the return routes are refreshed also
+//-----------------------------------------------------------------------------
+
+void DomoZWave_HealNetworkNode( int32 home, int32 node, bool doRR )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_HealNetworkNode" ) == false ) return;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_HealNetworkNode: HomeId=%d Node=%d", home, node );
+
+	if ( GetNodeInfo( home, node ) )
+	{
+		Manager::Get()->HealNetworkNode( home, node, doRR );
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Node=%d doesn't exist", node );
+	}
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_HealNetwork>
+// Heal the complete network by updating its neighborhood list
+// Optionally we can do a "doRR" then the return routes are refreshed also
+// This can take a while if we execute it on a big network
+//-----------------------------------------------------------------------------
+
+void DomoZWave_HealNetwork( int32 home, bool doRR )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_HealNetwork" ) == false ) return;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_HealNetwork: HomeId=%d", home );
+
+	Manager::Get()->HealNetwork( home, doRR );
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_TestNetworkNode>
+// Do testing of network stability/quality for a specific node
+//-----------------------------------------------------------------------------
+
+void DomoZWave_TestNetworkNode( int32 home, int32 node, int32 count )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_TestNetworkNode" ) == false ) return;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_TestNetworkNode: HomeId=%d Node=%d", home, node );
+
+	if ( GetNodeInfo( home, node ) )
+	{
+		Manager::Get()->TestNetworkNode( home, node, count );
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Node=%d doesn't exist", node );
+	}
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_TestNetwork>
+// Do testing of network stability/quality for the whole network
+//-----------------------------------------------------------------------------
+
+void DomoZWave_TestNetwork( int32 home, int32 count )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_TestNetwork" ) == false ) return;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_TestNetwork: HomeId=%d", home );
+
+	Manager::Get()->TestNetwork( home, count );
+}
+
+//-----------------------------------------------------------------------------
 // <DomoZWave_GetDriverStatistics>
 //-----------------------------------------------------------------------------
 
@@ -3760,7 +3956,7 @@ const char* DomoZWave_GetDriverStatistics( int32 home )
 	Driver::DriverData data;
 	Manager::Get()->GetDriverStatistics( home, &data );
 
-	snprintf( dev_value, 1024, "sofcnt: %d|ackwaiting: %d|readaborts: %d|badchecksum: %d|readcnt: %d|writecnt: %d|cancnt: %d|nakcnt: %d|ackcnt: %d|oofcnt: %d|dropped: %d|retries: %d|callbacks: %d|badroutes: %d|noack: %d|netbusy: %d|nondelivery: %d|routedbusy: %d|broadcastreadcnt: %d|broascastwritecnt: %d", data.m_SOFCnt, data.m_ACKWaiting, data.m_readAborts, data.m_badChecksum, data.m_readCnt, data.m_writeCnt, data.m_CANCnt, data.m_NAKCnt, data.m_ACKCnt, data.m_OOFCnt, data.m_dropped, data.m_retries, data.m_callbacks, data.m_badroutes, data.m_noack, data.m_netbusy, data.m_nondelivery, data.m_routedbusy, data.m_broadcastReadCnt, data.m_broadcastWriteCnt );
+	snprintf( dev_value, 1024, "sofcnt: %d|ackwaiting: %d|readaborts: %d|badchecksum: %d|readcnt: %d|writecnt: %d|cancnt: %d|nakcnt: %d|ackcnt: %d|oofcnt: %d|dropped: %d|retries: %d|callbacks: %d|badroutes: %d|noack: %d|netbusy: %d|nondelivery: %d|routedbusy: %d|broadcastreadcnt: %d|broadcastwritecnt: %d", data.m_SOFCnt, data.m_ACKWaiting, data.m_readAborts, data.m_badChecksum, data.m_readCnt, data.m_writeCnt, data.m_CANCnt, data.m_NAKCnt, data.m_ACKCnt, data.m_OOFCnt, data.m_dropped, data.m_retries, data.m_callbacks, data.m_badroutes, data.m_noack, data.m_netbusy, data.m_nondelivery, data.m_routedbusy, data.m_broadcastReadCnt, data.m_broadcastWriteCnt );
 
 	char *tdev_value;
 	tdev_value = dev_value;
