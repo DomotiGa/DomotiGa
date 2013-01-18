@@ -2925,7 +2925,8 @@ const char* DomoZWave_GetNodeConfigValue( int32 home, int32 node, int32 item )
 					}
 
 					char *tvalue;
-					tvalue = dev_value;
+					tvalue =new char [sizeof(dev_value)];
+					strcpy( tvalue, dev_value );
 					return tvalue;
 				}
 			}
@@ -3959,7 +3960,8 @@ const char* DomoZWave_GetDriverStatistics( int32 home )
 	snprintf( dev_value, 1024, "sofcnt: %d|ackwaiting: %d|readaborts: %d|badchecksum: %d|readcnt: %d|writecnt: %d|cancnt: %d|nakcnt: %d|ackcnt: %d|oofcnt: %d|dropped: %d|retries: %d|callbacks: %d|badroutes: %d|noack: %d|netbusy: %d|nondelivery: %d|routedbusy: %d|broadcastreadcnt: %d|broadcastwritecnt: %d", data.m_SOFCnt, data.m_ACKWaiting, data.m_readAborts, data.m_badChecksum, data.m_readCnt, data.m_writeCnt, data.m_CANCnt, data.m_NAKCnt, data.m_ACKCnt, data.m_OOFCnt, data.m_dropped, data.m_retries, data.m_callbacks, data.m_badroutes, data.m_noack, data.m_netbusy, data.m_nondelivery, data.m_routedbusy, data.m_broadcastReadCnt, data.m_broadcastWriteCnt );
 
 	char *tdev_value;
-	tdev_value = dev_value;
+	tdev_value =new char [sizeof(dev_value)];
+	strcpy( tdev_value, dev_value );
 	return tdev_value;
 }
 
