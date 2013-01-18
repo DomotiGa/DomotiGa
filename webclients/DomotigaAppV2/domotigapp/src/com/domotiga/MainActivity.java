@@ -16,12 +16,14 @@ import com.domotiga.tools.XMLRPC;
 import android.app.Activity;
 import android.app.ProgressDialog;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.Window;
 import android.view.ViewGroup.LayoutParams;
 import android.widget.Button;
 import android.widget.ImageButton;
@@ -34,30 +36,57 @@ public class MainActivity extends Activity {
 	private Intent myIntent = null;
 	private TextView sun, moon;
 	private XMLRPCClient client;
+	private ImageButton refresh;
 	
 	@Override        
 	public void onCreate(Bundle savedInstanceState) {
                 super.onCreate(savedInstanceState);
-                setContentView(R.layout.mainscreen);   
+                requestWindowFeature(Window.FEATURE_CUSTOM_TITLE);
+                setContentView(R.layout.mainscreen);           
+
+                getWindow().setFeatureInt(Window.FEATURE_CUSTOM_TITLE, R.layout.window_title);
+                
+                refresh = (ImageButton)findViewById(R.id.refresh);
+                refresh.setOnClickListener(new View.OnClickListener()
+           		{
+           			public void onClick(View v)
+           			{
+           				myIntent = new Intent(MainActivity.this, MainActivity.class);
+        				startActivity(myIntent);
+           			}
+           		});
+                
+                SharedPreferences settings = this.getSharedPreferences("DomotigaPrefsFile", 0);
+                settings.getString("DomotigaUrl", "host");
+                if(settings.getString("DomotigaUrl", null) == null)
+                {
+                	myIntent = new Intent(MainActivity.this, ParameterActivity.class);
+        			startActivity(myIntent);
+                }
                 client = XMLRPC.getClient(this);
                 if (client != null) 
                 {
 	                HashMap<String, String> switchableDevicesObject = null;
-					try {
+					/*
+	                try {
 						switchableDevicesObject = (HashMap<String, String>) client.call("data.sunmoon");
 					} catch (XMLRPCException e) {
 						// TODO Auto-generated catch block
 						e.printStackTrace();
 					}
+					
 	                sun = (TextView)findViewById(R.id.sun);
 	                moon = (TextView)findViewById(R.id.moon);
 	                
+	                
 	                Iterator it = switchableDevicesObject.entrySet().iterator();
+	                
 	                while (it.hasNext()) {
 	                    Map.Entry pairs = (Map.Entry)it.next();
 	                    Log.d("log ",pairs.getKey() + " = " + pairs.getValue());
 	                    it.remove(); // avoids a ConcurrentModificationException
 	                }
+	                */
                 }
                 
                 
@@ -144,6 +173,12 @@ public class MainActivity extends Activity {
 			Intent intentParameter = new Intent(getApplicationContext(),
 					ParameterActivity.class);
 			startActivityForResult(intentParameter, 0);
+			return true;
+		case R.id.refresh_menu:
+			finish();
+			myIntent = new Intent(MainActivity.this, MainActivity.class);
+			startActivity(myIntent);
+
 			return true;
 		default:
 			return super.onOptionsItemSelected(item);

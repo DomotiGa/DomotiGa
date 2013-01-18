@@ -10,7 +10,7 @@ public abstract class Settings {
 	public static final String PREFS_URL = "DomotigaUrl";
 	public static final String PREFS_OUT_TEMP = "DomotigaOutTemp";
 	public static final String PREFS_INT_TEMP = "DomotigaIntTemp";
-	public static final String DEFAULT_URL = "http://192.168.178.10:9009";
+	public static final String DEFAULT_URL = "http://192.168.2.5:9009";
 
 	public static String getParamString(Activity activity, String param, String defaultValue) {
 		SharedPreferences settings = activity.getSharedPreferences(PREFS, 0);

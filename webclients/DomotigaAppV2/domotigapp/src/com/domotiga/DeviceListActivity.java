@@ -17,9 +17,11 @@ import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.Window;
 import android.view.View.OnClickListener;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
@@ -41,6 +43,7 @@ public class DeviceListActivity extends ListActivity {
 	private ProgressDialog progressDialog;
 	private String location;
 	Thread thread = null;
+	private ImageButton refresh, back;
 	private Runnable returnRes = new Runnable() {
 
 		public void run() {
@@ -146,7 +149,37 @@ public class DeviceListActivity extends ListActivity {
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
-
+		requestWindowFeature(Window.FEATURE_CUSTOM_TITLE);
+		setContentView(R.layout.devices_list);        
+        getWindow().setFeatureInt(Window.FEATURE_CUSTOM_TITLE, R.layout.window_title);
+        
+        client = XMLRPC.getClient(this);
+        
+        back = (ImageButton)findViewById(R.id.back);
+        back.setVisibility(View.VISIBLE);
+        back.setOnClickListener(new View.OnClickListener()
+   		{
+   			public void onClick(View v)
+   			{
+   				finish();
+   			}
+   		});
+        refresh = (ImageButton)findViewById(R.id.refresh);
+        refresh.setOnClickListener(new View.OnClickListener()
+   		{
+   			public void onClick(View v)
+   			{
+   				viewDevices = new Runnable() {
+   					public void run() {
+   						loadScreen();
+   					}
+   				};
+   				Thread thread = new Thread(null, viewDevices, "MagentoBackground");
+   				thread.start();
+   			}
+   		});
+		
+		
 		Intent myIntent= getIntent(); // gets the previously created intent
 		location = myIntent.getStringExtra("location"); 
 		

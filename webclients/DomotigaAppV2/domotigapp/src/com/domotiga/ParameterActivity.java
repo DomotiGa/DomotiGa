@@ -12,19 +12,38 @@ import com.domotiga.tools.XMLRPC;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.view.View;
+import android.view.Window;
 import android.widget.ArrayAdapter;
+import android.widget.ImageButton;
 import android.widget.Spinner;
 import android.widget.TextView;
 
 public class ParameterActivity extends Activity {
 	
 	private XMLRPCClient client;
+	private ImageButton back, refresh;
 	
 	@SuppressWarnings("unchecked")
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
-
+		requestWindowFeature(Window.FEATURE_CUSTOM_TITLE);
+		setContentView(R.layout.parameters);        
+        getWindow().setFeatureInt(Window.FEATURE_CUSTOM_TITLE, R.layout.window_title);
+		
+        refresh = (ImageButton)findViewById(R.id.refresh);
+        refresh.setVisibility(View.GONE);
+        
+		back = (ImageButton)findViewById(R.id.back);
+        back.setVisibility(View.VISIBLE);
+        back.setOnClickListener(new View.OnClickListener()
+   		{
+   			public void onClick(View v)
+   			{
+   				finish();
+   			}
+   		});
 		
 		setContentView(R.layout.parameters);
 

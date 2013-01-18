@@ -10,13 +10,34 @@ import android.app.Activity;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.os.Bundle;
+import android.view.View;
+import android.view.Window;
+import android.widget.ImageButton;
 import android.widget.TextView;
 
 public class AboutActivity extends Activity {
+	
+	private ImageButton back, refresh;
+	
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
-
+		requestWindowFeature(Window.FEATURE_CUSTOM_TITLE);
+		setContentView(R.layout.about);        
+        getWindow().setFeatureInt(Window.FEATURE_CUSTOM_TITLE, R.layout.window_title);
+		
+        refresh = (ImageButton)findViewById(R.id.refresh);
+        refresh.setVisibility(View.GONE);
+        
+		back = (ImageButton)findViewById(R.id.back);
+        back.setVisibility(View.VISIBLE);
+        back.setOnClickListener(new View.OnClickListener()
+   		{
+   			public void onClick(View v)
+   			{
+   				finish();
+   			}
+   		});
 		XMLRPCClient client = XMLRPC.getClient(this);
 
 		String domotigaversion = getResources().getString(R.string.error_server_unavailable);
