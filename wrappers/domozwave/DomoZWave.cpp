@@ -1,9 +1,3 @@
-//uint8 GetSUCNodeId( uint32 const _homeId );
-//uint8 GetControllerNodeId
-//bool IsPrimaryController( uint32 const _homeId );
-//bool IsStaticUpdateController( uint32 const _homeId );
-//bool IsBridgeController( uint32 const _homeId );
-
 //-----------------------------------------------------------------------------
 //
 // DomoZWave a C++/C-wrapper to add open-zwave support to DomotiGa.
@@ -26,6 +20,9 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 //
 //-----------------------------------------------------------------------------
+
+// Revisions:
+// r1126: Wrapper supports open-zwave r635 and up
 
 //-----------------------------------------------------------------------------
 // Define and get version numbers of DomoZWave and the open-zwave (vers.c)
@@ -472,7 +469,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 		case ValueID::ValueType_Short:
 		{
 			Manager::Get()->GetValueAsShort( valueID, &short_value );
-			snprintf( dev_value, 1024, "%d.h", short_value );
+			snprintf( dev_value, 1024, "%d", short_value );
 			WriteLog( LogLevel_Debug, false, "Type=Short (raw value=%s)", dev_value );
 			break;
 		}
@@ -1169,6 +1166,28 @@ void RPC_DriverReady( int homeID, int nodeID )
 
 	WriteLog( LogLevel_Debug, true, "DriverReady: HomeId=%d Node=%d", homeID, nodeID );
 
+	switch( Manager::Get()->GetControllerInterfaceType( homeID ) )
+        {
+                case Driver::ControllerInterface_Serial:
+                {
+			WriteLog( LogLevel_Debug, false, "ControllerInterface=Serial" );
+			break;
+		}
+		case Driver::ControllerInterface_Hid:
+		{
+			WriteLog( LogLevel_Debug, false, "ControllerInterface=Hid" );
+			break;
+		}
+		default:
+		{
+			WriteLog( LogLevel_Debug, false, "ControllerInterface=Unknown" );
+			break;
+		}
+	}
+
+	string controllerPath = Manager::Get()->GetControllerPath( homeID ); 
+	WriteLog( LogLevel_Debug, false, "ControllerPath=%s", controllerPath.c_str() );
+
 	// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
 	xmlrpc_env_init( &env );
 	xmlrpc_value* resultP = NULL;
@@ -1333,11 +1352,13 @@ void OnNotification
 		}
 		case Notification::Type_AllNodesQueried:
 		case Notification::Type_AwakeNodesQueried:
+		case Notification::Type_AllNodesQueriedSomeDead:
 		{
 			m_structCtrl* ctrl = GetControllerInfo( (int)data->GetHomeId() );
 
 			if ( data->GetType() == Notification::Type_AllNodesQueried ) WriteLog( LogLevel_Debug, true, "AllNodesQueried: HomeId=%d", (int)data->GetHomeId() );
 			if ( data->GetType() == Notification::Type_AwakeNodesQueried ) WriteLog( LogLevel_Debug, true, "AwakeNodesQueried: HomeId=%d", (int)data->GetHomeId() );
+			if ( data->GetType() == Notification::Type_AllNodesQueriedSomeDead ) WriteLog( LogLevel_Debug, true, "AllNodesQueriedSomeDead: HomeId=%d", (int)data->GetHomeId() );
 
 			if ( ctrl->m_controllerAllQueried == 0 )
 			{ 
@@ -2648,6 +2669,7 @@ bool DomoZWave_SetValue( int32 home, int32 node, int32 instance, int32 value )
 	else
 	{
 		WriteLog( LogLevel_Debug, false, "Return=false (node doesn't exist)" );
+		response = false;
 	}
 
 	return response;
@@ -2897,7 +2919,7 @@ const char* DomoZWave_GetNodeConfigValue( int32 home, int32 node, int32 item )
 						case ValueID::ValueType_Short:
 						{
 							Manager::Get()->GetValueAsShort( v, &short_value );
-							snprintf( dev_value, 1024, "%d.h", short_value );
+							snprintf( dev_value, 1024, "%d", short_value );
 							break;
 						}
 						case ValueID::ValueType_Schedule:
