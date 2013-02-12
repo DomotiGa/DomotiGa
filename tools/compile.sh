@@ -56,7 +56,7 @@ else
 	else
 	  cd ../DomotiGa3
 	fi
-	gbc3 -agm
+	gbc3 -agpm
 	gba3 -o `pwd`/../DomotiGa3.gambas
 	rm -rf .gambas
 	cd ..
