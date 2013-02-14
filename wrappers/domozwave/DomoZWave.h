@@ -182,6 +182,7 @@ bool DomoZWave_SetValue( int32 home, int32 node, int32 instance, int32 value );
 
 // Request or update node configuration
 bool DomoZWave_SetConfigParam( int32 home, int32 node, int32 param, int32 value, int32 size );
+bool DomoZWave_SetConfigParamList( int32 home, int32 node, int32 param, const char* value );
 void DomoZWave_RequestConfigParam( int32 home, int32 node, int32 param );
 void DomoZWave_RequestAllConfigParams( int32 home, int32 node );
 const char* DomoZWave_GetNodeConfigValue( int32 home, int32 node, int32 item );
@@ -191,6 +192,7 @@ const char* DomoZWave_GetNodeConfigHelp( int32 home, int32 node, int32 item );
 const char* DomoZWave_GetNodeConfigValue( int32 home, int32 node, int32 item );
 const char* DomoZWave_GetNodeConfigValueType( int32 home, int32 node, int32 item );
 const char* DomoZWave_GetNodeConfigValueList( int32 home, int32 node, int32 item );
+bool DomoZWave_GetNodeConfigValueReadOnly( int32 home, int32 node, int32 item );
 
 // Retrieve the node neighborhood list or commandclass list
 const char* DomoZWave_GetNodeNeighborsList( int32 home, int32 node );
@@ -203,6 +205,14 @@ int DomoZWave_GetNodeGroupMax( int32 home, int32 node, int32 ogroup );
 const char* DomoZWave_GetNodeGroupLabel( int32 home, int32 node, int32 ogroup );
 void DomoZWave_AddAssociation( int32 home, int32 node, int group, int otherNode );
 void DomoZWave_RemoveAssociation( int32 home, int32 node, int group, int otherNode );
+
+// Request or set UserCode of a node
+int DomoZWave_GetNodeUserCodeCount( int32 home, int32 node );
+const char* DomoZWave_GetNodeUserCodeLabel( int32 home, int32 node, int32 usercode );
+const char* DomoZWave_GetNodeUserCodeValue( int32 home, int32 node, int32 usercode );
+bool DomoZWave_SetNodeUserCodeStart( int32 home, int32 node );
+bool DomoZWave_SetNodeUserCodeStop( int32 home );
+bool DomoZWave_SetNodeUserCodeRemove( int32 home, int32 node, int32 usercode );
 
 // Soft or hard reset the controller
 void DomoZWave_ControllerSoftReset( int32 home );

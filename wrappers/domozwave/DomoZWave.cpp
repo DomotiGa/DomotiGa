@@ -21,13 +21,10 @@
 //
 //-----------------------------------------------------------------------------
 
-// Revisions:
-// r1126: Wrapper supports open-zwave r635 and up
-
 //-----------------------------------------------------------------------------
 // Define and get version numbers of DomoZWave and the open-zwave (vers.c)
 //-----------------------------------------------------------------------------
-char domozwave_vers[] = "DomoZWave version r1101";
+char domozwave_vers[] = "DomoZWave version r1143";
 #include <vers.c>
 //-----------------------------------------------------------------------------
 
@@ -64,6 +61,20 @@ char domozwave_vers[] = "DomoZWave version r1101";
 // wrapper
 #include "DomoZWave.h"
 using namespace OpenZWave;
+
+//-----------------------------------------------------------------------------
+// Internal enum types
+//-----------------------------------------------------------------------------
+
+enum TypeNodeState
+{
+	DZType_Unknown = 0,
+	DZType_Alive,
+	DZType_Dead,
+	DZType_Sleep,
+	DZType_Awake,
+	DZType_Timeout
+};
 
 //-----------------------------------------------------------------------------
 // Variables
@@ -115,6 +126,8 @@ typedef struct
 	bool		m_controllerBusy;
 	uint8		m_nodeId;
 	list<m_cmdItem>	m_cmd;
+	uint8		m_userCodeEnrollNode;
+	time_t		m_userCodeEnrollTime;
 } m_structCtrl;
 
 static list<m_structCtrl*> g_allControllers;
@@ -155,6 +168,8 @@ typedef struct
 	uint8		basicmapping;
 	uint8		instancecount;
 	string		commandclass;
+	time_t		m_LastSeen;
+	TypeNodeState	m_DeviceState;
 	std::map<int,string> instancecommandclass;
 	std::map<int,string> instanceLabel;
 	list<ValueID>	m_values;
@@ -915,6 +930,52 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 		WriteLog( LogLevel_Debug, false, "Value=%s", dev_value );
 		WriteLog( LogLevel_Debug, false, "Note=Value not send, CommandClassId & label combination isn't supported by DomotiGa (this is not an issue)" );
 	}
+
+	// Here we do special actions for (automatic) UserCode enrollment
+	// If the Index=0, that seems to be the "new" UserCode, which need to be added
+	if (( id == COMMAND_CLASS_USER_CODE ) && ( instanceID == 1 ) && ( genre == ValueID::ValueGenre_User ) && ( valueID.GetIndex() == 0 ) && ( valueID.GetType() == ValueID::ValueType_Raw ))
+	{
+
+		m_structCtrl* ctrl = GetControllerInfo( homeID );
+
+		// Only do the enrollment, if it matches are preselected node
+		if ( ctrl->m_userCodeEnrollNode == nodeID )
+		{
+			WriteLog( LogLevel_Debug, false, "UserCode=New User Code or Tag Code received, controller is in enroll mode" );
+
+			// We matched, find a "free" UserCode in our node list and do a SetValue
+			for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+			{
+				ValueID v = *it;
+
+				// Find the usercode items of this node
+				if (( v.GetCommandClassId() == COMMAND_CLASS_USER_CODE ) && ( v.GetGenre() == ValueID::ValueGenre_User ) && ( v.GetInstance() == 1 ) && ( v.GetType() == ValueID::ValueType_Raw ))
+				{
+					// Only allow index >=1, because the "new" UserCode has index=0
+					if ( v.GetIndex() >= 1 )
+					{
+						string string_value;
+						Manager::Get()->GetValueAsString( v, &string_value );
+
+						// We assume if the value starts with "0x00" that it is empty
+						if ( string_value.find("0x00") == 0 )
+						{
+							WriteLog( LogLevel_Debug, false, "UserCode=Code %d is available, setting the received code", v.GetIndex() );
+							WriteLog( LogLevel_Debug, false, "" );
+							string_value = dev_value;
+							//response = Manager::Get()->SetValue( v, string_value );
+							Manager::Get()->SetValue( v, string_value );
+							break;
+						}
+					}
+				}
+			}
+		}
+		else
+		{
+			WriteLog( LogLevel_Debug, false, "UserCode=New User Code or Tag Code received, but controller isn't in enroll mode" );
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -1290,6 +1351,13 @@ void OnNotification
 		case Notification::Type_ValueChanged:
 		{
 			RPC_ValueChanged( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), false );
+
+			// Update LastSeen and DeviceState
+			if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
+			{
+				nodeInfo->m_LastSeen = time( NULL );
+				nodeInfo->m_DeviceState = DZType_Alive;
+			}
 			break;
 		}
 		case Notification::Type_Group:
@@ -1297,11 +1365,18 @@ void OnNotification
 			RPC_Group( (int)data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
+		case Notification::Type_NodeNew:
+		{
+			RPC_NodeNew( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			break;
+		}
 		case Notification::Type_NodeAdded:
 		{
 			NodeInfo* nodeInfo = new NodeInfo();
 			nodeInfo->m_homeId = data->GetHomeId();
 			nodeInfo->m_nodeId = data->GetNodeId();
+			nodeInfo->m_DeviceState = DZType_Unknown;
+			nodeInfo->m_LastSeen = 0;
 			g_nodes.push_back( nodeInfo );
 			
 			RPC_NodeAdded( (int)data->GetHomeId(), (int)data->GetNodeId() );
@@ -1311,6 +1386,7 @@ void OnNotification
 		{
 			uint32 const homeId = data->GetHomeId();
 			uint8 const nodeId = data->GetNodeId();
+
                         for ( list<NodeInfo*>::iterator it = g_nodes.begin(); it != g_nodes.end(); ++it )
                         {
 				NodeInfo* nodeInfo = *it;
@@ -1333,6 +1409,13 @@ void OnNotification
 		{
 			// Event caused by basic set or hail
 			RPC_NodeEvent( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), (int)data->GetEvent() );
+
+			// Update LastSeen and DeviceState
+			if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
+			{
+				nodeInfo->m_LastSeen = time( NULL );
+				nodeInfo->m_DeviceState = DZType_Alive;
+			}
 			break;
 		}
 		case Notification::Type_PollingEnabled:
@@ -1439,11 +1522,10 @@ void OnNotification
 		case Notification::Type_EssentialNodeQueriesComplete:
 		{
 			WriteLog( LogLevel_Debug, true, "EssentialNodeQueriesComplete: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
-			break;
-		}
-		case Notification::Type_NodeNew:
-		{
-			RPC_NodeNew( (int)data->GetHomeId(), (int)data->GetNodeId() );
+
+			// We require the configuration parameters when the device is essentially queried
+			// This still need to be optimized, because we do it with every startup now
+			Manager::Get()->RequestAllConfigParams( data->GetHomeId(), data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_NodeQueriesComplete:
@@ -1468,6 +1550,13 @@ void OnNotification
 				case Notification::Code_MsgComplete:
 				{
 					WriteLog( LogLevel_Debug, true, "MsgComplete: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+
+					// Update LastSeen and DeviceState
+					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
+					{
+						nodeInfo->m_LastSeen = time( NULL );
+						nodeInfo->m_DeviceState = DZType_Alive;
+					}
 					break;
 				}
 				case Notification::Code_Timeout:
@@ -1483,6 +1572,13 @@ void OnNotification
 				case Notification::Code_Awake:
 				{
 					WriteLog( LogLevel_Debug, true, "Code_Awake: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+
+					// Update LastSeen and DeviceState
+					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
+					{
+						nodeInfo->m_LastSeen = time( NULL );
+						nodeInfo->m_DeviceState = DZType_Awake;
+					}
 					break;
 				}
 				case Notification::Code_Sleep:
@@ -1493,6 +1589,18 @@ void OnNotification
 				case Notification::Code_Dead:
 				{
 					WriteLog( LogLevel_Debug, true, "Code_Dead: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					break;
+				}
+				case Notification::Code_Alive:
+				{
+					WriteLog( LogLevel_Debug, true, "Code_Alive: HomeId=%d Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+
+					// Update LastSeen and DeviceState
+					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
+					{
+						nodeInfo->m_LastSeen = time( NULL );
+						nodeInfo->m_DeviceState = DZType_Alive;
+					}
 					break;
 				}
 				default:
@@ -1832,6 +1940,7 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	Options::Get()->AddOptionInt( "PollInterval", polltime );
 	Options::Get()->AddOptionBool( "IntervalBetweenPolls", true );
 	Options::Get()->AddOptionBool( "SuppressValueRefresh", false );
+	Options::Get()->AddOptionBool( "PerformReturnRoutes", false );
 
 	Options::Get()->Lock();
 
@@ -2627,43 +2736,43 @@ bool DomoZWave_SetValue( int32 home, int32 node, int32 instance, int32 value )
 				if ( inst == instance )
 				{
 			        	if ( ValueID::ValueType_Bool == (*it).GetType() )
-						{
-							bool_value = (bool)value;
-							response = Manager::Get()->SetValue( *it, bool_value );
-						}
-						else if ( ValueID::ValueType_Byte == (*it).GetType() )
-						{
-							uint8_value = (uint8)value;
-							response = Manager::Get()->SetValue( *it, uint8_value );
-						}
-						else if ( ValueID::ValueType_Short == (*it).GetType() )
-						{
-							uint16_value = (uint16)value;
-							response = Manager::Get()->SetValue( *it, uint16_value );
-						}
-						else if ( ValueID::ValueType_Int == (*it).GetType() )
-						{
-							int_value = value;
-							response = Manager::Get()->SetValue( *it, int_value );
-						}
-						else if ( ValueID::ValueType_List == (*it).GetType() )
-						{
-							response = Manager::Get()->SetValue( *it, value );
-        				}
-            			else
-						{
-							WriteLog(LogLevel_Debug, false, "Return=false (unknown ValueType)");
-							return false;
-						}
-
-						WriteLog( LogLevel_Debug, true, "DomoZWave_SetValue: HomeId=%d Node=%d", home, node );
-						WriteLog( LogLevel_Debug, false, "CommandClassId=%d", id );
-						WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id) );
-						WriteLog( LogLevel_Debug, false, "Instance=%d", instance );
-						WriteLog( LogLevel_Debug, false, "Value=%d", value );
-						WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+					{
+						bool_value = (bool)value;
+						response = Manager::Get()->SetValue( *it, bool_value );
 					}
+					else if ( ValueID::ValueType_Byte == (*it).GetType() )
+					{
+						uint8_value = (uint8)value;
+						response = Manager::Get()->SetValue( *it, uint8_value );
+					}
+					else if ( ValueID::ValueType_Short == (*it).GetType() )
+					{
+						uint16_value = (uint16)value;
+						response = Manager::Get()->SetValue( *it, uint16_value );
+					}
+					else if ( ValueID::ValueType_Int == (*it).GetType() )
+					{
+						int_value = value;
+						response = Manager::Get()->SetValue( *it, int_value );
+					}
+					else if ( ValueID::ValueType_List == (*it).GetType() )
+					{
+						response = Manager::Get()->SetValue( *it, value );
+       				}
+            			else
+				{
+					WriteLog(LogLevel_Debug, false, "Return=false (unknown ValueType)");
+					return false;
 				}
+
+				WriteLog( LogLevel_Debug, true, "DomoZWave_SetValue: HomeId=%d Node=%d", home, node );
+				WriteLog( LogLevel_Debug, false, "CommandClassId=%d", id );
+				WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id) );
+				WriteLog( LogLevel_Debug, false, "Instance=%d", instance );
+				WriteLog( LogLevel_Debug, false, "Value=%d", value );
+				WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+			}
+		}
       	  }
 	}
 	else
@@ -2694,6 +2803,50 @@ bool DomoZWave_SetConfigParam( int32 home, int32 node, int32 param, int32 value,
 	response = Manager::Get()->SetConfigParam( home, node, param, value, size );
 	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
 	return response;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetConfigParamList>
+// Sets a configuration list item, because it is a string
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_SetConfigParamList( int32 home, int32 node, int32 param, const char* value )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetConfigList" ) == false ) return false;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetConfigList: HomeId=%d Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "Parameter=%d", param );
+	WriteLog( LogLevel_Debug, false, "Value=%s", value );
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the configuration items of this node 
+			if ( ( v.GetCommandClassId() == COMMAND_CLASS_CONFIGURATION  ) && ( v.GetGenre() == ValueID::ValueGenre_Config ) && ( v.GetInstance() == 1 ) )
+			{
+				if ( v.GetIndex() == param )
+				{
+					if ( v.GetType() == ValueID::ValueType_List )
+					{
+						string string_value(value);
+						return Manager::Get()->SetValueListSelection( v, string_value );
+					} else {
+						WriteLog( LogLevel_Error, true, "HomeId=%d Node=%d Param=%d isn't a list item", home, node, param );
+						return false;
+					}
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "SetConfigList==None (node doesn't exist)" );
+		return false;
+	}
+	return false;
 }
 
 //-----------------------------------------------------------------------------
@@ -2759,11 +2912,11 @@ const char* DomoZWave_GetNodeConfigList( int32 home, int32 node )
 	}
 	else
 	{
-		WriteLog( LogLevel_Debug, false, "ConfigurationList==None (node doesn't exist)" );
+		WriteLog( LogLevel_Debug, false, "ConfigList==None (node doesn't exist)" );
 		return "";
 	}
 
-	WriteLog( LogLevel_Debug, false, "ConfigurationList=%s", configlist.c_str() );
+	WriteLog( LogLevel_Debug, false, "ConfigList=%s", configlist.c_str() );
 
 	// We convert from string to char*, because else garbage is reported to gambas
 	char *tconfiglist;
@@ -3076,6 +3229,42 @@ const char* DomoZWave_GetNodeConfigValueList( int32 home, int32 node, int32 item
 }
 
 //-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeConfigValueReadOnly>
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_GetNodeConfigValueReadOnly( int32 home, int32 node, int32 item )
+{
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeConfigValueReadOnly" ) == false ) return false;
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the configuration items of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_CONFIGURATION  ) && ( v.GetGenre() == ValueID::ValueGenre_Config ) && ( v.GetInstance() == 1 ))
+			{
+				// Check the index, only if this matches, get the Label
+				if ( v.GetIndex() == item )
+				{
+					return Manager::Get()->IsValueReadOnly( v );
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Value=None (node doesn't exist)" );
+	}
+
+	// Set default value to ReadWrite
+	return false;
+}
+
+//-----------------------------------------------------------------------------
 // <DomoZWave_GetNodeNeighborsList>
 // Retrieves the list of neigbors and it will be displayed in the example format:
 // 2|3|4|6|7
@@ -3334,7 +3523,7 @@ void DomoZWave_AddAssociation( int32 home, int32 node, int32 group, int32 otherN
 
 //-----------------------------------------------------------------------------
 // <DomoZWave_RemoveAssociation>
-// Remove a group assocation
+// Remove a group association
 //-----------------------------------------------------------------------------
 
 void DomoZWave_RemoveAssociation( int32 home, int32 node, int32 group, int32 otherNode )
@@ -3347,6 +3536,230 @@ void DomoZWave_RemoveAssociation( int32 home, int32 node, int32 group, int32 oth
 	Manager::Get()->RemoveAssociation( home, node, group, otherNode );
 	// Refresh isn't required anymore with r564
 	//Manager::Get()->RefreshNodeInfo( home, node);
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeUserCodeCount>
+// Returns the number of usercounts supported by the device
+// 0 is returned if no UserCode CommandClass exists
+//-----------------------------------------------------------------------------
+
+int DomoZWave_GetNodeUserCodeCount( int32 home, int32 node )
+{
+	uint32 Count = 0;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeUserCodeCount" ) == false ) return 0;
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the usercode items of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_USER_CODE ) && ( v.GetGenre() == ValueID::ValueGenre_User ) && ( v.GetInstance() == 1 ))
+			{
+				// Check the index, and if we find a higher value, store it
+				if ( v.GetIndex() > Count )
+				{
+					Count = v.GetIndex();
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Value=None (node doesn't exist)" );
+	}
+
+	return Count;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeUserCodeLabel>
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeUserCodeLabel( int32 home, int32 node, int32 usercode )
+{
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeUserCodeLabel" ) == false ) return "";
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the usercode items of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_USER_CODE ) && ( v.GetGenre() == ValueID::ValueGenre_User ) && ( v.GetInstance() == 1 ))
+			{
+				// Check the index, and if we find a higher value, store it
+				if ( v.GetIndex() == usercode )
+				{
+					string valuelabel;
+					valuelabel = Manager::Get()->GetValueLabel( v );
+
+					// We convert from string to char*, because else garbage is reported to gambas
+					char *tvaluelabel;
+					tvaluelabel=new char [valuelabel.size()+1];
+					strcpy( tvaluelabel, valuelabel.c_str() );
+					return tvaluelabel;
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Value=None (node doesn't exist)" );
+	}
+
+	return "";
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeUserCodeValue>
+// Retrieves the UserCode value for the specific UserCode
+// Format is in 0x00 0x00 0x00 ... etc
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeUserCodeValue( int32 home, int32 node, int32 usercode )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeUserCodeValue" ) == false ) return "";
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the usercode items of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_USER_CODE ) && ( v.GetGenre() == ValueID::ValueGenre_User ) && ( v.GetInstance() == 1 ))
+			{
+				if (( v.GetIndex() == usercode ) && ( v.GetType() == ValueID::ValueType_Raw ))
+				{
+					string string_value;
+					Manager::Get()->GetValueAsString( v, &string_value );
+
+					// We convert from string to char*, because else garbage is reported to gambas
+					char *tstring_value;
+					tstring_value=new char [string_value.size()+1];
+					strcpy( tstring_value, string_value.c_str() );
+					return tstring_value;
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Value=None (node doesn't exist)" );
+	}
+
+	return "";
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetNodeUserCodeStart>
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_SetNodeUserCodeStart( int32 home, int32 node )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetNodeUserCodeStart" ) == false ) return false;
+
+        WriteLog( LogLevel_Debug, true, "DomoZWave_SetNodeUserCodeStart: HomeId=%d Node=%d", home, node );
+
+        m_structCtrl* ctrl = GetControllerInfo( home );
+
+	ctrl->m_userCodeEnrollNode = node;
+	ctrl->m_userCodeEnrollTime = time( NULL );
+
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetNodeUserCodeStop>
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_SetNodeUserCodeStop( int32 home )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetNodeUserCodeStop" ) == false ) return false;
+
+        WriteLog( LogLevel_Debug, true, "DomoZWave_SetNodeUserCodeStop: HomeId=%d", home );
+
+        m_structCtrl* ctrl = GetControllerInfo( home );
+
+	ctrl->m_userCodeEnrollNode = 0;
+	ctrl->m_userCodeEnrollTime = 0;
+
+	return true;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetNodeUserCodeRemove>
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_SetNodeUserCodeRemove( int32 home, int32 node, int32 usercode )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetNodeUserCodeRemove" ) == false ) return false;
+
+        WriteLog( LogLevel_Debug, true, "DomoZWave_SetNodeUserCodeRemove: HomeId=%d Node=%d UserCode=%d", home, node, usercode );
+
+        m_structCtrl* ctrl = GetControllerInfo( home );
+
+	ctrl->m_userCodeEnrollNode = 0;
+	ctrl->m_userCodeEnrollTime = 0;
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the usercode items of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_USER_CODE ) && ( v.GetGenre() == ValueID::ValueGenre_User ) && ( v.GetInstance() == 1 ))
+			{
+				if (( v.GetIndex() == usercode ) && ( v.GetType() == ValueID::ValueType_Raw ))
+				{
+					string string_value;
+					Manager::Get()->GetValueAsString( v, &string_value );
+
+					// Count the number of x = 0x?? values
+					int count = 0;
+  					for (size_t i = 0; i < string_value.size(); i++)
+						if (string_value[i] == 'x') count++;
+
+					// Set the string_value to 0x00 ...
+					string_value = "";
+
+					for (int i = 0; i < count; i++)
+					{
+						if ( string_value.length() >= 1 )
+						{
+							string_value.append( " 0x00" );
+						}
+						else
+						{
+							string_value.append( "0x00" );
+						}
+					}
+
+					WriteLog( LogLevel_Debug, false, "SetValue=%s", string_value.c_str() );
+
+					// Now we really set only if it is a sleeping device - it can take a while
+					return Manager::Get()->SetValue( v, string_value );
+				}
+			}
+		}
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Value=None (node doesn't exist)" );
+	}
+
+	return true;
 }
 
 //-----------------------------------------------------------------------------

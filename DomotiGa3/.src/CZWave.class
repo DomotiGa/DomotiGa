@@ -19,7 +19,7 @@
 Library "libdomozwave"
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Public sLibDomoZwave As String = "DomoZWave version r1101"
+Public sLibDomoZwave As String = "DomoZWave version r1143"
 
 ' Initialize and destroy the wrapper - no HomeId required
 Extern DomoZWave_Init(deviceConfigPath As String, zwConfigPath As String, logname As String, rpcPort As Integer, enableLog As Boolean, enableOZWLog As Boolean, polltime As Integer)
@@ -68,6 +68,7 @@ Extern DomoZWave_SetValue(home As Integer, node As Integer, instance As Integer,
 
 ' Request or update node configuration
 Extern DomoZWave_SetConfigParam(home As Integer, node As Integer, param As Integer, value As Integer, size As Integer) As Boolean
+Extern DomoZWave_SetConfigParamList(home As Integer, node As Integer, param As Integer, value As String) As Boolean
 Extern DomoZWave_RequestConfigParam(home As Integer, node As Integer, param As Integer)
 Extern DomoZWave_RequestAllConfigParams(home As Integer, node As Integer)
 Extern DomoZWave_GetNodeConfigList(home As Integer, node As Integer) As String
@@ -76,6 +77,7 @@ Extern DomoZWave_GetNodeConfigHelp(home As Integer, node As Integer, item As Int
 Extern DomoZWave_GetNodeConfigValue(home As Integer, node As Integer, item As Integer) As String
 Extern DomoZWave_GetNodeConfigValueType(home As Integer, node As Integer, item As Integer) As String
 Extern DomoZWave_GetNodeConfigValueList(home As Integer, node As Integer, item As Integer) As String
+Extern DomoZWave_GetNodeConfigValueReadOnly(home As Integer, node As Integer, item As Integer) As Boolean
 
 ' Retrieve the node neighborhood list or commandclass list
 Extern DomoZWave_GetNodeNeighborsList(home As Integer, node As Integer) As String
@@ -89,6 +91,14 @@ Extern DomoZWave_GetNodeGroupLabel(home As Integer, node As Integer, ogroup As I
 Extern DomoZWave_AddAssociation(home As Integer, node As Integer, group As Integer, othernode As Integer)
 Extern DomoZWave_RemoveAssociation(home As Integer, node As Integer, group As Integer, othernode As Integer)
 
+' Request or set UserCode of a node
+Extern DomoZWave_GetNodeUserCodeCount(home As Integer, node As Integer) As Integer
+Extern DomoZWave_GetNodeUserCodeLabel(home As Integer, node As Integer, usercode As Integer) As String
+Extern DomoZWave_GetNodeUserCodeValue(home As Integer, node As Integer, usercode As Integer) As String
+Extern DomoZWave_SetNodeUserCodeStart(home As Integer, node As Integer) As Boolean
+Extern DomoZWave_SetNodeUserCodeStop(home As Integer) As Boolean
+Extern DomoZWave_SetNodeUserCodeRemove(home As Integer, node As Integer, usercode As Integer) As Boolean
+
 ' Soft or hard reset the controller
 Extern DomoZWave_ControllerSoftReset(home As Integer)
 Extern DomoZWave_ControllerHardReset(home As Integer)
@@ -97,8 +107,6 @@ Extern DomoZWave_ControllerHardReset(home As Integer)
 Extern DomoZWave_CancelControllerCommand(home As Integer) As Boolean
 Extern DomoZWave_AddDevice(home As Integer) As Boolean
 Extern DomoZWave_RemoveDevice(home As Integer) As Boolean
-Extern DomoZWave_AddController(home As Integer) As Boolean
-Extern DomoZWave_RemoveController(home As Integer) As Boolean
 Extern DomoZWave_AssignReturnRoute(home As Integer, node As Integer, destnode As Integer) As Boolean
 Extern DomoZWave_DeleteAllReturnRoutes(home As Integer, node As Integer) As Boolean
 Extern DomoZWave_RequestNetworkUpdateFromPrimary(home As Integer) As Boolean
@@ -158,6 +166,10 @@ Public sZWaveZDKVersion As String
 Public iHomeID As Integer
 Public iControllerID As Integer
 Public sControllerType As String = ("Unknown")
+
+' Timer variables to cancel certain commands/states in open-zwave
+Public tControllerCommand As Timer
+Public tUserCodeEnroll As Timer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' run zwave network related tasks
@@ -439,10 +451,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Request or update node configuration
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Public Sub SetConfigParam(iNodeId As Integer, iParam As Integer, iValue As Integer, Optional iSize As Integer = 2)
 
   If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Set config param " & iParam & " to value " & iValue & " for node id " & iNodeId & ", size is " & iSize & "."))
   DomoZWave_SetConfigParam(iHomeID, iNodeId, iParam, iValue, iSize)
+
+End
+
+Public Sub SetConfigParamList(iNodeId As Integer, iParam As Integer, sValue As String)
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Set config param List " & iParam & " to value \"" & sValue & "\" for node id " & iNodeId & "."))
+   DomoZWave_SetConfigParamList(iHomeID, iNodeId, iParam, sValue)
 
 End
 
@@ -484,9 +504,28 @@ Public Sub GetNodeConfigValue(iNodeId As Integer, Item As Integer) As String
 
 End
 
+Public Sub GetNodeConfigValueType(iNodeId As Integer, Item As Integer) As String
+
+  Return DomoZWave_GetNodeConfigValueType(iHomeID, iNodeId, Item)
+
+End
+
+Public Sub GetNodeConfigValueList(iNodeId As Integer, Item As Integer) As String
+
+  Return DomoZWave_GetNodeConfigValueList(iHomeID, iNodeId, Item)
+
+End
+
+Public Sub GetNodeConfigValueReadOnly(iNodeId As Integer, Item As Integer) As Boolean
+
+  Return DomoZWave_GetNodeConfigValueReadOnly(iHomeID, iNodeId, Item)
+
+End
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Retrieve the node neighborhood list or commandclass list
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Public Sub GetNodeNeighborsList(iNodeId As Integer) As String
 
   Dim NList As String
@@ -524,10 +563,10 @@ Public Sub GetNodeGroupCount(iNodeId As Integer) As Integer
 
 End
 
-Public Sub GetNodeGroupList(iNodeId As Integer) As Integer
+Public Sub GetNodeGroupList(iNodeId As Integer, group As Integer) As String
 
   If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Requested group list for node id " & iNodeId & "."))
-  Return DomoZWave_GetNodeGroupList(iHomeID, iNodeId)
+  Return DomoZWave_GetNodeGroupList(iHomeID, iNodeId, group)
 
 End
 
@@ -560,18 +599,76 @@ Public Sub RemoveAssociation(iNodeId As Integer, iAssociationGroup As Integer, i
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' UserCode functions, usefull for e.g. Tag Reader
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Public Sub GetNodeUserCodeCount(iNodeId As Integer) As Integer
+
+  Return DomoZWave_GetNodeUserCodeCount(iHomeID, iNodeId)
+
+End
+
+Public Sub GetNodeUserCodeLabel(iNodeId As Integer, UserCode As Integer) As String
+
+  Return DomoZWave_GetNodeUserCodeLabel(iHomeID, iNodeId, UserCode)
+
+End
+
+Public Sub GetNodeUserCodeValue(iNodeId As Integer, UserCode As Integer) As String
+
+  Return DomoZWave_GetNodeUserCodeValue(iHomeID, iNodeId, UserCode)
+
+End
+
+Public Sub SetNodeUserCodeStart(iNodeId As Integer) As Boolean
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Start UserCode enrollment for homeid=" & iHomeID & ", nodeid=" & iNodeId))
+  Try tUserCodeEnroll.Stop
+  tUserCodeEnroll = New Timer As "tUserCodeEnroll"
+  tUserCodeEnroll.Delay = 30000
+  tUserCodeEnroll.Start
+
+  Return DomoZWave_SetNodeUserCodeStart(iHomeID, iNodeId)
+
+End
+
+Public Sub SetNodeUserCodeStop() As Boolean
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Stop UserCode enrollment for homeid=" & iHomeID & " (30 sec timer expired)"))
+  tUserCodeEnroll.Stop
+  Return DomoZWave_SetNodeUserCodeStop(iHomeID)
+  
+End
+
+Public Sub tUserCodeEnroll_Timer()
+
+  SetNodeUserCodeStop()
+
+End
+ 
+
+Public Sub SetNodeUserCodeRemove(iNodeId As Integer, UserCode As Integer)
+
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Remove UserCode for homeid=" & iHomeID & ", nodeid=" & iNodeId & ", usercode=" & UserCode)) 
+  DomoZWave_SetNodeUserCodeRemove(iHomeID, iNodeId, UserCode)
+
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Soft or hard reset the controller
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Public Sub ControllerSoftReset()
 
-  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Controller will be Soft Reset (no data will be lost)"))
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Controller will be Soft Reset for homeid=" & iHomeID & " (no data will be lost)"))
   DomoZWave_ControllerSoftReset(iHomeID)
 
 End
 
 Public Sub ControllerHardReset()
 
-  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Controller will be HARD Reset (*ALL* data will be lost)"))
+  If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Controller will be HARD Reset for homeid=" & iHomeID & " (*ALL* data will be lost)"))
   DomoZWave_ControllerHardReset(iHomeID)
 
 End
@@ -579,9 +676,13 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Controller commands
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Public Sub CancelControllerCommand() As Boolean
 
   Dim bResult As Boolean
+
+  ' Try to stop timer first
+  Try tControllerCommand.Stop
 
   bResult = DomoZWave_CancelControllerCommand(iHomeID)
 
@@ -606,6 +707,13 @@ Public Sub AddDevice() As Boolean
 
   If bResult Then
     If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Begin add device, press button on device to add!"))
+
+    ' Start our 30sec timer - we *need* to put it in CZWave.class, because the Z-Wave Commander 
+    ' closing can resulting in "hanging" of the controller
+    tControllerCommand = Null
+    tControllerCommand = New Timer As "tControllerCommand"
+    tControllerCommand.Delay = 30000
+    tControllerCommand.Start
   Else
     If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Begin add device, controller already in add/remove mode, press cancel first"))
   Endif
@@ -622,6 +730,12 @@ Public Sub RemoveDevice() As Boolean
 
   If bResult Then
     If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Begin remove device, press button on device to remove!"))
+
+    ' Start our 30sec timer
+    Try tControllerCommand.Stop
+    tControllerCommand = New Timer As "tControllerCommand"
+    tControllerCommand.Delay = 30000
+    tControllerCommand.Start
   Else
     If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Begin remove device, controller already in add/remove mode, press cancel first"))
   Endif
@@ -630,35 +744,10 @@ Public Sub RemoveDevice() As Boolean
 
 End
 
-Public Sub AddController() As Boolean
+Public Sub tControllerCommand_Timer()
 
-  Dim bResult As Boolean
-
-  bResult = DomoZWave_AddController(iHomeID)
-
-  If bResult Then
-    If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Begin add controller, press button on other controller to add!"))
-  Else
-    If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Begin add controller, controller already in add/remove mode, press cancel first"))
-  Endif
-
-  Return bResult
-
-End
-
-Public Sub RemoveController() As Boolean
-
-  Dim bResult As Boolean
-
-  bResult = DomoZWave_RemoveController(iHomeID)
-
-  If bResult Then
-    If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Begin remove controller, press button on other controller to remove!"))
-  Else
-    If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Begin remove controller, controller already in add/remove mode, press cancel first"))
-  Endif
-
-  Return bResult
+  tControllerCommand.Stop
+  CancelControllerCommand()
 
 End
 
@@ -714,7 +803,7 @@ End
 Public Sub HealNetwork()
 
   If bZWaveDebug Then Main.WriteDebugLog(("[Z-Wave] Healing network"))
-  DomoZWave_HealNetwork(iHomeID, FALSE)
+  DomoZWave_HealNetwork(iHomeID, False)
 
 End
 
