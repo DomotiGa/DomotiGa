@@ -1,0 +1,281 @@
+' Gambas class file
+
+' Description:
+' Mochad.class
+' Provide support for Mochad.
+
+' Development Status:
+' Just started developing this one.
+
+' Links:
+' http://sourceforge.net/apps/mediawiki/mochad/index.php?title=Main_Page
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' This module is written by and Copyright(C) 2012 Roland van Hulzen.
+' This class only support standard X10 but the mochad interface can do much more.
+
+' Read file called COPYING for license details.
+
+Property TCPHost As String
+Property TCPPort As String
+Property GlobalX10 As Boolean
+Property MochadDebug As Boolean
+
+Private sTCPHost As String
+Private iTCPPort As String
+Private bMochadDebug As Boolean
+Private bGlobalX10 As Boolean
+
+Public hMochad As New Socket
+
+Public sBuffer As String
+Public sMochad As String
+Public tMochadConnect As Timer
+Private iConnectRetry As Integer = 0 ' retries
+Private iConnectDelay As Integer = 60000 ' 1 minute
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Connect() As Boolean
+
+  ' try to close the connection
+  Try hMochad.Close
+
+  ' get a new one
+  hMochad = New Socket As "Mochad"
+  hMochad.Connect(sTCPHost, iTCPPort)
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("Mochad Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Mochad_Ready()
+
+  Main.WriteLog(("Mochad TCP socket connected."))
+
+  ' initialise the ASCII communication
+  Try Write #hMochad, "ASCI", 4
+
+  ' define timer for reconnect
+  tMochadConnect = New Timer As "MochadConnect"
+  tMochadConnect.Delay = iConnectRetry
+  tMochadConnect.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is closed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Mochad_Closed()
+
+  Main.WriteLog(("Mochad Error: TCP socket closed."))
+  If iConnectRetry < 6 Then
+    Main.WriteDebugLog(("[Mochad ]Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", ".")))
+    tMochadConnect.Start
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tMochadConnect_Timer()
+
+  If Not Connect() Then
+    Inc iConnectRetry
+    iConnectDelay *= iConnectRetry
+    tMochadConnect.Delay = iConnectDelay
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try tMochadConnect.Stop
+  Try hMochad.Close
+  Main.WriteLog(("Mochad TCP socket close."))
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("Mochad Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+  Return False
+
+End
+
+Public Sub Mochad_Found()
+
+  Main.WriteLog(("Mochad IP address resolved."))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Mochad_Error()
+
+  ' handle error
+  Select Case hMochad.Status
+    Case Net.CannotCreateSocket
+      Main.WriteLog(("Mochad: The system does not allow to create a socket."))
+    Case Net.HostNotFound
+      Main.WriteLog(("Mochad: Host '") & sTCPHost & ("' not found."))
+    Case Net.ConnectionRefused
+      Main.WriteLog(("Mochad: Unable to connect to interface. Connection refused."))
+    Case Net.CannotRead
+      Main.WriteLog(("Mochad: Error reading data."))
+    Case Net.CannotWrite
+      Main.WriteLog(("Mochad: Error writing data."))
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send generic command via tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sValue As String)
+
+  Dim sCmd As String
+
+  sCmd = "PL " & Left(sAddress, 1) & Val(Right(sAddress, 2)) & " " & Upper(sValue) 
+  If Main.bMochadDebug Then Main.WriteDebugLog(("[Mochad] Send command: ") & sCmd)
+  Try Write #hMochad, sCmd & Chr$(10), Len(sCmd) + 1
+  If Error Then Main.WriteDebugLog(("[Mochad] Error writing data to the TCP port! -> ") & Error.Text)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' data received on tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Mochad_Read()
+
+  Dim sData As String
+  Dim sTemp As String
+  Dim sPL_RF As String
+  Dim sStr As String
+  Dim sCode As String
+  Dim sCommand As String
+
+  Try Read #hMochad, sData, 1
+  If Error Then Main.WriteDebugLog(("[Mochad] Error reading data from the TCP port! -> ") & Error.Text)
+  If sData = Chr(10) Then ' buffer until linefeed then parse
+    If Len(sBuffer) > 1 Then
+      sStr = SBuffer
+      If InStr(sStr, "Raw data received:") Then
+      Else
+        If Main.bMochadDebug Then Main.WriteDebugLog(("[Mochad] Received string: ") & sStr)
+        sTemp = Mid(sStr, 22, Len(sStr))
+        sPL_RF = Mid(sStr, 19, 2)
+        Select sPL_RF
+          Case "PL"
+            If InStr(sTemp, "HouseUnit:") Then 
+              sMochad = Mid(sTemp, 12, 1) & Format$(Trim(Mid(sTemp, 13, 10)), "00")
+            Else
+              If InStr(sTemp, "Func:") Then 
+                If (Left(sMochad, 1) <> " " And sMochad <> "") Then
+                  sMochad = sMochad & " " & Mid(sTemp, InStr(sTemp, "Func:") + 5, 10)
+                Endif
+              Endif
+            Endif
+          Case "RF"
+          ' todo?
+        End Select
+        If Len(sMochad) > 4 And sMochad <> "Error" Then
+          sCode = Upper$(Trim(Left(sMochad, InStr(sMochad, " "))))
+          sCommand = Upper$(Trim(Right(sMochad, InStr(sMochad, " ") - 1)))
+          UpdateX10(sCode, sCommand)
+        Endif
+      Endif
+      sBuffer = Null
+    Endif
+  Else
+    sBuffer &= sData
+  Endif
+
+End
+
+Private Sub UpdateX10(sCode As String, sCommand As String)
+
+  Dim iDeviceId As Integer
+
+  If Main.bMochadDebug Then Main.WriteDebugLog(("[Mochad] Received command '") & sCommand & ("' for device '") & sCode & "'")
+
+  If bGlobalX10 Then
+    iDeviceId = Devices.FindAll(sCode, 9999, "X10")
+  Else
+    iDeviceId = Devices.Find(sCode, Devices.FindInterface("Mochad"), "X10")
+  Endif
+  If iDeviceId Then
+    If sCommand = "ON" Then
+      Devices.ValueUpdate(iDeviceId, "ON", "", "", "")
+    Else If sCommand = "OFF" Then
+      Devices.ValueUpdate(iDeviceId, "OFF", "", "", "")
+    Endif
+  Endif
+
+End
+
+' implement properties
+Private Function TCPHost_Read() As String
+
+  Return sTCPHost
+
+End
+
+Private Sub TCPHost_Write(Value As String)
+
+  sTCPHost = Value
+
+End
+
+Private Function TCPPort_Read() As String
+
+  Return iTCPPort
+
+End
+
+Private Sub TCPPort_Write(Value As String)
+
+  iTCPPort = Value
+
+End
+
+Private Function MochadDebug_Read() As Boolean
+
+  Return bMochadDebug
+
+End
+
+Private Sub MochadDebug_Write(Value As Boolean)
+
+  bMochadDebug = Value
+
+End
+
+Private Function GlobalX10_Read() As Boolean
+
+  Return bGlobalX10
+
+End
+
+Private Sub GlobalX10_Write(Value As Boolean)
+
+  bGlobalX10 = Value
+
+End

@@ -13,8 +13,8 @@
 '
 ' Thermostat      : value1 = Room Temperature set point (°C)      - OpenTherm MsgID=16
 '                   value2 = Room Temperature sensor (°C)         - OpenTherm MsgID=24
-'                   value3 = Outside Temperature Sensor (°C)      - OpenTherm MsgID=27
-'                   value4 = Status OpenTherm master
+'                   value3 = Room set point status                - n/a
+'                   value4 = Status OpenTherm master:
 '                            - "Idle"                             - OpenTherm MsgID=0, Lowerbyte: 0000 0000
 '                            - "Heating up room"                  - OpenTherm MsgID=0, Lowerbyte: 0000 0010
 '                            - "Heating up boiler"                - OpenTherm MsgID=0, Lowerbyte: 0000 0100
@@ -29,7 +29,7 @@
 '
 ' Boiler          : value1 = Boiler set point (°C)                - OpenTherm MsgID=56
 '                   value2 = Boiler water temperature (°C)        - OpenTherm MsgID=25
-'                   value3
+'                   value3 = Boiler water flow (l/min)            - OpenTherm MsgID=19  [Only when polling is disabled.]
 '                   value4
 '
 ' Burner          : value1 = Flame status  (On/Off)               - OpenTherm MsgID=0, Lowerbyte: 0000 1000
@@ -49,56 +49,95 @@
 
 ' Read file called COPYING for license details.
 
-PROPERTY Port AS String
+PROPERTY Type AS String
+PROPERTY TCPHost AS String
+PROPERTY TCPPort AS String
+PROPERTY SerPort AS String
 PROPERTY OpenThermDebug AS Boolean
+PROPERTY PollTime AS Integer
+PROPERTY Thermostat AS String
+PROPERTY TemperatureOverride AS String
 PROPERTY OutsideSensor AS Boolean
 PROPERTY SyncClock AS Boolean
-PROPERTY PollTime AS Integer
-PROPERTY TemperatureOverride AS String
-PROPERTY Thermostat AS String
+PROPERTY RelayEnabled AS Boolean
+PROPERTY RelayPort AS Integer
 
-PRIVATE sPort AS String
+PRIVATE sType AS String
+PRIVATE sTCPHost AS String
+PRIVATE sTCPPort AS String
+PRIVATE sSerPort AS String
 PRIVATE bOpenThermDebug AS Boolean
-PRIVATE bOutsideSensor AS Boolean
-PRIVATE bSyncClock AS Boolean
+PRIVATE iPollTime AS Integer
 PRIVATE sThermostat AS String
 PRIVATE sTemperatureOverride AS String
-PRIVATE iPollTime AS Integer
+PRIVATE bOutsideSensor AS Boolean
+PRIVATE bSyncClock AS Boolean
+PRIVATE bRelayEnabled AS Boolean
+PRIVATE iRelayPort AS Integer
 
 PUBLIC tOpenTherm AS Timer
+PUBLIC hOpenThermSer AS NEW SerialPort
+PUBLIC hOpenThermTCP AS NEW Socket
+PUBLIC hOpenThermRelay AS NEW ServerSocket
+PUBLIC hRelayOTClient AS Object[]
+PUBLIC hRelayOTSocket AS NEW Socket
 
-PUBLIC hOpenTherm AS NEW SerialPort
+
 PRIVATE sBuffer AS String
+PRIVATE sBufferSocket AS String
 PRIVATE sTemperatureOverrideStatus AS String = ""
-PRIVATE bValidOutsideSensor AS Boolean = FALSE
 
-PRIVATE sDescription AS String[] = Split("Status,Control setpoint,Remote parameter flags,Maximum relative modulation level,Boiler capacity and modulation limits,Room Setpoint,Relative modulation level,CH water pressure,Room temperature,Boiler water temperatur,DHW temperature,Outside temperature,Return water temperatur,DHW setpoint boundaries,Max CH setpoint boundaries,DHW setpoint,Max CH water setpoint,Burner starts,CH pump starts,DHW pump/valve starts,DHW burner starts,Burner operation hours,CH pump operation hours,DHW pump/valve operation hours,DHW burner operation hours", ",")
+' Device ID'S
+PRIVATE iThermostatID AS Integer            'DeviceID of Thermostat device
+PRIVATE iCHID AS Integer                    'DeviceID of Central Heating device
+PRIVATE iBoilerID AS Integer                'DeviceID of Boiler device
+PRIVATE iBurnerID AS Integer                'DeviceID of Burner device
+PRIVATE iOutsideID AS Integer               'DeviceID of Outside temperature device
 
 ' local status variables
-PRIVATE sOutsideTemp AS String            ' outside temperature
-PRIVATE bOverrideActive AS Boolean        ' indicates if setpoint override is active
-PRIVATE bOverrideSend AS Boolean          ' indicates if override setpoint is send to gateway
-PRIVATE fCurrentSetPoint AS Float         ' setpoint received from gateway
-PRIVATE fOverrideSetPoint AS Float        ' setpoint to override existing thermostat setpoint
-PRIVATE fOriginalSetPoint AS Float        ' setpoint of thermostat before override
-PRIVATE fBoilerSetPoint AS Float          ' boiler setpoint
-PRIVATE fCentralHeatingSetPoint AS Float  ' central heating setpoint
-PRIVATE bClockSyncedToday AS Boolean      ' indicates if clock is already synced
-PRIVATE iDayOfMonth AS Integer            '
+PRIVATE fRoomTemp AS Float = 0              'Room temperature
+PRIVATE fRoomSetPoint AS Float = 0          'Room temperature set point
+PRIVATE fOutsideTemp AS Float = 0           'Outside temperature
+PRIVATE bFault AS Boolean = FALSE           'Fault indicator
+PRIVATE bCH AS Boolean = FALSE              'Central Heating state (true = active)
+PRIVATE bDHW AS Boolean = FALSE             'Domestic hot water state (true = active)
+PRIVATE bCooling AS Boolean = FALSE         'Cooling state
+PRIVATE bFlame AS Boolean = FALSE           'Flame status
+PRIVATE fCHModLevel AS Float = 0            'Relative modulation level
+PRIVATE fCHWaterPress AS Float = 0          'CH Water pressure
+PRIVATE fBoilerTemp AS Float = 0            'Boler water temperature
+PRIVATE fBoilerSetPoint AS Float = 0        'Boiler temperature set point
+PRIVATE fBurnerStarts AS Float = 0          'Burner starts counter
+PRIVATE fCHSetPoint AS Float = 0            'Central Heating temperature set point
+PRIVATE fCHBurnerHours AS Float = 0         'Burning hours central heating
+PRIVATE fHWBurnerHours AS Float = 0         'Burning hours boiler
+PRIVATE fBoilerFlow AS Float = 0            'Hot water flow
+
+PRIVATE bApplicationError AS Boolean        'indicates error state OpenTherm application
+PRIVATE bIgnoreAbout AS Boolean             'indicates if about message is expected
+PRIVATE bOverrideActive AS Boolean          'indicates if setpoint override is active
+PRIVATE bOverrideSend AS Boolean            'indicates if override setpoint is send to gateway
+PRIVATE fCurrentSetPoint AS Float           'setpoint received from gateway
+PRIVATE fOverrideSetPoint AS Float          'setpoint to override existing thermostat setpoint
+PRIVATE fOriginalSetPoint AS Float          'setpoint of thermostat before override
+PRIVATE fOverrideBoilerSetPoint AS Float    'boiler setpoint
+PRIVATE fCentralHeatingSetPoint AS Float    'central heating setpoint
+PRIVATE bClockSyncedToday AS Boolean        'indicates if clock is already synced
+PRIVATE iDayOfMonth AS Integer              '
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC FUNCTION Connect() AS Boolean
+PUBLIC FUNCTION ConnectSerial() AS Boolean
 
   ' try to close the port
-  TRY hOpenTherm.Close
+  TRY hOpenThermSer.Close
 
   ' get a new one
-  hOpenTherm = NEW Serialport AS "OpenTherm"
+  hOpenThermSer = NEW Serialport AS "OpenThermSer"
 
-  WITH hOpenTherm
-    .PortName = sPort
+  WITH hOpenThermSer
+    .PortName = sSerPort
     .Speed = 9600
     .Parity = 0
     .DataBits = 8
@@ -107,48 +146,269 @@ PUBLIC FUNCTION Connect() AS Boolean
     .Open()
   END WITH
 
-  TRY PRINT #hOpenTherm, "PS=1\r"
-  IF ERROR THEN
-    Main.WriteDebugLog(("[OpenTherm] Error writing data to serial port! -> ") & Error.Text)
-    RETURN FALSE
+  bIgnoreAbout = TRUE
+  TRY PRINT #hOpenThermSer, "PR=A\r" 'Get about information of opentherm gateway 
+    IF ERROR THEN
+      Main.WriteDebugLog(("[OpenTherm] Error writing data to serial port! -> ") & Error.Text)
+      RETURN FALSE
+    ELSE
+      GetDeviceIDs()
+      SLEEP 0.5
+      IF bIgnoreAbout THEN
+        hOpenThermSer.Close
+        Main.WriteDebugLog(("[OpenTherm] Gateway is not responding") & Error.Text)
+        RETURN FALSE
+      ELSE
+        ' all ok
+        RETURN TRUE
+      ENDIF
+    ENDIF
+
+CATCH ' some errors
+  Main.WriteLog(("OpenTherm Error: ") & ERROR.Text)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Receive data from serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB OpenThermSer_Read()
+
+  DIM sData AS String
+
+  TRY READ #hOpenThermSer, sData, 1
+  IF ERROR THEN Main.WriteDebugLog(("[OpenTherm] Error reading data from serial port! -> ") & Error.Text)
+  IF sData = Chr(10) THEN ' buffer until linefeed then parse
+    IF Len(sBuffer) > 1 THEN ParseLine(Left(sBuffer, Len(sBuffer) - 1))
+    sBuffer = NULL
   ELSE
-    ' all ok
+    sBuffer &= sData
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open TCP port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION ConnectTCP() AS Boolean
+
+  ' try to close the connection
+  TRY hOpenThermTCP.Close
+  bIgnoreAbout = TRUE
+
+  ' get a new one
+  hOpenThermTCP = NEW Socket AS "OpenThermTCP"
+  hOpenThermTCP.Connect(sTCPHost, sTCPPort)
+  IF NOT ERROR THEN
     RETURN TRUE
+  ELSE
+    RETURN FALSE
   ENDIF
 
 CATCH ' some errors
-  Main.WriteLog(("OpenTherm Error: ") & ERROR.Text)
+  Main.WriteLog(("OpenTherm Error: ") & ERROR.Text & " at " & ERROR.Where)
   RETURN FALSE
 
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' close port
+' socket is connected
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC FUNCTION Disconnect() AS Boolean
+PUBLIC SUB OpenThermTCP_Ready()
 
-  ' try to close the connection
-  TRY tOpenTherm.Stop
-  TRY hOpenTherm.Close
-  Main.WriteLog(("OpenTherm serial port close."))
-
-  ' all ok
-  RETURN TRUE
-
-CATCH ' some errors
-  Main.WriteLog(("OpenTherm Error: ") & ERROR.Text)
-  RETURN FALSE
+  GetDeviceIDs()
+  Main.WriteLog(("OpenTherm TCP socket connected."))
+  PRINT #hOpenthermtcp, "PR=A" 'Get about information of opentherm gateway
 
 END
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is closed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB OpenThermTCP_Closed()
+
+  Main.WriteLog(("OpenTherm TCP socket closed."))
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB OpenThermTCP_Error()
+
+  ' handle error
+  SELECT CASE hOpenThermTCP.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteLog(("OpenTherm: The system does not allow to create a socket."))
+    CASE Net.HostNotFound
+      Main.WriteLog(("OpenTherm: Host '") & sTCPHost & ("' not found."))
+    CASE Net.ConnectionRefused
+      Main.WriteLog(("OpenTherm: Unable to connect to gateway. Connection refused."))
+    CASE Net.CannotRead
+      Main.WriteLog(("OpenTherm: Error reading data."))
+    CASE Net.CannotWrite
+      Main.WriteLog(("OpenTherm: Error writing data."))
+  END SELECT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Receive data from network socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB OpenThermTCP_Read()
+
+  DIM sData AS String
+
+  TRY READ #hOpenThermTCP, sData, 1
+  IF ERROR THEN Main.WriteDebugLog(("[OpenTherm] Error reading data from TCP socket! -> ") & Error.Text)
+  IF sData = Chr(10) THEN ' buffer until linefeed then parse
+    IF Len(sBuffer) > 1 THEN ParseLine(Left(sBuffer, Len(sBuffer) - 1))
+    sBuffer = NULL
+  ELSE
+    sBuffer &= sData
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Start relay port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION StartRelay() AS Boolean
+
+  hOpenThermRelay = NEW ServerSocket AS "OpenThermRelay"
+  hOpenThermRelay.Type = Net.Internet
+  hOpenThermRelay.Port = iRelayPort
+  ' we start listening for max 1 connection
+  hOpenThermRelay.Listen(1)
+
+  IF hOpenThermRelay.Status = Net.Active THEN
+    hRelayOTclient = NEW Object[]
+    ' all ok
+    RETURN TRUE
+  ELSE
+    RETURN FALSE
+  END IF
+
+END
+
+PUBLIC SUB OpenThermRelay_Connection(sHost AS String)
+
+  hRelayOTSocket = NEW Socket AS "RelayOTSocket"
+  ' accept client
+  IF hOpenThermRelay.Status <= Net.Inactive THEN RETURN
+  IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm Relay] Connection request from client ") & sHost)
+
+  hRelayOTSocket = hOpenThermRelay.Accept()
+  hRelayOTclient.Add(hRelayOTSocket)
+  IF Main.bOpenThermDebug THEN
+    IF hRelayOTSocket.Status = Net.Connected THEN Main.WriteLog(("OpenTherm gateway relay client connection from ip address ") & hRelayOTSocket.RemoteHost & " (" & DNS.ResolveHost(hRelayOTSocket.RemoteHost) & ") accepted.")
+  ENDIF
+
+END
+
+PUBLIC SUB OpenThermRelay_Error()
+
+  ' handle error
+  SELECT CASE hOpenThermRelay.Status
+    CASE Net.CannotCreateSocket
+      Main.WriteDebugLog(("[OpenTherm Relay] The system does not allow to create a socket."))
+    CASE Net.CannotBindSocket
+      Main.WriteDebugLog(("[OpenTherm Relay] Cannot bind socket."))
+    CASE Net.CannotListen
+      Main.WriteDebugLog(("[OpenTherm Relay] Cannot listen on port."))
+  END SELECT
+
+END
+
+PUBLIC SUB OpenThermRelay_Closed()
+
+  Main.WriteLog(("OpenTherm TCP relay socket closed."))
+
+END
+
+PUBLIC SUB Socket_Read()
+  
+  DIM sData AS String
+  IF LAST.Status <> Net.Connected THEN RETURN 
+  TRY READ #LAST, sData, 1
+  
+  IF sData = Chr(10) THEN ' buffer until linefeed then parse
+    IF Len(sBufferSocket) > 1 THEN
+      sBufferSocket = Left(sBufferSocket, Len(sBufferSocket) - 1)
+      Main.WriteDebugLog(("[OpenTherm Relay] Received command from relay client: '") & sBufferSocket & "'")
+      WriteCmd(sBufferSocket)
+    ENDIF 
+    sBufferSocket = NULL
+  ELSE
+    sBufferSocket &= sData
+  ENDIF
+
+END
+
+PUBLIC SUB Socket_Closed()
+  
+  Main.WriteLog(("OpenTherm gateway relay client connection closed."))
+  hRelayOTclient.Remove(hRelayOTclient.Find(LAST))
+  
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Get device id's, and store them as local variables. This will speedup the code
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB GetDeviceIDs()
+
+  iThermostatID = Devices.Find("Thermostat", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Thermostat")
+  IF iThermostatID = 0 THEN
+    IF Main.bOpenThermDebug THEN
+      Main.WriteDebugLog(("[OpenTherm] Thermostat device is missing and not automatically created. Thermostat updates will be ignored!"))
+      Main.WriteDebugLog(("[OpenTherm] Check if the device exists and is not disabled or hidden"))
+    ENDIF
+  ENDIF
+  iCHID = Devices.Find("CentralHeating", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Central Heating")
+  IF iCHID = 0 THEN
+    IF Main.bOpenThermDebug THEN
+      Main.WriteDebugLog(("[OpenTherm] Central heating device is missing and not automatically created. Central heating updates will be ignored!"))
+      Main.WriteDebugLog(("[OpenTherm] Check if the device exists and is not disabled or hidden"))
+    ENDIF
+  ENDIF
+  iBoilerID = Devices.Find("Boiler", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Boiler")
+  IF iBoilerID = 0 THEN
+    IF Main.bOpenThermDebug THEN
+      Main.WriteDebugLog(("[OpenTherm] Boiler device is missing and not automatically created. Boiler updates will be ignored!"))
+      Main.WriteDebugLog(("[OpenTherm] Check if the device exists and is not disabled or hidden"))
+    ENDIF
+  ENDIF
+  iBurnerID = Devices.Find("Burner", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Burner")
+  IF iBurnerID = 0 THEN
+    IF Main.bOpenThermDebug THEN
+      Main.WriteDebugLog(("[OpenTherm] Burner device is missing and not automatically created. Burner updates will be ignored!"))
+      Main.WriteDebugLog(("[OpenTherm] Check if the device exists and is not disabled or hidden"))
+    ENDIF
+  ENDIF
+  iOutsideID = Devices.Find("Outside", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Outside sensor")
+  IF iOutsideID = 0 THEN
+    IF Main.bOpenThermDebug THEN
+      Main.WriteDebugLog(("[OpenTherm] Outside sensor device is missing and not automatically created. Outside sensor updates will be ignored!"))
+      Main.WriteDebugLog(("[OpenTherm] Check if the device exists and is not disabled or hidden"))
+    ENDIF
+  ENDIF
+
+END
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Start polling
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB Run()
 
-  ' start poll timer
-  tOpenTherm = NEW Timer AS "tOpenTherm"
-  tOpenTherm.Delay = iPollTime * 1000 ' multiply for seconds
-  tOpenTherm.Start
-
-  GetStatus()
+  IF iPollTime > 0 THEN
+    ' start poll timer
+    tOpenTherm = NEW Timer AS "tOpenTherm"
+    tOpenTherm.Delay = iPollTime * 1000 ' multiply for seconds
+    tOpenTherm.Start
+  ELSE
+    'Don't turn on polling, just process all messages received via OpenTherm gateway connection
+    WriteCmd("PS=0")
+  ENDIF
 
 END
 
@@ -158,7 +418,9 @@ PUBLIC SUB tOpenTherm_Timer()
 
 END
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' request latest status report of OpenTherm gateway
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB GetStatus()
 
   DIM rResult AS Result
@@ -185,33 +447,24 @@ PUBLIC SUB GetStatus()
 
 END
 
-PUBLIC SUB OpenTherm_Read()
-
-  DIM sData AS String
-
-  TRY READ #hOpenTherm, sData, 1
-  IF ERROR THEN Main.WriteDebugLog(("[OpenTherm] Error reading data from serial port! -> ") & Error.Text)
-  IF sData = Chr(10) THEN ' buffer until linefeed then parse
-    IF Len(sBuffer) > 1 THEN ParseLine(Left(sBuffer, Len(sBuffer) - 1))
-    sBuffer = NULL
-  ELSE
-    sBuffer &= sData
-  ENDIF
-
-END
-
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PRIVATE SUB ParseLine(sData AS String)
 
-  DIM sLine, sResponse, sLast2, sLast8, sBM, sCHM, sFlame, sFailure, sFault, sThermostat AS String
+  DIM sLine, sResponse, sFlame, sThermostat AS String
   DIM sResponses AS String[]
-  DIM iResponse, iDeviceId AS Integer
+  DIM iCount AS Integer
   DIM rResult AS Result
   DIM bParseLine AS Boolean
-  DIM sRoomSetPoint, sRoomTemp AS String
-  DIM sCHSetPoint, sCHTemp, sCHModLevel, sCHPressure AS String
-  DIM sBoilerSetPoint, sBoilerTemp AS String
 
-  'IF Main.bOpenThermDebug THEN Main.WriteDebugLog("[OpenTherm] " & sData)
+  DIM iMsgID AS Integer
+  DIM fTemp AS Float
+  DIM bTemp AS Byte
+  DIM sMsgData, sMsgDirection, sErrorDescription AS String
+
+  ' relay incoming data to relay port
+  IF Main.bOpenThermRelayEnabled THEN TRY WRITE #hRelayOTSocket, sData & "\r"
 
   ' parse each line
   FOR EACH sLine IN Split(sData, "\n")
@@ -262,21 +515,272 @@ PRIVATE SUB ParseLine(sData AS String)
         bParseLine = FALSE
     END SELECT
 
+    IF Len(sLine) = 9 THEN 'AND NOT (bIgnoreAbout) THEN
+      iMsgID = Val("&H" & Mid(sLine, 4, 2))
+      sMsgData = Right(sLine, 4)
+      fTemp = Val("&" & sMsgData)
+      sMsgDirection = Left(sLine, 1)
+
+      SELECT CASE iMsgID  'OpenTherm Message ID
+        CASE 0
+          IF sMsgDirection = "B" AND NOT (iThermostatID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received status message: " & sLine))
+            bTemp = Val("&" & Right(sMsgData, 2)) 'Lower byte
+            IF Main.bOpenThermDebug THEN 
+              IF BTst(bTemp, 0) THEN Main.WriteDebugLog(("[OpenTherm]  - status = Error"))
+              IF BTst(bTemp, 3) THEN
+                Main.WriteDebugLog(("[OpenTherm]  - status = Flame on"))
+              ELSE
+                Main.WriteDebugLog(("[OpenTherm]  - status = Flame off"))
+              ENDIF
+              IF BTst(bTemp, 1) THEN Main.WriteDebugLog(("[OpenTherm]  - status = Heating up room"))
+              IF BTst(bTemp, 2) THEN Main.WriteDebugLog(("[OpenTherm]  - status = Heating boiler"))
+              IF BTst(bTemp, 4) THEN Main.WriteDebugLog(("[OpenTherm]  - status = Cooling down room"))
+            ENDIF
+            IF (BTst(bTemp, 1) <> bCH) THEN 'Central Heating state
+              bCH = BTst(bTemp, 1)
+              IF bCH THEN
+                Devices.ValueUpdate(iThermostatID, "", "", "", "Heating up room")
+              ELSE
+                Devices.ValueUpdate(iThermostatID, "", "", "", "Idle")
+              ENDIF
+            ENDIF
+            IF (BTst(bTemp, 2) <> bDHW) THEN 'Domestic hot water state
+              bDHW = BTst(bTemp, 2)
+              IF bDHW THEN
+                Devices.ValueUpdate(iThermostatID, "", "", "", "Heating up boiler")
+              ELSE
+                Devices.ValueUpdate(iThermostatID, "", "", "", "Idle")
+              ENDIF
+            ENDIF
+            IF (BTst(bTemp, 3) <> bFlame) THEN 'Flame status
+              bFlame = BTst(bTemp, 3)
+              IF bFlame THEN
+                Devices.ValueUpdate(iBurnerID, "On", "", "", "")
+              ELSE
+                Devices.ValueUpdate(iBurnerID, "Off", "", "", "")
+              ENDIF
+            ENDIF
+            IF (BTst(bTemp, 4) <> bCooling) THEN 'Cooling state
+              bCooling = BTst(bTemp, 3)
+              IF bCooling THEN
+                Devices.ValueUpdate(iThermostatID, "", "", "", "Cooling down room")
+              ELSE
+                Devices.ValueUpdate(iThermostatID, "", "", "", "Idle")
+              ENDIF
+            ENDIF
+            IF (BTst(bTemp, 0) <> bFault) THEN 'Fault indicator (details in message #5)
+              bFault = BTst(bTemp, 0)
+              IF bFault THEN
+                IF NOT (bApplicationError) THEN Devices.ValueUpdate(iThermostatID, "", "", "", "Unknown error")
+              ELSE
+                Devices.ValueUpdate(iThermostatID, "", "", "", "Idle")
+              ENDIF
+            ENDIF
+          ENDIF
+        CASE 1  'Control set point
+          IF sMsgDirection = "B" AND NOT (iCHID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received control set point message: " & sLine))
+            fTemp = Round((fTemp / 256), -2)
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - set point temperature = " & CStr(fTemp)))
+            IF fCHSetPoint <> fTemp THEN
+              fCHSetPoint = fTemp
+              Devices.ValueUpdate(iCHID, Format(fCHSetPoint, "#0.0#"), "", "", "")
+            ENDIF
+          ENDIF
+        CASE 5  'Application specific fault flags
+          IF sMsgDirection = "B" THEN
+            bTemp = Val("&" & Left(sMsgData, 2)) 'High byte
+            IF bTemp > 0 THEN 'check if a fault bit is set
+              bApplicationError = TRUE
+              IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received 'application specific fault flags' message: " & sLine))
+              sErrorDescription = ""
+              IF BTst(bTemp, 0) THEN
+                IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - fault = service required"))
+                sErrorDescription += ", Service required"
+              ENDIF
+              IF BTst(bTemp, 1) THEN
+                IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - fault = remote reset enabled"))
+                sErrorDescription += ", remote reset enabled"
+              ENDIF
+              IF BTst(bTemp, 2) THEN
+                IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - fault = water pressure fault"))
+                 sErrorDescription += ", water pressure fault"
+              ENDIF
+              IF BTst(bTemp, 3) THEN
+                IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - fault = gas/flame fault"))
+                 sErrorDescription += ", gas/flame fault"
+              ENDIF
+              IF BTst(bTemp, 4) THEN
+                IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - fault = air pressure fault"))
+                sErrorDescription += ", air pressure fault"
+              ENDIF
+              IF BTst(bTemp, 5) THEN
+                IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - fault = water over temperature fault"))
+                sErrorDescription += ", water over temperature fault"
+              ENDIF
+              IF BTst(bTemp, 6) THEN
+                IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - fault = <unknown> (bit 7 set)"))
+                sErrorDescription += ", unknown fault"
+              ENDIF
+              IF BTst(bTemp, 7) THEN
+                IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - fault = <unknown> (bit 8 set)"))
+                sErrorDescription += ", unknown fault"
+              ENDIF
+              IF Len(sErrorDescription) > 0 THEN 
+                sErrorDescription = Right(sErrorDescription, Len(sErrorDescription) - 2)
+                IF NOT (iThermostatID = 0) THEN Devices.ValueUpdate(iThermostatID, "", "", "", sErrorDescription)
+              ENDIF
+            ELSE
+              IF Main.bOpenThermDebug THEN
+                Main.WriteDebugLog(("[OpenTherm] Received 'application specific fault flags' message: " & sLine))
+                Main.WriteDebugLog(("[OpenTherm]  - No fault flags set"))
+              ENDIF
+              bApplicationError = FALSE
+            ENDIF
+          ENDIF
+        CASE 16 'Room set point
+          IF sMsgDirection = "T" AND NOT (iThermostatID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received room set point message: " & sLine))
+            fTemp = Round((fTemp / 256), -2)
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - set point temperature = " & CStr(fTemp)))
+            fCurrentSetPoint = fTemp
+            IF fRoomSetPoint <> fTemp THEN
+              fRoomSetPoint = fTemp
+              Devices.ValueUpdate(iThermostatID, Format(fRoomSetPoint, "#0.0#"), "", CheckRemoteControl(), "")
+            ENDIF
+          ENDIF
+        CASE 17 'Relative modulation level
+          IF sMsgDirection = "B" AND NOT (iCHID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received relative modulation level message: " & sLine))
+            fTemp = fTemp / 256
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - level = " & CStr(fTemp)))
+            IF fCHModLevel <> fTemp THEN
+              fCHModLevel = fTemp
+              Devices.ValueUpdate(iCHID, "", "", fCHModLevel, "")
+            ENDIF
+          ENDIF
+        CASE 18 'CH Water pressure
+          IF sMsgDirection = "B" AND NOT (iCHID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received central heating water pressure message: " & sLine))
+            fTemp = Round((fTemp / 256), -2)
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - pressure = " & CStr(fTemp)))
+            IF fCHWaterPress <> fTemp THEN
+              fCHWaterPress = fTemp
+              Devices.ValueUpdate(iCHID, "", "", "", Format(fCHWaterPress, "#.0#"))
+            ENDIF
+          ENDIF
+        CASE 19 'Boiler hot water flow
+          IF sMsgDirection = "B" AND NOT (iBoilerID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received hot water flow message: " & sLine))
+            fTemp = Round((fTemp / 256), -2)
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - flow rate = " & CStr(fTemp)))
+            IF fBoilerFlow <> fTemp THEN
+              fBoilerFlow = fTemp
+              Devices.ValueUpdate(iBoilerID, "", "", Format(fBoilerFlow, "#.0#"), "")
+            ENDIF
+          ENDIF
+        CASE 24 'Room temperature
+          IF sMsgDirection = "T" AND NOT (iThermostatID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received room temperature message: " & sLine))
+            fTemp = Round((fTemp / 256), -2)
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - temperature = " & CStr(fTemp)))
+            IF fRoomTemp <> fTemp THEN
+              fRoomTemp = fTemp
+              Devices.ValueUpdate(iThermostatID, "", Format(fRoomTemp, "#0.0#"), "", "")
+            ENDIF
+          ENDIF
+        CASE 25 'Boiler water temperature
+          IF sMsgDirection = "B" AND NOT (iBoilerID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received boiler temperature message: " & sLine))
+            fTemp = Round((fTemp / 256), -2)
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - temperature = " & CStr(fTemp)))
+            IF fBoilerTemp <> fTemp THEN
+              fBoilerTemp = fTemp
+              Devices.ValueUpdate(iBoilerID, "", Format(fBoilerTemp, "#0.0#"), "", "")
+            ENDIF
+          ENDIF
+        CASE 27 'Outside temperature
+          IF sMsgDirection = "B" AND NOT (iOutsideID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received outside temperature message: " & sLine))
+            fTemp = Round((fTemp / 256), -2)
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - temperature = " & CStr(fTemp)))
+            IF fOutsideTemp <> fTemp AND fTemp <> 0 THEN
+              fOutsideTemp = fTemp
+              Devices.ValueUpdate(iOutsideID, Format(fOutsideTemp, "#0.0#"), "", "", "")
+            ENDIF
+          ENDIF
+        CASE 56 'Boiler temperature set point
+          IF (sMsgDirection = "B" OR sMsgDirection = "A") AND NOT (iBoilerID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received boiler set point message: " & sLine))
+            fTemp = Round((fTemp / 256), -2)
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - set point temperature = " & CStr(fTemp)))
+            IF fBoilerSetPoint <> fTemp THEN
+              fBoilerSetPoint = fTemp
+              Devices.ValueUpdate(iBoilerID, Format(fBoilerSetPoint, "#0.0#"), "", "", "")
+            ENDIF
+          ENDIF
+        CASE 57 'CH temperature set point
+          IF (sMsgDirection = "B" OR sMsgDirection = "A") AND NOT (iCHID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received maximum central heating set point message: " & sLine))
+            fTemp = Round((fTemp / 256), -2)
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - set point temperature = " & CStr(fTemp)))
+            IF fCHSetPoint <> fTemp THEN
+              fCHSetPoint = fTemp
+              Devices.ValueUpdate(iCHID, Format(fCHSetPoint, "#0.0#"), "", "", "")
+            ENDIF
+          ENDIF
+        CASE 116 'Burner starts counter
+          IF sMsgDirection = "B" AND NOT (iBurnerID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received burner starts counter message: " & sLine))
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - counter = " & CStr(fTemp)))
+            IF fBurnerStarts <> fTemp THEN
+              fBurnerStarts = fTemp
+              Devices.ValueUpdate(iBurnerID, "", fBurnerStarts, "", "")
+            ENDIF
+          ENDIF
+        CASE 120 'Burner hours central heating
+          IF sMsgDirection = "B" AND NOT (iBurnerID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received burner running hours central heating message: " & sLine))
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - counter = " & CStr(fTemp)))
+            IF fCHBurnerHours <> fTemp THEN
+              fCHBurnerHours = fTemp
+              Devices.ValueUpdate(iBurnerID, "", "", fCHBurnerHours, "")
+            ENDIF
+          ENDIF
+        CASE 123 'Burner hours boiler
+          IF sMsgDirection = "B" AND NOT (iBurnerID = 0) THEN
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received burner running hours boiler message: " & sLine))
+            IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]  - counter = " & CStr(fTemp)))
+            IF fHWBurnerHours <> fTemp THEN
+              fHWBurnerHours = fTemp
+              Devices.ValueUpdate(iBurnerID, "", "", "", fHWBurnerHours)
+            ENDIF
+          ENDIF
+      END SELECT
+      bParseLine = FALSE
+    ENDIF
+
     IF InStr(sLine, "OpenTherm Gateway") THEN
-      IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received 'OpenTherm Gateway' response: OpenTherm gateway device has been restarted unexpectedly"))
-      IF bOverrideActive THEN
-        IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]   resending thermostat override setpoint '" & CStr(fOverrideSetPoint) & "'"))
-        SendCommand("THERMOSTAT", CStr(fOverrideSetPoint))
+      IF bIgnoreAbout THEN
+        bIgnoreAbout = FALSE
+        Main.WriteLog(("Connected to '" & sLine & "'"))
+      ELSE
+        IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Received 'OpenTherm Gateway' response, OpenTherm gateway device has been restarted unexpectedly?"))
+        IF bOverrideActive THEN
+          IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm]   resending thermostat override setpoint '" & CStr(fOverrideSetPoint) & "'"))
+          SendCommand("THERMOSTAT", CStr(fOverrideSetPoint))
+        ENDIF
       ENDIF
       bParseLine = FALSE
     ENDIF
 
     IF bParseLine THEN
+      Main.WriteDebugLog(("[OpenTherm] Parsing received OpenTherm gateway report: ") & sLine)
       TRY sResponses = Split(sLine)
-      IF ERROR THEN 
+      IF ERROR THEN
         IF Main.bOpenThermDebug THEN
-          Main.WriteDebugLog(("[OpenTherm] ERROR: Parsing OpenTherm data packet: ") & sLine)
-          Main.WriteDebugLog(("[OpenTherm]   " & ERROR.Text & " at " & ERROR.Where))
+          Main.WriteDebugLog(("[OpenTherm] Failed to parse report: " & ERROR.Text & " at " & ERROR.Where))
         ENDIF
       ELSE
         ' Example of sResponses:
@@ -307,94 +811,74 @@ PRIVATE SUB ParseLine(sData AS String)
         ' 24 - 258                 DHW burner operation hours (MsgID=123) - Printed as a decimal value
 
         IF sResponses.count = 25 THEN
-          ' update outside sensor value if valid value is received from gateway
-          IF sResponses[11] <> "0.00" THEN sOutsideTemp = Format(CStr(sResponses[11]), "#0.0#")
-
-          ' update current setpoint
+          ' remove : in any response
+          FOR iCount = 0 TO 24
+            sResponses[iCount] = Replace(sResponses[iCount], ":", "", 1)
+          NEXT
+          'Update current setpoint
           fCurrentSetPoint = Val(Format(CStr(sResponses[5]), "#.#"))
 
-          ' update existing devices
-'          rResult = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE AND interface = &1", Devices.FindInterface("OpenTherm gateway"))
-          rResult = Devices.FindDevicesForInterface(Devices.FindInterface("Opentherm gateway"))
-          IF rResult.Available THEN
-            IF rResult.Count THEN
-              FOR EACH rResult
-                SELECT UCase(rResult!address)
-                  CASE "THERMOSTAT"
-                    sRoomSetPoint = Replace(sResponses[5], ":", "", 1)
-                    sRoomSetPoint = Format(sRoomSetPoint, "#0.0#")
-                    sRoomTemp = Replace(sResponses[8], ":", "", 1)
-                    sRoomTemp = Format(sRoomTemp, "#0.0#")
-                    Main.WriteDebugLog(("[OpenTherm] Thermostat:"))
-                    Main.WriteDebugLog(("[OpenTherm]  - Room temperature = " & sRoomTemp))
-                    Main.WriteDebugLog(("[OpenTherm]  - Room temperature set point = " & sRoomSetPoint))
-                    
-                    ' update thermostat override status
-                    IF NOT bOverrideSend AND NOT bOverrideActive THEN sTemperatureOverrideStatus = "Override inactive"
-                    IF bOverrideSend THEN
-                      IF fOverrideSetPoint = fCurrentSetPoint THEN
-                        Main.WriteDebugLog(("[OpenTherm]  - Room temperature set point is overruled by DomotiGa"))
-                        bOverrideActive = TRUE
-                        sTemperatureOverrideStatus = "Override active"
-                        bOverrideSend = FALSE
-                      ELSE
-                        Main.WriteDebugLog(("[OpenTherm]  - New room temperature set point " & CStr(fOverrideSetPoint) & " not active yet"))
-                      ENDIF
-                    ENDIF
-                    
-                    IF bOverrideActive AND (sTemperatureOverride = "Temporarily") THEN
-                      IF fCurrentSetPoint <> fOverrideSetPoint THEN
-                        Main.WriteDebugLog(("[OpenTherm]  - Override room temperature disabled due to setpoint change"))
-                        bOverrideActive = FALSE
-                        sTemperatureOverrideStatus = "Override inactive"
-                      ENDIF
-                    ENDIF
+          'Update thermostat values
+          IF NOT (iThermostatID = 0) THEN
+            IF bOpenThermDebug THEN
+              Main.WriteDebugLog(("[OpenTherm] Thermostat:"))
+              Main.WriteDebugLog(("[OpenTherm]  - Room temperature set point = " & sResponses[8]))
+              Main.WriteDebugLog(("[OpenTherm]  - Room temperature = " & sResponses[5]))
+              Main.WriteDebugLog(("[OpenTherm]  - Status = " & sResponses[0]))
+            ENDIF
+            sTemperatureOverrideStatus = CheckRemoteControl() ' update thermostat override status
+            sThermostat = "Idle" ' defauls to Idle
+            IF (Mid(sResponses[0], 13, 1)) = "1" THEN sThermostat = "Cooling down room" ' OpenTherm MsgID=0, LWB, 0001 0000
+            IF (Mid(sResponses[0], 15, 1)) = "1" THEN sThermostat = "Heating up boiler" ' OpenTherm MsgID=0, LWB, 0000 0100
+            IF (Mid(sResponses[0], 16, 1)) = "1" THEN sThermostat = "Heating up room"   ' OpenTherm MsgID=0, LWB, 0000 0010
+            IF (Mid(sResponses[0], 17, 1)) = "1" THEN sThermostat = "Error"             ' OpenTherm MsgID=0, LWB, 0000 0001
+            Devices.ValueUpdate(iThermostatID, Format(sResponses[5], "#0.0#"), Format(sResponses[8], "#0.0#"), sTemperatureOverrideStatus, sThermostat)
+          ENDIF
 
-                    sThermostat = "Idle" ' defauls to Idle
-                    IF (Mid(sResponses[0], 13, 1)) = "1" THEN sThermostat = "Cooling down room" ' OpenTherm MsgID=0, LWB, 0001 0000
-                    IF (Mid(sResponses[0], 15, 1)) = "1" THEN sThermostat = "Heating up boiler" ' OpenTherm MsgID=0, LWB, 0000 0100
-                    IF (Mid(sResponses[0], 16, 1)) = "1" THEN sThermostat = "Heating up room"   ' OpenTherm MsgID=0, LWB, 0000 0010
-                    IF (Mid(sResponses[0], 17, 1)) = "1" THEN sThermostat = "Error"             ' OpenTherm MsgID=0, LWB, 0000 0001
+          'Update Central Heating values
+          IF NOT (iCHID = 0) THEN
+            IF bOpenThermDebug THEN
+              Main.WriteDebugLog(("[OpenTherm] Central heating:"))
+              Main.WriteDebugLog(("[OpenTherm]  - Set point = " & sResponses[16]))
+              Main.WriteDebugLog(("[OpenTherm]  - Temperature = " & sResponses[1]))
+              Main.WriteDebugLog(("[OpenTherm]  - Modulation level = " & sResponses[6]))
+              Main.WriteDebugLog(("[OpenTherm]  - Water pressure = " & sResponses[7]))
+            ENDIF
+            Devices.ValueUpdate(iCHID, Format(sResponses[16], "##0.0#"), Format(sResponses[1], "##0.0#"), Format(sResponses[6], "##0"), Format(sResponses[7], "0.##"))
+          ENDIF
 
-                    Devices.ValueUpdate(rResult!id, sRoomSetPoint, sRoomTemp, sTemperatureOverrideStatus, sThermostat)
-                  CASE "CENTRALHEATING"
-                    sCHSetPoint = Replace(sResponses[16], ":", "", 1)
-                    sCHSetPoint = Format(sCHSetPoint, "##0.0#")
-                    sCHTemp = Replace(sResponses[1], ":", "", 1)
-                    sCHTemp = Format(sCHTemp, "##0.0#")
-                    sCHModLevel = Replace(sResponses[6], ":", "", 1)
-                    sCHModLevel = Format(sCHModLevel, "##0")
-                    sCHPressure = Replace(sResponses[7], ":", "", 1)
-                    sCHPressure = Format(sCHPressure, "0.##")
-                    Devices.ValueUpdate(rResult!id, sCHSetPoint, sCHTemp, sCHModLevel, sCHPressure)
-                  CASE "BOILER"
-                    sBoilerSetPoint = Replace(sResponses[15], ":", "", 1)
-                    sBoilerSetPoint = Format(sBoilerSetPoint, "##0.0#")
-                    sBoilerTemp = Replace(sResponses[9], ":", "", 1)
-                    sBoilerTemp = Format(sBoilerTemp, "##0.0#")
-                    Devices.ValueUpdate(rResult!id, sBoilerSetPoint, sBoilerTemp, "", "")
-                  CASE "BURNER"
-                    IF (Mid(sResponses[0], 14, 1)) = "1" THEN ' get bit 3 of lower byte of status message
-                      sFlame = "On"
-                    ELSE
-                      sFlame = "Off"
-                    ENDIF
-                    Devices.ValueUpdate(rResult!id, sFlame, Format(CStr(sResponses[17]), "#####"), Format(CStr(sResponses[21]), "#####"), Format(CStr(sResponses[24]), "#####"))
-                  CASE "OUTSIDE"
-                    Devices.ValueUpdate(rResult!id, sOutsideTemp, "", "", "")
-                  CASE ELSE
-                    IF Main.bOpenThermDebug THEN
-                      MAIN.WriteDebugLog("[OpenTherm] Invalid address '" & rResult!address & "', valid addresses are:")
-                      MAIN.WriteDebugLog("[OpenTherm]   - Thermostat")
-                      MAIN.WriteDebugLog("[OpenTherm]   - Centralheating")
-                      MAIN.WriteDebugLog("[OpenTherm]   - Boiler")
-                      MAIN.WriteDebugLog("[OpenTherm]   - Burner")
-                      MAIN.WriteDebugLog("[OpenTherm]   - Outside")
-                    ENDIF 
-                END SELECT 
-              NEXT
+          'Update hot water (boiler) values
+          IF NOT (iBoilerID = 0) THEN
+            IF bOpenThermDebug THEN
+              Main.WriteDebugLog(("[OpenTherm] Hot water (boiler):"))
+              Main.WriteDebugLog(("[OpenTherm]  - Set point = " & sResponses[15]))
+              Main.WriteDebugLog(("[OpenTherm]  - Temperature = " & sResponses[9]))
+            ENDIF
+            Devices.ValueUpdate(iBoilerID, Format(sResponses[15], "##0.0#"), Format(sResponses[9], "##0.0#"), "", "")
+          ENDIF
+
+          'Update burner values
+          IF NOT (iBurnerID = 0) THEN
+            IF bOpenThermDebug THEN
+              Main.WriteDebugLog(("[OpenTherm] Burner:"))
+              Main.WriteDebugLog(("[OpenTherm]  - Flame = " & Mid(sResponses[0], 14, 1)))
+              Main.WriteDebugLog(("[OpenTherm]  - starts = " & sResponses[17]))
+              Main.WriteDebugLog(("[OpenTherm]  - operation hours central heating = " & sResponses[21]))
+              Main.WriteDebugLog(("[OpenTherm]  - operation hours hot water boiler = " & sResponses[24]))
+            ENDIF
+            sFlame = IIf((Mid(sResponses[0], 14, 1) = "1"), "On", "Off")
+            Devices.ValueUpdate(iBurnerID, sFlame, Format(CStr(sResponses[17]), "#####"), Format(CStr(sResponses[21]), "#####"), Format(CStr(sResponses[24]), "#####"))
+          ENDIF
+
+          'Update outside sensor
+          IF NOT (iOutsideID = 0) THEN
+            IF bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Outside temperature: " & sResponses[11]))
+            IF sResponses[11] <> "0.00" THEN
+              fOutsideTemp = CFloat(Format(CStr(sResponses[11]), "#0.0#"))
+              Devices.ValueUpdate(iOutsideID, Format(CStr(fOutsideTemp), "#0.0#"), "", "", "")
             ENDIF
           ENDIF
+
         ELSE
           IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Invalid response '") & sLine & "'")
         ENDIF
@@ -404,6 +888,34 @@ PRIVATE SUB ParseLine(sData AS String)
 
 CATCH
   IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] ERROR: Parsing OpenTherm data packet: ") & sLine & " " & ERROR.Text & " at " & ERROR.Where)
+
+END
+
+PRIVATE FUNCTION CheckRemoteControl() AS String
+
+  DIM sCheckRemoteControl AS String = ""
+
+  ' update thermostat override status
+  IF NOT bOverrideSend AND NOT bOverrideActive THEN sCheckRemoteControl = "Override inactive"
+  IF bOverrideSend THEN
+    IF fOverrideSetPoint = fCurrentSetPoint THEN
+      Main.WriteDebugLog(("[OpenTherm]  - Room temperature set point is overruled by DomotiGa"))
+      bOverrideActive = TRUE
+      sCheckRemoteControl = "Override active"
+      bOverrideSend = FALSE
+    ELSE
+      Main.WriteDebugLog(("[OpenTherm]  - New room temperature set point " & CStr(fOverrideSetPoint) & " not active yet"))
+    ENDIF
+  ENDIF
+
+  IF bOverrideActive AND (sTemperatureOverride = "Temporarily") THEN
+    IF fCurrentSetPoint <> fOverrideSetPoint THEN
+      Main.WriteDebugLog(("[OpenTherm]  - Override room temperature disabled due to setpoint change"))
+      bOverrideActive = FALSE
+      sCheckRemoteControl = "Override inactive"
+    ENDIF
+  ENDIF
+  RETURN sCheckRemoteControl
 
 END
 
@@ -475,10 +987,10 @@ PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String)
 
       CASE "BOILER"           ' set the domestic hot water setpoint
         IF CFloat(Val(sCmd)) > 0 AND CFloat(Val(sCmd)) < 100 THEN
-          fBoilerSetPoint = CFloat(Val(sCmd))
-          WriteCmd("SW=" & CStr(fBoilerSetPoint))
+          fOverrideBoilerSetPoint = CFloat(Val(sCmd))
+          WriteCmd("SW=" & CStr(fOverrideBoilerSetPoint))
         ELSE
-          IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Invalid boiler setpoint value '" & CStr(fBoilerSetPoint) & "'. Valid values are between 0.0 and 100.0"))
+          IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Invalid boiler setpoint value '" & CStr(fOverrideBoilerSetPoint) & "'. Valid values are between 0.0 and 100.0"))
         ENDIF
 
       CASE "CENTRALHEATING"   ' set the maximum central heating setpoint
@@ -491,10 +1003,10 @@ PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String)
 
       CASE "OUTSIDE"          ' send new outside temperature to thermostat
         IF CFloat(Val(sCmd)) > -40 AND CFloat(Val(sCmd)) < 127 THEN
-          sOutsideTemp = CFloat(Val(sCmd))
-          WriteCmd("OT=" & CStr(sOutsideTemp))
+          fOutsideTemp = CFloat(Val(sCmd))
+          WriteCmd("OT=" & CStr(fOutsideTemp))
         ELSE
-          IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Invalid outside temperature '" & CStr(sOutsideTemp) & "'. Valid values are between -40.0 and +127.0"))
+          IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Invalid outside temperature '" & CStr(fOutsideTemp) & "'. Valid values are between -40.0 and +127.0"))
         ENDIF
 
       CASE "CLOCK"            ' synchonize clock with local clock by sending current time
@@ -512,7 +1024,7 @@ PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String)
 
 END
 
-PUBLIC SUB WriteCmd(sCommand AS String)
+PRIVATE SUB WriteCmd(sCommand AS String)
 
   IF Main.bOpenThermDebug THEN
     IF sCommand <> "PS=1" THEN ' don't log default report request
@@ -521,9 +1033,18 @@ PUBLIC SUB WriteCmd(sCommand AS String)
   ENDIF
 
   IF Len(sCommand) > 3 AND InStr(sCommand, "=") THEN 
-    TRY PRINT #hOpenTherm, sCommand & "\r"
-    IF ERROR THEN
-      Main.WriteDebugLog(("[OpenTherm] Error writing data to serial port! -> ") & Error.Text)
+    IF sType = "tcp" THEN
+      TRY PRINT #hOpenThermTCP, sCommand & "\r"
+      IF ERROR THEN
+        Main.WriteDebugLog(("[OpenTherm] Error writing data to socket! -> ") & ERROR.Text)
+        Main.WriteDebugLog(("[OpenTherm] Trying to reconnect..."))
+        TRY hOpenThermTCP.Connect
+      ENDIF
+    ELSE
+      TRY PRINT #hOpenThermSer, sCommand & "\r"
+      IF ERROR THEN
+        Main.WriteDebugLog(("[OpenTherm] Error writing data to serial port! -> ") & Error.Text)
+      ENDIF
     ENDIF
   ELSE
     IF Main.bOpenThermDebug THEN Main.WriteDebugLog(("[OpenTherm] Invalid command: ") & sCommand)
@@ -531,16 +1052,78 @@ PUBLIC SUB WriteCmd(sCommand AS String)
 
 END
 
-' implement properties
-FUNCTION Port_Read() AS String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' close port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
 
-  RETURN sPort
+  ' try to close the connection
+  IF sType = "tcp"
+    TRY tOpenTherm.Stop
+    TRY hOpenThermRelay.Close
+    TRY hOpenThermTCP.Close
+    Main.WriteLog(("OpenTherm serial port close."))
+  ELSE
+    TRY tOpenTherm.Stop
+    TRY hOpenThermSer.Close
+    Main.WriteLog(("OpenTherm serial port close."))
+  ENDIF
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("OpenTherm Error: ") & ERROR.Text)
+  RETURN FALSE
 
 END
 
-SUB Port_Write(Value AS String)
+' implement properties
+PRIVATE FUNCTION Type_Read() AS String
 
-  sPort = Value
+  RETURN sType
+
+END
+
+PRIVATE SUB Type_Write(Value AS String)
+
+  sType = Value
+
+END
+
+PRIVATE FUNCTION TCPHost_Read() AS String
+
+  RETURN sTCPHost
+
+END
+
+PRIVATE SUB TCPHost_Write(Value AS String)
+
+  sTCPHost = Value
+
+END
+
+PRIVATE FUNCTION TCPPort_Read() AS String
+
+  RETURN sTCPPort
+
+END
+
+PRIVATE SUB TCPPort_Write(Value AS String)
+
+  sTCPPort = Value
+
+END
+
+PRIVATE FUNCTION SerPort_Read() AS String
+
+  RETURN sSerPort
+
+END
+
+PRIVATE SUB SerPort_Write(Value AS String)
+
+  sSerPort = Value
 
 END
 
@@ -613,5 +1196,29 @@ END
 PRIVATE SUB SyncClock_Write(Value AS Boolean)
 
   bSyncClock = Value
+
+END
+
+PRIVATE FUNCTION RelayEnabled_Read() AS Boolean
+
+  RETURN bRelayEnabled
+
+END
+
+PRIVATE SUB RelayEnabled_Write(Value AS Boolean)
+
+  bRelayEnabled = Value
+
+END
+
+PRIVATE FUNCTION RelayPort_Read() AS Integer
+
+  RETURN iRelayPort
+
+END
+
+PRIVATE SUB RelayPort_Write(Value AS Integer)
+
+  iRelayPort = Value
 
 END

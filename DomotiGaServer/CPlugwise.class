@@ -5,7 +5,7 @@
 ' Use Plugwise to control devices.
 
 ' Development Status:
-' Working fine, only need to add support for reading usage history from plugs.
+' Working fine, only need to add support for reading logbuffers from plugs.
 
 ' Links:
 ' http://www.plugwise.nl
@@ -20,22 +20,36 @@
 PROPERTY Port AS String
 PROPERTY PlugwiseDebug AS Boolean
 PROPERTY PollTime AS Integer
-PROPERTY Firmware AS Integer
 
 PRIVATE sPort AS String
 PRIVATE bPlugwiseDebug AS Boolean
 PRIVATE iPollTime AS Integer
-PRIVATE iFirmware AS Integer
 
 PUBLIC hPlugwise AS NEW SerialPort
-PUBLIC tPlugwise AS Timer
+PUBLIC tPlugwisePoll AS Timer
+PUBLIC tPlugwiseBusy AS Timer
+
+' calibration data
+PRIVATE cGainA AS NEW Collection
+PRIVATE cGainB AS NEW Collection
+PRIVATE cOffNoise AS NEW Collection
+PRIVATE cOffTot AS NEW Collection
+PRIVATE cLogAddress AS NEW Collection
+
+' queue and command buffer stuff
+PRIVATE cQueue AS NEW Collection    ' command buffer
+PRIVATE bStickBusy AS Boolean       ' waiting for delay timer to finish
+PRIVATE bHeaderFound AS Boolean = FALSE
+PRIVATE bFooterFound AS Boolean = FALSE
+PRIVATE sRecBuf AS String
 
 ' CRC-16(CCITT) table with Poly = 0x10210
 PRIVATE aCRCTable AS Integer[256]
 PRIVATE bTableInit AS Boolean
 
 CONST STICKINITCODE AS String = "000A"
-CONST STICKINITRESPONSECODE AS String = "0000"
+CONST COMMANDRESPONSECODE AS String = "0011"
+CONST ACKRESPONSECODE AS String = "0000"
 CONST POWERCHANGECODE AS String = "0017"
 CONST DEVICEINFOCODE AS String = "0023"
 CONST DEVICEINFORESPONSECODE AS String = "0024"
@@ -72,7 +86,29 @@ PUBLIC FUNCTION Connect() AS Boolean
   RETURN TRUE
 
 CATCH ' some errors
-  Main.WriteLog(("Plugwise Error: ") & ERROR.Text)
+  Main.WriteLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+  RETURN FALSE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' close port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC FUNCTION Disconnect() AS Boolean
+
+  ' try stop running timers
+  TRY tPlugwisePoll.Stop
+  TRY tPlugwiseBusy.Stop
+
+  ' try to close the connection
+  hPlugwise.Close
+  Main.WriteLog(("Plugwise serial port close."))
+
+  ' all ok
+  RETURN TRUE
+
+CATCH ' some errors
+  Main.WriteLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
   RETURN FALSE
 
 END
@@ -80,243 +116,581 @@ END
 PUBLIC SUB Run()
 
   ' start poll timer for power usage check
-  tPlugwise = NEW Timer AS "tPlugwise"
-  tPlugwise.Delay = iPollTime * 1000 ' multiply for seconds
-  tPlugwise.Start
+  tPlugwisePoll = NEW Timer AS "tPlugwisePoll"
+  tPlugwisePoll.Delay = iPollTime * 1000 ' multiply for seconds
+  tPlugwisePoll.Start
 
-  IF iFirmware > 2008 THEN InitStick()
+  ' define timer for Plugwise stick busy
+  tPlugwiseBusy = NEW Timer AS "tPlugwiseBusy"
+  tPlugwiseBusy.Stop
+
+  InitStick()
   CheckPlugs()
 
 END
 
-PUBLIC SUB tPlugwise_Timer()
+PUBLIC SUB tPlugwisePoll_Timer()
 
   CheckPlugs()
 
 END
 
-PUBLIC SUB InitStick()
+PRIVATE FUNCTION StoreCircle(sMAC AS String, fGainA AS Float, fGainB AS Float, fOffTot AS Float, fOffNoise AS Float)
 
-  DIM sHeader, sString, sCRC, sComplete, sResult, sSeq, sAckCode, sMAC, sID AS String
+  ' simple try to add it
+  TRY cGainA.Add(fGainA, sMAC)
+  TRY cGainB.Add(fGainB, sMAC)
+  TRY cOffTot.Add(fOffTot, sMAC)
+  TRY cOffNoise.Add(fOffNoise, sMAC)
 
-  ' <ENQ><ENQ><ETX><ETX>000AB43C<CR><LF>
-  sHeader = Chr(5) & Chr(5) & Chr(3) & Chr(3)
-  sString = STICKINITCODE
-  sCRC = CalculateCRC(sString)
-  sComplete = sHeader & sString & sCRC & Chr(13) & Chr(10)
+END
+
+PRIVATE FUNCTION GetPackets(sRaw AS String) AS String[]
+
+  DIM rReg AS NEW Regexp
+  DIM aMatches AS NEW String[]
+  DIM sTmp AS String
+
+  ' PRINT " ---- "
+  ' PRINT " RAW " & sRaw
+  ' PRINT " ---- "
+
+  sTmp = sRaw
+  rReg.Compile("\x03\x03(\\w+)\r\n")
+  rReg.Exec(sTmp)
+  DO WHILE rReg.Text <> ""
+    aMatches.Add(rReg.Text)
+    sTmp = Mid(sTmp, rReg.Offset + 2)
+    rReg.Exec(sTmp)
+  LOOP
+  RETURN aMatches
+
+END
+
+PRIVATE FUNCTION ProcessReceivedPacket(sInput AS String)
+
+  DIM sType, sPacket, sCRC AS String
+  DIM iBegin AS Integer
+  DIM sPackets AS String[]
+
+  ' reset for next data
+  sRecBuf = ""
+  bHeaderFound = FALSE
+  bFooterFound = FALSE
+
+  sPackets = GetPackets(sInput)
+  FOR EACH sPacket IN sPackets
+
+    ' find and store header position
+    iBegin = InStr(sPacket, Chr(3) & Chr(3))
+
+    ' get response type from packet
+    sType = Mid(sPacket, iBegin + 2, 4)
+
+    ' checksum check
+    sCRC = Mid(sPacket, Len(sPacket) - 5, 4)
+    IF sCRC = CalculateCRC(Mid(sPacket, iBegin + 2, Len(sPacket) - iBegin - 7)) THEN
+      IF bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] < " & Mid(sPacket, 5, Len(sPacket) - 6) & " (CRC OK)"))
+    ELSE
+      IF bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] < " & Mid(sPacket, 5, Len(sPacket) - 6) & " (CRC Error, discarding data)"))
+      RETURN
+    ENDIF
+
+    ' strip header and type
+    sPacket = Mid(sPacket, iBegin + 6, Len(sPacket) - 8)
+    SELECT sType
+      CASE CALIBRATIONRESPONSECODE
+        ProcessCalibrationResponse(sPacket)
+
+      CASE POWERINFORESPONSECODE
+        ProcessPowerInfoResponse(sPacket)
+
+      CASE DEVICEINFORESPONSECODE
+        ProcessDeviceInfoResponse(sPacket)
+
+      CASE ACKRESPONSECODE
+        ProcessAckResponse(sPacket)
+
+      CASE COMMANDRESPONSECODE
+        ProcessCommandResponse(sPacket)
+
+      CASE POWERLOGRESPONSECODE
+        ProcessPowerLogResponse(sPacket)
+      CASE ELSE
+        IF bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] Received unknown response type! (" & sType & ")"))
+     END SELECT
+  NEXT
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+END
+
+PRIVATE SUB ProcessReceivedChar(sTemp AS String)
+
+  DIM sResult AS String
+
+  IF sTemp = Chr(5) THEN bHeaderFound = TRUE
+  IF sTemp = Chr(10) THEN bFooterFound = TRUE
+  sRecBuf &= sTemp
+  IF bFooterFound = TRUE AND IF bHeaderFound = TRUE THEN ProcessReceivedPacket(sRecbuf)
+
+END
+
+PRIVATE SUB CalculateLogHistory(sPulses AS String, sMAC AS String) AS String
+
+  DIM iPulses AS Integer
+  DIM fCorrectedPulses, fkWh AS Float
+
+  ' no valid data
+  IF sPulses = "FFFFFFFF" THEN RETURN "?"
+
+  ' calculate actual usage in Watt
+  iPulses = Val("&H" & sPulses) / 1.0
+  fCorrectedPulses = CorrectPulses(iPulses, sMAC)
+  fkWh = (fCorrectedPulses / 3600) / 468.9385193
+
+  RETURN Format(CStr(fkWh), "0.000")
+
+END
+
+PRIVATE SUB ProcessPowerLogResponse(sResult AS String)
+
+  DIM sMAC, sLogDate1, sLogDate2, sLogDate3, sLogDate4 AS String
+  DIM sLogPulse1, sLogPulse2, sLogPulse3, sLogPulse4 AS String
 
   IF bPlugwiseDebug THEN
-    Main.WriteDebugLog(("[Plugwise] Initialize Stick"))
-    Main.WriteDebugLog(("[Plugwise] String: ") & sString & (" CRC: ") & sCRC)
+    Main.WriteDebugLog(("[Plugwise] Received Power Log response!"))
+    Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & Mid(sResult, 1, 4))
+    sMAC = Mid(sResult, 5, 16)
+    Main.WriteDebugLog(("[Plugwise] MAC Address: ") & sMAC)
+    sLogDate1 = TimeSinceLastMonth(Mid(sResult, 21, 8))
+    sLogPulse1 = CalculateLogHistory(Mid(sResult, 29, 8), sMAC)
+    sLogDate2 = TimeSinceLastMonth(Mid(sResult, 37, 8))
+    sLogPulse2 = CalculateLogHistory(Mid(sResult, 45, 8), sMAC)
+    sLogDate3 = TimeSinceLastMonth(Mid(sResult, 53, 8))
+    sLogPulse3 = CalculateLogHistory(Mid(sResult, 61, 8), sMAC)
+    sLogDate4 = TimeSinceLastMonth(Mid(sResult, 69, 8))
+    sLogPulse4 = CalculateLogHistory(Mid(sResult, 77, 8), sMAC)
+
+    ' firstbuf=00004224  (First buffer - Hours passed since 1 jun 2007 02:00)
+    Main.WriteDebugLog(("[Plugwise] Log1: ") & sLogPulse1 & " kWh at " & sLogDate1)
+    Main.WriteDebugLog(("[Plugwise] Log2: ") & sLogPulse2 & " kWh at " & sLogDate2)
+    Main.WriteDebugLog(("[Plugwise] Log3: ") & sLogPulse3 & " kWh at " & sLogDate3)
+    Main.WriteDebugLog(("[Plugwise] Log4: ") & sLogPulse4 & " kWh at " & sLogDate4)
   ENDIF
-  Send(sComplete)
-  sResult = GetResult(STICKINITRESPONSECODE, sComplete)
-  IF sResult THEN
-    IF bPlugwiseDebug THEN
-      sSeq = Mid(sResult, 1, 4)
-      sAckCode = Mid(sResult, 5, 4)
-      sMAC = Mid(sResult, 27, 16)
-      sID = Mid(sResult, 63, 4)
-      Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & sSeq)
-      Main.WriteDebugLog(("[Plugwise] Acknowledgement: ") & sAckCode & IIf(sAckCode = "00C1", " (Ok)", " (Error)"))
-      Main.WriteDebugLog(("[Plugwise] MAC Address Stick: ") & sMAC)
-      Main.WriteDebugLog(("[Plugwise] Short Network ID: ") & sID)
-    ENDIF
-  ELSE
-    IF bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] InitStick() didn't get expected answer."))
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+END
+
+PRIVATE SUB ProcessDeviceInfoResponse(sResult AS String)
+
+  DIM sMAC, sRelay, sState, sLogAddress, sType, sHW, sTime AS String
+  DIM iLogAddress, iDeviceId AS Integer
+
+  sMAC = Mid(sResult, 5, 16)
+  sRelay = Mid(sResult, 37, 2)
+  sState = IIf(sRelay = "01", "On", "Off")
+  sTime = Mid(sResult, 21, 8)
+  sLogAddress = Mid(sResult, 29, 8)
+  iLogAddress = (Val("&H" & sLogAddress & "&") - LOGADDRESSOFFSET) / 32
+  sType = Mid(sResult, 61, 2)
+  IF bPlugwiseDebug THEN
+    Main.WriteDebugLog(("[Plugwise] Received Device Info response!"))
+    Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & Mid(sResult, 1, 4))
+    Main.WriteDebugLog(("[Plugwise] MAC Address: ") & sMAC)
+    Main.WriteDebugLog(("[Plugwise] Relay State: ") & sRelay & " " & sState)
+    Main.WriteDebugLog(("[Plugwise] Time in Circle: ") & TimeSinceLastMonth(sTime))
+    Main.WriteDebugLog(("[Plugwise] Log Address: ") & iLogAddress & " Hex: " & sLogAddress)
+    Main.WriteDebugLog(("[Plugwise] Frequency: ") & GetFreq(Mid(sResult, 39, 2)) & "Hz")
+    Main.WriteDebugLog(("[Plugwise] Hardware version: ") & Mid(sResult, 41, 4) & "-" & Mid(sResult, 45, 4) & "-" & Mid(sResult, 49, 4))
+    Main.WriteDebugLog(("[Plugwise] Firmware: ") & TimeSinceEpoch(Mid(sResult, 53, 8)))
+    SELECT sType
+      CASE "00"
+        sHW = "Stick"
+      CASE "01"
+        sHW = "Circle+"
+      CASE "02"
+        sHW = "Circle"
+    END SELECT
+    Main.WriteDebugLog(("[Plugwise] Hardware Type: ") & sHW)
+  ENDIF
+
+  ' store logaddress
+  cLogAddress.Add(iLogAddress, sMAC)
+
+  ' update device state
+  iDeviceId = Devices.Find(sMAC, Devices.FindInterface("Plugwise Stick"), UCase("Plugwise Circle"))
+  IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sState, "", "", "")
+
+  ' now that the logaddress is known get the power logs too
+  GetPowerLogs(sMAC)
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+END
+
+PRIVATE SUB ProcessCommandResponse(sResult AS String)
+
+  DIM sAckCode, sMAC, sOnline, sID, sSID AS String
+
+  IF bPlugwiseDebug THEN
+    Main.WriteDebugLog(("[Plugwise] Received Command response!"))
+    sMAC = Mid(sResult, 5, 16)
+    sOnline = Mid(sResult, 23, 2)
+    sID = Mid(sResult, 25, 16)
+    sSID = Mid(sResult, 41, 4)
+    Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & Mid(sResult, 1, 4))
+    Main.WriteDebugLog(("[Plugwise] MAC Address Stick: ") & sMAC)
+    Main.WriteDebugLog(("[Plugwise] Network is: ") & IIf(sOnline = "01", "Online", "Offline"))
+    Main.WriteDebugLog(("[Plugwise] Unique Network ID: ") & sID)
+    Main.WriteDebugLog(("[Plugwise] Short Network ID: ") & sSID)
+  ENDIF
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+END
+
+PRIVATE SUB ProcessAckResponse(sResult AS String)
+
+  DIM sAckCode, sMAC, sID AS String
+
+  IF bPlugwiseDebug THEN
+    Main.WriteDebugLog(("[Plugwise] Received Ack response!"))
+    sAckCode = Mid(sResult, 5, 4)
+    Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & Mid(sResult, 1, 4))
+    Main.WriteDebugLog(("[Plugwise] Acknowledgement: ") & sAckCode & IIf(sAckCode = "00C1", " (OK)", " (ERROR)"))
+  ENDIF
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+END
+
+PRIVATE SUB ProcessCalibrationResponse(sResult AS String)
+
+  DIM sMAC AS String
+  DIM fGainA, fGainB, fOffTot, fOffNoise AS Float
+
+  sMAC = Mid(sResult, 5, 16)
+  fGainA = HexToFloat(Mid(sResult, 21, 8))
+  fGainB = HexToFloat(Mid(sResult, 29, 8))
+  fOffTot = HexToFloat(Mid(sResult, 37, 8))
+  fOffNoise = HexToFloat(Mid(sResult, 45, 8))
+
+  IF bPlugwiseDebug THEN
+    Main.WriteDebugLog(("[Plugwise] Received Calibration response!"))
+    Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & Mid(sResult, 1, 4))
+    Main.WriteDebugLog(("[Plugwise] MAC Address: ") & sMAC)
+    Main.WriteDebugLog(("[Plugwise] GainA: ") & Str(fGainA))
+    Main.WriteDebugLog(("[Plugwise] GainB: ") & Str(fGainB))
+    Main.WriteDebugLog(("[Plugwise] OffTot: ") & Str(fOffTot))
+    Main.WriteDebugLog(("[Plugwise] OffNoise: ") & Str(fOffNoise))
+  ENDIF
+
+  ' store calibration data
+  StoreCircle(sMAC, fGainA, fGainB, fOffTot, fOffNoise)
+
+  ' get power info now calibration data is known
+  GetPowerInfo(sMAC)
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+END
+
+PRIVATE SUB ProcessPowerInfoResponse(sResult AS String)
+
+  DIM sMAC, sPulses, sPulses8s, sWatt, skW AS String
+  DIM iPulses, iDeviceId AS Integer
+  DIM fCorrectedPulses, fkW, fWatt AS Float
+
+  sMAC = Mid(sResult, 5, 16)
+  sPulses = Mid(sResult, 21, 4)
+  sPulses8s = Mid(sResult, 25, 4)
+
+  ' calculate actual usage in Watt
+  iPulses = Val("&H" & sPulses) / 1.0
+  fCorrectedPulses = CorrectPulses(iPulses, sMAC)
+  fkW = (fCorrectedPulses / 1) / 468.9385193
+  skW = Format(CStr(fkW), "0.00")
+  sWatt = Format(CStr(fkW * 1000), "0.00")
+
+  IF bPlugwiseDebug THEN
+    Main.WriteDebugLog(("[Plugwise] Received Power Info response!"))
+    Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & Mid(sResult, 1, 4))
+    Main.WriteDebugLog(("[Plugwise] MAC Address: ") & sMAC)
+    Main.WriteDebugLog(("[Plugwise] Pulses: ") & iPulses & " Hex: " & sPulses & " (Corrected: " & fCorrectedPulses & ")")
+    Main.WriteDebugLog(("[Plugwise] Usage: ") & sWatt & " Watt (" & skW & " kW)")
+  ENDIF
+
+  ' update device state
+  iDeviceId = Devices.Find(sMAC, Devices.FindInterface("Plugwise Stick"), UCase("Plugwise Circle"))
+  IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "", sWatt, skW, "")
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+END
+
+PRIVATE SUB CorrectPulses(iPulses AS Integer, sMAC AS String) AS Float
+
+  DIM fTemp, fCorrectedPulses AS Float
+
+  fTemp = iPulses + cOffNoise[sMAC]
+  IF iPulses THEN fCorrectedPulses = 1.0 * ((((fTemp) ^ 2.0 * cGainB[sMAC]) + ((fTemp) * cGainA[sMAC])) + cOffTot[sMAC])
+
+  RETURN fCorrectedPulses
+
+END
+
+PRIVATE SUB InitStick()
+
+  DIM sPacket, sCmd, sCRC AS String
+  DIM sHeader AS String = Chr(5) & Chr(5) & Chr(3) & Chr(3)
+  DIM sFooter AS String = Chr(13) & Chr(10)
+
+  IF hPlugwise.Status <> Net.Active THEN RETURN
+
+  ' <ENQ><ENQ><ETX><ETX>000AB43C<CR><LF>
+  sCmd = STICKINITCODE
+  sCRC = CalculateCRC(sCmd)
+  sPacket = sHeader & sCmd & sCRC & sFooter
+
+  IF bPlugwiseDebug THEN
+    Main.WriteDebugLog(("[Plugwise] Initializing Stick"))
+    Main.WriteDebugLog(("[Plugwise] Cmd: ") & sCmd & (" CRC: ") & sCRC)
+  ENDIF
+  QueueCommand(sPacket)
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB QueueCommand(sPacket AS String)
+
+  ' add command to queue
+  cQueue.Add(sPacket, Rnd)
+
+  ' if stick is not busy process it
+  IF bStickBusy = FALSE THEN DoQueue()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB DoQueue()
+
+  DIM sPacket AS String
+
+  FOR EACH sPacket IN cQueue
+    WriteCommand(sPacket, cQueue.Key)
+    BREAK ' only do first one
+  NEXT
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send packet to plugwise stick
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB WriteCommand(sBuffer AS String, sKey AS String)
+
+  IF bPlugwiseDebug THEN Main.WriteDebugLog("[Plugwise] > " & Mid(sBuffer, 5, Len(sBuffer) - 6))
+
+  TRY PRINT #hPlugwise, sBuffer
+  IF ERROR THEN Main.WriteDebugLog(("[Plugwise] Error writing data to the serial port! ->") & ERROR.Text)
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  ' start timer to wait before sending next command
+  tPlugwiseBusy.Delay = 50 ' 50mS (initial test value)
+  tPlugwiseBusy.Start
+  bStickBusy = TRUE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' stick busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tPlugwiseBusy_Timer()
+
+  bStickBusy = FALSE
+  tPlugwiseBusy.Stop
+
+  IF cQueue.Count THEN ' if there are more commands left in queue, send next one
+    IF bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] Sending command from Queue (count = " & cQueue.Count & ")"))
+    DoQueue()
   ENDIF
 
 END
 
-PUBLIC SUB CheckPlugs()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read data char for char
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB Plugwise_Read()
+
+  DIM sPacket AS String
+
+  TRY READ #hPlugwise, sPacket, 1
+  IF NOT ERROR THEN
+    ProcessReceivedChar(sPacket)
+  ELSE
+    Main.WriteDebugLog(("[Plugwise] Error reading data from the serial port! ->") & ERROR.Text)
+  ENDIF
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' loop through plugwise devices in database and collect their data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB CheckPlugs()
 
   DIM rResult AS Result
 
-'  TRY rResult = Main.hDB.Exec("SELECT * FROM devices WHERE enabled is TRUE AND interface = &1", Devices.FindInterface("Plugwise Stick"))
   TRY rResult = Devices.FindDevicesForInterface(Devices.FindInterface("Plugwise Stick"))
   IF rResult.Count THEN
     FOR EACH rResult
       IF Main.bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] Checking power usage of device '") & rResult!name & ("' with address ") & rResult!address)
-      GetPowerInfo(rResult!address, rResult!id)
+      GetPowerInfo(rResult!address)
       IF Main.bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] Checking relay state of device '") & rResult!name & ("' with address ") & rResult!address)
-      GetDeviceInfo(rResult!address, rResult!id)
-      ' IF Main.bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] Reading power history of Device '") & rResult!name & ("' with address ") & rResult!address)
-      ' GetPowerLogs(rResult!address, rResult!id)
+      GetDeviceInfo(rResult!address)
     NEXT
+  ELSE
+    Main.WriteDebugLog(("[Plugwise] No Circles found in the database, please add them."))
   ENDIF
 
 END
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' control plugs
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 PUBLIC SUB SendCommand(sAddress AS String, sCmd AS String)
 
-  DIM sHeader, sString, sFunc, sCRC, sComplete, sMAC AS String
+  DIM sPacket, sCommand, sFunc, sCRC, sMAC AS String
+  DIM sHeader AS String = Chr(5) & Chr(5) & Chr(3) & Chr(3)
+  DIM sFooter AS String = Chr(13) & Chr(10)
 
   sMAC = Replace(sAddress, ":", "")
   sFunc = IIf(UCase(sCmd) = "ON", "01", "00")
 
   ' <ENQ><ENQ><ETX><ETX>0017000A1100003111AB01AC92<CR><LF>
   sHeader = Chr(5) & Chr(5) & Chr(3) & Chr(3)
-  sString = POWERCHANGECODE & sMAC & sFunc
-  sCRC = CalculateCRC(sString)
-  sComplete = sHeader & sString & sCRC & Chr(13) & Chr(10)
+  sCommand = POWERCHANGECODE & sMAC & sFunc
+  sCRC = CalculateCRC(sCommand)
+  sPacket = sHeader & sCommand & sCRC & sFooter
 
   IF bPlugwiseDebug THEN
-    Main.WriteDebugLog(("[Plugwise] MAC: ") & sMAC)
-    Main.WriteDebugLog(("[Plugwise] String: ") & sString & (" CRC: ") & sCRC)
+    Main.WriteDebugLog(("[Plugwise] Queue Power Change:"))
+    Main.WriteDebugLog(("[Plugwise] MAC Address: ") & sMAC)
+    Main.WriteDebugLog(("[Plugwise] Cmd String: ") & sCommand & (" CRC: ") & sCRC)
   ENDIF
-  Send(sComplete)
+  QueueCommand(sPacket)
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
 
 END
 
-PUBLIC SUB GetDeviceInfo(sAddress AS String, iDeviceId AS Integer)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' control plugs
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PRIVATE SUB GetPowerLogs(sAddress AS String)
 
-  DIM sHeader, sString, sCRC, sComplete, sResult, sRelay, sMAC, sMacRecv, sState, sLogAddress, sSeq AS String
+  DIM sPacket, sCmd, sCRC, sMAC, sLogAddress AS String
+  DIM sHeader AS String = Chr(5) & Chr(5) & Chr(3) & Chr(3)
+  DIM sFooter AS String = Chr(13) & Chr(10)
   DIM iLogAddress AS Integer
-  DIM iMinLength AS Integer = 5
 
   sMAC = Replace(sAddress, ":", "")
 
-  sHeader = Chr(5) & Chr(5) & Chr(3) & Chr(3)
-  sString = DEVICEINFOCODE & sMAC
-  sCRC = CalculateCRC(sString)
-  sComplete = sHeader & sString & sCRC & Chr(13) & Chr(10)
+  IF cLogAddress.Exist(sMAC) THEN
+    iLogAddress = LOGADDRESSOFFSET + (32 * cLogAddress[sMAC] - 1)
+    sLogAddress = Hex(ilogaddress, 8)
+    sCmd = LOGINFOCODE & sMAC & sLogAddress
+    sCRC = CalculateCRC(sCmd)
+    sPacket = sHeader & sCmd & sCRC & sFooter
 
-  IF bPlugwiseDebug THEN
-    Main.WriteDebugLog(("[Plugwise] MAC: ") & sMAC)
-    Main.WriteDebugLog(("[Plugwise] String: ") & sString & (" CRC: ") & sCRC)
-  ENDIF
-
-  IF iFirmware > 2008 THEN iMinLength += 34
-
-  Send(sComplete)
-  sResult = GetResult(DEVICEINFORESPONSECODE, sComplete)
-  IF Len(sResult) > iMinLength THEN
-    IF iFirmware > 2008 THEN
-      sMacRecv = Mid(sResult, 5, 16)
-      sRelay = Mid(sResult, 37, 2)
-    ELSE
-      sMacRecv = Mid(sResult, 1, 16)
-      sRelay = Mid(sResult, 33, 2)
-    ENDIF
-    sState = IIf(sRelay = "01", "On", "Off")
     IF bPlugwiseDebug THEN
-      Main.WriteDebugLog(("[Plugwise] GetDeviceInfo Result: ") & sResult)
-      Main.WriteDebugLog(("[Plugwise] MAC Address: ") & sMacRecv)
-      IF iFirmware > 2008 THEN
-        sSeq = Mid(sResult, 1, 4)
-        sLogAddress = Mid(sResult, 29, 8)
-        'iLogAddress = (HexToInt(sLogAddress) - 278528) / 32
-        iLogAddress = (Val("&H" & sLogAddress & "&") - 278528) / 32
-        Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & sSeq)
-        Main.WriteDebugLog(("[Plugwise] Log Address: ") & iLogAddress & " (" & sLogAddress & ")")
-        Main.WriteDebugLog(("[Plugwise] Time in Circle: ") & Val("&H" & Mid(sResult, 21, 4) & "&") & " " & HexToInt(Mid(sResult, 23, 2)) & " " & HexToInt(Mid(sResult, 25, 4)))
-        Main.WriteDebugLog(("[Plugwise] Frequency: ") & GetFreq(Mid(sResult, 39, 2)) & "Hz")
-        Main.WriteDebugLog(("[Plugwise] Hardware version: ") & Mid(sResult, 41, 4) & "-" & Mid(sResult, 45, 4) & "-" & Mid(sResult, 49, 4))
-        Main.WriteDebugLog(("[Plugwise] Firmware: ") & TimeSinceEpoch(Mid(sResult, 53, 8)))
-      ENDIF
-      Main.WriteDebugLog(("[Plugwise] RelayState: ") & sRelay & " " & sState)
+      Main.WriteDebugLog(("[Plugwise] Queue Power Logs:"))
+      Main.WriteDebugLog(("[Plugwise] MAC Address: ") & sMAC)
+      Main.WriteDebugLog(("[Plugwise] Log Address: ") & iLogAddress & " Hex: " & sLogAddress)
+      Main.WriteDebugLog(("[Plugwise] Cmd String: ") & sCmd & (" CRC: ") & sCRC)
     ENDIF
-    ' update device state
-    IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, sState, "", "", "")
+    QueueCommand(sPacket)
   ELSE
     IF bPlugwiseDebug THEN
-      Main.WriteDebugLog(("[Plugwise] GetDeviceInfo() didn't get expected answer."))
-      Main.WriteDebugLog(("[Plugwise] Is module plugged in and address correct?"))
+      Main.WriteDebugLog(("[Plugwise] Queue Power Logs:"))
+      Main.WriteDebugLog(("[Plugwise] Log Address: Unknown, skipping."))
     ENDIF
   ENDIF
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
 
 END
 
-PUBLIC SUB GetPowerInfo(sAddress AS String, iDeviceId AS Integer)
+PRIVATE SUB GetDeviceInfo(sAddress AS String)
 
-  DIM sHeader, sString, sCRC, sComplete, sResult, sPulses, sPulses1Sec, sMAC, sSeq AS String
-  DIM iPulses AS Integer
-  DIM fGainA, fGainB, fOffTot, fOffNoise, fCorrectPulses, fWatt, fkWh, fTemp AS Float
-  DIM iMinLength AS Integer = 36
+  DIM sPacket, sCmd, sCRC, sMAC AS String
+  DIM sHeader AS String = Chr(5) & Chr(5) & Chr(3) & Chr(3)
+  DIM sFooter AS String = Chr(13) & Chr(10)
+
+  sMAC = Replace(sAddress, ":", "")
+
+  sCmd = DEVICEINFOCODE & sMAC
+  sCRC = CalculateCRC(sCmd)
+  sPacket = sHeader & sCmd & sCRC & sFooter
+
+  IF bPlugwiseDebug THEN
+    Main.WriteDebugLog(("[Plugwise] Queue Device Info:"))
+    Main.WriteDebugLog(("[Plugwise] MAC Address: ") & sMAC)
+    Main.WriteDebugLog(("[Plugwise] Cmd String: ") & sCmd & (" CRC: ") & sCRC)
+  ENDIF
+  QueueCommand(sPacket)
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+END
+
+PRIVATE SUB GetPowerInfo(sAddress AS String)
+
+  DIM sPacket, sCmd, sCRC, sMAC AS String
+  DIM sHeader AS String = Chr(5) & Chr(5) & Chr(3) & Chr(3)
+  DIM sFooter AS String = Chr(13) & Chr(10)
 
   sMac = Replace(sAddress, ":", "")
 
-  ' <ENQ><ENQ><ETX><ETX>0026000D6F00002366BB7071<CR><LF>
-  sHeader = Chr(5) & Chr(5) & Chr(3) & Chr(3)
-  sString = CALIBRATIONCODE & sMAC
-  sCRC = CalculateCRC(sString)
-  sComplete = sHeader & sString & sCRC & Chr(13) & Chr(10)
-
-  IF bPlugwiseDebug THEN
-    Main.WriteDebugLog(("[Plugwise] Calibration Request"))
-    Main.WriteDebugLog(("[Plugwise] MAC: ") & sMAC)
-    Main.WriteDebugLog(("[Plugwise] String: ") & sString & (" CRC: ") & sCRC)
-  ENDIF
-
-  IF iFirmware > 2008 THEN iMinLength += 24
-
-  Send(sComplete)
-  sResult = GetResult(CALIBRATIONRESPONSECODE, sComplete)
-
-  IF Len(sResult) > iMinLength THEN
-    IF iFirmware > 2008 THEN
-      sSeq = Mid(sResult, 8, 4)
-      fGainA = HexToFloat(Mid(sResult, 28, 8))
-      fGainB = HexToFloat(Mid(sResult, 36, 8))
-      fOffTot = HexToFloat(Mid(sResult, 44, 8))
-      fOffNoise = HexToFloat(Mid(sResult, 52, 8))
-    ELSE
-      fGainA = HexToFloat(Mid(sResult, 1, 8))
-      fGainB = HexToFloat(Mid(sResult, 9, 8))
-      fOffTot = HexToFloat(Mid(sResult, 17, 8))
-      fOffNoise = HexToFloat(Mid(sResult, 25, 8))
-    ENDIF
-    IF bPlugwiseDebug THEN
-      Main.WriteDebugLog(("[Plugwise] GetCalibration Result: ") & sResult)
-      IF iFirmware > 2008 THEN Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & sSeq)
-      Main.WriteDebugLog(("[Plugwise] GainA: ") & Str(fGainA))
-      Main.WriteDebugLog(("[Plugwise] GainB: ") & Str(fGainB))
-      Main.WriteDebugLog(("[Plugwise] OffTot: ") & Str(fOffTot))
-      Main.WriteDebugLog(("[Plugwise] OffNoise: ") & Str(fOffNoise))
-    ENDIF
-
-    ' <ENQ><ENQ><ETX><ETX>0012000D6F00002366BB338B<CR><LF>
-    sString = POWERINFOCODE & sMAC
-    sCRC = CalculateCRC(sString)
-    sComplete = sHeader & sString & sCRC & Chr(13) & Chr(10)
-    Send(sComplete)
-    sResult = GetResult(POWERINFORESPONSECODE, sComplete)
-
-    IF iFirmware = 2008 THEN
-     iMinLength = 20
-    ELSE
-     iMinLength = 32
-    ENDIF
-
-    IF Len(sResult) > iMinLength THEN
-      IF iFirmware > 2008 THEN
-        sSeq = Mid(sResult, 8, 4)
-        sPulses = Mid(sResult, 28, 4)
-      ELSE
-        sPulses = Mid(sResult, 5, 4)
-      ENDIF
-      iPulses = HexToInt(sPulses) / 1.0
-      fTemp = iPulses + fOffNoise
-      IF iPulses THEN fCorrectPulses = 1.0 * ((((fTemp) ^ 2.0 * fGainB) + ((fTemp) * fGainA)) + fOffTot)
-      fkWh = (fCorrectPulses / 1) / 468.9385193
-      fWatt = fkWh * 1000
-
-      IF bPlugwiseDebug THEN
-        Main.WriteDebugLog(("[Plugwise] GetPowerInfo Result: ") & sResult)
-        IF iFirmware > 2008 THEN Main.WriteDebugLog(("[Plugwise] Sequence Number: ") & sSeq)
-        Main.WriteDebugLog(("[Plugwise] Pulses: ") & sPulses & " (hex) " & iPulses)
-        Main.WriteDebugLog(("[Plugwise] Corrected Pulses: ") & fCorrectPulses)
-        Main.WriteDebugLog(("[Plugwise] kWh: ") & Str(fkWh))
-        Main.WriteDebugLog(("[Plugwise] Watt: ") & Str(fWatt))
-      ENDIF
-      IF iDeviceId THEN Devices.ValueUpdate(iDeviceId, "", Format(CStr(fWatt), "0.###"), Format(CStr(fkWh), "0.###"), "")
-    ENDIF
+  IF NOT cGainA.Exist(sMAC) THEN ' get calibration info first
+    ' <ENQ><ENQ><ETX><ETX>0026000D6F00002366BB7071<CR><LF>
+    sCmd = CALIBRATIONCODE & sMAC
+    IF bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] Queue Calibration Request:"))
   ELSE
-    IF bPlugwiseDebug THEN
-      Main.WriteDebugLog(("[Plugwise] GetPowerInfo() didn't get expected answer for address '") & sAddress & ("' result was '") & sResult & "'")
-      Main.WriteDebugLog(("[Plugwise] Is module plugged in and address correct?"))
-    ENDIF
+    ' <ENQ><ENQ><ETX><ETX>0012000D6F00002366BB338B<CR><LF>
+    sCmd = POWERINFOCODE & sMAC
+    IF bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] Queue Power Info Request:"))
   ENDIF
+
+  sCRC = CalculateCRC(sCmd)
+  sPacket = sHeader & sCmd & sCRC & sFooter
+  IF bPlugwiseDebug THEN
+    Main.WriteDebugLog(("[Plugwise] MAC Address: ") & sMAC)
+    Main.WriteDebugLog(("[Plugwise] Cmd String: ") & sCmd & (" CRC: ") & sCRC)
+  ENDIF
+  QueueCommand(sPacket)
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
 
 END
 
@@ -332,6 +706,29 @@ PRIVATE FUNCTION GetFreq(sByte AS String) AS String
 
 END
 
+PRIVATE FUNCTION TimeSinceLastMonth(sTime AS String) AS String
+
+  DIM gTime AS Date
+  DIM iYear, iMonth, iMinutes AS Integer
+
+  ' check for valid data
+  IF Len(sTime) <> 8 THEN RETURN
+  IF sTime = "FFFFFFFF" THEN RETURN "?"
+
+  iYear = 2000 + Val("&H" & Left(sTime, 2))
+  iMonth = Val("&H" & Mid(sTime, 3, 2))
+  iMinutes = Val("&H" & Mid(sTime, 5, 4))
+
+  ' add minutes to year/month values
+  gTime = DateAdd(Date(iYear, iMonth, 1, 1, 0, 0), gb.Minute, iMinutes)
+
+  RETURN Format$(gTime, "yyyy/mm/dd hh:nn:ss")
+
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+END
+
 PRIVATE FUNCTION TimeSinceEpoch(sTime AS String) AS String
 
   DIM gTime AS Date
@@ -343,6 +740,9 @@ PRIVATE FUNCTION TimeSinceEpoch(sTime AS String) AS String
 
   RETURN Format$(gTime, "yyyy/mm/dd hh:nn:ss")
 
+CATCH ' some errors
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
 END
 
 PRIVATE FUNCTION CalcLogDate(sTime AS String) AS String
@@ -351,7 +751,7 @@ PRIVATE FUNCTION CalcLogDate(sTime AS String) AS String
 
   IF Len(sTime) <> 8 THEN RETURN
 
-  ' calculate time since epoch
+  ' calculate time
   gTime = DateAdd(Date(2007, 6, 1), gb.Hour, Val("&H" & sTime & "&"))
 
   RETURN Format$(gTime, "yyyy/mm/dd hh:nn:ss")
@@ -388,98 +788,7 @@ PRIVATE FUNCTION HexToFloat(sHex AS String) AS Float
   RETURN iSign * fMant * 2 ^ fExponent
 
 CATCH
-  Main.WriteLog(("Plugwise Error: ") & ERROR.Text & " at " & ERROR.Where & " sHex = " & sHex)
-
-END
-
-PRIVATE FUNCTION HexToInt(sHex AS String) AS Integer
-
-  TRY RETURN Val("&H" & sHex)
-
-END
-
-PRIVATE FUNCTION GetResult(sType AS String, sCommand AS String) AS String
-
-  DIM iTries AS Integer = 32
-  DIM iAttempts AS Integer = 0 
-  DIM sData, sTemp, sResult, sOldData AS String
-  DIM iBegin AS Integer
-  DIM bGarbage AS Boolean = TRUE
-
-  WHILE (bGarbage)
-    iTries = 32
-    WHILE (iTries > 0)
-      ' wait a bit and read response.
-      SLEEP 0.01
-      ' see if we got some data.
-      TRY READ #hPlugwise, sTemp, Lof(hPlugwise)
-      sData &= sTemp
-      DEC iTries
-    WEND
-    iBegin = InStr(sData, Chr(5) & Chr(5) & Chr(3) & Chr(3) & sType)
-    IF (iBegin == 0) THEN
-      IF (iAttempts < 3) THEN
-        bGarbage = TRUE
-        sOldData = sData
-        Send(sCommand)
-      ELSE
-        bGarbage = FALSE
-      ENDIF
-    ELSE
-      bGarbage = FALSE
-    ENDIF
-    INC iAttempts
-  WEND
-
-  SELECT sType
-    CASE CALIBRATIONRESPONSECODE
-      IF iBegin THEN
-        IF iFirmware > 2008 THEN
-          sResult = Mid(sData, iBegin + 1, 150)
-        ELSE
-          sResult = Mid(sData, iBegin + 24, 52)
-        ENDIF
-      END IF
-    CASE POWERINFORESPONSECODE
-      IF iBegin THEN
-        IF iFirmware > 2008 THEN
-          sResult = Mid(sData, iBegin + 1, 61)
-        ELSE
-          sResult = Mid(sData, iBegin + 24, 37)
-        ENDIF
-      END IF
-    CASE DEVICEINFORESPONSECODE
-      IF iBegin THEN
-        IF iFirmware > 2008 THEN
-          sResult = Mid(sData, iBegin + 8, 60)
-        ELSE
-          sResult = Mid(sData, iBegin + 8, 34)
-        ENDIF
-      ENDIF
-    CASE STICKINITRESPONSECODE
-      IF iBegin THEN sResult = Mid(sData, iBegin + 8, 72)
-    CASE POWERLOGRESPONSECODE 
-      sResult = Mid(sData, iBegin + 8, 99)
-   END SELECT
-
-  IF (iAttempts > 1) AND IF (Len(sResult) > 0) THEN
-    Main.WriteDebugLog(("[Plugwise] Needed to interrogate the stick more then once!"))
-    Main.WriteDebugLog(("[Plugwise] Data wrong: ") & sOldData)
-    Main.WriteDebugLog(("[Plugwise] Data correct: ") & sData)
-  ENDIF
-
-  RETURN sResult
-
-END
-
-PRIVATE SUB Send(sCommand AS String)
-
-  IF hPlugwise.Status <> Net.Active THEN RETURN
-
-  IF Main.bPlugwiseDebug THEN Main.WriteDebugLog(("[Plugwise] Write: ") & sCommand)
-  TRY WRITE #hPlugwise, sCommand, Len(sCommand)
-  ' warn the user.
-  IF ERROR THEN Main.WriteDebugLog(("[Plugwise] Unable to write to serial port!"))
+  Main.WriteDebugLog(("Plugwise Error: ") & ERROR.Text & " at " & ERROR.Where & " sHex = " & sHex)
 
 END
 
@@ -518,24 +827,6 @@ PRIVATE SUB InitCRCTable()
 
 END
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' close port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC FUNCTION Disconnect() AS Boolean
-
-  ' try to close the connection
-  hPlugwise.Close
-  Main.WriteLog(("Plugwise serial port close."))
-
-  ' all ok
-  RETURN TRUE
-
-CATCH ' some errors
-  Main.WriteLog(("Plugwise Error: ") & ERROR.Text)
-  RETURN FALSE
-
-END
-
 ' implement properties
 PRIVATE FUNCTION Port_Read() AS String
 
@@ -570,17 +861,5 @@ END
 PRIVATE FUNCTION PollTime_Write(Value AS Integer)
 
   iPollTime = Value
-
-END
-
-PRIVATE FUNCTION Firmware_Read() AS Integer
-
-  RETURN iFirmware
-
-END
-
-PRIVATE SUB Firmware_Write(Value AS Integer)
-
-  iFirmware = Value
 
 END
