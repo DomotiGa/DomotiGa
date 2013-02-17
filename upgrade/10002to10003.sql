@@ -61,6 +61,7 @@ CREATE TABLE `settings_opentherm` (
 LOCK TABLES `settings_opentherm` WRITE;
 /*!40000 ALTER TABLE `settings_opentherm` DISABLE KEYS */;
 INSERT INTO `settings_opentherm` VALUES (0,'',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',1080,'tcp',0,50000,0),(1,'Temporarily',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',1080,'serial',0,50000,0);
+UNLOCK TABLES;
 
 --
 -- Table structure for table `settings_smartvisu`
