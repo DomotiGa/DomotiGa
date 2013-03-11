@@ -42,6 +42,7 @@ PUBLIC hRelayTRXClient AS Object[]
 PUBLIC hRelayTRXSocket AS NEW Socket
 PUBLIC tRFXComTRXConnect AS Timer
 PUBLIC tRFXComTRXReset AS Timer
+PUBLIC tRFXComTRXBusy AS Timer
 PRIVATE bResetActive AS Boolean = TRUE
 PRIVATE iConnectRetry AS Integer = 0 ' retries
 PRIVATE iConnectDelay AS Integer = 60000 ' 1 minute
@@ -50,6 +51,8 @@ PRIVATE RecBytes AS Byte
 PUBLIC bSimulate AS Boolean
 PRIVATE iSeq AS Integer
 PRIVATE iFirmWareVersion AS Integer
+PRIVATE cQueue AS NEW Collection    ' command buffer
+PRIVATE bInterfaceBusy AS Boolean   ' waiting for delay timer to finish
 
 ' counters to prevent logfile to fill up the disk
 PRIVATE iReadErrorCount AS Integer
@@ -380,6 +383,10 @@ PUBLIC SUB RFXComTRX_Ready()
   tRFXComTRXReset.Delay = 1000
   tRFXComTRXReset.Stop
 
+  ' define timer for Interface busy
+  tRFXComTRXBusy = NEW Timer AS "tRFXComTRXBusy"
+  tRFXComTRXBusy.Stop
+
 END
 
 ' just here for development/debugging
@@ -395,6 +402,33 @@ PUBLIC SUB ParseDump(sFile AS String)
     LINE INPUT #hFile, sLine
     IF Len(sLine) > 5 THEN Simulate(sLine)
   WEND
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB QueueCommand(aPacket AS Byte[])
+
+  ' add command to queue
+  cQueue.Add(aPacket, Rnd)
+
+  ' if controller is not busy process it
+  IF bInterfaceBusy = FALSE THEN DoQueue()
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB DoQueue()
+
+  DIM aPacket AS Byte[] = NULL
+
+  FOR EACH aPacket IN cQueue
+    WriteCommand(aPacket, cQueue.Key)
+    BREAK ' only do first one
+  NEXT
 
 END
 
@@ -491,6 +525,10 @@ PUBLIC FUNCTION ConnectSerial() AS Boolean
   tRFXComTRXReset = NEW Timer AS "tRFXComTRXReset"
   tRFXComTRXReset.Delay = 1000
   tRFXComTRXReset.Stop
+
+  ' define timer for Interface busy
+  tRFXComTRXBusy = NEW Timer AS "tRFXComTRXBusy"
+  tRFXComTRXBusy.Stop
 
   ' all ok
   RETURN TRUE
@@ -638,7 +676,7 @@ PUBLIC FUNCTION ProtocolSetup(sType AS String, OPTIONAL aMode AS Byte[])
       RETURN
   END SELECT
 
-  WriteCommand(bCmd)
+  QueueCommand(bCmd)
 
   IF sType = "RESET" THEN
     tRFXComTRXReset.Start
@@ -697,7 +735,7 @@ END
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send a command to the interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PUBLIC FUNCTION WriteCommand(bBuffer AS Byte[])
+PUBLIC FUNCTION WriteCommand(bBuffer AS Byte[], sKey AS String)
 
   DIM iCnt AS Integer
   DIM sMessage AS String
@@ -719,6 +757,28 @@ PUBLIC FUNCTION WriteCommand(bBuffer AS Byte[])
   INC iSeq
   IF iSeq = 256 THEN iSeq = 1
 
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  tRFXComTRXBusy.Delay = 50 ' 50mS (initial test value)
+  tRFXComTRXBusy.Start
+  bInterfaceBusy = TRUE
+
+END
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+PUBLIC SUB tRFXComTRXBusy_Timer()
+
+  bInterfaceBusy = FALSE
+  tRFXComTRXBusy.Stop
+
+  IF cQueue.Count THEN ' if there are more commands left in queue, send next one
+    IF bRFXComTRXDebug THEN Main.WriteDebugLog(("[RFXComTRX] Sending command from Queue (count = " & cQueue.Count & ")"))
+    DoQueue()
+  ENDIF
+
 END
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -727,6 +787,7 @@ END
 PUBLIC FUNCTION Disconnect() AS Boolean
 
   ' try to close the connection
+  TRY tRFXComTRXBusy.Stop
   TRY hRFXComTRX.Close
   TRY hRFXComTRXSer.Close
   TRY hRFXComTRXRelay.Close
@@ -1787,7 +1848,7 @@ PUBLIC SUB Decode_Security1()
       WriteMessage("Subtype       = Visonic PowerCode sensor - auxiliary contact")
     CASE sTypeMeiantech
       sType = "Meiantech"
-      WriteMessage("Subtype       = Meiantech")
+      WriteMessage("Subtype       = Meiantech/Atlantic/Aidebao")
     CASE ELSE
       WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
       RETURN
@@ -1842,11 +1903,29 @@ PUBLIC SUB Decode_Security1()
       sBatt = "Low"
     CASE sStatusPairKD101
       sCmd = "Pair KD101"
+    CASE sStatusNormalTamper
+      sCmd = "Normal"
+      sTamper = "Tamper"
+    CASE sStatusNormalDelayedTamper
+      sCmd = "Normal Delayed"
+      sTamper = "Tamper"
+    CASE sStatusAlarmTamper
+      sCmd = "Alarm"
+      sTamper = "Tamper"
+    CASE sStatusAlarmDelayedTamper
+      sCmd = "Alarm Delayed"
+      sTamper = "Tamper"
+    CASE sStatusMotionTamper
+      sCmd = "Motion"
+      sTamper = "Tamper"
+    CASE sStatusNoMotionTamper
+      sCmd = "No Motion"
+      sTamper = "Tamper"
     CASE ELSE
       WriteMessage("Status        = Unknown")
       RETURN
   END SELECT
-  WriteMessage("Status        = " & sCmd)
+  WriteMessage("Status        = " & sCmd & " " & sTamper)
   IF (RecBuf[8] AND &HF) = 0 THEN
     sBatt = "Low"
   ELSE
@@ -3996,6 +4075,10 @@ PUBLIC SUB Lighting1(sType AS String, sAddress AS String, sCommand AS String, OP
       bBuf[6] = IIf(bGroup, 5, 0)
     CASE "ON"
       bBuf[6] = IIf(bGroup, 6, 1)
+    CASE "DIM"
+      bBuf[6] = 2
+    CASE "BRIGHT"
+      bBuf[6] = 3
     CASE "ALL OFF", "GROUP OFF"
       bBuf[6] = 5
     CASE "ALL ON", "GROUP ON"
@@ -4012,7 +4095,7 @@ PUBLIC SUB Lighting1(sType AS String, sAddress AS String, sCommand AS String, OP
       RETURN
   END SELECT
   bBuf[7] = 0
-  WriteCommand(bBuf)
+  QueueCommand(bBuf)
 
 END
 
@@ -4122,7 +4205,7 @@ PUBLIC SUB Lighting2(sType AS String, sAddress AS String, sCommand AS String, OP
       ENDIF
   END SELECT
   bBuf[11] = 0
-  WriteCommand(bBuf)
+  QueueCommand(bBuf)
 
 END
 
@@ -4281,7 +4364,7 @@ PUBLIC SUB Lighting5(sType AS String, sAddress AS String, sCommand AS String)
     CASE ELSE
         Main.WriteDebugLog(("[RFXComTRX] Unknown Lighting5 type '") & bBuf[2] & ("' given!"))
   END SELECT
-  WriteCommand(bBuf)
+  QueueCommand(bBuf)
 
 END
 
@@ -4383,7 +4466,7 @@ PUBLIC SUB Lighting6(sType AS String, sAddress AS String, sCommand AS String, OP
   INC iLighting6CmndSeqNbr
   IF iLighting6CmndSeqNbr > 4 THEN iLighting6CmndSeqNbr = 0
 
-  WriteCommand(bBuf)
+  QueueCommand(bBuf)
 
 END
 
@@ -4440,7 +4523,7 @@ PUBLIC SUB Curtain(sType AS String, sAddress AS String, sCommand AS String)
       RETURN
   END SELECT
   bBuf[7] = 0
-  WriteCommand(bBuf)
+  QueueCommand(bBuf)
 
 END
 
@@ -4499,7 +4582,7 @@ PUBLIC SUB Thermostat2(sType AS String, sAddress AS String, sCommand AS String)
       RETURN
   END SELECT
   bBuf[6] = 0
-  WriteCommand(bBuf)
+  QueueCommand(bBuf)
 
 END
 
