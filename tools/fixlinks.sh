@@ -37,6 +37,7 @@ ln -s ../DomotiGa/CLEDMatrix.class
 ln -s ../DomotiGa/CLGTV.class
 ln -s ../DomotiGa/CLIRC.class
 ln -s ../DomotiGa/CMeteohub.class
+ln -s ../DomotiGa/CMochad.class
 ln -s ../DomotiGa/CMQTT.class
 ln -s ../DomotiGa/CNcid.class
 ln -s ../DomotiGa/CTemp08.class

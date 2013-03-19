@@ -34,6 +34,7 @@ ln -s ../../DomotiGa3/.src/CIViewer.class
 ln -s ../../DomotiGa3/.src/CJeeLabs.class
 ln -s ../../DomotiGa3/.src/CK8055.class
 ln -s ../../DomotiGa3/.src/CLEDMatrix.class
+ln -s ../../DomotiGa3/.src/CMochad.class
 ln -s ../../DomotiGa3/.src/CMQTT.class
 ln -s ../../DomotiGa3/.src/CMeteohub.class
 ln -s ../../DomotiGa3/.src/CNcid.class
