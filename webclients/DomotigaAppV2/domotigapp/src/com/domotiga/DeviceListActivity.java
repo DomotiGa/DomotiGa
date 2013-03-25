@@ -1,24 +1,22 @@
 package com.domotiga;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
 
-import org.xmlrpc.android.XMLRPCClient;
+import org.xmlrpc.android.XMLRPCClientSSH;
 import org.xmlrpc.android.XMLRPCException;
 
 import android.app.ListActivity;
 import android.app.ProgressDialog;
 import android.content.Intent;
 import android.os.Bundle;
-import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
-import android.view.Window;
 import android.view.View.OnClickListener;
+import android.view.Window;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ImageButton;
@@ -34,11 +32,11 @@ import com.domotiga.tools.XMLRPC;
 
 public class DeviceListActivity extends ListActivity {
 
-	private XMLRPCClient client;
+	private XMLRPCClientSSH client;
 	private ArrayList<Device> devices = null;
 	private ArrayList<Device> thermo = null;
 	private DeviceAdapter adapter;
-	private TextView header;
+	//private TextView header; //used to show thermo
 	private Runnable viewDevices;
 	private ProgressDialog progressDialog;
 	private String location;
@@ -55,8 +53,8 @@ public class DeviceListActivity extends ListActivity {
 			}
 			progressDialog.dismiss();
 			adapter.notifyDataSetChanged();
-
-			if (thermo != null && thermo.size() > 0) {
+			// show thermo value
+			/*if (thermo != null && thermo.size() > 0) {
 				String intThermo = Settings.getParamString(
 						adapter.getContext(), Settings.PREFS_INT_TEMP, "");
 				String outThermo = Settings.getParamString(
@@ -73,7 +71,7 @@ public class DeviceListActivity extends ListActivity {
 				String result = getResources().getString(R.string.temp_label);
 				result = String.format(result, intValue, outValue);
 				header.setText(result);
-			}
+			}*/
 
 		}
 	};
@@ -81,7 +79,8 @@ public class DeviceListActivity extends ListActivity {
 	private void loadScreen() {
 		if (client != null) {
 			try {
-				HashMap<String, String> tempDevicesObject = (HashMap<String, String>) client
+				//populate thermo value
+				/*HashMap<String, String> tempDevicesObject = (HashMap<String, String>) client
 						.call("device.list");
 
 				thermo = new ArrayList<Device>();
@@ -101,7 +100,7 @@ public class DeviceListActivity extends ListActivity {
 						item.setIconName(values[2]);
 						thermo.add(item);
 					}
-				}
+				}*/
 
 				HashMap<String, String> switchableDevicesObject = (HashMap<String, String>) client
 						.call("device.list");
@@ -186,7 +185,7 @@ public class DeviceListActivity extends ListActivity {
 		client = XMLRPC.getClient(this);
 		setContentView(R.layout.devices_list);
 		devices = new ArrayList<Device>();
-		header = (TextView) findViewById(R.id.temptv);
+		//header = (TextView) findViewById(R.id.temptv); //temptext instance used to show thermo
 		adapter = new DeviceAdapter(this, R.layout.devices_list_listview,
 				devices);
 		setListAdapter(adapter);
@@ -249,15 +248,15 @@ public class DeviceListActivity extends ListActivity {
 
 				}
 			});
-
-			LinearLayout tempLayout = (LinearLayout) findViewById(R.id.templayout);
+			//click on temp layout not work !!!!
+			/*LinearLayout tempLayout = (LinearLayout) findViewById(R.id.templayout);
 			tempLayout.setOnClickListener(new OnClickListener() {
 				public void onClick(View v) {
 					Intent intentImage= new Intent(getApplicationContext(),
 							ImageActivity.class);
 					startActivityForResult(intentImage, 0);
 				}
-			});
+			});*/
 		}
 	}
 

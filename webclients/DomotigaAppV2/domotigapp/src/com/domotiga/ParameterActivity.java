@@ -3,25 +3,25 @@ package com.domotiga;
 import java.util.Arrays;
 import java.util.HashMap;
 
-import org.xmlrpc.android.XMLRPCClient;
+import org.xmlrpc.android.XMLRPCClientSSH;
 import org.xmlrpc.android.XMLRPCException;
-
-import com.domotiga.R;
-import com.domotiga.tools.Settings;
-import com.domotiga.tools.XMLRPC;
 
 import android.app.Activity;
 import android.os.Bundle;
 import android.view.View;
 import android.view.Window;
 import android.widget.ArrayAdapter;
+import android.widget.CheckBox;
 import android.widget.ImageButton;
 import android.widget.Spinner;
 import android.widget.TextView;
 
+import com.domotiga.tools.Settings;
+import com.domotiga.tools.XMLRPC;
+
 public class ParameterActivity extends Activity {
 	
-	private XMLRPCClient client;
+	private XMLRPCClientSSH client;
 	private ImageButton back, refresh;
 	
 	@SuppressWarnings("unchecked")
@@ -54,6 +54,7 @@ public class ParameterActivity extends Activity {
 			//on récupère le liste des devices
 			String[] devices;
 			client = XMLRPC.getClient(this);
+			
 			if (client!=null) {
 			HashMap<String, String> devicesObject;
 			try {
@@ -109,6 +110,19 @@ public class ParameterActivity extends Activity {
 			    }
 			    spinner2.setSelection(position);
 		  //  }
+			
+			    //remplissage ssh
+			    CheckBox cbssh = (CheckBox) findViewById(R.id.ServerSSHUse);
+			    cbssh.setChecked(Settings.getParamBoolean(this, Settings.PREFS_SSH, false));
+			    TextView tvsshaddress = (TextView) findViewById(R.id.ServerSSHAddress);
+			    tvsshaddress.setText(Settings.getParamString(this, Settings.PREFS_SSH_IP, "0.0.0.0"));
+				TextView tvsshport = (TextView) findViewById(R.id.ServerSSHPort);
+				tvsshport.setText(Settings.getParamString(this, Settings.PREFS_SSH_PORT, "22"));
+				TextView tvsshuser = (TextView) findViewById(R.id.ServerSSHUser);
+				tvsshuser.setText(Settings.getParamString(this, Settings.PREFS_SSH_USER, "Username"));
+    			TextView tvsshpass = (TextView) findViewById(R.id.ServerSSHPass);
+    			tvsshpass.setText(Settings.getParamString(this, Settings.PREFS_SSH_PASS, ""));		
+			    
 	}
 	
 	@Override
@@ -126,6 +140,30 @@ public class ParameterActivity extends Activity {
 			spinner = (Spinner) findViewById( R.id.SpinnerOutTemp );
 			Settings.setParamString(this,Settings.PREFS_OUT_TEMP,(String)spinner.getSelectedItem());
 		}
+		
+		CheckBox cbssh = (CheckBox) findViewById(R.id.ServerSSHUse);
+		if  (cbssh.isChecked()) {
+			Settings.setParamBoolean(this, Settings.PREFS_SSH, true);
+		}
+		else {
+			Settings.setParamBoolean(this, Settings.PREFS_SSH, false);
+		}
+		TextView tvsshaddress = (TextView) findViewById(R.id.ServerSSHAddress);
+		String sshaddress=tvsshaddress.getText().toString();	
+		Settings.setParamString(this,Settings.PREFS_SSH_IP,sshaddress);
+		
+		TextView tvsshport = (TextView) findViewById(R.id.ServerSSHPort);
+		String sshport=tvsshport.getText().toString();	
+		Settings.setParamString(this,Settings.PREFS_SSH_PORT,sshport);
+		
+		TextView tvsshuser = (TextView) findViewById(R.id.ServerSSHUser);
+		String sshuser=tvsshuser.getText().toString();	
+		Settings.setParamString(this,Settings.PREFS_SSH_USER,sshuser);
+		
+		TextView tvsshpass = (TextView) findViewById(R.id.ServerSSHPass);
+		String sshpass=tvsshpass.getText().toString();	
+		Settings.setParamString(this,Settings.PREFS_SSH_PASS,sshpass);		
+		client = XMLRPC.newClient(this);
 		finish();
 	}
 

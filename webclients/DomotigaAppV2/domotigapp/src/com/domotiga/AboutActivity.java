@@ -1,10 +1,7 @@
 package com.domotiga;
 
-import org.xmlrpc.android.XMLRPCClient;
+import org.xmlrpc.android.XMLRPCClientSSH;
 import org.xmlrpc.android.XMLRPCException;
-
-import com.domotiga.R;
-import com.domotiga.tools.XMLRPC;
 
 import android.app.Activity;
 import android.content.pm.PackageInfo;
@@ -14,6 +11,8 @@ import android.view.View;
 import android.view.Window;
 import android.widget.ImageButton;
 import android.widget.TextView;
+
+import com.domotiga.tools.XMLRPC;
 
 public class AboutActivity extends Activity {
 	
@@ -38,8 +37,7 @@ public class AboutActivity extends Activity {
    				finish();
    			}
    		});
-		XMLRPCClient client = XMLRPC.getClient(this);
-
+		XMLRPCClientSSH client = XMLRPC.getClient(this);
 		String domotigaversion = getResources().getString(R.string.error_server_unavailable);
 		String uptime = getResources().getString(R.string.error_server_unavailable);
 		if (client != null) {
