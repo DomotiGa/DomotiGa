@@ -25,6 +25,7 @@ import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.domotiga.data.Device;
 import com.domotiga.tools.Settings;
@@ -101,7 +102,9 @@ public class MainActivity extends Activity {
 	    				header.setText(result);
 	                } catch (XMLRPCException e) {
 	    				e.printStackTrace();
-	    			}
+	    				System.out.println("MainActivity  : "+e.getMessage());
+	   				 	Toast.makeText(this, e.getMessage(), Toast.LENGTH_SHORT).show();
+	                }
 	                /*
 	                try {
 						switchableDevicesObject = (HashMap<String, String>) client.call("data.sunmoon");
@@ -134,6 +137,8 @@ public class MainActivity extends Activity {
 					} catch (XMLRPCException e) {
 						// TODO Auto-generated catch block
 						e.printStackTrace();
+						System.out.println("MainActivity  : "+e.getMessage());
+	   				 	Toast.makeText(this, e.getMessage(), Toast.LENGTH_SHORT).show();
 					}
 	                
 	                Iterator<String> iDevices = switchableDevicesObject.values()

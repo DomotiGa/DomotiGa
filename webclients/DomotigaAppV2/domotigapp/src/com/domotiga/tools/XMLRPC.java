@@ -6,6 +6,8 @@ import org.xmlrpc.android.XMLRPCClientSSH;
 import org.xmlrpc.android.XMLRPCException;
 
 import android.app.Activity;
+import android.widget.Toast;
+
 import com.domotiga.tools.SSHTUNNEL;
 import com.jcraft.jsch.Session;  
 
@@ -49,6 +51,8 @@ public abstract class XMLRPC {
 				
 				return c;
 			} catch (XMLRPCException e) {
+				//System.out.println("XMLRPC  : "+e.getMessage());
+				Toast.makeText(activity, e.getMessage(), Toast.LENGTH_LONG).show();
 				return null;
 			}
 		

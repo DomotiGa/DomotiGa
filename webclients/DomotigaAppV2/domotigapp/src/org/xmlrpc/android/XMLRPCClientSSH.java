@@ -24,8 +24,11 @@ import org.apache.http.params.HttpProtocolParams;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserFactory;
 
-import com.jcraft.jsch.JSch;  
-import com.jcraft.jsch.Session;  
+//import com.jcraft.jsch.JSch;  
+//import com.jcraft.jsch.Session;
+import android.widget.Toast;
+
+import com.jcraft.jsch.*;
 
 /**
  * XMLRPCClient allows to call remote XMLRPC method.
@@ -87,6 +90,7 @@ public class XMLRPCClientSSH extends XMLRPCCommon {
 	private HttpPost postMethod;
 	private HttpParams httpParams;
 	private  Session session= null; 
+	private String SSHError = "";
 //	private JSch jsch ;
 
 	/**
@@ -271,19 +275,7 @@ AuthScope.ANY_REALM),
             	if(session !=null && session.isConnected()){  
     	            //System.out.println("ReUse actual SSH Connection");
             	} else{
-            		//Set StrictHostKeyChecking property to no to avoid UnknownHostKey issue  
-            		java.util.Properties config = new java.util.Properties();  
-            		config.put("StrictHostKeyChecking", "no");  
-            		JSch jsch = new JSch();  
-            		session=jsch.getSession(this.SSHUser,this.SSHIp , this.SSHPort);  
-            		session.setPassword(this.SSHPass);  
-            		session.setConfig(config);
-            		session.connect(); 
-            		//session.setTimeout();
-            		//System.out.println("Connected");  
-            		int assinged_port=session.setPortForwardingL(SSHTunnelPort, SSHRemoteIp, SSHTunnelPort);  
-            		//System.out.println("localhost:"+assinged_port+" -> "+SSHRemoteIp+":"+SSHTunnelPort);  
-            		//System.out.println("Port Forwarded");
+            		OpenSSH();
             	}
             }
 			//Log.d(Tag.LOG, "ros HTTP POST");
@@ -343,6 +335,7 @@ AuthScope.ANY_REALM),
 			}
 		} catch (XMLRPCException e) {
 			// catch & propagate XMLRPCException/XMLRPCFault
+			//e.printStackTrace();
 			throw e;
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -362,6 +355,43 @@ AuthScope.ANY_REALM),
             //System.out.println("Closing SSH Connection");  
             session.disconnect();
 		}
+	}
+	
+	public int OpenSSH () throws XMLRPCException {
+		int assinged_port = 0 ;
+		try {
+			//Set StrictHostKeyChecking property to no to avoid UnknownHostKey issue  
+			java.util.Properties config = new java.util.Properties();  
+			config.put("StrictHostKeyChecking", "no");  
+			JSch jsch = new JSch();  
+			session=jsch.getSession(this.SSHUser,this.SSHIp , this.SSHPort);  
+			session.setPassword(this.SSHPass);  
+			session.setConfig(config);
+			session.connect(1500); 
+			//session.setTimeout(1500);
+			//System.out.println("Connected");  
+			assinged_port=session.setPortForwardingL(SSHTunnelPort, SSHRemoteIp, SSHTunnelPort);  
+			//System.out.println("localhost:"+assinged_port+" -> "+SSHRemoteIp+":"+SSHTunnelPort);  
+			//System.out.println("Port Forwarded");
+			SSHError = "";
+			
+		 } catch (JSchException e) {           
+			 //System.out.println("SSH Error  (OpenSSH): "+e.getMessage());
+			 throw new XMLRPCException("SSH ERROR : "+e.getMessage());
+
+	     }
+	         
+	        if (assinged_port == 0) {
+	        	//System.out.println("Port forwarding failed !");
+	        	throw new XMLRPCException("SSH ERROR (OpenSSH): Port forwarding failed");
+	        	
+	        } else {
+	        	return assinged_port ;
+	        }
+	}
+	
+	public String GetSSHError() {
+		return SSHError;
 	}
 	
 	private String methodCall(String method, Object[] params)
