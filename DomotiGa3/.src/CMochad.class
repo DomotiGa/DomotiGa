@@ -31,7 +31,6 @@ Private bGlobalX10 As Boolean
 Public hMochad As New Socket
 
 Public sBuffer As String
-Public sMochad As String
 Public tMochadConnect As Timer
 Private iConnectRetry As Integer = 0 ' retries
 Private iConnectDelay As Integer = 60000 ' 1 minute
@@ -43,11 +42,11 @@ Public Function Connect() As Boolean
 
   ' try to close the connection
   Try hMochad.Close
-
+Return
   ' get a new one
   hMochad = New Socket As "Mochad"
   hMochad.Connect(sTCPHost, iTCPPort)
-
+  'ParseDump("/home/ron/Mochad.txt")
   ' all ok
   Return True
 
@@ -160,53 +159,145 @@ Public Sub SendCommand(sAddress As String, sValue As String)
 
 End
 
+' just here for development/debugging
+Public Sub ParseDump(sFile As String)
+
+  Dim hFile As File
+  Dim sLine As String
+
+  Try hFile = Open sFile For Input
+  If Error Then Return
+  While Not Eof(hFile)
+    Line Input #hFile, sLine
+    If Len(sLine) > 5 Then ParseData(sLine)
+  Wend
+
+End
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' data received on tcp socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Mochad_Read()
 
   Dim sData As String
-  Dim sTemp As String
-  Dim sPL_RF As String
-  Dim sStr As String
-  Dim sCode As String
-  Dim sCommand As String
 
   Try Read #hMochad, sData, 1
   If Error Then Main.WriteDebugLog(("[Mochad] Error reading data from the TCP port! -> ") & Error.Text)
   If sData = Chr(10) Then ' buffer until linefeed then parse
-    If Len(sBuffer) > 1 Then
-      sStr = SBuffer
-      If InStr(sStr, "Raw data received:") Then
-      Else
-        If Main.bMochadDebug Then Main.WriteDebugLog(("[Mochad] Received string: ") & sStr)
-        sTemp = Mid(sStr, 22, Len(sStr))
-        sPL_RF = Mid(sStr, 19, 2)
-        Select sPL_RF
-          Case "PL"
-            If InStr(sTemp, "HouseUnit:") Then 
-              sMochad = Mid(sTemp, 12, 1) & Format$(Trim(Mid(sTemp, 13, 10)), "00")
-            Else
-              If InStr(sTemp, "Func:") Then 
-                If (Left(sMochad, 1) <> " " And sMochad <> "") Then
-                  sMochad = sMochad & " " & Mid(sTemp, InStr(sTemp, "Func:") + 5, 10)
-                Endif
-              Endif
-            Endif
-          Case "RF"
-          ' todo?
-        End Select
-        If Len(sMochad) > 4 And sMochad <> "Error" Then
-          sCode = Upper$(Trim(Left(sMochad, InStr(sMochad, " "))))
-          sCommand = Upper$(Trim(Right(sMochad, InStr(sMochad, " ") - 1)))
-          UpdateX10(sCode, sCommand)
-        Endif
-      Endif
-      sBuffer = Null
-    Endif
+    ParseData(sBuffer)
   Else
     sBuffer &= sData
   Endif
+
+End
+
+Private Sub ParseData(sStr As String)
+
+  Dim sTemp, sPL_RF, sAddress, sMochad, sType, sValue, sTamper As String
+  Dim sBatt As String = "?"
+  Dim aData, aType, aCmd As String[]
+  Dim iDeviceId As Integer
+
+  sBuffer = Null
+  If InStr(sStr, "Raw data received:") = 0 Then
+    If Main.bMochadDebug Then Main.WriteDebugLog(("[Mochad] Received string: ") & sStr)
+    sTemp = Mid(sStr, 22, Len(sStr))
+    sPL_RF = Mid(sStr, 19, 2)
+    Select sPL_RF
+      Case "PL"
+        If InStr(sTemp, "HouseUnit:") Then 
+          sMochad = Mid(sTemp, 12, 1) & Format$(Trim(Mid(sTemp, 13, 10)), "00")
+        Else
+          If InStr(sTemp, "Func:") Then 
+            If (Left(sMochad, 1) <> " " And sMochad <> "") Then
+              sMochad = sMochad & " " & Mid(sTemp, InStr(sTemp, "Func:") + 5, 10)
+            Endif
+          Endif
+        Endif
+        If Len(sMochad) > 4 And sMochad <> "Error" Then
+          sAddress = Upper$(Trim(Left(sMochad, InStr(sMochad, " "))))
+          sValue = Upper$(Trim(Right(sMochad, InStr(sMochad, " ") - 1)))
+          UpdateX10(sAddress, sValue)
+        Endif
+      Case "RF"
+        ' Motion_alert_MS10A
+        ' Motion_normal_MS10A
+        ' Contact_alert_min_DS10A
+        ' Contact_normal_min_DS10A
+        ' Contact_alert_max_DS10A
+        ' Contact_normal_max_DS10A
+        ' Contact_alert_min_low_DS10A
+        ' Contact_normal_min_low_DS10A
+        ' Contact_alert_max_low_DS10A
+        ' Contact_normal_max_low_DS10A
+        ' Arm_KR10A
+        ' Disarm_KR10A
+        ' Lights_On_KR10A
+        ' Lights_Off_KR10A
+        ' Panic_KR10A
+        aData = Scan(sStr, "* RFSEC Addr: * Func: *")
+        If aData.Count = 3 Then
+          sAddress = "x10sec 0x" & Lower(Replace(aData[1], ":", ""))
+          If aData[2] = "(null)" Then Return
+          aType = Scan(aData[2], "*_*")
+          If aType.Count = 2 Then
+          Select aType[0]
+            Case "Motion"
+              sType = "MOTION"
+              aCmd = Scan(aType[1], "*_*")
+              If aCmd.Count = 2 Then
+                sValue = IIf(aCmd[0] = "alert", "Motion", "No Motion")
+              Endif
+            Case "Contact"
+              sType = "DWS"
+              aCmd = Scan(aType[1], "*_*_*")
+              If aCmd.Count = 3 Then
+                sValue = IIf(aCmd[0] = "alert", "Alert", "Normal")
+                sTamper = IIf(aCmd[1] = "min", "Secure", "Tamper")
+                sBatt = "Low"
+              Else
+                aCmd = Scan(aType[1], "*_*")
+                If aCmd.Count = 2 Then
+                  sValue = IIf(aCmd[0] = "alert", "Alert", "Normal")
+                  sTamper = IIf(aCmd[1] = "min", "Secure", "Tamper")
+                  sBatt = "OK"
+                Endif
+              Endif
+            Case "Arm", "Disarm", "Panic"
+              sType = "REMOTE"
+              sValue = aType[0]
+            Case "Lights"
+              sType = "REMOTE"
+              aCmd = Scan(aType[1], "*_*")
+              If aCmd.Count = 2 Then
+                sValue = "Lights " & aCmd[0]
+              Endif
+            Case Else
+              If Main.bMochadDebug Then Main.WriteDebugLog(("[Mochad] Unknown device type: ") & aData[1])
+          End Select
+        Else
+          If Main.bMochadDebug Then Main.WriteDebugLog(("[Mochad] Invalid command data: ") & aData[2])
+        Endif
+      Else
+        If Main.bMochadDebug Then Main.WriteDebugLog(("[Mochad] Invalid data: ") & sStr)
+      Endif
+      If Main.bMochadDebug Then
+        Main.WriteDebugLog("Address = " & sAddress)
+        Main.WriteDebugLog("Command = " & sValue)
+        Main.WriteDebugLog("Type = " & sType)
+        Main.WriteDebugLog("Battery level = " & sBatt)
+      Endif
+      iDeviceId = Devices.Find(sAddress, Devices.FindInterface("Mochad Interface"), sType)
+      ' update value & battery status
+      If iDeviceId Then
+        Devices.ValueUpdate(iDeviceId, sValue, sTamper, "", "")
+        If Len(sBatt) Then Devices.Battery(iDeviceId, sBatt)
+      Endif
+    End Select
+  Endif
+
+Catch
+   Main.WriteDebugLog(("[Mochad] Error while Parsing: ") & ERROR.Text & (" at ") & ERROR.Where)
 
 End
 
@@ -223,9 +314,9 @@ Private Sub UpdateX10(sCode As String, sCommand As String)
   Endif
   If iDeviceId Then
     If sCommand = "ON" Then
-      Devices.ValueUpdate(iDeviceId, "ON", "", "", "")
+      Devices.ValueUpdate(iDeviceId, "On", "", "", "")
     Else If sCommand = "OFF" Then
-      Devices.ValueUpdate(iDeviceId, "OFF", "", "", "")
+      Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
     Endif
   Endif
 
