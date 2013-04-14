@@ -3,8 +3,11 @@
 
 echo "This script will create symbolic links between shared code of DomotiGa3 and DomotiGaServer3.\nPress CTRL-C to abort or ENTER to continue"
 read dummy
-
-cd ../DomotiGaServer3/.src/
+if [ -d DomotiGaServer3 ]; then
+  cd DomotiGaServer3/.src/
+else
+  cd ../DomotiGaServer3/.src/
+fi
 cp Main.module Main.module.back
 rm *.class
 rm *.module
