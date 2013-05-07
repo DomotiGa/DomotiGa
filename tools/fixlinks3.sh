@@ -84,7 +84,6 @@ ln -s ../../DomotiGa3/.src/GLatitude.module
 ln -s ../../DomotiGa3/.src/HDDTemp.module
 ln -s ../../DomotiGa3/.src/X10Cmd.module
 ln -s ../../DomotiGa3/.src/Shell.module
-ln -s ../../DomotiGa3/.src/JSON.module
 ln -s ../../DomotiGa3/.src/Mail.module
 ln -s ../../DomotiGa3/.src/Pachube.module
 ln -s ../../DomotiGa3/.src/Ping.module
