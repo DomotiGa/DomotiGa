@@ -34,11 +34,11 @@ Public Sub SendCommand(sDevice As String, sCmd As String)
   If InStr(sCmd, "ON") Or InStr(sCmd, "OFF") Then
     Select Main.iX10Cmdtype
       Case 0 ' cm11a heyu
-        sCommand = Main.sX10CmdCommand & " " & LCase(sCmd) & " " & sDevice
+        sCommand = LCase(sCmd) & " " & sDevice
       Case 1 ' cma15a cm15ademo
-        sCommand = Main.sX10CmdCommand & " " & LCase(sDevice) & " " & LCase(sCmd)
+        sCommand = LCase(sDevice) & " " & LCase(sCmd)
       Case 2 ' cm17a heyu
-        sCommand = Main.sX10CmdCommand & " f" & LCase(sCmd) & " " & sDevice
+        sCommand = "f" & LCase(sCmd) & " " & sDevice
     End Select
   Else If InStr(sCmd, "DIM ") Then ' DIM 1 - 99
     aDim = Split(sCmd, " ")
@@ -47,9 +47,9 @@ Public Sub SendCommand(sDevice As String, sCmd As String)
       Select Main.iX10Cmdtype
         Case 0 ' cm11a heyu
           If iDim > 0 Then iDim = Round(0.32 * iDim) ' 32 steps
-          sCommand = Main.sX10CmdCommand & " " & "preset " & sDevice & " " & iDim
+          sCommand = "preset " & sDevice & " " & iDim
         Case 1 ' cm15a cm15ademo
-          sCommand = Main.sX10CmdCommand & " " & LCase(sDevice) & " " & "PreDim " & iDim
+          sCommand = LCase(sDevice) & " " & "xDim " & iDim
       End Select
     Else
       Main.WriteDebugLog(("[X10Cmd] invalid dim command format '") & sCmd & "'")
@@ -58,14 +58,14 @@ Public Sub SendCommand(sDevice As String, sCmd As String)
   Else If InStr(sCmd, "DIM") Or InStr(sCmd, "BRIGHT") Then
     Select Main.iX10Cmdtype
       Case 0 ' heyu
-        sCommand = Main.sX10CmdCommand & " " & LCase(sCmd) & " " & sDevice & " 2"
+        sCommand = LCase(sCmd) & " " & sDevice & " 2"
       Case 1 ' cm15ademo
-        sCommand = Main.sX10CmdCommand & " " & LCase(sDevice) & " " & LCase(sCmd)
+        sCommand = LCase(sDevice) & " " & LCase(sCmd)
     End Select
   Else If InStr(sCmd, "STOP")
     ' ignore
   Else
-    Main.WriteDebugLog(("[X10Cmd] Unsupported command '") & sCmd & "'")
+    Main.WriteDebugLog(("[X10Cmd] Unsupported command '") & Main.sX10CmdCommand & " " & sCmd & "'")
     Return
   Endif
   QueueCommand(sCommand)
@@ -104,14 +104,20 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub RunCommand(sCmd As String, sKey As String)
 
-  Shell sCmd & " 2>&1" For Read As "X10Cmd"
-  If Main.bX10CmdDebug Then Main.WriteDebugLog(("[X10Cmd] Run: ") & sCmd)
+  If Main.iX10CmdType = 1 And Main.bX10CmdMonitor = True Then
+     If Main.bX10CmdDebug Then Main.WriteDebugLog(("[X10Cmd] Run: ") & sCmd)
+     Print #pMonitor, "x " & sCmd
+  Else  
+    If Main.bX10CmdDebug Then Main.WriteDebugLog(("[X10Cmd] Run: ") & Main.sX10CmdCommand & " " & sCmd)
+    Shell Main.sX10CmdCommand & " " & sCmd & " 2>&1" For Read As "X10Cmd"
+    If bX10CmdBusy = False Then bX10CmdBusy = True
+  Endif
+  
   ' remove command from queue
-  cQueue.Remove(sKey)
-  If bX10CmdBusy = False Then bX10CmdBusy = True
-
+    cQueue.Remove(sKey)
+    
 Catch
-  Main.WriteDebugLog(("[X10Cmd] Error executing: '") & sCmd & "' " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(("[X10Cmd] Error executing: '") & Main.sX10CmdCommand & " " & sCmd & "' " & Error.Text & " at " & Error.Where)
 
 End
 
@@ -148,10 +154,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Monitor()
 
-  pMonitor = Exec [Main.sX10CmdCommand, "monitor"] For Read As "X10CmdMonitor"
+   Select Main.iX10Cmdtype
+      Case 0 ' heyu
+        pMonitor = Exec [Main.sX10CmdCommand, "monitor"] For Read As "X10CmdMonitor"
+      Case 1 ' cm15ademo
+        pMonitor = Exec [Main.sX10CmdCommand] For Read Write As "X10CmdMonitor"
+      Case 2 ' cm17
+        Main.WriteDebugLog("[X10CMD] Monitor not aviable")
+    End Select
 
-Catch
-  Main.WriteDebugLog(("[X10Cmd] Error executing: '") & Main.sX10CmdCommand & " monitor' " & Error.Text & " at " & Error.Where)
+    Catch
+      Main.WriteDebugLog(("[X10Cmd] Error executing: '") & Main.sX10CmdCommand & " monitor' " & Error.Text & " at " & Error.Where)
+
 
 End
 
@@ -163,21 +177,30 @@ Public Sub X10CmdMonitor_Read()
   Dim sLine As String
 
   Try sLine = Read #Last, -256
-  If Error Then Main.WriteDebugLog(("[X10Cmd] Error reading data from Heyu monitor output-> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(("[X10Cmd] Error reading data from monitor output-> ") & Error.Text)
   If Len(sLine) > 0 Then
     sMonitorBuffer &= sLine
-    If InStr(sMonitorBuffer, "func") > 0 Then
-      ParseMonitorMessage(sMonitorBuffer)
+    
+    
+    If InStr(sMonitorBuffer, "func") > 0 And Main.iX10Cmdtype = 0 Then  ' heyu
+      ParseMonitorMessageHeyu(sMonitorBuffer)
       sMonitorBuffer = Null
     Endif
+    
+    If InStr(sMonitorBuffer, "PLC-") > 0 And Main.iX10Cmdtype = 1 Then  ' cm15demo
+      ParseMonitorMessageCm15demo(sMonitorBuffer)
+      sMonitorBuffer = Null
+    Endif
+    
+    
   Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' parse monitor output
+' parse monitor output for heyu
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseMonitorMessage(sMessage As String)
+Private Sub ParseMonitorMessageHeyu(sMessage As String)
 
   Dim iDeviceId, iCnt As Integer
   Dim aFirstLine, aSecondLine As String[]
@@ -226,6 +249,52 @@ Private Sub ParseMonitorMessage(sMessage As String)
   Endif
 
 End
+
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse monitor output for cm15demo
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ParseMonitorMessageCm15demo(sMessage As String)
+
+  Dim iDeviceId, iCnt As Integer
+  Dim data As String[]
+  Dim sAddress, sOrder, sHouseCode, sCurrentValue As String
+
+  If Main.bX10CmdDebug Then Main.WriteDebugLog(("[X10Cmd] Monitor get: ") & sMessage)
+
+  ' Message sample :
+  ' date X PLC-R: C-1  Off        ?
+
+  data = Scan(sMessage, "*PLC-R: * * *")
+ 
+  If data.Count = 4
+    sAddress = Trim(data[1])
+    sAddress = Replace$(sAddress, "-", "")
+    If Len(sAddress) = 2 Then
+      sAddress = Left(sAddress, 1) & "0" & Right(sAddress, 1)
+    Endif
+    
+    sOrder = Trim(data[2])
+    
+
+    If Main.bX10CmdGlobalX10 Then
+       iDeviceId = Devices.FindAll(sAddress, 9999, "X10")
+    Else
+       iDeviceId = Devices.Find(sAddress, Devices.FindInterface("X10Cmd Interface"), "X10")
+    Endif
+  
+    If iDeviceId > 0 Then ' if found then update it's value
+      sCurrentValue = Devices.GetValueForDevice(Devices.FindNameForDevice(iDeviceId))
+      If Not (sCurrentValue Like sOrder) Then 
+        Devices.ValueUpdate(iDeviceId, sOrder, "", "", "")
+      Endif
+    Endif
+  Endif
+
+End
+
+
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' stop monitor
