@@ -36,7 +36,7 @@ extract($_REQUEST, EXTR_PREFIX_ALL|EXTR_REFS, 'r_');
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-<meta id="viewport" name="viewport" content="width=320; initial-scale=1.0; maximum-scale=1.0; user-scalable=0;" />
+<meta id="viewport" name="viewport" content="width=320, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
 <link rel="shortcut icon" href="images/favicon.ico" />
 <script type="text/javascript" src="domotiga.js"></script>
 <title>DomotiGa</title>
