@@ -55,6 +55,12 @@ Private iConnectRetry As Integer = 0 ' retries
 Private iConnectDelay As Integer = 60000 ' 1 minute
 Private bFailedWriteRetry As Boolean = True
 
+Public tRFXComTXBusy As Timer
+Private cQueue As New Collection    ' command buffer
+Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
+Private iByteCount As Integer
+Private bFirstByte As Boolean = True
+
 Const GETSW As Byte = &H30
 Const MODERFXCOM As Byte = &H33
 Const MODERFXCOMNOREC As Byte = &H37
@@ -104,6 +110,10 @@ Public Function ConnectSerial() As Boolean
     .Open()
   End With
 
+  ' define timer for interface busy
+  tRFXComTXBusy = New Timer As "tRFXComTXBusy"
+  tRFXComTXBusy.Stop
+
   DoInit()
 
   ' all ok
@@ -115,12 +125,51 @@ Catch ' some errors
 
 End
 
+Public Sub RFXComTX_Read()
+
+  Dim sData As Byte
+
+  Try sData = Read #hRFXComTX As Byte
+  If Error Then Main.WriteDebugLog(("[RFXComTX] Error reading data from the TCP port! -> ") & Error.Text)
+  ProcessReceivedChar(sData)
+
+End
+
+Private Sub ProcessReceivedChar(bTemp As Byte)
+
+  ' relay incoming data to relay port
+  If Main.bRFXComTXRelayEnabled Then Try Write #hRelayTXSocket, bTemp As Byte
+
+  If bFirstByte = True Then
+    bFirstByte = False
+    iByteCount = 0
+  Endif
+
+  Main.ControlLed("RFXCom", "On")
+  If bTemp = bProtocol Then
+    If Main.bRFXComTXDebug Then Main.WriteDebugLog("[RFXComTX] ACK=>", True)
+  Else If bTemp = &H5A Then
+    If Main.bRFXComTXDebug Then Main.WriteDebugLog("[RFXComTX] NAK=>", True)
+  Endif
+  Inc iBytecount
+  If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2), True)
+
+  If iByteCount = 1 Then
+     If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog("\n", True)
+     bFirstByte = True
+  Endif
+
+  Main.ControlLed("RFXCom", "Off")
+
+End
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
+  Try tRFXComTXBusy.Stop
   Try hRFXComTX.Close
   Try hRFXComTXSer.Close
   Try tRFXComTXConnect.Stop
@@ -182,12 +231,32 @@ End
 Public Sub RFXComTX_Ready()
 
   Main.WriteLog(("RFXCom ") & sInterfaceType & (" TCP socket connected."))
-  DoInit()
 
   ' define timer for RFXComTX reconnect
   tRFXComTXConnect = New Timer As "tRFXComTXConnect"
   tRFXComTXConnect.Delay = iConnectRetry
   tRFXComTXConnect.Stop
+
+  ' define timer for Interface busy
+  tRFXComTXBusy = New Timer As "tRFXComTXBusy"
+  tRFXComTXBusy.Stop
+
+  DoInit()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tRFXComTXBusy_Timer()
+
+  bInterfaceBusy = False
+  tRFXComTXBusy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If bRFXComTXDebug Then Main.WriteDebugLog(("[RFXComTX] Sending command from Queue (count = " & cQueue.Count & ")"))
+    DoQueue()
+  Endif
 
 End
 
@@ -264,12 +333,16 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   Dim iDeviceId As Integer
   Dim sType As String
 
-  iDeviceId = Devices.Find(sAddress, Devices.FindInterface("RFXCom Transmitter"))
-  If iDeviceId Then
-    sType = Devices.FindTypeForDevice(iDeviceId)
-  Else
+  If sInterface = "serial" And If hRFXComTXSer.Status <> Net.Active Then
+    Main.WriteDebugLog(("[RFXComTX] Serial port not opened, unable to control device!"))
     Return
   Endif
+
+  iDeviceId = Devices.Find(sAddress, Devices.FindInterface("RFXCom Transmitter"))
+  If Not iDeviceId Then Return
+
+  sType = Devices.FindTypeForDevice(iDeviceId)
+  If Not sType Then Return
 
   If Not bRFXmitter Then
     Select sType
@@ -363,7 +436,17 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
 
 End
 
-Private Sub WriteCom(bBuffer As Byte[])
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send a command to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteCommand(bBuffer As Byte[], sKey As String)
+
+  Dim sMessage, sByte As String
+
+  For Each sByte In bBuffer
+    sMessage &= Hex(sByte, 2)
+  Next
+  If Main.bRFXComTXDebug Then Main.WriteDebugLog("[RFXComTX] > " & sMessage)
 
   If sInterface = "tcp" Then
     ' send the message to the tcp stream
@@ -385,73 +468,39 @@ Private Sub WriteCom(bBuffer As Byte[])
     If Error Then Main.WriteRFXDebugLog(("[RFXComTX] Unable to write to serial port!"))
   Endif
 
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  tRFXComTXBusy.Delay = 50 ' 50mS (initial test value)
+  tRFXComTXBusy.Start
+  bInterfaceBusy = True
+
 End
 
-Private Sub WriteMessage(bBuf As Byte[], Optional bCmd As Boolean)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(aPacket As Byte[])
 
-  Dim sMessage As String = Hex(bBuf[0], 2)
-  Dim dFinish As Date
-  Dim bTemp As Byte
-  Dim iIndex, iEnd As Integer
+  ' add command to queue
+  cQueue.Add(aPacket, Rnd)
 
-  bAck = False
+  ' if controller is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
 
-  If Not bCmd Then
-    iEnd = ((bBuf[0] And &HF8) / 8)
-    If (bBuf[0] And &H7) <> 0 Then Inc iEnd
-    For iIndex = 1 To iEnd
-      sMessage &= Hex(bBuf[iIndex], 2)
-    Next
-    If Main.bRFXComTXDebug Then Main.WriteDebugLog("[RFXComTX] " & sMessage)
-  Endif
+End
 
-  ' write data to the interface
-  WriteCom(bBuf)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
 
-  dFinish = Second(Now) + 3 ' wait for ACK, max 3 seconds
+  Dim aPacket As Byte[] = Null
 
-  Do While (bAck = False)
-    If (Second(Now) > dFinish) Then
-      Main.WriteDebugLog("[RFXComTX] No ACK received within 3 seconds!", False)
-      Break
-    Endif
-
-    If sInterface = "tcp" Then
-      Try bTemp = Read #hRFXComTX As Byte
-      If Not Error Then
-        If bTemp = bProtocol Then
-          If Main.bRFXComTXDebug Then Main.WriteDebugLog("[RFXComTX] ACK=>", True)
-          bMessage = True
-        Else If bTemp = &H5A Then
-          If Main.bRFXComTXDebug Then Main.WriteDebugLog("[RFXComTX] NAK=>", True)
-          bMessage = True
-        Endif
-        If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2), True)
-        If bCmd Then bMessage = True
-      Endif
-    Else
-      Try bTemp = Read #hRFXComTXSer As Byte
-      If Not Error Then
-        If bTemp = bProtocol Then
-          If Main.bRFXComTXDebug Then Main.WriteDebugLog("[RFXComTX] ACK=>", True)
-          bMessage = True
-        Else If bTemp = &H5A Then
-          If Main.bRFXComTXDebug Then Main.WriteDebugLog("[RFXComTX] NAK=>", True)
-          bMessage = True
-        Endif
-        If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2), True)
-        If bCmd Then bMessage = True
-      Endif
-    Endif
-
-    If bMessage Then
-      bAck = True
-      bMessage = False
-      If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog("\n", True)
-    Endif
-    Sleep 0.05
-  Loop
-  bAck = False
+  For Each aPacket In cQueue
+    WriteCommand(aPacket, cQueue.Key)
+    Break ' only do first one
+  Next
 
 End
 
@@ -477,11 +526,11 @@ Public Function SetInitMode()
   If bHandshake Then
     If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog(("Initialized ") & sInterfaceType & (" for Handshake usage with => ") & Hex(bBuf1[0]) & Hex(bBuf1[1]) & Hex(bBuf1[2]) & Hex(bBuf1[3]) & "\n")
     bProtocol = MODERFXCOM
-    WriteMessage(bBuf1, True)
+    QueueCommand(bBuf1)
   Else
     If Main.bRFXComTXDebug Then Main.WriteRFXDebugLog(("Initialized ") & sInterfaceType & (" for No Handshake usage with => ") & Hex(bBuf2[0]) & Hex(bBuf2[1]) & Hex(bBuf2[2]) & Hex(bBuf2[3]) & "\n")
     bProtocol = MODERFXCOMNOREC
-    WriteMessage(bBuf2, True)
+    QueueCommand(bBuf2)
   Endif
 
 End
@@ -495,7 +544,7 @@ Public Sub DisableX10TX()
     Main.WriteRFXDebugLog(("Cmd to ") & sInterfaceType & (" => F03FF03F\n"), False)
     Main.WriteRFXDebugLog(("Disable X10 RF\n"), False)
   Endif
-  WriteMessage(bBuf, True)
+  QueueCommand(bBuf)
 
 End Sub
 
@@ -508,7 +557,7 @@ Public Function EnableARCTX()
     Main.WriteRFXDebugLog(("Cmd to ") & sInterfaceType & (" => F03DF03D\n"), False)
     Main.WriteRFXDebugLog(("Enable KlikAan-KlikUit RF\n"), False)
   Endif
-  WriteMessage(bBuf, True)
+  QueueCommand(bBuf)
 
 End
 
@@ -521,7 +570,7 @@ Public Sub EnableHarrisonTX()
     Main.WriteRFXDebugLog(("Cmd to ") & sInterfaceType & (" => F03CF03C\n"), False)
     Main.WriteRFXDebugLog(("Enable Harrison RF\n"), False)
   Endif
-  WriteMessage(bBuf, True)
+  QueueCommand(bBuf)
 
 End
 
@@ -534,7 +583,7 @@ Public Sub EnableKopplaTX()
     Main.WriteRFXDebugLog(("Cmd to ") & sInterfaceType & (" => F03EF03E\n"), False)
     Main.WriteRFXDebugLog(("Enable Flamingo / Koppla RF\n"), False)
   Endif
-  WriteMessage(bBuf, True)
+  QueueCommand(bBuf)
 
 End
 
@@ -548,7 +597,7 @@ Public Function GetVersion()
     If Not bRFXmitter Then Main.WriteRFXDebugLog(("RF Modes are reset to: X10 enabled and all other modes are disabled\n"), False)
     Main.WriteRFXDebugLog(sInterfaceType & (" has Firmware Version: "), False)
   Endif
-  WriteMessage(bBuf, True)
+  QueueCommand(bBuf)
 
 End
 
@@ -659,13 +708,12 @@ Public Sub Digimax(sAddress As String, sCmd As String)
       sData &= Chr(&H30 Or (&HF - (Lsr(iHouse, 4) + iHouse + Lsr(iDevice, 4) + iDevice + &H3) And &HF))
       sData &= Chr(&H21) & Chr(&H20) & Chr(&HFF - (Lsl(5, 4)) And &HF0)
   End Select
-
+ ' TODO:
 End
 
 ' ARC/KAKU for RFXmitter
 Public Sub ARC(sAddress As String, sCmd As String)
 
-  ' [GB2:ARRD] DIM bBuf AS Byte[4]
   Dim bBuf As New Byte[4]
   Dim iDevice, iUnit As Integer
 
@@ -687,20 +735,19 @@ Public Sub ARC(sAddress As String, sCmd As String)
   bBuf[2] = Lsl((iDevice And &H8), 3) Or Lsl((iDevice And &H4), 2) Or Lsl((iDevice And &H2), 1) Or (iDevice And &H1)
   bBuf[3] = Lsl((iUnit And &H8), 3) Or Lsl((iUnit And &H4), 2) Or Lsl((iUnit And &H2), 1) Or (iUnit And &H1)
 
-  WriteMessage(bBuf)
+  QueueCommand(bBuf)
 
   bBuf[1] = &H55
   bBuf[2] = &H80 Or Lsl((iDevice And &H8), 3) Or Lsl((iDevice And &H4), 2) Or &H7
   bBuf[3] = Lsl((iUnit And &H8), 3) Or Lsl((iUnit And &H4), 2) Or Lsl((iUnit And &H2), 1) Or (iUnit And &H1)
 
-  WriteMessage(bBuf)
+  QueueCommand(bBuf)
 
 End
 
 ' X10 for RFXmitter/transmitter
 Public Sub X10(sAddress As String, sCommand As String)
 
-  ' [GB2:ARRD] DIM bBuf AS Byte[5]
   Dim bBuf As New Byte[5]
   Dim bHouse, bUnit As Byte
   Dim iUnit, iDc, iUnithl As Integer
@@ -760,8 +807,7 @@ Public Sub X10(sAddress As String, sCommand As String)
   bBuf[2] = (Not bHouse) And &HFF
   bBuf[3] = iUnit
   bBuf[4] = (Not iUnit) And &HFF
-
-  WriteMessage(bBuf)
+  QueueCommand(bBuf)
 
 End
 
@@ -769,7 +815,6 @@ End
 Public Sub AC(sAddress As String, sCmd As String, bHEEU As Boolean, Optional bGroup As Boolean)
 
   Dim bLength As Byte = 33
-  ' [GB2:ARRD] DIM bBuf AS Byte[6]
   Dim bBuf As New Byte[6]
   Dim sUnit As String
   Dim iDim, iBrightness As Integer
@@ -832,15 +877,13 @@ Public Sub AC(sAddress As String, sCmd As String, bHEEU As Boolean, Optional bGr
     Main.WriteDebugLog(("[RFXComTX] Unknown command '") & UCase(sCmd) & ("' given!"))
   Endif
   bBuf[0] = bLength
-
-  WriteMessage(bBuf)
+  QueueCommand(bBuf)
 
 End
 
 ' Koppla for RFXmitter
 Public Sub Koppla(sAddress As String, sCmd As String)
 
-  ' [GB2:ARRD] DIM bBuf AS Byte[5]
   Dim bBuf As New Byte[5]
   Dim sHouse, sDevice As String
   Dim iBrightness, iLevel As Integer
@@ -931,8 +974,7 @@ Public Sub Koppla(sAddress As String, sCmd As String)
   End Select
 
   bBuf[2] = CalcIkeaParity(bBuf[2], bBuf[3])
-
-  WriteMessage(bBuf)
+  QueueCommand(bBuf)
 
 End
 
@@ -964,7 +1006,6 @@ End
 ' Flamingo for RFXmitter
 Public Sub Flamingo(sAddress As String, sCmd As String)
 
-  ' [GB2:ARRD] DIM bBuf AS Byte[3]
   Dim bBuf As New Byte[3]
   Dim sHouse, sDevice As String
 
@@ -1008,8 +1049,7 @@ Public Sub Flamingo(sAddress As String, sCmd As String)
     Case "ON"
     bBuf[2] = bBuf[2] Or &H20
   End Select
-
-  WriteMessage(bBuf)
+  QueueCommand(bBuf)
 
 End
 
@@ -1035,15 +1075,13 @@ Public Sub Waveman(sAddress As String, sCmd As String)
 
   bBuf[2] = xLate[CInt(sDevice) - 1]
   bBuf[3] = xLate[Asc(sHouse) - &H41]
-
-  WriteMessage(bBuf)
+  QueueCommand(bBuf)
 
 End
 
 ' Harrison for RFXmitter
 Public Sub Harrison(sAddress As String, sCmd As String)
 
-  ' [GB2:ARRD] DIM bBuf AS Byte[5]
   Dim bBuf As New Byte[5]
   Dim sHouse As String = Left$(sAddress, 1)
   Dim iDevice As Integer = CInt(Right$(sAddress, 2))
@@ -1128,8 +1166,7 @@ Public Sub Harrison(sAddress As String, sCmd As String)
       bBuf[3] = &HFC
   End Select
   bBuf[4] = &H80
-
-  WriteMessage(bBuf)
+  QueueCommand(bBuf)
 
 End
 
