@@ -411,6 +411,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 	int id = valueID.GetCommandClassId();
 	int genre = valueID.GetGenre();
 	string label = Manager::Get()->GetValueLabel( valueID );
+	string unit = Manager::Get()->GetValueUnits( valueID );
 	int instanceID = valueID.GetInstance();
 	int type = valueID.GetType();
 	char dev_value[1024];
@@ -434,7 +435,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
 	WriteLog( LogLevel_Debug, false, "Index=%d", valueID.GetIndex() );
 	WriteLog( LogLevel_Debug, false, "Label=%s", label.c_str() );
-	WriteLog( LogLevel_Debug, false, "Units=%s", Manager::Get()->GetValueUnits( valueID ).c_str() );
+	WriteLog( LogLevel_Debug, false, "Units=%s", unit.c_str() );
 
 	nodeInfo = GetNodeInfo( homeID, nodeID );
 	if ( nodeInfo == NULL )
@@ -616,7 +617,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 			{
 				value_no = 2;
 			}
-			else if ( label == "Energy" )
+			else if ( ( label == "Energy" ) && ( unit == "kWh" ) )
 			{
 				value_no = 3;
 			}
