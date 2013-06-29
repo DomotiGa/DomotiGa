@@ -1,0 +1,424 @@
+' Gambas class file
+
+' Description:
+' CVisonic.class
+' Support for Visonic PowerMax/PowerMaster Alarm
+'
+' Development Status:
+' Initial testing build
+' Need to have serial port connected .
+
+' Links:
+' http://www.domoticaforum.eu/viewtopic.php?f=68&t=6517
+
+' Credits:
+' Initial setup by Wouter wolkers
+' Thanks to everyone who helped devcode the  data
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+Property Port As String
+Property VisonicDebug As Boolean
+Property MasterCode As String
+
+Private sPort As String
+Private bVisonicDebug As Boolean
+Private sMasterCode As String
+
+Public hVisonic As New SerialPort
+
+' command buffer
+Private bHeaderFound As Boolean = False
+Private bFooterFound As Boolean = False
+Private sRecBuf As New Byte[]
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Connect() As Boolean
+
+  ' try to close the port
+  Try hVisonic.Close
+
+  ' get a new one
+  hVisonic = New Serialport As "Visonic"
+  With hVisonic
+    .PortName = sPort
+    .Speed = 9600
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("Visonic Error: ") & ERROR.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' close port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hVisonic.Close
+  Main.WriteLog(("Visonic serial port close."))
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("Visonic Error: ") & ERROR.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send a command to the alarm panel
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function SendCommand(aCommand As Array)
+
+  Dim iCmd As Byte
+  
+  If hVisonic.Status = Net.Active Then
+
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] > ", True)
+  For Each iCmd In aCommand
+    If Main.bVisonicDebug Then Main.WriteRFXDebugLog(Hex$(iCmd, 2) & " ", True)
+    Try Write #hVisonic, iCmd As Byte
+  Next
+  If Main.bVisonicDebug Then Main.WriteRFXDebugLog("\n", True)
+  
+  Else
+    Main.WriteDebugLog("[Visonic] Not connected anymore")
+  Endif
+
+Catch
+  Main.WriteDebugLog(("[Visonic] Error while trying to send: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data back from Alarm panel and parse it when it's complete
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Visonic_Read()
+  Dim sData As Byte
+
+  Try sData = Read #hVisonic As Byte
+  If Error Then Main.WriteDebugLog(("[Visonic] Error reading data from the serial port! ->") & ERROR.Text)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] < " & Hex$(sData, 2))
+  ProcessReceivedChar(sData)
+  
+End
+
+Private Sub ProcessReceivedChar(sTemp As String)
+
+  If sTemp = &h0D Then bHeaderFound = True
+  If ((sTemp = &h0A) And (bHeaderFound)) Then bFooterFound = True
+  sRecBuf.Add(sTemp)
+
+  If bFooterFound = True And If bHeaderFound = True Then ProcessReceivedPacket(sRecbuf)
+
+End
+
+Private Function ProcessReceivedPacket(sInput As Byte[])
+  Dim bData As Byte
+  
+  If Main.bVisonicDebug Then Main.WriteDebugLog(("Visonic received full packet: "))
+  For Each bData In sInput
+    If Main.bVisonicDebug Then Main.WriteRFXDebugLog(Hex$(bData, 2))
+  Next
+  If Main.bVisonicDebug Then Main.WriteDebugLog(" ")
+  
+  ' Check the CRC here
+  
+  ' Remove the start byte
+  sInput.Extract(0, 1)
+  ' Remove the end byte
+  sInput.Extract(sInput.Count - 1, 1)
+
+  If Main.bVisonicDebug Then 
+    Main.WriteRFXDebugLog(("Visonic received full packet no headers: "))
+    For Each bData In sInput
+      Main.WriteRFXDebugLog(Hex$(bData, 2), True)
+    Next
+    Main.WriteDebugLog(" ", True)
+  Endif
+  
+  SendACK()
+
+ Select Case sInput[0]
+   Case &h02    ' ACK
+     If Main.bVisonicDebug Then Main.WriteDebugLog("Acknowledgement")
+   Case &h08    ' Access denied
+     If Main.bVisonicDebug Then Main.WriteDebugLog("Access Denied")
+   Case &hA5    ' General Event description
+     If Main.bVisonicDebug Then Main.WriteDebugLog("General event")
+     ParseA5(sInput)
+   Default
+     If Main.bVisonicDebug Then Main.WriteDebugLog("Unknown message type: " & Hex$(sInput[0], 2))
+ End Select
+
+  ' reset for next data
+  sRecBuf.Clear()
+  bHeaderFound = False
+  bFooterFound = False
+
+
+Catch ' some errors
+  Main.WriteDebugLog(("Visonic Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+
+End
+
+' A0 command - Event log
+Private Function ParseA0(sInput As Byte[])
+  
+  
+End
+
+
+
+Private Function ParseA5(sInput As Byte[])
+'Byte 2 indicates the type of event:
+' 0x01 Log Event Print
+' 0x02 Status message
+' 0x03 Tamper Event
+' 0x04 Zone Event
+Select Case sInput[2]
+  Case &h01 ' Log Event Print
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Log event print")
+  Case &h02 ' Status message
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Status message")
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Zones 1-8  :" & Bin$(sInput[3], 8))
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Zones 9-16 :" & Bin$(sInput[4], 8))
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Zones 17-24:" & Bin$(sInput[5], 8))
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Zones 25-30:" & Bin$(sInput[6], 8))
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Battery Zones 1-8  :" & Bin$(sInput[7], 8))
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Battery Zones 9-16 :" & Bin$(sInput[8], 8))
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Battery Zones 17-24:" & Bin$(sInput[9], 8))
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Battery Zones 25-30:" & Bin$(sInput[10], 8))
+  Case &h03 ' Tamper event
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Tamper event")
+  Case &h04 ' Zone event
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Zone event")
+    Select Case sInput[3] ' System Status
+      Case &h00 ' Disarm
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Disarm")
+      Case &h01 ' Exit Delay
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Exit Delay, arming Home")
+      Case &h02 ' Exit Delay
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Exit Delay, arming Away")
+      Case &h03 ' Entry Delay
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Entry Delay")
+      Case &h04 ' Armed Home
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Armed Home")
+      Case &h05 ' Armed Away
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Armed Away")
+      Case &h06 ' User Test
+        If Main.bVisonicDebug Then Main.WriteDebugLog("User test")
+      Case &h07 ' Downloading
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Downloading")
+      Case &h08 ' Programming
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Programming")
+      Case &h09 ' Installer
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Installer")
+      Case &h0A ' Home Bypass
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Home Bypass")
+      Case &h0B ' Away Bypass
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Away Bypass")
+      Case &h0C ' Ready
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Ready")
+      Case &h0D ' Not Ready
+        If Main.bVisonicDebug Then Main.WriteDebugLog("Not Ready")
+    End Select
+    If (sInput[4] And 1) Then
+      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 0 set, Ready")
+    Endif
+    If (sInput[4] And 2) Then
+      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 1 set, Alert in Memory")
+    Endif
+    If (sInput[4] And 4) Then 
+      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 2 set, Trouble!")
+    Endif
+    If (sInput[4] And 8) Then 
+      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 3 set, Bypass")
+    Endif
+    If (sInput[4] And 16) Then 
+      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 4 set, Last 10 secods of entry/exit")
+    Endif
+    If (sInput[4] And 32) Then 
+      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 5 set, Zone event")
+      If Main.bVisonicDebug Then Main.WriteDebugLog("Zone: " & Hex$(sInput[5], 2))
+      Select Case sInput[6]
+        Case &h00 ' None
+          If Main.bVisonicDebug Then Main.WriteDebugLog("No zone event")
+        Case &h01 ' Tamper Alarm
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Tamper Alarm")
+        Case &h02 ' Tamper Restore
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Tamper alarm restored")
+        Case &h03 ' Open
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone open")
+        Case &h04 ' Closed
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Closed")
+        Case &h05 ' Violated(Motion)
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone violated (Motion detected)")
+        Case &h06 ' Panic Alarm
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone panic alarm")
+        Case &h07 ' RF Jamming
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone RF jamming detected")
+        Case &h08 ' Tamper Open
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Tamper alarm open")
+        Case &h09 ' Communication Failure
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone communication failure")
+        Case &h0A ' Line Failure
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone line failure")
+        Case &h0B ' Fuse
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Fuse")
+        Case &h0C ' Not Active
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone not active")
+        Case &h0D ' Low Battery
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone low battery")
+        Case &h0E ' AC Failure
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone AC Failure")
+        Case &h0F ' Fire Alarm
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone fire alarm")
+        Case &h10 ' Emergency
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Emergency")
+        Case &h11 ' Siren Tamper
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Siren tamper")
+        Case &h12 ' Siren Tamper Restore
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Siren tamper restored")
+        Case &h13 ' Siren Low Battery
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone siren low battery")
+        Case &h14 ' Siren AC Fail
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone siren AC failure")
+      End Select
+    Endif
+    If (sInput[4] And 64) Then 
+      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 6 set, Arm")
+    Endif
+    If (sInput[4] And 128) Then 
+      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 7 set, Alarm!")
+    Endif
+    Case &h10
+      If Main.bVisonicDebug Then Main.WriteDebugLog("A5 Event 0x10, unknown")
+  Default
+    If Main.bVisonicDebug Then Main.WriteDebugLog("Unknown A5 event: " & Hex$(sInput[2], 2))
+End Select
+  
+End
+
+Public Sub InitVisonic()
+  Dim init As Byte[] = [&H0D, &HAB, &H0A, &H00, &H01, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43, &H06, &H0A]
+  
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Initializing ")
+  SendCommand(init)
+  Sleep 0.025
+  SendACK()
+
+End
+
+' ACK package
+Private Sub SendACK()
+  Dim ack As Byte[] = [&h0D, &h02, &hFD, &h0A]
+
+  SendCommand(ack)
+End
+
+' Request status update
+Private Sub SendRequestUpdate()
+  Dim RequestUpdate As Byte[] = [&H0D, &HA2, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43, &H1A, &H0A]
+
+  SendCommand(RequestUpdate)
+End
+
+' Request Event log
+Private Sub SendRequestEventLog()
+  Dim RequestUpdate As Byte[] = [&H0D, &HA0, &H00, &H00, &H00, &H88, &H88, &H00, &H00, &H00, &H00, &H00, &H43, &H88, &H0A]
+  
+  RequestUpdate[5] = sMasterCode[0]
+  RequestUpdate[6] = sMasterCode[1]
+
+  SendCommand(RequestUpdate)
+End
+
+Private Sub CalculateCRC(bData As Byte[]) As Byte
+  Dim highb, lowb, b As Byte
+  Dim checksum As Short
+      
+  checksum = 0
+  For Each b In bData
+    checksum += b
+  Next
+'  Print "Orig: " & Hex$(checksum, 4)
+  highb = Lsr(checksum, 8)
+  lowb = Lsr(Lsl(checksum, 8), 8)
+'  Print "lowb :    " & Hex$(lowb, 2)
+'  Print "highb:    " & Hex$(highb, 2)
+		      
+  checksum = Lsr(Lsl(&hFFFF - lowb - highb, 8), 8)
+			    
+'  Print Hex$(checksum, 2)
+  Return checksum
+				  
+End
+				  
+Public Sub Run()
+  Dim init As Byte[] = [&H0D, &HAB, &H0A, &H00, &H01, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43, &H06, &H0A]
+
+  If bVisonicDebug Then
+    Main.WriteDebugLog("[Visonic] Initializing ")
+  Endif
+  sRecBuf.Clear()
+  SendCommand(init)
+  Sleep 0.025
+  SendACK()
+
+End
+
+
+' implement the properties
+Private Function Port_Read() As String
+
+  Return sPort
+
+End
+
+Private Sub Port_Write(sValue As String)
+
+  sPort = sValue
+
+End
+
+Private Function VisonicDebug_Read() As Boolean
+
+  Return bVisonicDebug
+
+End
+
+Private Sub VisonicDebug_Write(sValue As Boolean)
+
+  bVisonicDebug = sValue
+
+End
+
+Private Function MasterCode_Read() As String
+
+  Return sMasterCode
+
+End
+
+Private Sub MasterCode_Write(sValue As String)
+
+  sMasterCode = sValue
+
+End
