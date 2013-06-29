@@ -4170,6 +4170,6 @@ PRIMARY KEY (id)
 
 LOCK TABLES settings_visonic WRITE;
 
-INSERT INTO settings_visonic VALUES (0,0,'/dev/ttyUSB0',0,'1234',NULL),(1,0,'/dev/ttyUSB6',0,'1234',0);
+INSERT INTO settings_visonic VALUES (0,0,'/dev/ttyUSB0',0,'1234',0),(1,0,'/dev/ttyUSB6',0,'1234',0);
 
 UNLOCK TABLES;

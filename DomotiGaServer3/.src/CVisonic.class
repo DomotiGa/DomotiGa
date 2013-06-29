@@ -32,7 +32,6 @@ Public hVisonic As New SerialPort
 
 ' command buffer
 Private bHeaderFound As Boolean = False
-Private bFooterFound As Boolean = False
 Private sRecBuf As New Byte[]
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -85,19 +84,19 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send a command to the alarm panel
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function SendCommand(aCommand As Array)
+Public Function SendCommand(aCommand As Byte[])
 
   Dim iCmd As Byte
+  Dim sStr As String
   
   If hVisonic.Status = Net.Active Then
 
-  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] > ", True)
-  For Each iCmd In aCommand
-    If Main.bVisonicDebug Then Main.WriteRFXDebugLog(Hex$(iCmd, 2) & " ", True)
-    Try Write #hVisonic, iCmd As Byte
-  Next
-  If Main.bVisonicDebug Then Main.WriteRFXDebugLog("\n", True)
-  
+    If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] > ", True)
+    For Each iCmd In aCommand
+      If Main.bVisonicDebug Then Main.WriteRFXDebugLog(Hex$(iCmd, 2) & " ", True)
+      Try Write #hVisonic, iCmd As Byte
+    Next
+    If Main.bVisonicDebug Then Main.WriteRFXDebugLog("\n", True)
   Else
     Main.WriteDebugLog("[Visonic] Not connected anymore")
   Endif
@@ -115,43 +114,66 @@ Public Sub Visonic_Read()
 
   Try sData = Read #hVisonic As Byte
   If Error Then Main.WriteDebugLog(("[Visonic] Error reading data from the serial port! ->") & ERROR.Text)
-  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] < " & Hex$(sData, 2))
+  'If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] < " & Hex$(sData, 2))
   ProcessReceivedChar(sData)
   
 End
 
-Private Sub ProcessReceivedChar(sTemp As String)
+Private Sub ProcessReceivedChar(bTemp As Byte)
 
-  If sTemp = &h0D Then bHeaderFound = True
-  If ((sTemp = &h0A) And (bHeaderFound)) Then bFooterFound = True
-  sRecBuf.Add(sTemp)
+  ' We detected a preamble, set the HeaderFound to True. It doesn't matter if we find more 0x0D in the data, because it is already set to True anyway
+  If bTemp = &h0D Then bHeaderFound = True
 
-  If bFooterFound = True And If bHeaderFound = True Then ProcessReceivedPacket(sRecbuf)
+  ' Add the received Byte to the Array
+  If bHeaderFound Then sRecBuf.Add(bTemp)
+
+  ' We detected a postamble and a preamble has been found
+  If (bTemp = &h0A) And (bHeaderFound) Then
+
+    ' Check the Crc, if it doesn't match - the 0x0A isn't the postamble!
+    If CheckCRC(sRecBuf) Then
+      ProcessReceivedPacket(sRecbuf)
+    End If
+  End If
 
 End
 
 Private Function ProcessReceivedPacket(sInput As Byte[])
-  Dim bData As Byte
-  
-  If Main.bVisonicDebug Then Main.WriteDebugLog(("Visonic received full packet: "))
-  For Each bData In sInput
-    If Main.bVisonicDebug Then Main.WriteRFXDebugLog(Hex$(bData, 2))
-  Next
-  If Main.bVisonicDebug Then Main.WriteDebugLog(" ")
-  
-  ' Check the CRC here
-  
-  ' Remove the start byte
-  sInput.Extract(0, 1)
-  ' Remove the end byte
-  sInput.Extract(sInput.Count - 1, 1)
 
-  If Main.bVisonicDebug Then 
-    Main.WriteRFXDebugLog(("Visonic received full packet no headers: "))
+  Dim bData As Byte
+  Dim sStr As String
+  
+  If Main.bVisonicDebug Then
+    sStr = ""
     For Each bData In sInput
-      Main.WriteRFXDebugLog(Hex$(bData, 2), True)
+      If sStr == "" Then
+        sStr &= Hex$(bData, 2)
+      Else
+        sStr &= " " & Hex$(bData, 2)
+      End If
     Next
-    Main.WriteDebugLog(" ", True)
+  
+    Main.WriteDebugLog(("[Visonic] < ") & sStr)
+  End If
+  
+  ' Remove the preamble
+  sInput.Extract(0, 1)
+  ' Remove the postamble
+  sInput.Pop()
+  ' Remove the checksum too
+  sInput.Pop()
+  
+  If Main.bVisonicDebug Then 
+    sStr = ""
+    For Each bData In sInput
+      If sStr == "" Then
+        sStr &= Hex$(bData, 2)
+      Else
+        sStr &= " " & Hex$(bData, 2)
+      End If
+    Next
+
+    Main.WriteDebugLog(("[Visonic] No Headers: ") & sStr)
   Endif
   
   SendACK()
@@ -171,11 +193,11 @@ Private Function ProcessReceivedPacket(sInput As Byte[])
   ' reset for next data
   sRecBuf.Clear()
   bHeaderFound = False
-  bFooterFound = False
-
 
 Catch ' some errors
   Main.WriteDebugLog(("Visonic Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+  sRecBuf.Clear()
+  bHeaderFound = False
 
 End
 
@@ -351,6 +373,32 @@ Private Sub SendRequestEventLog()
   SendCommand(RequestUpdate)
 End
 
+Private Sub CheckCRC(bData As Byte[]) As Boolean
+
+  Dim bChecksum As Byte
+  Dim bDataTmp As Byte[]
+  
+  ' first copy the bData - else we loose information
+  bDataTmp = bData.Copy()
+  ' Remove the preamble
+  bDataTmp.Extract(0, 1)
+  ' Remove the postamble
+  bDataTmp.Pop()
+
+  ' Check if Count > 0
+  If bDataTmp.Count > 0 Then
+
+    ' Copy and remove the checksum
+    bChecksum = bDataTmp.Pop()
+
+    ' Check if calculation and checksum match
+    If CalculateCRC(bDataTmp) = bChecksum Then Return True
+  End If
+
+  Return False
+
+End
+
 Private Sub CalculateCRC(bData As Byte[]) As Byte
   Dim highb, lowb, b As Byte
   Dim checksum As Short
@@ -364,14 +412,14 @@ Private Sub CalculateCRC(bData As Byte[]) As Byte
   lowb = Lsr(Lsl(checksum, 8), 8)
 '  Print "lowb :    " & Hex$(lowb, 2)
 '  Print "highb:    " & Hex$(highb, 2)
-		      
+      
   checksum = Lsr(Lsl(&hFFFF - lowb - highb, 8), 8)
-			    
+    
 '  Print Hex$(checksum, 2)
   Return checksum
-				  
+  
 End
-				  
+  
 Public Sub Run()
   Dim init As Byte[] = [&H0D, &HAB, &H0A, &H00, &H01, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43, &H06, &H0A]
 
