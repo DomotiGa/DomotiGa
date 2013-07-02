@@ -64,6 +64,7 @@ ln -s ../../DomotiGa3/.src/CTimerDelay.class
 ln -s ../../DomotiGa3/.src/CTimerOnOff.class
 ln -s ../../DomotiGa3/.src/CUPS.class
 ln -s ../../DomotiGa3/.src/CVISCA.class
+ln -s ../../DomotiGa3/.src/CVisonic.class
 ln -s ../../DomotiGa3/.src/CWebServer.class
 ln -s ../../DomotiGa3/.src/CTelnetServer.class
 ln -s ../../DomotiGa3/.src/CWeeder.class
