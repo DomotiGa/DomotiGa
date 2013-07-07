@@ -1,0 +1,363 @@
+' Gambas class file
+
+' Description:
+' CKMTronicUDP.class
+' Provide basic support for device control of KMTronic UDP relay board.
+
+' Development Status:
+' Just started developing this one, not complete yet.
+
+' Links:
+' http://www.kmtronic.com/manuals/kmtronic_DINo_Netboard_manual.pdf
+
+' Special thanks to KMTronic LTD for supplying sample devices.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+Property KMTronicUDPDebug As Boolean
+Property PollTime As Integer
+Property UDPPort As Integer
+
+Private bKMTronicUDPDebug As Boolean
+Private iPollTime As Integer
+Private iUDPPort As Integer
+
+Public hKMTronicUDPClient As UdpSocket
+Public hKMTronicUDPServer As UdpSocket
+Public tKMTronicUDPPoll As Timer
+
+' queue and command buffer stuff
+Private cDevice As New Collection   ' device buffer
+Private cQueue As New Collection    ' command buffer
+Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
+Public tKMTronicUDPBusy As Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer for polling
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Run()
+
+  If iPollTime = 0 Then
+    Try tKMTronicUDPPoll.Stop
+    Return
+  Endif
+
+  ' start udp listener for kmtronic
+  hKMTronicUDPServer = New UdpSocket As "hKMTronicUDPServer"
+  hKMTronicUDPServer.Port = iUDPPort
+  hKMTronicUDPServer.Bind
+
+  ' start poll timer for kmtronic
+  tKMTronicUDPPoll = New Timer As "tKMTronicUDP"
+  tKMTronicUDPPoll.Delay = iPollTime * 1000 ' multiply for seconds
+  tKMTronicUDPPoll.Start
+
+  ' define timer for kmtronic busy
+  tKMTronicUDPBusy = New Timer As "tKMTronicUDPBusy"
+  tKMTronicUDPBusy.Delay = 50 ' 50mS (initial test value)
+  tKMTronicUDPBusy.Stop
+
+End
+
+Public Sub hKMTronicUDPServer_Error()
+
+  Select Case hKMTronicUDPServer.Status
+    Case Net.CannotBindSocket
+      Main.WriteDebugLog(("KMTronicUDP: Unable to bind to port."))
+    Case Net.CannotCreateSocket
+      Main.WriteDebugLog(("KMTronicUDP: System does not allow to create a socket."))
+    Case Net.CannotRead
+      Main.WriteDebugLog(("KMTronicUDP: Error sending data."))
+    Case Net.CannotWrite
+      Main.WriteDebugLog(("KMTronicUDP: Error receiving data."))
+  End Select
+
+End
+
+Public Sub hKMTronicUDPServer_Read()
+
+  Dim sData As String
+
+  Read #hKMTronicUDPServer, sData, Lof(hKMTronicUDPServer)
+  If bKMTronicUDPDebug Then Main.WriteDebugLog("[KMTronicUDP] Board with address '" & hKMTronicUDPServer.SourceHost & "' replied with '" & sData & "'")
+
+  ProcessData(sData, hKMTronicUDPServer.SourceHost)
+
+End
+
+Private Sub ProcessData(sData As String, sDevice As String)
+
+  Dim iDeviceId, iPort As Integer
+  Dim sAddress, sStatus As String
+
+  Select Len(sData)
+    Case 8 ' DINo with 4 inputs and 4 outputs
+      For iPort = 1 To 8
+        sStatus = IIf(Mid(sData, iPort, 1) = "1", "On", "Off")
+        If iPort < 5 Then ' Input port
+          sAddress = "IN" & Format(iPort, "0#")
+          If bKMTronicUDPDebug Then Main.WriteDebugLog("[KMTronicUDP] Port with address '" & sAddress & "' has status '" & sStatus & "'")
+          iDeviceId = Devices.Find(sDevice & ":" & sAddress, Devices.FindInterface("KMTronicUDP Interface"), "KMTronic Input")
+          ' if found then update it's value
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, sStatus, "", "", "")
+        Else ' Output port
+          sAddress = "OUT" & Format(iPort - 4, "0#")
+          If bKMTronicUDPDebug Then Main.WriteDebugLog("[KMTronicUDP] Port with address '" & sAddress & "' has status '" & sStatus & "'")
+          iDeviceId = Devices.Find(sDevice & ":" & sAddress, Devices.FindInterface("KMTronicUDP Interface"), "KMTronic Output")
+          ' if found then update it's value
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, sStatus, "", "", "")
+        Endif
+      Next
+    Case Else
+      If bKMTronicUDPDebug Then Main.WriteDebugLog("[KMTronicUDP] Response not supported, please report board type and response to support@domotiga.nl")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' poll board(s) for status
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tKMTronicUDP_Timer()
+
+  CheckUDPBoards()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub QueueCommand(sPacket As String, sDevice As String)
+
+  Dim sKey As String = Rnd
+
+  ' add device and command to queue
+  cDevice.Add(sDevice, sKey)
+  cQueue.Add(sPacket, sKey)
+
+  ' if interface is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DoQueue()
+
+  Dim sPacket, sDevice As String
+
+  For Each sPacket In cQueue
+    sDevice = cDevice[cQueue.Key]
+    WriteCommand(sPacket, sDevice, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' scan for KMTronicUDP devices
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckUDPBoards()
+
+  Dim rResult As Result
+  Dim cDevices As New Collection
+  Dim aScan As String[]
+  Dim sName As String
+
+  ' get all enabled devices of type KMTronicUDP
+  rResult = Devices.FindDevicesForInterface(Devices.FindInterface("KMTronicUDP Interface"))
+  If rResult Then
+    If rResult.Available Then
+      If rResult.Count >= 1 Then
+        ' loop through each device
+        For Each rResult
+          aScan = Scan(rResult!address, "*:*")
+          If aScan.Count = 2 Then
+            cDevices.Add(rResult!name, aScan[0])
+          Else
+            Main.WriteDebugLog(("[KMTronicUDP] Invalid address given: '") & rResult!addres & "'")
+            rResult.MoveNext
+          Endif
+        Next
+      Endif
+    Else
+      Main.WriteLog(("KMTronicUDP: No KMTronicUDP type device(s) found in device table!"))
+    Endif
+  Endif
+
+  If cDevices.Count Then
+    For Each sName In cDevices
+      ' check device for status
+      GetStatus(sName, cDevices.Key)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tKMTronicUDPBusy_Timer()
+
+  bInterfaceBusy = False
+  tKMTronicUDPBusy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If bKMTronicUDPDebug Then Main.WriteDebugLog(("[KMTronicUDP] Sending command from Queue (count = " & cQueue.Count & ")"))
+    DoQueue()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get the status of device ports
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetStatus(sDevice As String, sAddress As String)
+
+  Dim sCmd As String = "FF0000"
+
+  If bKMTronicUDPDebug Then Main.WriteDebugLog(("[KMTronicUDP] Checking port status of device named '") & sDevice & ("' with address '") & sAddress & "'.")
+  QueueCommand(sCmd, sAddress)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send data to interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteCommand(sBuffer As String, sDevice As String, sKey As String)
+
+  hKMTronicUDPClient = New UdpSocket As "KMTronicUDPClient"
+  hKMTronicUDPClient.Bind()
+  hKMTronicUDPClient.TargetPort = iUDPPort
+  hKMTronicUDPClient.TargetHost = sDevice
+
+  Try Write #hKMTronicUDPClient, sBuffer, Len(sBuffer)
+  If Not Error Then
+    If bKMTronicUDPDebug Then Main.WriteDebugLog(("[KMTronicUDP] Sent UDP packet to device with address '") & sDevice & "'")
+  Else
+    Print Error.Text
+  Endif
+  If bKMTronicUDPDebug Then Main.WriteDebugLog("[KMTronicUDP] > " & sBuffer)
+  Try Close hKMTronicUDPClient
+
+  ' remove sent command from queue
+  cDevice.Remove(sKey)
+  cQueue.Remove(sKey)
+
+  ' start timer to wait before sending next command
+  tKMTronicUDPBusy.Start
+  bInterfaceBusy = True
+
+Catch
+  Main.WriteDebugLog(("KMTronicUDP Error: Cannot send UDP message! ") & Error.Text & (" at ") & Error.Where)
+
+End
+
+Public Sub KMTronicUDPClient_Error()
+
+  Select Case hKMTronicUDPClient.Status
+    Case Net.CannotBindSocket
+      Main.WriteDebugLog(("KMTronicUDP: Unable to Bind to that portclient"))
+    Case Net.CannotCreateSocket
+      Main.WriteDebugLog(("KMTronicUDP: System does not allow to create a socket"))
+    Case Net.CannotRead
+      Main.WriteDebugLog(("KMTronicUDP: Error Sending Data"))
+    Case Net.CannotWrite
+      Main.WriteDebugLog(("KMTronicUDP: Error Receiving Data"))
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' stop timers
+  Try tKMTronicUDPPoll.Stop
+  Try tKMTronicUDPBusy.Stop
+
+  ' try to close server
+  Try hKMTronicUDPServer.Close
+  Main.WriteLog(("KMTronicUDP stopped."))
+
+  ' all ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(("KMTronicUDP Error: ") & Error.Text & (" at ") & Error.Where)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' called from devices module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCommand As String, iDeviceId As Integer)
+
+  Dim sIp, sPort As String
+  Dim aScan As String[]
+  Dim sCmd As String = "FF"
+
+  aScan = Scan(sAddress, "*:OUT*")
+  If aScan.Count = 2 Then
+    sIp = aScan[0]
+    sCmd &= Format(aScan[1], "0#")
+  Else
+    Main.WriteDebugLog(("[KMTronicUDP] Invalid address given: ") & sAddress)
+    Return
+  Endif
+
+  Select Case UCase(sCommand)
+    Case "ON"
+      sCmd &= "01"
+    Case "OFF"
+      sCmd &= "00"
+    Case Else
+      Main.WriteDebugLog(("[KMTronicUDP] Only ON/OFF commands are supported for KMTronicUDP devices!"))
+      Return
+  End Select
+
+  If bKMTronicUDPDebug Then Main.WriteDebugLog(("[KMTronicUDP] Switching port ") & aScan[1] & ("' of device with address '") & sIp & "' '" & sCommand & "'.")
+  QueueCommand(sCmd, sIp)
+
+End
+
+Private Function KMTronicUDPDebug_Read() As Boolean
+
+  Return bKMTronicUDPDebug
+
+End
+
+Private Sub KMTronicUDPDebug_Write(Value As Boolean)
+
+  bKMTronicUDPDebug = Value
+
+End
+
+Private Function PollTime_Read() As Integer
+
+  Return iPollTime
+
+End
+
+Private Sub PollTime_Write(Value As Integer)
+
+  iPollTime = Value
+
+End
+
+Private Function UDPPort_Read() As Integer
+
+  Return iUDPPort
+
+End
+
+Private Sub UDPPort_Write(Value As Integer)
+
+  iUDPPort = Value
+
+End
