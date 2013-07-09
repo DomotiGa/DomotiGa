@@ -2212,7 +2212,7 @@ PRIMARY KEY (id)
 --
 
 LOCK TABLES settings_kmtronicudp WRITE;
-INSERT INTO settings_kmtronicudp VALUES (0,12345,0,60,0),(1,12345,0,60,0);
+INSERT INTO settings_kmtronicudp VALUES (0,0,12345,60,0),(1,0,12345,60,0);
 UNLOCK TABLES;
 
 --
