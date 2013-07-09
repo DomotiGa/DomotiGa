@@ -3674,7 +3674,7 @@ DROP TABLE IF EXISTS `settings_zwave`;
 CREATE TABLE `settings_zwave` (
   `id` int(11) NOT NULL,
   `enabled` tinyint(1) DEFAULT NULL,
-  `se128` varchar(128) DEFAULT NULL,
+  `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `reloadnodes` tinyint(1) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,

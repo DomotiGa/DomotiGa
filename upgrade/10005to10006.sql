@@ -48,6 +48,7 @@ ALTER TABLE settings_temp08 MODIFY serialport varchar(128);
 ALTER TABLE settings_visca MODIFY serialport varchar(128);
 ALTER TABLE settings_weeder MODIFY serialport varchar(128);
 ALTER TABLE settings_visonic MODIFY serialport varchar(128);
+ALTER TABLE settings_zwave MODIFY serialport varchar(128);
 
 LOCK TABLES version WRITE;
 INSERT INTO version VALUES (51,'1.0.006');
