@@ -6,14 +6,14 @@
 '
 ' Development Status:
 ' Initial testing build
-' Need to have serial port connected .
+' Need to have serial port connected.
 
 ' Links:
 ' http://www.domoticaforum.eu/viewtopic.php?f=68&t=6517
 
 ' Credits:
-' Initial setup by Wouter wolkers
-' Thanks to everyone who helped devcode the  data
+' Initial setup by Wouter Wolkers and Alexander Kuiper
+' Thanks to everyone who helped devcode the data
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -28,11 +28,18 @@ Private sPort As String
 Private bVisonicDebug As Boolean
 Private sMasterCode As String
 
+Private tPLConnection As Timer
+
 Public hVisonic As New SerialPort
 
 ' command buffer
 Private bHeaderFound As Boolean = False
 Private sRecBuf As New Byte[]
+
+Const bPLTimeOut As Integer = 60000
+
+Const bDownloadCode1 As Byte = &H56
+Const bDownloadCode2 As Byte = &H50
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open serial port
@@ -53,6 +60,11 @@ Public Function Connect() As Boolean
     .FlowControl = 0
     .Open()
   End With
+  
+  ' Define 60 seconds timer and start it for PowerLink communication
+  tPLConnection = New Timer As "tPLConnection"
+  tPLConnection.Delay = bPLTimeOut
+  tPLConnection.Start
 
   ' all ok
   Return True
@@ -82,17 +94,100 @@ Catch ' some errors
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Start timer for PowerLink connection, we will try to re-establish if it goes away
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tPLConnection_Timer()
+
+  ' TBD: Don't do this forever, stop after a certain number of faillures
+  ' TBD: Needs to be tested more - it doesn't seem to work? Maybe we need to close/open the serial port?
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] PowerLink Timer Expired (" & bPLTimeOut & " milliseconds)")
+  SendPMInitPowerLink()
+
+  ' Restart timer
+  tPLConnection = New Timer As "tPLConnection"
+  tPLConnection.Delay = bPLTimeOut
+  tPLConnection.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Check the CRC of the received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckCRC(bData As Byte[]) As Boolean
+
+  Dim bChecksum As Byte
+  Dim bDataTmp As Byte[]
+  
+  ' first copy the bData - else we loose information
+  bDataTmp = bData.Copy()
+  ' Remove the preamble
+  bDataTmp.Extract(0, 1)
+  ' Remove the postamble
+  bDataTmp.Pop()
+
+  ' Check if Count > 0
+  If bDataTmp.Count > 0 Then
+
+    ' Copy and remove the checksum
+    bChecksum = bDataTmp.Pop()
+
+    ' Check if calculation and checksum match
+    If CalculateCRC(bDataTmp) = bChecksum Then Return True
+  End If
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Calculate the CRC
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CalculateCRC(bData As Byte[]) As Byte
+
+  Dim highb, lowb, b As Byte
+  Dim checksum As Short
+      
+  checksum = 0
+  For Each b In bData
+    'Print "X=" & Hex$(b)
+    checksum += b
+  Next
+
+  'Print "Orig: " & Hex$(checksum, 4)
+  highb = Lsr(checksum, 8)
+  lowb = Lsr(Lsl(checksum, 8), 8)
+  'Print "lowb :    " & Hex$(lowb, 2)
+  'Print "highb:    " & Hex$(highb, 2)
+      
+  checksum = Lsr(Lsl(&hFFFF - lowb - highb, 8), 8)
+    
+  'Print Hex$(checksum, 2)
+  Return checksum
+  
+End
+  
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send a command to the alarm panel
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Public Function SendCommand(aCommand As Byte[])
 
   Dim iCmd As Byte
   Dim sStr As String
+  Dim bByte As String
+  Dim aCommandToSend As Byte[]
   
   If hVisonic.Status = Net.Active Then
 
+    ' First add preamble, crc and postamble
+    aCommandToSend = aCommand
+    bByte = CalculateCRC(aCommand)
+    aCommandToSend.Add(&H0D, 0)
+    aCommandToSend.Add(bByte)
+    aCommandToSend.Add(&H0A)
+
     If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] > ", True)
-    For Each iCmd In aCommand
+    For Each iCmd In aCommandToSend
       If Main.bVisonicDebug Then Main.WriteRFXDebugLog(Hex$(iCmd, 2) & " ", True)
       Try Write #hVisonic, iCmd As Byte
     Next
@@ -109,7 +204,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' got data back from Alarm panel and parse it when it's complete
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Public Sub Visonic_Read()
+
   Dim sData As Byte
 
   Try sData = Read #hVisonic As Byte
@@ -138,6 +235,9 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Process a complete valid Visonic packet
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Function ProcessReceivedPacket(sInput As Byte[])
 
   Dim bData As Byte
@@ -163,32 +263,27 @@ Private Function ProcessReceivedPacket(sInput As Byte[])
   ' Remove the checksum too
   sInput.Pop()
   
-  If Main.bVisonicDebug Then 
-    sStr = ""
-    For Each bData In sInput
-      If sStr == "" Then
-        sStr &= Hex$(bData, 2)
-      Else
-        sStr &= " " & Hex$(bData, 2)
-      End If
-    Next
-
-    Main.WriteDebugLog(("[Visonic] No Headers: ") & sStr)
-  Endif
-  
-  SendACK()
-
- Select Case sInput[0]
-   Case &h02    ' ACK
-     If Main.bVisonicDebug Then Main.WriteDebugLog("Acknowledgement")
-   Case &h08    ' Access denied
-     If Main.bVisonicDebug Then Main.WriteDebugLog("Access Denied")
-   Case &hA5    ' General Event description
-     If Main.bVisonicDebug Then Main.WriteDebugLog("General event")
-     ParseA5(sInput)
-   Default
-     If Main.bVisonicDebug Then Main.WriteDebugLog("Unknown message type: " & Hex$(sInput[0], 2))
- End Select
+  Select Case sInput[0]
+    Case &H02    ' ACK
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Acknowledgement")
+    Case &H08    ' Access denied
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Access Denied")
+    Case &H06    ' PowerMax/Master sends timeout - we are most likely in the download mode
+      ParsePM06(sInput)
+    Case &H3C    ' Messsage when start the download
+      ParsePM3C(sInput)
+    Case &H3F    ' Download information
+      ParsePM3F(sInput)
+    Case &HA5    ' General Event description
+      ParsePMA5(sInput)
+    Case &HA7    ' Panel Status Change
+      ParsePMA7(sInput)
+    Case &HAB    ' PowerLink communication message
+      ParsePMAB(sInput)
+    Default      ' Anything else - we will ACK it anyway
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Unknown message type: " & Hex$(sInput[0], 2))
+      SendPMACK()
+  End Select
 
   ' reset for next data
   sRecBuf.Clear()
@@ -201,272 +296,1678 @@ Catch ' some errors
 
 End
 
-' A0 command - Event log
-Private Function ParseA0(sInput As Byte[])
-  
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Public Sub Run()
+
+  sRecBuf.Clear()
+  'SendPMDL_START()
+   SendPMInitPowerLink()
   
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: ACK
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMACK()
 
+  Dim MSGV_ACK As Byte[] = [&h02]
 
-Private Function ParseA5(sInput As Byte[])
+  SendCommand(MSGV_ACK)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Acknowledgement")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: ACK type 2 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' ### This seems to be required by some messages? ###
+Public Sub SendPMACK2()
+
+  Dim MSGV_ACK As Byte[] = [&h02, &H43]
+
+  SendCommand(MSGV_ACK)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub InitVisonic()
+
+  Dim MSGV_INIT As Byte[] = [&HAB, &H0A, &H00, &H01, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43]
+
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Initializing ")
+
+  SendCommand(MSGV_INIT)
+  Sleep 0.025
+  SendPMACK()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMInitPowerLink()
+
+  Dim MSGV_INITPOWERLINK As Byte[] = [&HAB, &H06, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43]
+
+  SendCommand(MSGV_INITPOWERLINK)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] (Re)Init PowerLink")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Request Status Update
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+' Request status update
+Private Sub SendRequestUpdate()
+
+  Dim RequestUpdate As Byte[] = [&HA2, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43]
+
+  SendCommand(RequestUpdate)
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Event Log?
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Private Sub SendRequestEventLog()
+  'Dim RequestUpdate As Byte[] = [&HA0, &H00, &H00, &H00, &H88, &H88, &H00, &H00, &H00, &H00, &H00, &H43]
+  
+  'RequestUpdate[5] = sMasterCode[0]
+  'RequestUpdate[6] = sMasterCode[1]
+
+  'SendCommand(RequestUpdate)
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Request Status Update
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMStatusUpdate()
+
+  Dim MSGV_STATUSUPDATE As Byte[] = [&HA2, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43] 'A5
+
+  SendCommand(MSGV_STATUSUPDATE)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Status Update")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download Start - This is required to retrieve any information from the panel
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_START()
+
+  ' [3] & [4] = DownloadCode
+  Dim MSGV_DL_START As Byte[] = [&H24, &H00, &H00, &H01, &H00, &H00, &H00, &H00, &H00, &H00, &H00] '&H3C
+
+  MSGV_DL_START[3] = bDownloadCode1
+  MSGV_DL_START[4] = bDownloadCode2
+
+  SendCommand(MSGV_DL_START)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download Start")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download exit/stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_EXIT()
+
+  Dim MSGV_DL_EXIT As Byte[] = [&H0F] 'NONE
+
+  SendCommand(MSGV_DL_EXIT)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download Exit")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download panel firmware
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_PANELFW()
+
+  Dim MSGV_DL_PANELFW As Byte[] = [&H3E, &H00, &H04, &H20, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_PANELFW)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download Panel Information/Firmware")
+  
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download serial information
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_SERIAL()
+
+  Dim MSGV_DL_SERIAL As Byte[] = [&H3E, &H30, &H04, &H08, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_SERIAL)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download Serial Information")
+  
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download serial information
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_TIME()
+
+  'Dim MSGV_DL_TIME As Byte[] = [&H3E, &HF8, &H00, &H06, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+  Dim MSGV_DL_TIME As Byte[] = [&H3E, &HF8, &H00, &H20, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_TIME)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download date/time")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download communcation definitions?
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_COMMDEF()
+
+  Dim MSGV_DL_COMMDEF As Byte[] = [&H3E, &H01, &H01, &H1E, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_COMMDEF)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download Communication?")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download pincodes
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_PINCODES()
+
+  Dim MSGV_DL_PINCODES As Byte[] = [&H3E, &HFA, &H01, &H10, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  ' TBD: if 0x10 -> 0x60 we see Master Installer & Installer & PowerLink pin
+
+  SendCommand(MSGV_DL_PINCODES)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download pincodes")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download phonenumbers
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_PHONENRS()
+
+  Dim MSGV_DL_PHONENRS As Byte[] = [&H3E, &H36, &H01, &H20, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_PHONENRS)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download phonenumbers")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download PGM X10
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_PGMX10()
+
+  Dim MSGV_DL_PGMX10 As Byte[] = [&H3E, &H14, &H02, &HD5, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_PGMX10)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download PGM X10")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download partitions
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_PARTITIONS()
+
+  Dim MSGV_DL_PARTITIONS As Byte[] = [&H3E, &H00, &H03, &HF0, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_PARTITIONS)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download partitions")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download zones
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_ZONES()
+
+  Dim MSGV_DL_ZONES As Byte[] = [&H3E, &H00, &H09, &H78, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_ZONES)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download zones")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download keyfobs
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_KEYFOBS()
+
+  Dim MSGV_DL_KEYFOBS As Byte[] = [&H3E, &H78, &H09, &H40, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_KEYFOBS)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download keyfobs")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download 2-way keypads
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_2WKEYPAD()
+
+  Dim MSGV_DL_2WKEYPAD As Byte[] = [&H3E, &H00, &H0A, &H08, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_2WKEYPAD)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download 2-way keypads")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download 1-way keypads
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_1WKEYPAD()
+
+  Dim MSGV_DL_1WKEYPAD As Byte[] = [&H3E, &H20, &H0A, &H40, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_1WKEYPAD)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download 1-way keypads")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download sirens 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_SIRENS()
+
+  Dim MSGV_DL_SIRENS As Byte[] = [&H3E, &H60, &H0A, &H08, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_SIRENS)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download sirens")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download X10 names 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_X10NAMES()
+
+  Dim MSGV_DL_X10NAMES As Byte[] = [&H3E, &H30, &H0B, &H10, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_X10NAMES)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download X10 names")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download zone names 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_ZONENAMES()
+
+  Dim MSGV_DL_ZONENAMES As Byte[] = [&H3E, &H40, &H0B, &H1E, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_ZONENAMES)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download zone names")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download event log 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_EVENTLOG()
+
+  Dim MSGV_DL_EVENTLOG As Byte[] = [&H3E, &HDF, &H04, &H28, &H03, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_EVENTLOG)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download event log")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download zone str 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_ZONESTR()
+
+  Dim MSGV_DL_ZONESTR As Byte[] = [&H3E, &H00, &H19, &H00, &H02, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_ZONESTR)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download zone str")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download zone custom 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_ZONECUSTOM()
+
+  Dim MSGV_DL_ZONECUSTOM As Byte[] = [&H3E, &HA0, &H1A, &H50, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_ZONECUSTOM)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download zone custom")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message Send: Download all 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPMDL_ALL()
+
+  Dim MSGV_DL_ALL As Byte[] = [&H3E, &H00, &H00, &H00, &HFF, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+
+  SendCommand(MSGV_DL_ALL)
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Download ALL")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' 06 = Handle timeout message from the PM, most likely we are/were in download mode
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ParsePM06(sInput As Byte[])
+
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Timeout Received")
+  SendPMDL_EXIT()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' 3C = Message after we do a download start
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function ParsePM3C(sInput As Byte[])
+
+  Dim sPanelType As String
+
+  sPanelType = DisplayPanelType(sInput[6])
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] PanelType=" & sPanelType)
+
+  SendPMACK()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' 3F = Handle Download information
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function ParsePM3F(sInput As Byte[])
+
+  Dim sType As String
+  Dim bByte As Byte
+  Dim sSerial As String
+  Dim sPanelId As String
+  Dim sPanelName As String
+  Dim sFirmware As String
+ 
+  ' Format:
+  ' sInput[1] = Type
+  ' sInput[2] = SubType 
+  ' sInput[3] = Length
+
+  sType = Hex$(sInput[1], 2) & Hex$(sInput[2], 2)
+  Select sType
+    Case "3004" ' Serial and panelname information
+      sSerial = Hex$(sInput[4]) & Hex$(sInput[5]) & Hex$(sInput[6]) & Hex$(sInput[7]) & Hex$(sInput[8]) 
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Downloaded Serial=" & sSerial)
+      sPanelId = Hex$(sInput[11], 2) & Hex$(sInput[10], 2)
+      sPanelName = DisplayPanelName(sPanelId)
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Downloaded PanelName=" & sPanelName & " (" & sPanelId & ")")
+
+    Case "0004" ' Firmware
+      For bByte = 4 To (sInput.Count - 5)
+        sFirmware &= Chr$(sInput[bByte])
+      Next
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Downloaded Firmware=" & sFirmware)
+
+    Case "0009" ' ZoneType
+      ' TBD - Hardcoded to 28 zones now - PowerMaster 30 has 64!
+      If Main.bVisonicDebug Then
+        Main.WriteDebugLog("[Visonic] Downloaded Zone Type")
+        For bByte = 1 To 28
+          Main.WriteDebugLog("[Visonic] Zone Type " & bByte & ": " & DisplayZoneType(sInput[bByte + 3]))
+        Next
+      End If
+
+    ' Case "7809" ' Key Fobs
+
+    Default
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Unknown 3F Message: " & sType)
+  End Select
+
+  SendPMACK()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' AB = Handle PowerLink Messages
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function ParsePMAB(sInput As Byte[])
+
+  Dim MSGV_DATA As Byte[]
+  
+  Select Case sInput[1]
+    Case &H03 ' PowerLink keep-alive
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] PowerLink Keep-Alive (" & DisplayPLVersion(Chr$(sInput[5]) & Chr$(sInput[6]) & Chr$(sInput[7]) & Chr$(sInput[8])) & ")")
+      SendPMACK()
+      ' We received a keep-alive, restart timer
+      tPLConnection = New Timer As "tPLConnection"
+      tPLConnection.Delay = bPLTimeOut
+      tPLConnection.Start
+    Case &H0A ' PowerLink wants to auto-enroll
+      ' We received an auto-enrollment, restart time
+      MSGV_DATA = [&HAB, &H0A, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43]
+      MSGV_DATA[4] = bDownloadCode1
+      MSGV_DATA[5] = bDownloadCode2
+
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] PowerLink Auto-Enrollment")
+      tPLConnection = New Timer As "tPLConnection"
+      tPLConnection.Delay = bPLTimeOut
+      tPLConnection.Start
+      SendCommand(MSGV_DATA)
+    Default
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Unknown AB Message: " & Hex$(sInput[2], 2))
+      SendPMACK()
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' A0 = Handle Event Log
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function ParsePMA0(sInput As Byte[])
+  
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' A5 = Handle Status Messages
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function ParsePMA5(sInput As Byte[])
 'Byte 2 indicates the type of event:
 ' 0x01 Log Event Print
 ' 0x02 Status message
 ' 0x03 Tamper Event
 ' 0x04 Zone Event
-Select Case sInput[2]
-  Case &h01 ' Log Event Print
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Log event print")
-  Case &h02 ' Status message
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Status message")
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Zones 1-8  :" & Bin$(sInput[3], 8))
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Zones 9-16 :" & Bin$(sInput[4], 8))
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Zones 17-24:" & Bin$(sInput[5], 8))
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Zones 25-30:" & Bin$(sInput[6], 8))
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Battery Zones 1-8  :" & Bin$(sInput[7], 8))
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Battery Zones 9-16 :" & Bin$(sInput[8], 8))
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Battery Zones 17-24:" & Bin$(sInput[9], 8))
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Battery Zones 25-30:" & Bin$(sInput[10], 8))
-  Case &h03 ' Tamper event
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Tamper event")
-  Case &h04 ' Zone event
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Zone event")
-    Select Case sInput[3] ' System Status
-      Case &h00 ' Disarm
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Disarm")
-      Case &h01 ' Exit Delay
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Exit Delay, arming Home")
-      Case &h02 ' Exit Delay
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Exit Delay, arming Away")
-      Case &h03 ' Entry Delay
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Entry Delay")
-      Case &h04 ' Armed Home
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Armed Home")
-      Case &h05 ' Armed Away
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Armed Away")
-      Case &h06 ' User Test
-        If Main.bVisonicDebug Then Main.WriteDebugLog("User test")
-      Case &h07 ' Downloading
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Downloading")
-      Case &h08 ' Programming
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Programming")
-      Case &h09 ' Installer
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Installer")
-      Case &h0A ' Home Bypass
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Home Bypass")
-      Case &h0B ' Away Bypass
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Away Bypass")
-      Case &h0C ' Ready
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Ready")
-      Case &h0D ' Not Ready
-        If Main.bVisonicDebug Then Main.WriteDebugLog("Not Ready")
-    End Select
-    If (sInput[4] And 1) Then
-      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 0 set, Ready")
-    Endif
-    If (sInput[4] And 2) Then
-      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 1 set, Alert in Memory")
-    Endif
-    If (sInput[4] And 4) Then 
-      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 2 set, Trouble!")
-    Endif
-    If (sInput[4] And 8) Then 
-      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 3 set, Bypass")
-    Endif
-    If (sInput[4] And 16) Then 
-      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 4 set, Last 10 secods of entry/exit")
-    Endif
-    If (sInput[4] And 32) Then 
-      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 5 set, Zone event")
-      If Main.bVisonicDebug Then Main.WriteDebugLog("Zone: " & Hex$(sInput[5], 2))
-      Select Case sInput[6]
-        Case &h00 ' None
-          If Main.bVisonicDebug Then Main.WriteDebugLog("No zone event")
-        Case &h01 ' Tamper Alarm
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Tamper Alarm")
-        Case &h02 ' Tamper Restore
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Tamper alarm restored")
-        Case &h03 ' Open
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone open")
-        Case &h04 ' Closed
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Closed")
-        Case &h05 ' Violated(Motion)
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone violated (Motion detected)")
-        Case &h06 ' Panic Alarm
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone panic alarm")
-        Case &h07 ' RF Jamming
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone RF jamming detected")
-        Case &h08 ' Tamper Open
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Tamper alarm open")
-        Case &h09 ' Communication Failure
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone communication failure")
-        Case &h0A ' Line Failure
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone line failure")
-        Case &h0B ' Fuse
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Fuse")
-        Case &h0C ' Not Active
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone not active")
-        Case &h0D ' Low Battery
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone low battery")
-        Case &h0E ' AC Failure
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone AC Failure")
-        Case &h0F ' Fire Alarm
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone fire alarm")
-        Case &h10 ' Emergency
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Emergency")
-        Case &h11 ' Siren Tamper
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Siren tamper")
-        Case &h12 ' Siren Tamper Restore
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone Siren tamper restored")
-        Case &h13 ' Siren Low Battery
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone siren low battery")
-        Case &h14 ' Siren AC Fail
-          If Main.bVisonicDebug Then Main.WriteDebugLog("Zone siren AC failure")
+
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] General Event")
+
+  Select Case sInput[2]
+    Case &H01 ' Log Event Print
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Log Event Print")
+    Case &H02 ' Status message zones
+      If Main.bVisonicDebug Then
+        Main.WriteDebugLog("[Visonic] Status and Battery Message")
+        Main.WriteDebugLog("[Visonic] Status Zones 01-08: " & DisplayZoneBin(sInput[3]))
+        Main.WriteDebugLog("[Visonic] Status Zones 09-16: " & DisplayZoneBin(sInput[4]))
+        Main.WriteDebugLog("[Visonic] Status Zones 17-24: " & DisplayZoneBin(sInput[5]))
+        Main.WriteDebugLog("[Visonic] Status Zones 25-30: " & DisplayZoneBin(sInput[6]))
+        Main.WriteDebugLog("[Visonic] Battery Zones 01-08: " & DisplayZoneBin(sInput[7]))
+        Main.WriteDebugLog("[Visonic] Battery Zones 09-16: " & DisplayZoneBin(sInput[8]))
+        Main.WriteDebugLog("[Visonic] Battery Zones 17-24: " & DisplayZoneBin(sInput[9]))
+        Main.WriteDebugLog("[Visonic] Battery Zones 25-30: " & DisplayZoneBin(sInput[10]))
+      End If 
+    Case &H03 ' Tamper event
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Tamper Event")
+    Case &H04 ' Zone event
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Event")
+      Select Case sInput[3] ' System Status
+        Case &h00 ' Disarm
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Disarm")
+        Case &h01 ' Exit Delay
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Exit Delay, Arming Home")
+        Case &h02 ' Exit Delay
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Exit Delay, Arming Away")
+        Case &h03 ' Entry Delay
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Entry Delay")
+        Case &h04 ' Armed Home
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Armed Home")
+        Case &h05 ' Armed Away
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Armed Away")
+        Case &h06 ' User Test
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] User Test")
+        Case &h07 ' Downloading
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Downloading")
+        Case &h08 ' Programming
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Programming")
+        Case &h09 ' Installer
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Installer")
+        Case &h0A ' Home Bypass
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Home Bypass")
+        Case &h0B ' Away Bypass
+          If Main.bVisonicDebug Then Main.WriteDebugLog("Away Bypass")
+        Case &h0C ' Ready
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Ready")
+        Case &h0D ' Not Ready
+          If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Not Ready")
       End Select
-    Endif
-    If (sInput[4] And 64) Then 
-      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 6 set, Arm")
-    Endif
-    If (sInput[4] And 128) Then 
-      If Main.bVisonicDebug Then Main.WriteDebugLog("Bit 7 set, Alarm!")
-    Endif
-    Case &h10
-      If Main.bVisonicDebug Then Main.WriteDebugLog("A5 Event 0x10, unknown")
-  Default
-    If Main.bVisonicDebug Then Main.WriteDebugLog("Unknown A5 event: " & Hex$(sInput[2], 2))
-End Select
+
+      If (sInput[4] And 1) Then
+        If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Bit 0 set, Ready")
+      Endif
+      If (sInput[4] And 2) Then
+        If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Bit 1 set, Alert in Memory")
+      Endif
+      If (sInput[4] And 4) Then 
+        If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Bit 2 set, Trouble!")
+      Endif
+      If (sInput[4] And 8) Then 
+        If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Bit 3 set, Bypass")
+      Endif
+      If (sInput[4] And 16) Then 
+        If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Bit 4 set, Last 10 secods of entry/exit")
+      Endif
+      If (sInput[4] And 32) Then 
+        If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Bit 5 set, Zone Event")
+        If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone: " & Hex$(sInput[5], 2))
+
+        Select Case sInput[6]
+          Case &h00 ' None
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] No Zone Event")
+          Case &h01 ' Tamper Alarm
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Tamper Alarm")
+          Case &h02 ' Tamper Restore
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Tamper Alarm Restored")
+          Case &h03 ' Open
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Open")
+          Case &h04 ' Closed
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Closed")
+          Case &h05 ' Violated(Motion)
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Violated (Motion Detected)")
+          Case &h06 ' Panic Alarm
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Panic Alarm")
+          Case &h07 ' RF Jamming
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone RF jamming detected")
+          Case &h08 ' Tamper Open
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Tamper alarm open")
+          Case &h09 ' Communication Failure
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone communication failure")
+          Case &h0A ' Line Failure
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone line failure")
+          Case &h0B ' Fuse
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Fuse")
+          Case &h0C ' Not Active
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone not active")
+          Case &h0D ' Low Battery
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone low battery")
+          Case &h0E ' AC Failure
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone AC Failure")
+          Case &h0F ' Fire Alarm
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone fire alarm")
+          Case &h10 ' Emergency
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Emergency")
+          Case &h11 ' Siren Tamper
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Siren tamper")
+          Case &h12 ' Siren Tamper Restore
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Siren tamper restored")
+          Case &h13 ' Siren Low Battery
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Siren low battery")
+          Case &h14 ' Siren AC Fail
+            If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone Siren AC failure")
+        End Select
+      End If
+
+      If (sInput[4] And 64) Then 
+        If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Bit 6 set, Arm")
+      End If
+      If (sInput[4] And 128) Then 
+        If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Bit 7 set, Alarm!")
+      End If
+    Case &H06 ' Status message enrolled/bypassed
+      If Main.bVisonicDebug Then
+        Main.WriteDebugLog("[Visonic] Enrollment and Bypass Message")
+        Main.WriteDebugLog("[Visonic] Enrolled Zones 01-08: " & DisplayZoneBin(sInput[3]))
+        Main.WriteDebugLog("[Visonic] Enrolled Zones 09-16: " & DisplayZoneBin(sInput[4]))
+        Main.WriteDebugLog("[Visonic] Enrolled Zones 17-24: " & DisplayZoneBin(sInput[5]))
+        Main.WriteDebugLog("[Visonic] Enrolled Zones 25-30: " & DisplayZoneBin(sInput[6]))
+        Main.WriteDebugLog("[Visonic] Bypassed Zones 01-08: " & DisplayZoneBin(sInput[7]))
+        Main.WriteDebugLog("[Visonic] Bypassed Zones 09-16: " & DisplayZoneBin(sInput[8]))
+        Main.WriteDebugLog("[Visonic] Bypassed Zones 17-24: " & DisplayZoneBin(sInput[9]))
+        Main.WriteDebugLog("[Visonic] Bypassed Zones 25-30: " & DisplayZoneBin(sInput[10]))
+      End If
+
+    Case &H10
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] A5 Event 0x10, unknown")
+    Default
+      If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Unknown A5 event: " & Hex$(sInput[2], 2))
+  End Select
+
+Finally
+  ' We *always* need to ACK the A5 messages
+  SendPMACK()
   
 End
 
-Public Sub InitVisonic()
-  Dim init As Byte[] = [&H0D, &HAB, &H0A, &H00, &H01, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43, &H06, &H0A]
-  
-  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Initializing ")
-  SendCommand(init)
-  Sleep 0.025
-  SendACK()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' A7 = Handle Panel Status Change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function ParsePMA7(sInput As Byte[])
+
+  If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Panel Status Change")
+
+   If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Zone/User: " & DisplayZoneUser(sInput[3]))
+   If Main.bVisonicDebug Then Main.WriteDebugLog("[Visonic] Log Event: " & DisplayLogEvent(sInput[4]))
+
+Finally
+  ' We *always* need to ACK the A7 messages
+  SendPMACK()
 
 End
 
-' ACK package
-Private Sub SendACK()
-  Dim ack As Byte[] = [&h0D, &h02, &hFD, &h0A]
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display PowerLink version
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayPLVersion(sStr As String) As String
 
-  SendCommand(ack)
-End
-
-' Request status update
-Private Sub SendRequestUpdate()
-  Dim RequestUpdate As Byte[] = [&H0D, &HA2, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43, &H1A, &H0A]
-
-  SendCommand(RequestUpdate)
-End
-
-' Request Event log
-Private Sub SendRequestEventLog()
-  Dim RequestUpdate As Byte[] = [&H0D, &HA0, &H00, &H00, &H00, &H88, &H88, &H00, &H00, &H00, &H00, &H00, &H43, &H88, &H0A]
-  
-  RequestUpdate[5] = sMasterCode[0]
-  RequestUpdate[6] = sMasterCode[1]
-
-  SendCommand(RequestUpdate)
-End
-
-Private Sub CheckCRC(bData As Byte[]) As Boolean
-
-  Dim bChecksum As Byte
-  Dim bDataTmp As Byte[]
-  
-  ' first copy the bData - else we loose information
-  bDataTmp = bData.Copy()
-  ' Remove the preamble
-  bDataTmp.Extract(0, 1)
-  ' Remove the postamble
-  bDataTmp.Pop()
-
-  ' Check if Count > 0
-  If bDataTmp.Count > 0 Then
-
-    ' Copy and remove the checksum
-    bChecksum = bDataTmp.Pop()
-
-    ' Check if calculation and checksum match
-    If CalculateCRC(bDataTmp) = bChecksum Then Return True
-  End If
-
-  Return False
+  Return sStr
 
 End
 
-Private Sub CalculateCRC(bData As Byte[]) As Byte
-  Dim highb, lowb, b As Byte
-  Dim checksum As Short
-      
-  checksum = 0
-  For Each b In bData
-    checksum += b
-  Next
-'  Print "Orig: " & Hex$(checksum, 4)
-  highb = Lsr(checksum, 8)
-  lowb = Lsr(Lsl(checksum, 8), 8)
-'  Print "lowb :    " & Hex$(lowb, 2)
-'  Print "highb:    " & Hex$(highb, 2)
-      
-  checksum = Lsr(Lsl(&hFFFF - lowb - highb, 8), 8)
-    
-'  Print Hex$(checksum, 2)
-  Return checksum
-  
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display PanelType name
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayPanelType(bType As Byte) As String
+
+  Dim sStr As String
+
+  Select bType 
+    Case &H00
+      sStr = "PowerMax"
+    Case &H01
+      sStr = "PowerMax+"
+    Case &H02
+      sStr = "PowerMax Pro"
+    Case &H03
+      sStr = "PowerMax Complete"
+    Case &H04
+      sStr = "PowerMax Pro Part"
+    Case &H05
+      sStr = "PowerMax Complete Part"
+    Case &H06
+      sStr = "PowerMax Express"
+    Case &H07
+      sStr = "PowerMaster 10"
+    Case &H08
+      sStr = "PowerMaster 30"
+    Default
+      sStr = "UNKNOWN" 
+  End Select
+
+  Return sStr
+
 End
-  
-Public Sub Run()
-  Dim init As Byte[] = [&H0D, &HAB, &H0A, &H00, &H01, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43, &H06, &H0A]
 
-  If bVisonicDebug Then
-    Main.WriteDebugLog("[Visonic] Initializing ")
-  Endif
-  sRecBuf.Clear()
-  SendCommand(init)
-  Sleep 0.025
-  SendACK()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display full Panelname
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayPanelName(sId As String) As String
+
+  Dim sStr As String
+
+  Select sId
+    Case "0000"
+      sStr = "PowerMax"
+    Case "0001"
+      sStr = "PowerMax LT"
+    Case "0004"
+      sStr = "PowerMax A"
+    Case "0005"
+      sStr = "PowerMax"
+    Case "0006"
+      sStr = "PowerMax LT"
+    Case "0009"
+      sStr = "PowerMax B"
+    Case "000a"
+      sStr = "PowerMax A"
+    Case "000b"
+      sStr = "PowerMax"
+    Case "000c"
+      sStr = "PowerMax LT"
+    Case "000f"
+      sStr = "PowerMax B"
+    Case "0014"
+      sStr = "PowerMax A"
+    Case "0015"
+      sStr = "PowerMax"
+    Case "0016"
+      sStr = "PowerMax"
+    Case "0017"
+      sStr = "PowerArt"
+    Case "0018"
+      sStr = "PowerMax SC"
+    Case "0019"
+      sStr = "PowerMax SK"
+    Case "001a"
+      sStr = "PowerMax SV"
+    Case "001b"
+      sStr = "PowerMax T"
+    Case "001e"
+      sStr = "PowerMax WSS"
+    Case "001f"
+      sStr = "PowerMax Smith"
+    Case "0100"
+      sStr = "PowerMax+"
+    Case "0103"
+      sStr = "PowerMax+ UK (3)"
+    Case "0104"
+      sStr = "PowerMax+ JP"
+    Case "0106"
+      sStr = "PowerMax+ CTA"
+    Case "0108"
+      sStr = "PowerMax+"
+    Case "010a"
+      sStr = "PowerMax+ SH"
+    Case "010b"
+      sStr = "PowerMax+ CF"
+    Case "0112"
+      sStr = "PowerMax+ WSS"
+    Case "0113"
+      sStr = "PowerMax+ 2INST"
+    Case "0114"
+      sStr = "PowerMax+ HL"
+    Case "0115"
+      sStr = "PowerMax+ UK"
+    Case "0116"
+      sStr = "PowerMax+ 2INST3"
+    Case "0118"
+      sStr = "PowerMax+ CF"
+    Case "0119"
+      sStr = "PowerMax+ 2INST"
+    Case "011a"
+      sStr = "PowerMax+"
+    Case "011c"
+      sStr = "PowerMax+ WSS"
+    Case "011d"
+      sStr = "PowerMax+ UK"
+    Case "0120"
+      sStr = "PowerMax+ 2INST33"
+    Case "0121"
+      sStr = "PowerMax+"
+    Case "0122"
+      sStr = "PowerMax+ CF"
+    Case "0124"
+      sStr = "PowerMax+ UK"
+    Case "0127"
+      sStr = "PowerMax+ 2INST_MONITOR"
+    Case "0128"
+      sStr = "PowerMax+ KeyOnOff"
+    Case "0129"
+      sStr = "PowerMax+ 2INST_MONITOR"
+    Case "012a"
+      sStr = "PowerMax+ 2INST_MONITOR42"
+    Case "012b"
+      sStr = "PowerMax+ 2INST33"
+    Case "012c"
+      sStr = "PowerMax+ One Inst_1_44_0"
+    Case "012d"
+      sStr = "PowerMax+ CF_1_45_0"
+    Case "012e"
+      sStr = "PowerMax+ SA_1_46"
+    Case "012f"
+      sStr = "PowerMax+ UK_1_47"
+    Case "0130"
+      sStr = "PowerMax+ SA UK_1_48"
+    Case "0132"
+      sStr = "PowerMax+ KeyOnOff 1_50"
+    Case "0201"
+      sStr = "PowerMax Pro"
+    Case "0202"
+      sStr = "PowerMax Pro-Nuon"
+    Case "0204"
+      sStr = "PowerMax Pro-PortugalTelecom"
+    Case "020a"
+      sStr = "PowerMax Pro-PortugalTelecom2"
+    Case "020c"
+      sStr = "PowerMax HW-V9 Pro"
+    Case "020d"
+      sStr = "PowerMax ProSms"
+    Case "0214"
+      sStr = "PowerMax Pro-PortugalTelecom_4_5_02"
+    Case "0216"
+      sStr = "PowerMax HW-V9_4_5_02 Pro"
+    Case "0217"
+      sStr = "PowerMax ProSms_4_5_02"
+    Case "0218"
+      sStr = "PowerMax UK_DD243_4_5_02 Pro M"
+    Case "021b"
+      sStr = "PowerMax Pro-Part2__2_27"
+    Case "0223"
+      sStr = "PowerMax Pro Bell-Canada"
+    Case "0301"
+      sStr = "PowerMax Complete"
+    Case "0302"
+      sStr = "PowerMax Complete_NV"
+    Case "0303"
+      sStr = "PowerMax Complete-PortugalTelecom"
+    Case "0307"
+      sStr = "PowerMax Complete_1_0_07"
+    Case "0308"
+      sStr = "PowerMax Complete_NV_1_0_07"
+    Case "030a"
+      sStr = "PowerMax Complete_UK_DD243_1_1_03"
+    Case "030b"
+      sStr = "PowerMax Complete_COUNTERFORCE_1_0_06"
+    Case "0401"
+      sStr = "PowerMax Pro-Part"
+    Case "0402"
+      sStr = "PowerMax Pro-Part CellAdaptor"
+    Case "0405"
+      sStr = "PowerMax Pro-Part_5_0_08"
+    Case "0406"
+      sStr = "PowerMax Pro-Part CellAdaptor_5_2_04"
+    Case "0407"
+      sStr = "PowerMax Pro-Part KeyOnOff_5_0_08"
+    Case "0408"
+      sStr = "PowerMax UK Pro-Part_5_0_08"
+    Case "0409"
+      sStr = "PowerMax SectorUK Pro-Part_5_0_08"
+    Case "040a"
+      sStr = "PowerMax Pro-Part CP1 4_10"
+    Case "040c"
+      sStr = "PowerMax Pro-Part_Cell_key_4_12"
+    Case "040d"
+      sStr = "PowerMax Pro-Part UK 4_13"
+    Case "040e"
+      sStr = "PowerMax SectorUK Pro-Part_4_14"
+    Case "040f"
+      sStr = "PowerMax Pro-Part UK 4_15"
+    Case "0410"
+      sStr = "PowerMax Pro-Part CP1 4_16"
+    Case "0411"
+      sStr = "PowerMax NUON key 4_17"
+    Case "0433"
+      sStr = "PowerMax Pro-Part2__4_51"
+    Case "0434"
+      sStr = "PowerMax UK Pro-Part2__4_52"
+    Case "0436"
+      sStr = "PowerMax Pro-Part2__4_54"
+    Case "0437"
+      sStr = "PowerMax Pro-Part2__4_55 (CP_01)"
+    Case "0438"
+      sStr = "PowerMax Pro-Part2__4_56"
+    Case "0439"
+      sStr = "PowerMax Pro-Part2__4_57 (NUON)"
+    Case "043a"
+      sStr = "PowerMax Pro 4_58"
+    Case "043c"
+      sStr = "PowerMax Pro 4_60"
+    Case "043e"
+      sStr = "PowerMax Pro-Part2__4_62"
+    Case "0440"
+      sStr = "PowerMax Pro-Part2__4_64"
+    Case "0442"
+      sStr = "PowerMax 4_66"
+    Case "0443"
+      sStr = "PowerMax Pro 4_67"
+    Case "0444"
+      sStr = "PowerMax Pro 4_68"
+    Case "0445"
+      sStr = "PowerMax Pro 4_69"
+    Case "0446"
+      sStr = "PowerMax Pro-Part2__4_70"
+    Case "0447"
+      sStr = "PowerMax 4_71"
+    Case "0449"
+      sStr = "PowerMax 4_73"
+    Case "044b"
+      sStr = "PowerMax Pro-Part2__4_75"
+    Case "0451"
+      sStr = "PowerMax Pro 4_81"
+    Case "0452"
+      sStr = "PowerMax Pro 4_82"
+    Case "0454"
+      sStr = "PowerMax 4_84"
+    Case "0455"
+      sStr = "PowerMax 4_85"
+    Case "0456"
+      sStr = "PowerMax 4_86"
+    Case "0503"
+      sStr = "PowerMax UK Complete partition 1_5_00"
+    Case "050a"
+      sStr = "PowerMax Complete partition GPRS"
+    Case "050b"
+      sStr = "PowerMax Complete partition NV GPRS"
+    Case "050c"
+      sStr = "PowerMax Complete partition GPRS NO-BBA"
+    Case "050d"
+      sStr = "PowerMax Complete partition NV GPRS NO-BBA"
+    Case "050e"
+      sStr = "PowerMax Complete part. GPRS NO-BBA UK_5_14"
+    Case "0511"
+      sStr = "PowerMax Pro-Part CP1 GPRS 5_17"
+    Case "0512"
+      sStr = "PowerMax Complete part. BBA UK_5_18"
+
+    Case "0533"
+      sStr = "PowerMax Complete part2 5_51"
+    Case "0534"
+      sStr = "PowerMax Complete part2 5_52 (UK)"
+
+    Case "0536"
+      sStr = "PowerMax Complete 5_54 (GR)"
+    Case "0537"
+      sStr = "PowerMax Complete 5_55"
+    Case "053a"
+      sStr = "PowerMax Complete 5_58 (PT)"
+    Case "053b"
+      sStr = "PowerMax Complete part2 5_59 (NV)"
+    Case "053c"
+      sStr = "PowerMax Complete 5_60"
+    Case "053e"
+      sStr = "PowerMax Complete 5_62"
+    Case "053f"
+      sStr = "PowerMax Complete part2  5_63"
+    Case "0540"
+      sStr = "PowerMax Complete 5_64"
+    Case "0541"
+      sStr = "PowerMax Complete 5_65"
+    Case "0543"
+      sStr = "PowerMax Complete 5_67"
+    Case "0544"
+      sStr = "PowerMax Complete 5_68"
+    Case "0545"
+      sStr = "PowerMax Complete 5_69"
+    Case "0546"
+      sStr = "PowerMax Complete 5_70"
+    Case "0547"
+      sStr = "PowerMax Complete 5_71"
+    Case "0549"
+      sStr = "PowerMax Complete 5_73"
+    Case "054b"
+      sStr = "PowerMax Complete 5_75"
+    Case "054f"
+      sStr = "PowerMax Complete 5_79"
+    Case "0601"
+      sStr = "PowerMax Express"
+    Case "0603"
+      sStr = "PowerMax Express CP 01"
+    Case "0605"
+      sStr = "PowerMax Express OEM 6_5"
+    Case "0607"
+      sStr = "PowerMax Express BBA 6_7"
+    Case "0608"
+      sStr = "PowerMax Express CP 01 BBA 6_8"
+    Case "0609"
+      sStr = "PowerMax Express OEM1 BBA 6_9"
+    Case "060b"
+      sStr = "PowerMax Express BBA 6_11"
+    Case "0633"
+      sStr = "PowerMax Express 6_51"
+    Case "063b"
+      sStr = "PowerMax Express 6_59"
+    Case "063d"
+      sStr = "PowerMax Express 6_61"
+    Case "063e"
+      sStr = "PowerMax Express 6_62 (UK)"
+    Case "0645"
+      sStr = "PowerMax Express 6_69"
+    Case "0647"
+      sStr = "PowerMax Express 6_71"
+    Case "0648"
+      sStr = "PowerMax Express 6_72"
+    Case "0649"
+      sStr = "PowerMax Express 6_73"
+    Case "064a"
+      sStr = "PowerMax Activa 6_74"
+    Case "064c"
+      sStr = "PowerMax Express 6_76"
+    Case "064d"
+      sStr = "PowerMax Express 6_77"
+    Case "064e"
+      sStr = "PowerMax Express 6_78"
+    Case "064f"
+      sStr = "PowerMax Secure 6_79"
+    Case "0650"
+      sStr = "PowerMax Express 6_80"
+    Case "0650"
+      sStr = "PowerMax Express part2 M 6_80"
+    Case "0651"
+      sStr = "PowerMax Express 6_81"
+    Case "0652"
+      sStr = "PowerMax Express 6_82"
+    Case "0653"
+      sStr = "PowerMax Express 6_83"
+    Case "0654"
+      sStr = "PowerMax 6_84"
+    Case "0655"
+      sStr = "PowerMax 6_85"
+    Case "0658"
+      sStr = "PowerMax 6_88"
+    Case "0659"
+      sStr = "PowerMax 6_89"
+    Case "065a"
+      sStr = "PowerMax 6_90"
+    Case "065b"
+      sStr = "PowerMax 6_91"
+    Case "0701"
+      sStr = "PowerMax PowerCode-G 7_1"
+    Case "0702"
+      sStr = "PowerMax PowerCode-G 7_2"
+    Case "0704"
+      sStr = "PowerMaster 10 7_4"
+    Case "0705"
+      sStr = "PowerMaster 10 7_05"
+    Case "0707"
+      sStr = "PowerMaster 10 7_07"
+    Case "070c"
+      sStr = "PowerMaster 10 7_12"
+    Case "070f"
+      sStr = "PowerMaster 10 7_15"
+    Case "0710"
+      sStr = "PowerMaster 10 7_16"
+    Case "0711"
+      sStr = "PowerMaster 10 7_17"
+    Case "0712"
+      sStr = "PowerMaster 10 7_18"
+    Case "0713"
+      sStr = "PowerMaster 10 7_19"
+    Case "0802"
+      sStr = "PowerMax Complete PowerCode-G 8_2"
+    Case "0803"
+      sStr = "PowerMaster 30 8_3"
+    Case "080f"
+      sStr = "PowerMaster 30 8_15"
+    Case "0810"
+      sStr = "PowerMaster 30 8_16"
+    Case "0812"
+      sStr = "PowerMaster 30 8_18"
+    Case "0813"
+      sStr = "PowerMaster 30 8_19"
+    Case "0815"
+      sStr = "PowerMaster 30 8_21"
+    Default
+      sStr = "UNKNOWN"
+  End Select
+
+  Return sStr
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display Zone/User
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayZoneUser(bType As Byte) As String
 
+  Dim sStr As String
+
+  Select bType
+    Case &H00
+      sStr = "System"
+    Case &H01
+      sStr = "Zone 1"
+    Case &H02
+      sStr = "Zone 2"
+    Case &H03
+      sStr = "Zone 3"
+    Case &H04
+      sStr = "Zone 4"
+    Case &H05
+      sStr = "Zone 5"
+    Case &H06
+      sStr = "Zone 6"
+    Case &H07
+      sStr = "Zone 7"
+    Case &H08
+      sStr = "Zone 8"
+    Case &H09
+      sStr = "Zone 9"
+    Case &H0A
+      sStr = "Zone 10"
+    Case &H0B
+      sStr = "Zone 11"
+    Case &H0C
+      sStr = "Zone 12"
+    Case &H0D
+      sStr = "Zone 13"
+    Case &H0E
+      sStr = "Zone 14"
+    Case &H0F
+      sStr = "Zone 15"
+    Case &H10
+      sStr = "Zone 16"
+    Case &H11
+      sStr = "Zone 17"
+    Case &H12
+      sStr = "Zone 18"
+    Case &H13
+      sStr = "Zone 19"
+    Case &H14
+      sStr = "Zone 20"
+    Case &H15
+      sStr = "Zone 21"
+    Case &H16
+      sStr = "Zone 22"
+    Case &H17
+      sStr = "Zone 23"
+    Case &H18
+      sStr = "Zone 24"
+    Case &H19
+      sStr = "Zone 25"
+    Case &H1A
+      sStr = "Zone 26"
+    Case &H1B
+      sStr = "Zone 27"
+    Case &H1C
+      sStr = "Zone 28"
+    Case &H1D
+      sStr = "Zone 29"
+    Case &H1E
+      sStr = "Zone 30"
+    Case &H1F
+      sStr = "Keyfob1"
+    Case &H20
+      sStr = "Keyfob2"
+    Case &H21
+      sStr = "Keyfob3"
+    Case &H22
+      sStr = "Keyfob4"
+    Case &H23
+      sStr = "Keyfob5"
+    Case &H24
+      sStr = "Keyfob6"
+    Case &H25
+      sStr = "Keyfob7"
+    Case &H26
+      sStr = "Keyfob8"
+    Case &H27
+      sStr = "User1"
+    Case &H28
+      sStr = "User2"
+    Case &H29
+      sStr = "User3"
+    Case &H2A
+      sStr = "User4"
+    Case &H2B
+      sStr = "User5"
+    Case &H2C
+      sStr = "User6"
+    Case &H2D
+      sStr = "User7"
+    Case &H2E
+      sStr = "User8"
+    Case &H2F
+      sStr = "Wireless Commander1"
+    Case &H30
+      sStr = "Wireless Commander2"
+    Case &H31
+      sStr = "Wireless Commander3"
+    Case &H32
+      sStr = "Wireless Commander4"
+    Case &H33
+      sStr = "Wireless Commander5"
+    Case &H34
+      sStr = "Wireless Commander6"
+    Case &H35
+      sStr = "Wireless Commander7"
+    Case &H36
+      sStr = "Wireless Commander8"
+    Case &H37
+      sStr = "Wireless Siren1"
+    Case &H38
+      sStr = "Wireless Siren2"
+    Case &H39
+      sStr = "2Way Wireless Keypad1"
+    Case &H3A
+      sStr = "2Way Wireless Keypad2"
+    Case &H3B
+      sStr = "2Way Wireless Keypad3"
+    Case &H3C
+      sStr = "2Way Wireless Keypad4"
+    Case &H3D
+      sStr = "X10-1"
+    Case &H3E
+      sStr = "X10-2"
+    Case &H3F
+      sStr = "X10-3"
+    Case &H40
+      sStr = "X10-4"
+    Case &H41
+      sStr = "X10-5"
+    Case &H42
+      sStr = "X10-6"
+    Case &H43
+      sStr = "X10-7"
+    Case &H44
+      sStr = "X10-8"
+    Case &H45
+      sStr = "X10-9"
+    Case &H46
+      sStr = "X10-10"
+    Case &H47
+      sStr = "X10-11"
+    Case &H48
+      sStr = "X10-12"
+    Case &H49
+      sStr = "X10-13"
+    Case &H4A
+      sStr = "X10-14"
+    Case &H4B
+      sStr = "X10-15"
+    Case &H4C
+      sStr = "PGM"
+    Case &H4D
+      sStr = "GSM"
+    Case &H4E
+      sStr = "Powerlink"
+    Case &H4F
+      sStr = "Proxy Tag1"
+    Case &H50
+      sStr = "Proxy Tag2"
+    Case &H51
+      sStr = "Proxy Tag3"
+    Case &H52
+      sStr = "Proxy Tag4"
+    Case &H53
+      sStr = "Proxy Tag5"
+    Case &H54
+      sStr = "Proxy Tag6"
+    Case &H55
+      sStr = "Proxy Tag7"
+    Case &H56
+      sStr = "Proxy Tag8"
+    Default
+      sStr = "UNKNOWN (" & Hex$(bType,2) & ")"
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display Log Event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Private Sub DisplayLogEvent(bType As Byte) As String
+
+  Dim sStr As String
+
+  Select bType
+    Case &H00
+      sStr = "None"
+    Case &H01
+      sStr = "Interior Alarm"
+    Case &H02
+      sStr = "Perimeter Alarm"
+    Case &H03
+      sStr = "Delay Alarm"
+    Case &H04
+      sStr = "24h Silent Alarm"
+    Case &H05
+      sStr = "24h Audible Alarm"
+    Case &H06
+      sStr = "Tamper"
+    Case &H07
+      sStr = "Control Panel Tamper"
+    Case &H08
+      sStr = "Tamper Alarm"
+    Case &H09
+      sStr = "Tamper Alarm"
+    Case &H0A
+      sStr = "Communication Loss"
+    Case &H0B
+      sStr = "Panic From Keyfob"
+    Case &H0C
+      sStr = "Panic From Control Panel"
+    Case &H0D
+      sStr = "Duress"
+    Case &H0E
+      sStr = "Confirm Alarm"
+    Case &H0F
+      sStr = "General Trouble"
+    Case &H10
+      sStr = "General Trouble Restore"
+    Case &H11
+      sStr = "Interior Restore"
+    Case &H12
+      sStr = "Perimeter Restore"
+    Case &H13
+      sStr = "Delay Restore"
+    Case &H14
+      sStr = "24h Silent Restore"
+    Case &H15
+      sStr = "24h Audible Restore"
+    Case &H16
+      sStr = "Tamper Restore"
+    Case &H17
+      sStr = "Control Panel Tamper Restore"
+    Case &H18
+      sStr = "Tamper Restore"
+    Case &H19
+      sStr = "Tamper Restore"
+    Case &H1A
+      sStr = "Communication Restore"
+    Case &H1B
+      sStr = "Cancel Alarm"
+    Case &H1C
+      sStr = "General Restore"
+    Case &H1D
+      sStr = "Trouble Restore"
+    Case &H1E
+      sStr = "Not used"
+    Case &H1F
+      sStr = "Recent Close"
+    Case &H20
+      sStr = "Fire"
+    Case &H21
+      sStr = "Fire Restore"
+    Case &H22
+      sStr = "No Active"
+    Case &H23
+      sStr = "Emergency"
+    Case &H24
+      sStr = "No used"
+    Case &H25
+      sStr = "Disarm Latchkey"
+    Case &H26
+      sStr = "Panic Restore"
+    Case &H27
+      sStr = "Supervision (Inactive)"
+    Case &H28
+      sStr = "Supervision Restore (Active)"
+    Case &H29
+      sStr = "Low Battery"
+    Case &H2A
+      sStr = "Low Battery Restore"
+    Case &H2B
+      sStr = "AC Fail"
+    Case &H2C
+      sStr = "AC Restore"
+    Case &H2D
+      sStr = "Control Panel Low Battery"
+    Case &H2E
+      sStr = "Control Panel Low Battery Restore"
+    Case &H2F
+      sStr = "RF Jamming"
+    Case &H30
+      sStr = "RF Jamming Restore"
+    Case &H31
+      sStr = "Communications Failure"
+    Case &H32
+      sStr = "Communications Restore"
+    Case &H33
+      sStr = "Telephone Line Failure"
+    Case &H34
+      sStr = "Telephone Line Restore"
+    Case &H35
+      sStr = "Auto Test"
+    Case &H36
+      sStr = "Fuse Failure"
+    Case &H37
+      sStr = "Fuse Restore"
+    Case &H38
+      sStr = "Keyfob Low Battery"
+    Case &H39
+      sStr = "Keyfob Low Battery Restore"
+    Case &H3A
+      sStr = "Engineer Reset"
+    Case &H3B
+      sStr = "Battery Disconnect"
+    Case &H3C
+      sStr = "1-Way Keypad Low Battery"
+    Case &H3D
+      sStr = "1-Way Keypad Low Battery Restore"
+    Case &H3E
+      sStr = "1-Way Keypad Inactive"
+    Case &H3F
+      sStr = "1-Way Keypad Restore Active"
+    Case &H40
+      sStr = "Low Battery"
+    Case &H41
+      sStr = "Clean Me"
+    Case &H42
+      sStr = "Fire Trouble"
+    Case &H43
+      sStr = "Low Battery"
+    Case &H44
+      sStr = "Battery Restore"
+    Case &H45
+      sStr = "AC Fail"
+    Case &H46
+      sStr = "AC Restore"
+    Case &H47
+      sStr = "Supervision (Inactive)"
+    Case &H48
+      sStr = "Supervision Restore (Active)"
+    Case &H49
+      sStr = "Gas Alert"
+    Case &H4A
+      sStr = "Gas Alert Restore"
+    Case &H4B
+      sStr = "Gas Trouble"
+    Case &H4C
+      sStr = "Gas Trouble Restore"
+    Case &H4D
+      sStr = "Flood Alert"
+    Case &H4E
+      sStr = "Flood Alert Restore"
+    Case &H4F
+      sStr = "X-10 Trouble"
+    Case &H50
+      sStr = "X-10 Trouble Restore"
+    Case &H51
+      sStr = "Arm Home"
+    Case &H52
+      sStr = "Arm Away"
+    Case &H53
+      sStr = "Quick Arm Home"
+    Case &H54
+      sStr = "Quick Arm Away"
+    Case &H55
+      sStr = "Disarm"
+    Case &H56
+      sStr = "Fail To Auto-Arm"
+    Case &H57
+      sStr = "Enter To Test Mode"
+    Case &H58
+      sStr = "Exit From Test Mode"
+    Case &H59
+      sStr = "Force Arm"
+    Case &H5A
+      sStr = "Auto Arm"
+    Case &H5B
+      sStr = "Instant Arm"
+    Case &H5C
+      sStr = "Bypass"
+    Case &H5D
+      sStr = "Fail To Arm"
+    Case &H5E
+      sStr = "Door Open"
+    Case &H5F
+      sStr = "Communication Established By Control Panel"
+    Case &H60
+      sStr = "System Reset"
+    Case &H61
+      sStr = "Installer Programming"
+    Case &H62
+      sStr = "Wrong Password"
+    Case &H63
+      sStr = "Not Sys Event"
+    Case &H64
+      sStr = "Not Sys Event"
+    Case &H65
+      sStr = "Extreme Hot Alert"
+    Case &H66
+      sStr = "Extreme Hot Alert Restore"
+    Case &H67
+      sStr = "Freeze Alert"
+    Case &H68
+      sStr = "Freeze Alert Restore"
+    Case &H69
+      sStr = "Human Cold Alert"
+    Case &H6A
+      sStr = "Human Cold Alert Restore"
+    Case &H6B
+      sStr = "Human Hot Alert"
+    Case &H6C
+      sStr = "Human Hot Alert Restore"
+    Case &H6D
+      sStr = "Temperature Sensor Trouble"
+    Case &H6E
+      sStr = "Temperature Sensor Trouble Restore"
+    Default
+      sStr = "UNKNOWN (" & Hex$(bType,2) & ")"
+  End Select
+
+  Return sStr
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display Zone Even Type information
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Private Sub DisplayZoneEventType(bType As Byte) As String
+
+  Dim sStr As String
+
+  Select bType
+    Case &H00
+      sStr = "None" 
+    Case &H01
+      sStr = "Tamper Alarm"
+    Case &H02
+      sStr = "Tamper Restore"
+    Case &H03
+      sStr = "Open" 
+    Case &H04
+      sStr = "Closed"
+    Case &H05
+      sStr = "Violated (Motion)"
+    Case &H06
+      sStr = "Panic Alarm"
+    Case &H07
+      sStr = "RF Jamming"
+    Case &H08
+      sStr = "Tamper Open"
+    Case &H09
+      sStr = "Communication Failure"
+    Case &H0A
+      sStr = "Line Failure"
+    Case &H0B
+      sStr = "Fuse"
+    Case &H0C
+      sStr = "Not Active"
+    Case &H0D
+      sStr = "Low Battery"
+    Case &H0E
+      sStr = "AC Failure"
+    Case &H0F
+      sStr = "Fire Alarm"
+    Case &H10
+      sStr = "Emergency"
+    Case &H11
+      sStr = "Siren Tamper"
+    Case &H12
+      sStr = "Siren Tamper Restore"
+    Case &H13
+      sStr = "Siren Low Battery"
+    Case &H14
+      sStr = "Siren AC Fail"
+    Default
+      sStr = "UNKNOWN (" & Hex$(bType,2) & ")"
+  End Select
+
+  Return sStr
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display Zone Type Name
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayZoneType(bType As Byte) As String
+
+  Dim sStr As String
+
+  Select bType
+    Case &H00
+      sStr = "Non-Alarm"
+    Case &H01
+      sStr = "Emergency"
+    Case &H02
+      sStr = "Flood"
+    Case &H03
+      sStr = "Gas"
+    Case &H04
+      sStr = "Delay 1"
+    Case &H05
+      sStr = "Delay 2"
+    Case &H06
+      sStr = "Interior-Follow"
+    Case &H07
+      sStr = "Perimeter"
+    Case &H08
+      sStr = "Perimeter-Follow"
+    Case &H09
+      sStr = "24 Hours Silent"
+    Case &H0A
+      sStr = "24 Hours Audible"
+    Case &H0B
+      sStr = "Fire"
+    Case &H0C
+      sStr = "Interior"
+    Case &H0D
+      sStr = "Home Delay"
+    Case &H0E
+      sStr = "Temperature"
+    Case &H0F
+      sStr = "Outdoor"
+    Default
+      sStr = "UNKNOWN (" & Hex$(bType,2) & ")"
+  End Select
+
+  Return sStr
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display Zones in reverse binary format
+' Zones are from e.g. 1-8, but it is stored in 87654321 order in binary format
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayZoneBin(sBin As Byte) As String
+
+  Dim sTmp As String
+  Dim sStr As String
+  Dim iCount As Integer
+
+  sTmp = Bin$(sBin, 8)
+
+  For iCount = Len(sTmp) To 1 Step -1
+    sStr &= Mid$(sTmp, iCount, 1)
+  Next 
+
+  Return sStr
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' implement the properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Function Port_Read() As String
 
   Return sPort
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Port_Write(sValue As String)
 
   sPort = sValue
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Function VisonicDebug_Read() As Boolean
 
   Return bVisonicDebug
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub VisonicDebug_Write(sValue As Boolean)
 
   bVisonicDebug = sValue
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Function MasterCode_Read() As String
 
   Return sMasterCode
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub MasterCode_Write(sValue As String)
 
   sMasterCode = sValue
 
 End
+
