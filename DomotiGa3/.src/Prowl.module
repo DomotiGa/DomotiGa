@@ -12,6 +12,9 @@
 
 ' Read file called COPYING for license details.
 
+Public hProwlMessage As HttpClient
+Public cProwlData As New Collection
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Parse Prowl XML Response
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -92,11 +95,11 @@ Public Sub ValidateProwlApiKey(sApiKey As String) As String
   Dim aResponse As String[]
 
   If sApiKey = "" Then sApiKey = Main.sProwlApiKey
-  sUrl &= "apikey=" & sApiKey
+  sUrl &= "apikey=" & URL.Encode(sApiKey)
 
   hProwlValidate = New HttpClient As "hProwlValidate"
   hProwlValidate.URL = sUrl
-  hProwlValidate.TimeOut = 3
+  hProwlValidate.TimeOut = 8
   hProwlValidate.Async = False
   hProwlValidate.Get
 
@@ -115,7 +118,7 @@ Public Sub ValidateProwlApiKey(sApiKey As String) As String
         Return ""
       Case "error"
         If aResponse[1] = "" Then aResponse[1] = hProwlValidate.Code
-        If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Failed to validated API key= " & sApiKey & ", Code=" & aResponse[1] & ", ErrorMessage=" & aResponse[4])
+        If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Failed to validated API key=" & sApiKey & ", Code=" & aResponse[1] & ", ErrorMessage=" & aResponse[4])
         Return "Code=" & aResponse[1] & ", Msg=" & aResponse[4]
         Return False
       Default
@@ -132,48 +135,144 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Post the Prowl message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PostProwl(sApiKey As String, sApplication As String, sEvent As String, sDescription As String) As String
+Public Sub PostProwl(sApiKey As String, sApplication As String, sEvent As String, sDescription As String, Optional bAsync As Boolean = True) As String
 
-  Dim hProwlMessage As HttpClient
   Dim sUrl As String = "https://api.prowlapp.com/publicapi/add?"
   Dim sBuffer As String
   Dim aResponse As String[]
+  Dim Bucle As Byte
+
+  ' In Async mode we need to do extra things
+  If bAsync Then
+    ' Find free tag, between 1 and 99. Normally we should never go over 1 thread
+    For Bucle = 1 To 100
+      If Bucle = 100 Then Break
+
+      If Not cProwlData.Exist(Bucle) Then Break
+    Next
+
+    If Bucle = 100 Then
+      Main.WriteLog("ERROR: Prowl Message Queue full")
+      Return
+    End If
+  End If
 
   If sApiKey = "" Then sApiKey = Main.sProwlApiKey
   If sApplication = "" Then sApplication = Main.sProwlApplication
   If sEvent = "" Then sEvent = Main.sProwlEvent
-  sUrl &= "apikey=" & sApiKey & "&" & "application=" & URL.Encode(sApplication) & "&" & "event=" & URL.Encode(sEvent) & "&" & "description=" & URL.Encode(sDescription)
+  sUrl &= "apikey=" & URL.Encode(sApiKey) & "&" & "application=" & URL.Encode(sApplication) & "&" & "event=" & URL.Encode(sEvent) & "&" & "description=" & URL.Encode(sDescription)
 
   hProwlMessage = New HttpClient As "hProwlMessage"
   hProwlMessage.URL = sUrl
-  hProwlMessage.TimeOut = 3
-  hProwlMessage.Async = False
+  hProwlMessage.TimeOut = 8
+  hProwlMessage.Async = bAsync
+  hProwlMessage.Tag = Bucle
   hProwlMessage.Post("", "")
 
-  If hProwlMessage.Status < 0 Then
-    ' Faillure fetching data or apikey is invalid
-    If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Error sending Prowl message. API key=" & sApiKey & ", Code=" & hProwlMessage.Status & ", HTTP=" & hProwlMessage.Code)
-    Return "Failed, Code=" & hProwlMessage.Status & ", HTTP=" & hProwlMessage.Code
+  ' If Async = False - we need to return if it is successfull or not
+  If bAsync Then
+    If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Posting Prowl message (#" & Bucle & ") " & sUrl)
+    cProwlData.Add("", Bucle)
   Else
-    ' success or error - read the data
-    If Lof(hProwlMessage) Then sBuffer = Read #hProwlMessage, Lof(hProwlMessage)
+    If hProwlMessage.Status < 0 Then
+      ' Faillure fetching data or apikey is invalid
+      If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Error sending Prowl message. API key=" & sApiKey & ", Code=" & hProwlMessage.Status & ", HTTP=" & hProwlMessage.Code)
+      Return "Failed, Code=" & hProwlMessage.Status & ", HTTP=" & hProwlMessage.Code
+    Else
+      ' success or error - read the data
+      If Lof(hProwlMessage) Then sBuffer = Read #hProwlMessage, Lof(hProwlMessage)
 
-    aResponse = ParseProwlXML(sBuffer)
-    Select Case aResponse[0]
-      Case "success"
-        If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Successfully send message. API key=" & sApiKey & ", Code=" & aResponse[1] & ", Remaining=" & aResponse[2] & ", ResetDate=" & aResponse[3])
-        Return ""
-      Case "error"
-        If aResponse[1] = "" Then aResponse[1] = hProwlMessage.Code
-        If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Failed to send message. API key= " & sApiKey & ", Code=" & aResponse[1] & ", ErrorMessage=" & aResponse[4])
-        Return "Code=" & aResponse[1] & ", Msg=" & aResponse[4]
-      Default
-        If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Unknown error sending message. API key=" & sApiKey & ", HttpCode=" & hProwlMessage.Code & ", XML=" & sBuffer)
-        Return "Unknown XML, HTTP=" & hProwlMessage.Code
-    End Select
+      aResponse = ParseProwlXML(sBuffer)
+      Select Case aResponse[0]
+        Case "success"
+          If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Successfully send message. API key=" & sApiKey & ", Code=" & aResponse[1] & ", Remaining=" & aResponse[2] & ", ResetDate=" & aResponse[3])
+          Return ""
+        Case "error"
+          If aResponse[1] = "" Then aResponse[1] = hProwlMessage.Code
+          If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Failed to send message. API key=" & sApiKey & ", Code=" & aResponse[1] & ", ErrorMessage=" & aResponse[4])
+          Return "Code=" & aResponse[1] & ", Msg=" & aResponse[4]
+        Default
+          If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Unknown error sending message. API key=" & sApiKey & ", HttpCode=" & hProwlMessage.Code & ", XML=" & sBuffer)
+          Return "Unknown XML, HTTP=" & hProwlMessage.Code
+      End Select
 
+    End If
   End If
 
   Return ""
   
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read the data send by Prowl, this can be called multiple times
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hProwlMessage_Read()
+
+  Dim sData, sBuffer As String
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If Lof(Last) Then sBuffer = Read #Last, Lof(Last)
+  If cProwlData[Last.Tag] Then
+    sData = cProwlData[Last.Tag] & sBuffer
+  Else
+    sData = sBuffer
+  Endif
+
+  cProwlData[Last.Tag] = sData
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' End of the Prowl response found, parse it
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hProwlMessage_Finished()
+
+  Dim aResponse As New String[5]
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If Last.Status < 0 Then
+    ' Faillure fetching data or apikey is invalid
+    If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Error sending Prowl message (#" & Last.Tag & "). API key=" & Main.sProwlApiKey & ", Code=" & Last.Status & ", HTTP=" & Last.Code)
+  Else
+    ' success or error - read the data
+    aResponse = ParseProwlXML(cProwlData[Last.Tag])
+    Select Case aResponse[0]
+      Case "success"
+        If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Successfully send message (#" & Last.Tag & "). API key=" & Main.sProwlApiKey & ", Code=" & aResponse[1] & ", Remaining=" & aResponse[2] & ", ResetDate=" & aResponse[3])
+      Case "error"
+        If aResponse[1] = "" Then aResponse[1] = Last.Code
+        If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Failed to send message (#" & Last.Tag & "). API key=" & Main.sProwlApiKey & ", Code=" & aResponse[1] & ", ErrorMessage=" & aResponse[4])
+      Default
+        If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Unknown error sending message (#" & Last.Tag & "). API key=" & Main.sProwlApiKey & ", HttpCode=" & Last.Code & ", XML=" & cProwlData[Last.Tag])
+    End Select
+
+  End If
+
+Finally
+
+  cProwlData.Remove(Last.Tag)
+  Last.Close
+
+Catch
+  Main.WriteLog("ERROR: " & Error.Text & " when sending Prowl message")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Error Raised for the Prowl message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hProwlMessage_Error()
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If Main.bProwlDebug Then Main.WriteDebugLog("[Prowl] Error sending Prowl message: " & Last.Status)
+
+  Try cProwlData.Remove(Last.Tag)
+  Try Last.Close
+
 End

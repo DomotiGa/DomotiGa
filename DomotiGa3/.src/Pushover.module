@@ -11,6 +11,10 @@
 ' Copyright (C) Ron Klinkien, The Netherlands.
 
 ' Read file called COPYING for license details.
+
+Public hPushoverMessage As HttpClient
+Public cPushoverData As New Collection
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Validate Pushover token and user
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -60,7 +64,7 @@ Public Sub ValidatePushoverTokenUser(sToken As String, sUser As String) As Strin
       If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Successfully validated API token=" & sToken & ", user=" & sUser)
       Return ""
     Else
-      If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Failed to validated API token= " & sToken & ", user=" & sUser & ", Code=" & hPushoverValidate.Code & ", Error=" & sError)
+      If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Failed to validated API token=" & sToken & ", user=" & sUser & ", Code=" & hPushoverValidate.Code & ", Error=" & sError)
       Return "Code=" & hPushoverValidate.code & ", Error=" & sError
     Endif
 
@@ -73,9 +77,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Post the Pushover message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PostPushover(sToken As String, sUser As String, sDevice As String, sMessage As String) As String
+Public Sub PostPushover(sToken As String, sUser As String, sDevice As String, sMessage As String, Optional bAsync As Boolean = True) As String
 
-  Dim hPushoverMessage As HttpClient
   Dim sUrl As String = "https://api.pushover.net/1/messages.json"
   Dim sData As String
   Dim sBuffer As String
@@ -85,6 +88,22 @@ Public Sub PostPushover(sToken As String, sUser As String, sDevice As String, sM
   Dim vResponse As Variant
   Dim vErrors As Variant
   Dim sError As String
+  Dim Bucle As Byte
+  
+  ' In Async mode we need to do extra things
+  If bAsync Then
+    ' Find free tag, between 1 and 99. Normally we should never go over 1 thread
+    For Bucle = 1 To 100
+      If Bucle = 100 Then Break
+
+      If Not cPushoverData.Exist(Bucle) Then Break
+    Next
+
+    If Bucle = 100 Then
+      Main.WriteLog("ERROR: Pushover Message Queue full")
+      Return
+    End If
+  End If
   
   If sToken = "" Then sToken = Main.sPushoverToken
   If sUser = "" Then sUser = Main.sPushoverUser
@@ -98,36 +117,123 @@ Public Sub PostPushover(sToken As String, sUser As String, sDevice As String, sM
   hPushoverMessage = New HttpClient As "hPushoverMessage"
   hPushoverMessage.URL = sUrl
   hPushoverMessage.TimeOut = 3
-  hPushoverMessage.Async = False
+  hPushoverMessage.Async = bAsync
+  hPushoverMessage.Tag = Bucle
   hPushoverMessage.Post("application/x-www-form-urlencoded", sData)
 
-  If hPushoverMessage.Status < 0 Then
+  If bAsync Then
+    If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Posting Pushover message (#" & Bucle & ") " & sUrl)
+    cPushoverData.Add("", Bucle)
+  Else
+    If hPushoverMessage.Status < 0 Then
+      ' Faillure fetching data or apikey is invalid
+      If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Error sending Pushover message. API token=" & sToken & ", User=" & sUser & ", HttpCode=" & hPushoverMessage.Status)
+      Return "Failed, HTTP=" & hPushoverMessage.Status
+    Else
+      ' success or error - read the data
+      If Lof(hPushoverMessage) Then sBuffer = Read #hPushoverMessage, Lof(hPushoverMessage)
+
+      vResponse = JSON.Decode(sBuffer)
+
+      If vResponse.Exist("status") Then sStatus = vResponse["status"]
+      If vResponse.Exist("user") Then sUserResp = vResponse["user"]
+      If vResponse.Exist("device") Then sDeviceResp = vResponse["device"]
+      If vResponse.Exist("errors") Then vErrors = vResponse["errors"]
+      Try sError = vErrors[0]
+    
+      ' Status=1 is success, anything else is a faillure
+      If sStatus = "1" Then
+        If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Successfully send message. API token=" & sToken & ", user=" & sUser)
+        Return ""
+      Else
+        If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Failed to send message. API token=" & sToken & ", user=" & sUser & ", Code=" & hPushoverMessage.Code & ", Error=" & sError)
+        Return "Code=" & hPushoverMessage.code & ", Error=" & sError
+      Endif
+    End If
+  End If
+
+  Return ""
+  
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read the data send by Pushover, this can be called multiple times
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hPushoverMessage_Read()
+
+  Dim sData, sBuffer As String
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If Lof(Last) Then sBuffer = Read #Last, Lof(Last)
+  If cPushoverData[Last.Tag] Then
+    sData = cPushoverData[Last.Tag] & sBuffer
+  Else
+    sData = sBuffer
+  Endif
+
+  cPushoverData[Last.Tag] = sData
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' End of the Pushover response found, parse it
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hPushoverMessage_Finished()
+
+  Dim sStatus As String
+  Dim sUserResp As String
+  Dim sDeviceResp As String
+  Dim vResponse As Variant
+  Dim vErrors As Variant
+  Dim sError As String
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If Last.Status < 0 Then
     ' Faillure fetching data or apikey is invalid
-    If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Error sending Pushover message. API token=" & sToken & ", User=" & sUser & ", HttpCode=" & hPushoverMessage.Status)
-    Return "Failed, HTTP=" & hPushoverMessage.Status
+    If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Error sending Pushover message (#" & Last.Tag & "). API token=" & Main.sPushoverToken & ", User=" & Main.sPushoverUser & ", HttpCode=" & Last.Status)
   Else
     ' success or error - read the data
-    If Lof(hPushoverMessage) Then sBuffer = Read #hPushoverMessage, Lof(hPushoverMessage)
-
-    vResponse = JSON.Decode(sBuffer)
+    vResponse = JSON.Decode(cPushoverData[Last.Tag])
 
     If vResponse.Exist("status") Then sStatus = vResponse["status"]
     If vResponse.Exist("user") Then sUserResp = vResponse["user"]
     If vResponse.Exist("device") Then sDeviceResp = vResponse["device"]
     If vResponse.Exist("errors") Then vErrors = vResponse["errors"]
     Try sError = vErrors[0]
-    
+
     ' Status=1 is success, anything else is a faillure
     If sStatus = "1" Then
-      If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Successfully send message. API token=" & sToken & ", user=" & sUser)
-      Return ""
+      If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Successfully send message (#" & Last.Tag & "). API token=" & Main.sPushoverToken & ", user=" & Main.sPushoverUser)
     Else
-      If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Failed to send message. API token= " & sToken & ", user=" & sUser & ", Code=" & hPushoverMessage.Code & ", Error=" & sError)
-      Return "Code=" & hPushOverMessage.code & ", Error=" & sError
-    Endif
-
+      If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Failed to send message (#" & Last.Tag & "). API token=" & Main.sPushoverToken & ", user=" & Main.sPushoverUser & ", Code=" & Last.Code & ", Error=" & sError)
+    End If
   End If
 
-  Return ""
-  
+Finally
+
+  cPushoverData.Remove(Last.Tag)
+  Last.Close
+
+Catch
+  Main.WriteLog("ERROR: " & Error.Text & " when sending Pushover message")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Error Raised for the Pushover message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hPushoverMessage_Error()
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If Main.bPushoverDebug Then Main.WriteDebugLog("[Pushover] Error sending Pushover message: " & Last.Status)
+
+  Try cPushoverData.Remove(Last.Tag)
+  Try Last.Close
+
 End
