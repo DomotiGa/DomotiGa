@@ -1,35 +1,6 @@
 #!/bin/bash
 # Compile DomotiGa binaries
 
-hash gbc2 &> /dev/null
-if [ $? -eq 1 ]; then
-	echo "Gambas2 not found, skipping compile.."
-else
-	if [ -d DomotiGaServer ]; then
-	  cd DomotiGaServer
-	else
-	  cd ../DomotiGaServer
-	fi
-	gbc2 -agm
-	gba2 -o `pwd`/../DomotiGaServer.gambas
-	rm -rf .gambas
-	cd ..
-	chmod +x DomotiGaServer.gambas
-	ls -la DomotiGaServer.gambas
-
-	if [ -d DomotiGa ]; then
-	  cd DomotiGa
-	else
-	  cd ../DomotiGa
-	fi
-	gbc2 -agmp
-	gba2 -o `pwd`/../DomotiGa.gambas
-	rm -rf .gambas
-	cd ..
-	chmod +x DomotiGa.gambas
-	ls -la DomotiGa.gambas
-fi
-
 hash gbc3 &> /dev/null
 if [ $? -eq 1 ]; then
 	echo "Gambas3 not found, skipping compile.."
