@@ -63,7 +63,7 @@ CREATE TABLE scenes (
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 
-DROP TABLE IF EXISTS scenes_action;
+DROP TABLE IF EXISTS scenes_actions;
 
 CREATE TABLE scenes_actions (
   `scene` bigint(20) NOT NULL,
