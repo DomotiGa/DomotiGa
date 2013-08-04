@@ -1,0 +1,358 @@
+' Gambas class file
+
+' Description:
+' CSmartVisuServer.class
+' Built-in SmartVISU server support.
+
+' Development Status:
+' Just started, minimal tested.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.n
+
+' Coded by gambasforge project, I made it work/fixed bugs.
+
+' Read file called COPYING for license details.
+
+Event {Ready}
+Event Closed
+Event {Read}(data As String)
+
+Private $hibil10 As Boolean ' the new protocol is used
+Public sock As Socket
+Private Handeled As Boolean ' socket is ready
+
+Public Sub _new($sock As Socket)
+
+  sock = $sock
+  Object.Attach(sock, Me, "Socket")
+
+End
+
+Public Sub Disconnect()
+
+  sock.Close()
+
+End
+
+Public Sub Socket_Closed()
+
+  Raise Closed
+
+End
+
+Public Sub Socket_Read()
+
+  Dim data As String
+
+  Read #Last, data, Lof(Last)
+
+  If Handeled
+    If $hibil10 Then
+      Raise Read(hybi10Decode(data)["payload"])
+    Else
+      Raise Read(Trim(Mid(data, 2, Len(data) - 2)))
+    Endif
+  Else
+    ResponseHeaders(data)
+  Endif
+
+End
+
+Public Sub Send(text As String)
+
+  If Not Handeled Then Return
+  If Not (sock.Status = Net.Connected) Then Return
+  If $hibil10 Then
+    'Print " HyBi10 WebSocket > " & text
+    Write #sock, Me.hybi10Encode(text)
+  Else
+    'Print " HiBi00 WebSocket > " & text
+    Write #sock, (Chr(0) & text & Chr(255))
+  Endif
+
+End
+
+Private Sub ResponseHeaders(source As String)
+
+  Dim headers As Collection
+  Dim response, handshake As String
+
+  headers = HTTPHeaders(source)
+  'Print source
+
+  If headers["Sec-WebSocket-Key1"] <> Null And If headers["Sec-WebSocket-Key2"] <> Null
+    ' use hibi-00 protocol / hixie76
+
+    handshake = MakeHibi00Handshake(headers["Sec-WebSocket-Key1"], headers["Sec-WebSocket-Key2"], Right$(source, 8))
+    response = "HTTP/1.1 101 WebSocket Protocol Handshake\r\n"
+    "Upgrade: WebSocket\r\n"
+    "Connection: Upgrade\r\n"
+    "Sec-WebSocket-Origin: " & headers["Origin"] & "\r\n"
+    "Sec-WebSocket-Location: ws://" & headers["Host"] & "/\r\n"
+    "\r\n" & handshake & Chr(0)
+  Else If headers["Sec-WebSocket-Key"] And If IsInteger(headers["Sec-WebSocket-Version"])
+    ' use hibi-06 protocol / rfc6455
+
+    handshake = MakeHibi10HandShake(headers["Sec-WebSocket-Key"])
+    response = "HTTP/1.1 101 Switching Protocols\r\n"
+    "Upgrade: WebSocket\r\n"
+    "Connection: Upgrade\r\n"
+    "Sec-WebSocket-Accept: " & handshake & "\r\n\r\n"
+    $hibil10 = True
+  Else
+    ' protocol not supported
+    sock.Close()
+    Return
+  Endif
+
+  Write #sock, (response)
+  Handeled = True
+  Raise Ready
+
+Catch
+  Print Error.text & " at " & Error.where
+
+End
+
+' ===================== Utils =======================
+
+Private Function MD5(text As String) As String
+
+  Dim sum, chaine As String
+  Dim i As Integer
+
+  Shell "echo -n \"" & text & "\" | md5sum" To sum
+
+  For i = 1 To Len(sum) Step 2
+    chaine &= Chr(Val("&H" & Mid$(sum, i, 2)))
+  Next
+  Return chaine
+
+End
+
+Private Function Pack(Value As Integer) As String
+
+  Dim bits As String = Bin(Value, 32)
+  Dim bytes As New String[]
+  Dim i, num As Byte
+  Dim char As String
+
+  bytes.Add(Mid$(bits, 1, 8))
+  bytes.Add(Mid$(bits, 9, 8))
+  bytes.Add(Mid$(bits, 17, 8))
+  bytes.Add(Mid$(bits, 25, 8))
+
+  For Each bits In bytes
+    num = 0
+    For i = 0 To Len(bits) - 1
+      If Mid$(bits, 8 - i, 1) = "1" Then num = BSet(num, i)
+    Next
+    char &= Chr(num)
+  Next
+  Return char
+
+End
+
+Private Function HTTPHeaders(source As String) As Collection
+
+  Dim headers As New Collection
+  Dim s As String
+  Dim pos As Integer
+
+  For Each s In Split(source, "\r\n")
+    pos = InStr(s, ": ")
+    If pos > 0
+      headers[Left(s, pos - 1)] = Right(s, -1 * (pos + 1))
+    Endif
+  Next
+  Return headers
+
+End
+
+Private Function MakeHibi00Handshake(key1 As String, key2 As String, bytes8 As String) As String
+
+  Dim i As Integer
+  Dim numKey1, numKey2 As String ' number of digits in each key
+  Dim numSpace1, numSpace2 As Integer ' number of spaces in each key
+  Dim handshake As String
+
+  For i = 1 To Len(key1) ' check for spaces and digits
+    If IsDigit(Mid$(key1, i, 1)) Then numKey1 &= Mid$(key1, i, 1)
+    If Mid$(key1, i, 1) = " " Then Inc numSpace1
+  Next
+
+  For i = 1 To Len(key2)
+    If IsDigit(Mid$(key2, i, 1)) Then numKey2 &= Mid$(key2, i, 1)
+    If Mid$(key2, i, 1) = " " Then Inc numSpace2
+  Next
+  Return MD5(Pack(CLong(numKey1) / numSpace1) & Pack(CLong(numKey2) / numSpace2) & bytes8)
+
+End
+
+Private Function MakeHibi10HandShake(key As String) As String
+
+  Dim handshake As String = key & "258EAFA5-E914-47DA-95CA-C5AB0DC85B11" ' add special string
+
+  Return EncodeBase64(SHA1(handshake)) ' make hash and base64 encode it
+
+End
+
+Private Function SHA1(text As String) As String
+
+  Dim sum As String
+
+  Shell "echo -n \"" & text & "\" | sha1sum" To sum
+  Return Left(sum, -4)
+
+End
+
+Private Function EncodeBase64(text As String) As String
+
+  Dim sResult As String
+  Dim i As Integer
+
+  For i = 1 To Len(text) Step 2
+     sResult &= Chr(Val("&H" & Mid(text, i, 2)))
+  Next
+  Return Base64(sResult)
+
+End
+
+Public Function hybi10Encode(sPayLoad As String, Optional sType As String = "text", bMasked As Boolean = False) As String
+
+  Dim aFrameHead As New String[]
+  Dim iPayLoadLength As Integer = Len(sPayLoad)
+  Dim apayloadLengthBin As Byte[]
+  Dim aMask As New String[4]
+  Dim i As Integer
+  Dim sFrame As String
+
+  Select Case sType
+    Case "text"
+      ' first byte indicates end, Text-Frame (10000001)
+      aFrameHead.Add(Chr(129))
+    Case "close"
+      ' first byte indicates end, Close Frame(10001000):
+      aFrameHead.Add(Chr(136))
+    Case "ping"
+      ' first byte indicates FIN, Ping frame (10001001):
+      aFrameHead.Add(Chr(137))
+    Case "pong"
+      ' first byte indicates FIN, Pong frame(10001010):
+      aFrameHead.Add(Chr(138))
+  End Select
+  ' set mask and payload length (using 1, 3 or 9 bytes)
+  If iPayLoadLength > 65535 Then
+    apayloadLengthBin = IntegerToBytes(ipayloadLength, 64)
+    aframeHead.Add(Chr(IIf(bmasked = True, 255, 127)))
+    For i = 0 To 7
+      aframeHead[i + 2] = Chr(apayloadLengthBin[i])
+    Next
+    ' most significant bit must be 0 (close connection if frame too big)
+    If aframeHead[2] > 127 Then
+      Return False
+    Endif
+  Else
+    If iPayLoadLength > 125 Then
+      apayloadLengthBin = IntegerToBytes(ipayloadLength, 16)
+      aframeHead.Add(Chr(IIf(bmasked = True, 254, 126)))
+      aframeHead.Add(Chr(apayloadLengthBin[0]))
+      aframeHead.Add(Chr(apayloadLengthBin[1]))
+    Else
+      aframeHead.Add(Chr(IIf(bMasked = True, ipayloadLength + 128, ipayloadLength)))
+    Endif
+  Endif
+  If bmasked = True Then
+    ' generate a random mask
+    For i = 0 To 3
+      amask[i] = Chr(Rnd(0, 255))
+    Next
+    aframeHead = aframeHead.Insert(amask)
+  Endif
+  sFrame = aframeHead.Join("")
+  For i = 1 To ipayloadLength
+    sFrame &= IIf(bmasked, Chr(Asc(Mid(sPayLoad, i, 1)) Xor Asc(amask[i Mod 4])), Mid(sPayLoad, i, 1))
+  Next
+  Return sFrame
+
+End
+
+Private Sub IntegerToBytes(iVal As Integer, iByteLength As Integer) As Byte[]
+
+  Dim sVal As String = Bin(iVal, iByteLength)
+  Dim i As Integer = 1
+  Dim aByte As New Byte[]
+
+  For i = 0 To Len(sVal) - 1 Step 8
+    aByte.Add(Val("&X" & Mid(sVal, i + 1, 8)))
+  Next
+  Return aByte
+
+End
+
+Public Function hybi10Decode(sData As String) As Collection
+
+  Dim sPayloadLength As String
+  Dim sMask As String
+  Dim sunmaskedPayload As String
+  Dim cdecodedData As New Collection
+  Dim iPayLoadOffset As Integer
+  Dim idataLength As Integer
+  'estimate frame type:
+  'dim $firstByteBinary = sprintf( '%08b', ord($data[0]));
+  '$secondByteBinary = sprintf( '%08b', ord($data[1]));
+  Dim icode As Integer = Val("&X" & Mid(Bin(Asc(Mid(sData, 1, 1)), 8), 5, 4))
+  Dim bisMasked As Boolean = Left(Bin(Asc(Mid(sData, 2, 1)), 8)) = "1"
+  Dim ipayloadLength As Integer = Asc(Mid(sdata, 2, 1)) And 127
+  Dim i, j As Integer
+  'Close connection If unmasked frame Is Received:
+  If bisMasked = False Then
+    '$this - > close(1002); '<= == == == == == == == a modifier
+  Endif
+
+  Select Case icode
+      'text frame:
+    Case 1
+      cdecodedData["type"] = "text"
+      'connection Close frame:
+    Case 8
+      cdecodedData["type"] = "close"
+      'ping frame:
+    Case 9
+      cdecodedData["type"] = "ping"
+      'pong frame:
+    Case 10
+      cdecodedData["type"] = "pong"
+    Case Else
+      'Close connection on unknown opcode:
+      '$this - > close(1003);  <================================= a modifier
+  End Select
+
+  If ipayloadLength = 126 Then
+    smask = Mid(sdata, 5, 4)
+    ipayloadOffset = 8
+  Else
+    If ipayloadLength = 127 Then
+      smask = Mid(sdata, 11, 4)
+      ipayloadOffset = 14
+    Else
+      smask = Mid(sdata, 3, 4)
+      ipayloadOffset = 6
+    Endif
+  Endif
+  idataLength = Len(sdata)
+
+  If bisMasked = True Then
+    For i = ipayloadOffset + 1 To idataLength
+      j = i - (ipayloadOffset + 1)
+      sunmaskedPayload &= Chr(Asc(Mid(sdata, i, 1)) Xor Asc(Mid(smask, (j % 4) + 1, 1)))
+    Next
+    cdecodedData["payload"] = sunmaskedPayload
+  Else
+    ipayloadOffset -= 4
+    cdecodedData["payload"] = Mid(sdata, ipayloadOffset + 1)
+  Endif
+  Return cdecodedData
+
+End
