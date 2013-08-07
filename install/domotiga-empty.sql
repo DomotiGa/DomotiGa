@@ -1400,7 +1400,7 @@ CREATE TABLE `settings_asterisk` (
 
 LOCK TABLES `settings_asterisk` WRITE;
 /*!40000 ALTER TABLE `settings_asterisk` DISABLE KEYS */;
-INSERT INTO `settings_asterisk` VALUES (0,0,'localhost',5038,300,'asterisk','secret',0),(1,0,'192.168.100.2',5038,300,'asterisk','password',0);
+INSERT INTO `settings_asterisk` VALUES (0,0,'192.168.100.2',5038,300,'asterisk','password',0),(1,0,'192.168.100.2',5038,300,'asterisk','password',0);
 /*!40000 ALTER TABLE `settings_asterisk` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1461,7 +1461,7 @@ CREATE TABLE `settings_bluetooth` (
 
 LOCK TABLES `settings_bluetooth` WRITE;
 /*!40000 ALTER TABLE `settings_bluetooth` DISABLE KEYS */;
-INSERT INTO `settings_bluetooth` VALUES (0,0,'hci0',30,120,0),(1,0,'hci0',-20,300,0);
+INSERT INTO `settings_bluetooth` VALUES (0,0,'hci0',-20,300,0),(1,0,'hci0',-20,300,0);
 /*!40000 ALTER TABLE `settings_bluetooth` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1699,7 +1699,7 @@ CREATE TABLE `settings_domotica` (
 
 LOCK TABLES `settings_domotica` WRITE;
 /*!40000 ALTER TABLE `settings_domotica` DISABLE KEYS */;
-INSERT INTO `settings_domotica` VALUES (0,0,'/dev/ttyUSB6',0),(1,0,'/dev/ttyUSB4',0);
+INSERT INTO `settings_domotica` VALUES (0,0,'/dev/ttyUSB4',0),(1,0,'/dev/ttyUSB4',0);
 /*!40000 ALTER TABLE `settings_domotica` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1728,7 +1728,7 @@ CREATE TABLE `settings_dsc` (
 
 LOCK TABLES `settings_dsc` WRITE;
 /*!40000 ALTER TABLE `settings_dsc` DISABLE KEYS */;
-INSERT INTO `settings_dsc` VALUES (0,0,'/dev/ttyS0',9600,0,'1234',NULL),(1,0,'/dev/ttyS0',9600,0,'1234',0);
+INSERT INTO `settings_dsc` VALUES (0,0,'/dev/ttyS0',9600,0,'1234',0),(1,0,'/dev/ttyS0',9600,0,'1234',0);
 /*!40000 ALTER TABLE `settings_dsc` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1755,7 +1755,7 @@ CREATE TABLE `settings_eib` (
 
 LOCK TABLES `settings_eib` WRITE;
 /*!40000 ALTER TABLE `settings_eib` DISABLE KEYS */;
-INSERT INTO `settings_eib` VALUES (0,0,'localhost',6720,1),(1,0,'localhost',6720,-1);
+INSERT INTO `settings_eib` VALUES (0,0,'localhost',6720,0),(1,0,'localhost',6720,0);
 /*!40000 ALTER TABLE `settings_eib` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1814,7 +1814,7 @@ CREATE TABLE `settings_email` (
 
 LOCK TABLES `settings_email` WRITE;
 /*!40000 ALTER TABLE `settings_email` DISABLE KEYS */;
-INSERT INTO `settings_email` VALUES (0,0,'domotiga@somedomain.com','admin@somedomain.com','localhost',25,0,'youraccount','yourpassword',0),(1,0,'domotiga@yourdomain.nl','ron@yourdomain.nl','smtp.yourprovider.nl',25,0,'youraccount','yourpassword',0);
+INSERT INTO `settings_email` VALUES (0,0,'domotiga@yourdomain.nl','ron@yourdomain.nl','smtp.yourprover.nl',25,0,'youraccount','yourpassword',0),(1,0,'domotiga@yourdomain.nl','ron@yourdomain.nl','smtp.yourprovider.nl',25,0,'youraccount','yourpassword',0);
 /*!40000 ALTER TABLE `settings_email` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1866,7 +1866,7 @@ CREATE TABLE `settings_fritzbox` (
 
 LOCK TABLES `settings_fritzbox` WRITE;
 /*!40000 ALTER TABLE `settings_fritzbox` DISABLE KEYS */;
-INSERT INTO `settings_fritzbox` VALUES (0,0,'192.168.100.1',1),(1,0,'192.168.100.1',-1);
+INSERT INTO `settings_fritzbox` VALUES (0,0,'192.168.100.1',0),(1,0,'192.168.100.1',0);
 /*!40000 ALTER TABLE `settings_fritzbox` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1894,7 +1894,7 @@ CREATE TABLE `settings_glatitude` (
 
 LOCK TABLES `settings_glatitude` WRITE;
 /*!40000 ALTER TABLE `settings_glatitude` DISABLE KEYS */;
-INSERT INTO `settings_glatitude` VALUES (0,0,1,25,300,0),(1,0,0,1,300,0);
+INSERT INTO `settings_glatitude` VALUES (0,0,1,1,300,0),(1,0,0,1,300,0);
 /*!40000 ALTER TABLE `settings_glatitude` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1922,7 +1922,7 @@ CREATE TABLE `settings_gmail` (
 
 LOCK TABLES `settings_gmail` WRITE;
 /*!40000 ALTER TABLE `settings_gmail` DISABLE KEYS */;
-INSERT INTO `settings_gmail` VALUES (0,0,'gmailuser','password',120,1),(1,0,'user@gmail.com','test',60,0);
+INSERT INTO `settings_gmail` VALUES (0,0,'user@gmail.com','test',60,0),(1,0,'user@gmail.com','test',60,0);
 /*!40000 ALTER TABLE `settings_gmail` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1979,7 +1979,7 @@ CREATE TABLE `settings_hddtemp` (
 
 LOCK TABLES `settings_hddtemp` WRITE;
 /*!40000 ALTER TABLE `settings_hddtemp` DISABLE KEYS */;
-INSERT INTO `settings_hddtemp` VALUES (0,0,'localhost',7634,600,60,0),(1,0,'localhost',7634,300,40,0);
+INSERT INTO `settings_hddtemp` VALUES (0,0,'localhost',7634,300,40,0),(1,0,'localhost',7634,300,40,0);
 /*!40000 ALTER TABLE `settings_hddtemp` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2009,7 +2009,7 @@ CREATE TABLE `settings_homematic` (
 
 LOCK TABLES `settings_homematic` WRITE;
 /*!40000 ALTER TABLE `settings_homematic` DISABLE KEYS */;
-INSERT INTO `settings_homematic` VALUES (0,0,1,'192.168.1.15','9','tcp',0,1000),(1,0,1,'192.168.1.15','9','tcp',0,1000);
+INSERT INTO `settings_homematic` VALUES (0,0,0,'192.168.1.15','9','tcp',0,1000),(1,0,0,'192.168.1.15','9','tcp',0,1000);
 /*!40000 ALTER TABLE `settings_homematic` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2039,7 +2039,7 @@ CREATE TABLE `settings_iport` (
 
 LOCK TABLES `settings_iport` WRITE;
 /*!40000 ALTER TABLE `settings_iport` DISABLE KEYS */;
-INSERT INTO `settings_iport` VALUES (0,0,'192.168.100.66',60128,'tcp','/dev/ttyUSB3','9600',0),(1,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0','4800',0);
+INSERT INTO `settings_iport` VALUES (0,0,'192.168.1.68',500,'tcp','/dev/ttyUSBD0','4800',0),(1,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0','4800',0);
 /*!40000 ALTER TABLE `settings_iport` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2119,7 +2119,7 @@ CREATE TABLE `settings_iviewer` (
 
 LOCK TABLES `settings_iviewer` WRITE;
 /*!40000 ALTER TABLE `settings_iviewer` DISABLE KEYS */;
-INSERT INTO `settings_iviewer` VALUES (0,0,8020,'password',0),(1,0,5000,'password',0);
+INSERT INTO `settings_iviewer` VALUES (0,0,5000,'password',0),(1,0,5000,'password',0);
 /*!40000 ALTER TABLE `settings_iviewer` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2175,7 +2175,7 @@ CREATE TABLE `settings_k8055` (
 
 LOCK TABLES `settings_k8055` WRITE;
 /*!40000 ALTER TABLE `settings_k8055` DISABLE KEYS */;
-INSERT INTO `settings_k8055` VALUES (0,1,5,0,100,100,1),(1,0,5,0,100,100,-1);
+INSERT INTO `settings_k8055` VALUES (0,1,5,0,100,100,0),(1,0,5,0,100,100,0);
 /*!40000 ALTER TABLE `settings_k8055` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2226,7 +2226,7 @@ CREATE TABLE `settings_ledmatrix` (
 
 LOCK TABLES `settings_ledmatrix` WRITE;
 /*!40000 ALTER TABLE `settings_ledmatrix` DISABLE KEYS */;
-INSERT INTO `settings_ledmatrix` VALUES (0,0,'/dev/ttyUSB7',1,1,0,0),(1,0,'/dev/ttyUSB9',3,3,1,0);
+INSERT INTO `settings_ledmatrix` VALUES (0,0,'/dev/ttyUSB9',3,3,1,0),(1,0,'/dev/ttyUSB9',3,3,1,0);
 /*!40000 ALTER TABLE `settings_ledmatrix` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2256,7 +2256,7 @@ CREATE TABLE `settings_lgtv` (
 
 LOCK TABLES `settings_lgtv` WRITE;
 /*!40000 ALTER TABLE `settings_lgtv` DISABLE KEYS */;
-INSERT INTO `settings_lgtv` VALUES (0,0,'192.168.100.66',60128,'tcp','/dev/ttyUSB3','9600',0),(1,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0','4800',0);
+INSERT INTO `settings_lgtv` VALUES (0,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0','4800',0),(1,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0','4800',0);
 /*!40000 ALTER TABLE `settings_lgtv` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2283,7 +2283,7 @@ CREATE TABLE `settings_lirc` (
 
 LOCK TABLES `settings_lirc` WRITE;
 /*!40000 ALTER TABLE `settings_lirc` DISABLE KEYS */;
-INSERT INTO `settings_lirc` VALUES (0,0,'localhost',8765,0),(1,0,'localhost',8765,-1);
+INSERT INTO `settings_lirc` VALUES (0,0,'localhost',8765,0),(1,0,'localhost',8765,0);
 /*!40000 ALTER TABLE `settings_lirc` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2321,7 +2321,7 @@ CREATE TABLE `settings_main` (
 
 LOCK TABLES `settings_main` WRITE;
 /*!40000 ALTER TABLE `settings_main` DISABLE KEYS */;
-INSERT INTO `settings_main` VALUES (0,250,5000,0,15000,1,'FHome',0,0,0,'TagLine|Power Usage','House Mode','Outside','',NULL,NULL),(1,250,10000,0,15000,0,'FLogfiles',0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',NULL,NULL);
+INSERT INTO `settings_main` VALUES (0,250,10000,0,15000,0,'FHome',0,0,0,'TagLine|Power Usage','House Mode','Outside','',NULL,NULL),(1,250,10000,0,15000,0,'FLogfiles',0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',NULL,NULL);
 /*!40000 ALTER TABLE `settings_main` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2376,7 +2376,7 @@ CREATE TABLE `settings_mochad` (
 
 LOCK TABLES `settings_mochad` WRITE;
 /*!40000 ALTER TABLE `settings_mochad` DISABLE KEYS */;
-INSERT INTO `settings_mochad` VALUES (0,0,'127.0.0.1',1990,0,0),(1,0,'192.168.1.23',1099,0,-1);
+INSERT INTO `settings_mochad` VALUES (0,0,'192.168.1.23',1099,0,0),(1,0,'192.168.1.23',1099,0,0);
 /*!40000 ALTER TABLE `settings_mochad` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2435,7 +2435,7 @@ CREATE TABLE `settings_ncid` (
 
 LOCK TABLES `settings_ncid` WRITE;
 /*!40000 ALTER TABLE `settings_ncid` DISABLE KEYS */;
-INSERT INTO `settings_ncid` VALUES (0,0,'127.0.0.1',0,3333),(1,0,'192.168.200.15',-1,3333);
+INSERT INTO `settings_ncid` VALUES (0,0,'192.168.200.15',0,3333),(1,0,'192.168.200.15',0,3333);
 /*!40000 ALTER TABLE `settings_ncid` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2469,7 +2469,7 @@ CREATE TABLE `settings_nta8130` (
 
 LOCK TABLES `settings_nta8130` WRITE;
 /*!40000 ALTER TABLE `settings_nta8130` DISABLE KEYS */;
-INSERT INTO `settings_nta8130` VALUES (0,0,'192.168.100.7',10002,'serial','/dev/ttyUSB7','9600',7,1,1,'',0),(1,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','9600',7,1,1,'',1);
+INSERT INTO `settings_nta8130` VALUES (0,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','9600',7,1,1,'',0),(1,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','9600',7,1,1,'',0);
 /*!40000 ALTER TABLE `settings_nta8130` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2499,7 +2499,7 @@ CREATE TABLE `settings_onkyo` (
 
 LOCK TABLES `settings_onkyo` WRITE;
 /*!40000 ALTER TABLE `settings_onkyo` DISABLE KEYS */;
-INSERT INTO `settings_onkyo` VALUES (0,0,'192.168.100.66',60128,'tcp','/dev/ttyUSB3','9600',0),(1,0,'192.168.100.67',60128,'serial','/dev/ttyUSBD0','9600',0);
+INSERT INTO `settings_onkyo` VALUES (0,0,'192.168.100.67',60128,'tcp','/dev/ttyUSBD0','9600',0),(1,0,'192.168.100.67',60128,'serial','/dev/ttyUSBD0','9600',0);
 /*!40000 ALTER TABLE `settings_onkyo` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2534,7 +2534,7 @@ CREATE TABLE `settings_opentherm` (
 
 LOCK TABLES `settings_opentherm` WRITE;
 /*!40000 ALTER TABLE `settings_opentherm` DISABLE KEYS */;
-INSERT INTO `settings_opentherm` VALUES (0,'',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',1080,'tcp',0,50000,0),(1,'Temporarily',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',1080,'serial',0,50000,0);
+INSERT INTO `settings_opentherm` VALUES (0,'Temporarily',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',1080,'tcp',0,50000,0),(1,'Temporarily',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',1080,'serial',0,50000,0);
 /*!40000 ALTER TABLE `settings_opentherm` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2562,7 +2562,7 @@ CREATE TABLE `settings_owfs` (
 
 LOCK TABLES `settings_owfs` WRITE;
 /*!40000 ALTER TABLE `settings_owfs` DISABLE KEYS */;
-INSERT INTO `settings_owfs` VALUES (0,0,300,'/var/1-wire',1,0),(1,0,300,'/tmp/1wire',-1,0);
+INSERT INTO `settings_owfs` VALUES (0,0,300,'/tmp/1wire',-1,0),(1,0,300,'/tmp/1wire',-1,0);
 /*!40000 ALTER TABLE `settings_owfs` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2590,7 +2590,7 @@ CREATE TABLE `settings_oww` (
 
 LOCK TABLES `settings_oww` WRITE;
 /*!40000 ALTER TABLE `settings_oww` DISABLE KEYS */;
-INSERT INTO `settings_oww` VALUES (0,0,'192.168.1.65',8891,'Oww text-format',1),(1,0,'192.168.1.65',8888,'Henriksen WServer TCP',-1);
+INSERT INTO `settings_oww` VALUES (0,0,'192.168.1.65',8888,'Oww text-format',0),(1,0,'192.168.1.65',8888,'Oww text-format',0);
 /*!40000 ALTER TABLE `settings_oww` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2618,7 +2618,7 @@ CREATE TABLE `settings_pachube` (
 
 LOCK TABLES `settings_pachube` WRITE;
 /*!40000 ALTER TABLE `settings_pachube` DISABLE KEYS */;
-INSERT INTO `settings_pachube` VALUES (0,0,1234,NULL,15,0),(1,0,3711,NULL,10,-1);
+INSERT INTO `settings_pachube` VALUES (0,0,3711,NULL,10,0),(1,0,3711,NULL,10,0);
 /*!40000 ALTER TABLE `settings_pachube` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2644,7 +2644,7 @@ CREATE TABLE `settings_ping` (
 
 LOCK TABLES `settings_ping` WRITE;
 /*!40000 ALTER TABLE `settings_ping` DISABLE KEYS */;
-INSERT INTO `settings_ping` VALUES (0,0,60,0),(1,0,300,0);
+INSERT INTO `settings_ping` VALUES (0,0,300,0),(1,0,300,0);
 /*!40000 ALTER TABLE `settings_ping` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2706,7 +2706,7 @@ CREATE TABLE `settings_plcbus` (
 
 LOCK TABLES `settings_plcbus` WRITE;
 /*!40000 ALTER TABLE `settings_plcbus` DISABLE KEYS */;
-INSERT INTO `settings_plcbus` VALUES (0,0,'/dev/ttyUSB0','9600',0,'250',0,NULL,NULL,0),(1,0,'/dev/ttyUSB4','9600',0,'250',0,'A,B',NULL,-1);
+INSERT INTO `settings_plcbus` VALUES (0,0,'/dev/ttyUSB4','9600',0,'250',0,'A,B',NULL,0),(1,0,'/dev/ttyUSB4','9600',0,'250',0,'A,B',NULL,0);
 /*!40000 ALTER TABLE `settings_plcbus` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2733,7 +2733,7 @@ CREATE TABLE `settings_plugwise` (
 
 LOCK TABLES `settings_plugwise` WRITE;
 /*!40000 ALTER TABLE `settings_plugwise` DISABLE KEYS */;
-INSERT INTO `settings_plugwise` VALUES (0,1,'/dev/ttyUSB7',300,1),(1,0,'/dev/ttyUSB7',300,-1);
+INSERT INTO `settings_plugwise` VALUES (0,1,'/dev/ttyUSB7',300,0),(1,0,'/dev/ttyUSB7',300,0);
 /*!40000 ALTER TABLE `settings_plugwise` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2761,7 +2761,7 @@ CREATE TABLE `settings_pwrctrl` (
 
 LOCK TABLES `settings_pwrctrl` WRITE;
 /*!40000 ALTER TABLE `settings_pwrctrl` DISABLE KEYS */;
-INSERT INTO `settings_pwrctrl` VALUES (0,0,7077,75,'userpw',0),(1,0,7077,75,'user1user',0);
+INSERT INTO `settings_pwrctrl` VALUES (0,0,7077,75,'user1user',0),(1,0,7077,75,'user1user',0);
 /*!40000 ALTER TABLE `settings_pwrctrl` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2794,7 +2794,7 @@ CREATE TABLE `settings_rfxcomrx` (
 
 LOCK TABLES `settings_rfxcomrx` WRITE;
 /*!40000 ALTER TABLE `settings_rfxcomrx` DISABLE KEYS */;
-INSERT INTO `settings_rfxcomrx` VALUES (0,0,'192.168.100.7',10001,'tcp','/dev/ttyUSB3','4800',0,0,10011,0),(1,0,'192.168.100.7',10001,'serial','/dev/ttyUSB0','4800',0,-1,10011,0);
+INSERT INTO `settings_rfxcomrx` VALUES (0,0,'192.168.100.7',10001,'serial','/dev/ttyUSB0','4800',0,-1,10011,0),(1,0,'192.168.100.7',10001,'serial','/dev/ttyUSB0','4800',0,-1,10011,0);
 /*!40000 ALTER TABLE `settings_rfxcomrx` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2828,7 +2828,7 @@ CREATE TABLE `settings_rfxcomtrx` (
 
 LOCK TABLES `settings_rfxcomtrx` WRITE;
 /*!40000 ALTER TABLE `settings_rfxcomtrx` DISABLE KEYS */;
-INSERT INTO `settings_rfxcomtrx` VALUES (0,0,'192.168.100.7',10001,'tcp','/dev/ttyACM1','38400',0,0,10011,0,0),(1,0,'192.168.100.7',10001,'serial','/dev/ttyACM1','38400',-1,-1,10011,0,0);
+INSERT INTO `settings_rfxcomtrx` VALUES (0,0,'192.168.100.7',10001,'serial','/dev/ttyACM1','38400',0,-1,10011,0,0),(1,0,'192.168.100.7',10001,'serial','/dev/ttyACM1','38400',0,-1,10011,0,0);
 /*!40000 ALTER TABLE `settings_rfxcomtrx` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2866,7 +2866,7 @@ CREATE TABLE `settings_rfxcomtx` (
 
 LOCK TABLES `settings_rfxcomtx` WRITE;
 /*!40000 ALTER TABLE `settings_rfxcomtx` DISABLE KEYS */;
-INSERT INTO `settings_rfxcomtx` VALUES (0,0,'192.168.100.7',10002,'serial','/dev/ttyUSB7','4800',0,1,10012,1,0,0,0,0,0),(1,0,'192.168.100.7',10002,'serial','/dev/ttyUSBD8','4800',0,1,10012,0,0,0,0,0,1);
+INSERT INTO `settings_rfxcomtx` VALUES (0,0,'192.168.100.7',10002,'serial','/dev/ttyUSBD8','4800',0,1,10012,0,1,0,0,0,0),(1,0,'192.168.100.7',10002,'serial','/dev/ttyUSBD8','4800',0,1,10012,0,0,0,0,0,0);
 /*!40000 ALTER TABLE `settings_rfxcomtx` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2895,7 +2895,7 @@ CREATE TABLE `settings_rfxcomxpl` (
 
 LOCK TABLES `settings_rfxcomxpl` WRITE;
 /*!40000 ALTER TABLE `settings_rfxcomxpl` DISABLE KEYS */;
-INSERT INTO `settings_rfxcomxpl` VALUES (0,0,'rfxcom-lan.0004a31543ab','rfxcom-lan.0004a31543ab',0,0,0),(1,0,'rfxcom-lan.0004a31543ac','rfxcom-lan.0004a31543ac',0,0,0);
+INSERT INTO `settings_rfxcomxpl` VALUES (0,0,'rfxcom-lan.0004a31543ac','rfxcom-lan.0004a31543ac',0,0,0),(1,0,'rfxcom-lan.0004a31543ac','rfxcom-lan.0004a31543ac',0,0,0);
 /*!40000 ALTER TABLE `settings_rfxcomxpl` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2948,7 +2948,7 @@ CREATE TABLE `settings_serverstats` (
 
 LOCK TABLES `settings_serverstats` WRITE;
 /*!40000 ALTER TABLE `settings_serverstats` DISABLE KEYS */;
-INSERT INTO `settings_serverstats` VALUES (0,-1,'cyberjunky.nl',0),(1,-1,'DomotiGa Server',0);
+INSERT INTO `settings_serverstats` VALUES (0,-1,'DomotiGa Server',0),(1,-1,'DomotiGa Server',0);
 /*!40000 ALTER TABLE `settings_serverstats` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2978,7 +2978,7 @@ CREATE TABLE `settings_sharptv` (
 
 LOCK TABLES `settings_sharptv` WRITE;
 /*!40000 ALTER TABLE `settings_sharptv` DISABLE KEYS */;
-INSERT INTO `settings_sharptv` VALUES (0,0,'192.168.100.66',60128,'tcp','/dev/ttyUSB3','9600',0),(1,0,'192.168.1.68',500,'tcp','/dev/ttyUSBD0','4800',0);
+INSERT INTO `settings_sharptv` VALUES (0,0,'192.168.1.68',500,'tcp','/dev/ttyUSBD0','4800',0),(1,0,'192.168.1.68',500,'tcp','/dev/ttyUSBD0','4800',0);
 /*!40000 ALTER TABLE `settings_sharptv` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3061,7 +3061,7 @@ CREATE TABLE `settings_sms` (
 
 LOCK TABLES `settings_sms` WRITE;
 /*!40000 ALTER TABLE `settings_sms` DISABLE KEYS */;
-INSERT INTO `settings_sms` VALUES (0,120,0,'/dev/ttyUSB6','38400','3363','+31653131313','+31612341234',0),(1,120,0,'/dev/ttyUSB0','38400','3363','+31613131314','+31612341234',-1);
+INSERT INTO `settings_sms` VALUES (0,120,0,'/dev/ttyUSB0','38400','3363','+31653131314','+31612341234',0),(1,120,0,'/dev/ttyUSB0','38400','3363','+31613131314','+31612341234',0);
 /*!40000 ALTER TABLE `settings_sms` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3087,7 +3087,7 @@ CREATE TABLE `settings_sound` (
 
 LOCK TABLES `settings_sound` WRITE;
 /*!40000 ALTER TABLE `settings_sound` DISABLE KEYS */;
-INSERT INTO `settings_sound` VALUES (0,0,0,100),(1,0,0,0);
+INSERT INTO `settings_sound` VALUES (0,0,0,100),(1,0,0,100);
 /*!40000 ALTER TABLE `settings_sound` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3197,7 +3197,7 @@ CREATE TABLE `settings_temperaturnu` (
 
 LOCK TABLES `settings_temperaturnu` WRITE;
 /*!40000 ALTER TABLE `settings_temperaturnu` DISABLE KEYS */;
-INSERT INTO `settings_temperaturnu` VALUES (0,0,'Dordrecht','123456',5,0,0,''),(1,0,'City','123456',5,0,0,'');
+INSERT INTO `settings_temperaturnu` VALUES (0,0,'City','123456',5,0,0,''),(1,0,'City','123456',5,0,0,'');
 /*!40000 ALTER TABLE `settings_temperaturnu` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3306,7 +3306,7 @@ CREATE TABLE `settings_ups` (
 
 LOCK TABLES `settings_ups` WRITE;
 /*!40000 ALTER TABLE `settings_ups` DISABLE KEYS */;
-INSERT INTO `settings_ups` VALUES (0,0,'localhost',3493,3000,0),(1,0,'192.168.100.2',3493,300,0);
+INSERT INTO `settings_ups` VALUES (0,0,'192.168.100.2',3493,300,0),(1,0,'192.168.100.2',3493,300,0);
 /*!40000 ALTER TABLE `settings_ups` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3397,7 +3397,7 @@ CREATE TABLE `settings_voicetext` (
 
 LOCK TABLES `settings_voicetext` WRITE;
 /*!40000 ALTER TABLE `settings_voicetext` DISABLE KEYS */;
-INSERT INTO `settings_voicetext` VALUES (0,0,'cepstral','padsp','david','allison,diane',0),(1,0,'cepstral','/usr/bin/padsp','','linda,emily',0);
+INSERT INTO `settings_voicetext` VALUES (0,0,'cepstral','/usr/bin/padsp','','linda,emily',0),(1,0,'cepstral','/usr/bin/padsp','','linda,emily',0);
 /*!40000 ALTER TABLE `settings_voicetext` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3564,7 +3564,7 @@ CREATE TABLE `settings_weeder` (
 
 LOCK TABLES `settings_weeder` WRITE;
 /*!40000 ALTER TABLE `settings_weeder` DISABLE KEYS */;
-INSERT INTO `settings_weeder` VALUES (0,0,'/dev/ttyUSB1',1),(1,0,'/dev/ttyUSB1',0);
+INSERT INTO `settings_weeder` VALUES (0,0,'/dev/ttyUSB1',0),(1,0,'/dev/ttyUSB1',0);
 /*!40000 ALTER TABLE `settings_weeder` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3648,7 +3648,7 @@ CREATE TABLE `settings_xmlrpc` (
 
 LOCK TABLES `settings_xmlrpc` WRITE;
 /*!40000 ALTER TABLE `settings_xmlrpc` DISABLE KEYS */;
-INSERT INTO `settings_xmlrpc` VALUES (0,1,9009,5,0,1),(1,-1,9009,10,0,-1);
+INSERT INTO `settings_xmlrpc` VALUES (0,-1,9009,10,0,-1),(1,-1,9009,10,0,-1);
 /*!40000 ALTER TABLE `settings_xmlrpc` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3783,7 +3783,7 @@ CREATE TABLE `settings_zwave` (
 
 LOCK TABLES `settings_zwave` WRITE;
 /*!40000 ALTER TABLE `settings_zwave` DISABLE KEYS */;
-INSERT INTO `settings_zwave` VALUES (0,0,'/dev/ttyUSB4','115200',0,0,0,'*/30 * * * *',0,NULL,NULL,'30 23 * * *',0),(1,0,'/dev/ttyUSB3','115200',0,0,1,'*/30 * * * *',0,NULL,NULL,'30 23 * * *',0);
+INSERT INTO `settings_zwave` VALUES (0,0,'/dev/ttyUSB3','115200',0,0,0,'*/30 * * * *',0,NULL,NULL,'30 23 * * *',0),(1,0,'/dev/ttyUSB3','115200',0,0,1,'*/30 * * * *',0,NULL,NULL,'30 23 * * *',0);
 /*!40000 ALTER TABLE `settings_zwave` ENABLE KEYS */;
 UNLOCK TABLES;
 
