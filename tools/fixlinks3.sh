@@ -83,7 +83,6 @@ ln -s ../../DomotiGa3/.src/DNS.module
 ln -s ../../DomotiGa3/.src/Energy.module
 ln -s ../../DomotiGa3/.src/EventLoop.module
 ln -s ../../DomotiGa3/.src/Events.module
-ln -s ../../DomotiGa3/.src/GLatitude.module
 ln -s ../../DomotiGa3/.src/HDDTemp.module
 ln -s ../../DomotiGa3/.src/X10Cmd.module
 ln -s ../../DomotiGa3/.src/Shell.module
