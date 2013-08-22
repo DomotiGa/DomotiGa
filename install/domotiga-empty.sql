@@ -3835,6 +3835,7 @@ CREATE TABLE `thermostat_heating` (
   `regulatorInverted` tinyint(1) DEFAULT NULL,
   `regulatorOffsetBottom` float unsigned DEFAULT NULL,
   `regulatorOffsetTop` float unsigned DEFAULT NULL,
+  `secondary` tinyint(1) DEFAULT NULL,
   `description` text,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -3910,6 +3911,7 @@ CREATE TABLE `thermostat_schedule_entry` (
   `day` int(10) unsigned NOT NULL DEFAULT '0',
   `time` time NOT NULL DEFAULT '00:00:00',
   `constant` bigint(20) NOT NULL,
+  `secondary` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`scenario`,`heating`,`day`,`time`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -4141,7 +4143,7 @@ CREATE TABLE `version` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `db` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=52 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=53 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4150,7 +4152,7 @@ CREATE TABLE `version` (
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187'),(23,'0.1.188'),(24,'0.1.189'),(25,'0.1.190'),(26,'0.1.191'),(27,'0.1.192'),(28,'0.1.193'),(29,'0.1.194'),(30,'0.1.195'),(31,'0.1.196'),(32,'0.1.197'),(33,'0.1.198'),(34,'0.1.199'),(35,'0.1.200'),(36,'0.1.201'),(37,'0.1.202'),(38,'0.1.203'),(39,'0.1.204'),(40,'0.1.205'),(41,'0.1.206'),(42,'0.1.207'),(43,'0.1.208'),(44,'0.1.209'),(45,'1.0.000'),(46,'1.0.001'),(47,'1.0.002'),(48,'1.0.003'),(49,'1.0.004'),(50,'1.0.005'),(51,'1.0.006'),(52,'1.0.007');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187'),(23,'0.1.188'),(24,'0.1.189'),(25,'0.1.190'),(26,'0.1.191'),(27,'0.1.192'),(28,'0.1.193'),(29,'0.1.194'),(30,'0.1.195'),(31,'0.1.196'),(32,'0.1.197'),(33,'0.1.198'),(34,'0.1.199'),(35,'0.1.200'),(36,'0.1.201'),(37,'0.1.202'),(38,'0.1.203'),(39,'0.1.204'),(40,'0.1.205'),(41,'0.1.206'),(42,'0.1.207'),(43,'0.1.208'),(44,'0.1.209'),(45,'1.0.000'),(46,'1.0.001'),(47,'1.0.002'),(48,'1.0.003'),(49,'1.0.004'),(50,'1.0.005'),(51,'1.0.006'),(52,'1.0.007'),(53,'1.0.008');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 

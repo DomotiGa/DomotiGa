@@ -1,9 +1,18 @@
 
 --
+-- Fix thermostats
+--
+
+ALTER TABLE thermostat_schedule_entry ADD COLUMN secondary tinyint(1) DEFAULT NULL AFTER constant;
+ALTER TABLE thermostat_heating ADD COLUMN secondary tinyint(1) DEFAULT NULL AFTER regulatorOffsetBottom;
+
+--
 -- Remove GLatitude settings
 --
 
 DROP TABLE IF EXISTS `settings_glatitude`;
+
+DELETE FROM devices WHERE interface = 28;
 
 DELETE FROM `devicetypes` WHERE `id`='141';
 
