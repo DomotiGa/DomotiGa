@@ -29,7 +29,7 @@ INSERT INTO devicetypes VALUES (300,'DMXPlayer Module','DMXPlayer','DMX','010','
 --
 
 DROP TABLE IF EXISTS `weather`;
-/*yer Interface','DMX','Read Write')!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `weather` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
