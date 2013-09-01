@@ -80,6 +80,7 @@ ln -s ../../DomotiGa3/.src/Calendar.module
 ln -s ../../DomotiGa3/.src/Devices.module
 ln -s ../../DomotiGa3/.src/Digitemp.module
 ln -s ../../DomotiGa3/.src/DNS.module
+ln -s ../../DomotiGa3/.src/DMXPlayer.module
 ln -s ../../DomotiGa3/.src/Energy.module
 ln -s ../../DomotiGa3/.src/EventLoop.module
 ln -s ../../DomotiGa3/.src/Events.module
