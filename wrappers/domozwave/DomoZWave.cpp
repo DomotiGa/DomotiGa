@@ -2710,6 +2710,8 @@ bool DomoZWave_RequestNodeMeter( int32 home, int32 node )
 //-----------------------------------------------------------------------------
 // <DomoZWave_SetValue>
 // Set the On, Off or Dim xyz of a device and instance
+// 0=Off or 255=On - COMMAND_CLASS_SWITCH_BINARY
+// <other>=Dim & COMMAND_CLASS_SWITCH_MULTILEVEL 
 //-----------------------------------------------------------------------------
 
 bool DomoZWave_SetValue( int32 home, int32 node, int32 instance, int32 value )
@@ -2719,6 +2721,7 @@ bool DomoZWave_SetValue( int32 home, int32 node, int32 instance, int32 value )
 	uint8 uint8_value;
 	uint16 uint16_value;
 	bool response;
+	bool cmdfound = false;
 
         if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetValue" ) == false ) return false;
 
@@ -2731,50 +2734,109 @@ bool DomoZWave_SetValue( int32 home, int32 node, int32 instance, int32 value )
 		{
 			int id = (*it).GetCommandClassId();
 			int inst = (*it).GetInstance();
+			string label = Manager::Get()->GetValueLabel( (*it) );
 
 			if ( id == COMMAND_CLASS_SWITCH_MULTILEVEL || id == COMMAND_CLASS_SWITCH_BINARY )
 			{
+
+				switch ( id )
+				{
+					case COMMAND_CLASS_SWITCH_BINARY:
+					{
+						// label="Switch" is mandatory, else it isn't a switch
+						if ( label == "Switch"  )
+						{
+							// If it is a binary CommandClass, then we only allow 0 (off) or 255 (on)
+							if ( value > 0 && value < 255 )
+							{
+								continue;
+							}
+						}
+						else
+						{
+							continue;
+						}
+
+						break;
+					}
+					case COMMAND_CLASS_SWITCH_MULTILEVEL:
+					{
+						// label="Level" is mandatory, else it isn't a dimmer type device
+						if ( label == "Level"  )
+						{
+							if ( value == 0 || value == 255 )
+							{
+								continue;
+							}
+						}
+						else
+						{
+							continue;
+						}
+
+						break;
+					}
+					default:
+					{
+						continue;
+					}
+				}
+
 				if ( inst == instance )
 				{
 			        	if ( ValueID::ValueType_Bool == (*it).GetType() )
 					{
 						bool_value = (bool)value;
 						response = Manager::Get()->SetValue( *it, bool_value );
+						cmdfound = true;
 					}
 					else if ( ValueID::ValueType_Byte == (*it).GetType() )
 					{
 						uint8_value = (uint8)value;
 						response = Manager::Get()->SetValue( *it, uint8_value );
+						cmdfound = true;
 					}
 					else if ( ValueID::ValueType_Short == (*it).GetType() )
 					{
 						uint16_value = (uint16)value;
 						response = Manager::Get()->SetValue( *it, uint16_value );
+						cmdfound = true;
 					}
 					else if ( ValueID::ValueType_Int == (*it).GetType() )
 					{
 						int_value = value;
 						response = Manager::Get()->SetValue( *it, int_value );
+						cmdfound = true;
 					}
 					else if ( ValueID::ValueType_List == (*it).GetType() )
 					{
 						response = Manager::Get()->SetValue( *it, value );
-       				}
-            			else
-				{
-					WriteLog(LogLevel_Debug, false, "Return=false (unknown ValueType)");
-					return false;
-				}
+						cmdfound = true;
+	       				}
+      					else
+					{
+						WriteLog(LogLevel_Debug, false, "Return=false (unknown ValueType)");
+						return false;
+					}
 
-				WriteLog( LogLevel_Debug, true, "DomoZWave_SetValue: HomeId=%d Node=%d", home, node );
-				WriteLog( LogLevel_Debug, false, "CommandClassId=%d", id );
-				WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id) );
-				WriteLog( LogLevel_Debug, false, "Instance=%d", instance );
-				WriteLog( LogLevel_Debug, false, "Value=%d", value );
-				WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+					WriteLog( LogLevel_Debug, false, "CommandClassId=%d", id );
+					WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id) );
+					WriteLog( LogLevel_Debug, false, "Instance=%d", instance );
+					WriteLog( LogLevel_Debug, false, "Value=%d", value );
+					WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+				}
 			}
 		}
-      	  }
+
+
+		if ( cmdfound == false )
+		{
+			WriteLog( LogLevel_Debug, false, "Instance=%d", instance );
+			WriteLog( LogLevel_Debug, false, "Value=%d", value );
+			WriteLog( LogLevel_Debug, false, "Error=Couldn't match node to the required COMMAND_CLASS_SWITCH_BINARY or COMMAND_CLASS_SWITCH_MULTILEVEL");
+			return false;
+		}
+
 	}
 	else
 	{
