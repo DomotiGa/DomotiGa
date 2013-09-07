@@ -123,7 +123,8 @@ echo "</style>\n";
    } 
    //--> 
    function dim_light(dLocation,dName,dValue) {
-      var actionUrl = "change_device.php?location="+dLocation+"&device="+dName+"&value=Dim "+dValue
+      var actionUrl = "change_device.php?location="+dLocation+"&device="+dName+"&value=";
+      if ( dValue == "0" ) { actionUrl += "Off" } else if ( dValue == "100" ) { actionUrl += "On" } else { actionUrl += "Dim "+dValue };
       $.ajax({
         url: actionUrl,
         success: function () {
@@ -173,6 +174,7 @@ foreach ($data AS $item) {
       }
    }
    foreach ($datad AS $itemd) {
+      if ($itemd['devicevalue'] == ""){ $dimlevel = "0"; };
       if ($itemd['devicevalue'] == "Off"){ $dimlevel = "0"; };
       if ($itemd['devicevalue'] == "On"){ $dimlevel = "100"; };
       if (substr($itemd['devicevalue'],0,3) == "Dim"){ preg_match_all('!\d+!', $itemd['devicevalue'], $dimlevel); $dimlevel=implode($dimlevel[0]); };
