@@ -182,8 +182,7 @@ foreach ($data AS $item) {
          echo "<p><a class=\"red button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['devicename']."&value=Off\">Off</a></p>";
          // Slider to dim lights
          echo "<p id=\"dimmer".$item['id']."\" class=\"button slider\" style=\"width: 94%; height: 30px; margin-left: 3%;\">".$dimlevel."</p>\n";
-         echo "<p style=\"display: none\" class=\"val_dimmer\" id=\"val_dimmer".$item['id']."\"></p>";
-         echo "<p><a class=\"white button\" onclick=\"dim_light('".$item['devicelocation']."', '".$item['devicename']."', $('#val_dimmer".$item['id']."').text())\">Ok</a></p>";
+         echo "<p><a class=\"white button\" onclick=\"dim_light('".$item['devicelocation']."', '".$item['devicename']."', $('#dimmer".$item['id']."').text())\">Ok</a></p>";
          echo "<p><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
          echo "</div>\n";
       }
@@ -212,7 +211,6 @@ foreach ($data AS $item) {
                                                $(this).slider({ value: 0 });
                                        }
                                        $(this).find("a:first").text(m_val);
-                                       $(".val_dimmer").first().text(m_val);
                                }
                        });
                });
