@@ -2744,7 +2744,7 @@ bool DomoZWave_SetValue( int32 home, int32 node, int32 instance, int32 value )
 					case COMMAND_CLASS_SWITCH_BINARY:
 					{
 						// label="Switch" is mandatory, else it isn't a switch
-						if ( label == "Switch"  )
+						if ( label == "Switch" )
 						{
 							// If it is a binary CommandClass, then we only allow 0 (off) or 255 (on)
 							if ( value > 0 && value < 255 )
@@ -2752,24 +2752,13 @@ bool DomoZWave_SetValue( int32 home, int32 node, int32 instance, int32 value )
 								continue;
 							}
 						}
-						else
-						{
-							continue;
-						}
 
 						break;
 					}
 					case COMMAND_CLASS_SWITCH_MULTILEVEL:
 					{
 						// label="Level" is mandatory, else it isn't a dimmer type device
-						if ( label == "Level"  )
-						{
-							if ( value == 0 || value == 255 )
-							{
-								continue;
-							}
-						}
-						else
+						if ( label != "Level" )
 						{
 							continue;
 						}
