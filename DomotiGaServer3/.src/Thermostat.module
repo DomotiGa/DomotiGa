@@ -13,13 +13,13 @@
 ' Read file called COPYING for license details.
 
 Public tThermostat As Timer
-Public NO_TEMP As Integer = 1000
+Public NO_TEMP As Integer = -999
 Private aDerogatedHeating As New Collection
 Private aPreviousRequestedTemperature As New Collection
 
 Public Sub Run()
 
-  ' start poll timer for digitemp
+  ' start poll timer for thermostat
   tThermostat = New Timer As "tThermostat"
   tThermostat.Delay = Main.iThermostatPollTime * 1000
   tThermostat.Start
@@ -36,6 +36,9 @@ Public Sub tThermostat_Timer()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub DoTheJob()
 
   Dim dtCurrent As Date
@@ -51,20 +54,24 @@ Public Sub DoTheJob()
 
   ' get current date/time
   dtCurrent = Now()
-  ' get active scenario
+
+  ' get active scenario - if iScen=0 -> no active scenario
   iScen = GetActiveScenario()
+  If iScen = 0 Then Return
+
   ' get scenario's schedules
   rSched = Main.hDB.Exec("SELECT * FROM thermostat_schedule WHERE scenario=&1", iScen)
   If rSched Then
     If rSched.Count Then
-    ' for each schedule
+      ' for each schedule
       For Each rSched
-        ' get schedule's heating
+        ' get schedule's heating - can be only 1 record
         iHeat = rSched!heating
         rHeat = Main.hDB.Exec("SELECT * FROM thermostat_heating WHERE id=&1", iHeat)
         If rHeat Then
           If rHeat.Count Then
             If Main.bThermostatDebug Then Main.WriteDebugLog("[Thermostat] Working on heating : " & rHeat!name)
+
             ' check for constant change
             fRequestedTemp = GetRequestedTempForHeating(iScen, iHeat)
             If aPreviousRequestedTemperature.Exist(iHeat) Then
@@ -76,16 +83,25 @@ Public Sub DoTheJob()
             Else
               aPreviousRequestedTemperature.Add(fRequestedTemp, iHeat)
             Endif
+
             ' get requested temp
             fRequestedTemp = GetDerogateHeating(iHeat)
             If fRequestedTemp = NO_TEMP Then
               fRequestedTemp = GetRequestedTempForHeating(iScen, iHeat)
             Endif
+
             ' get real temp
-            fMeasuredTemp = CFloat(Replace(Devices.GetCurrentValueForDevice(rHeat!sensor, 1), ",", ".", gb.String))
-            If Main.bThermostatDebug Then Main.WriteDebugLog("[Thermostat] Requested temp is : " & fRequestedTemp & "/Measured temp is : " & fMeasuredTemp)
+            Try fMeasuredTemp = CFloat(Replace(Devices.GetCurrentValueForDevice(rHeat!sensor, 1), ",", ".", gb.String))
+            If Error Then
+              Main.WriteLog("[Thermostat] ERROR: Measured temp is not numeric (Devicename: " & Devices.FindNameForDevice(rHeat!sensor) & ")")
+              Return
+            Endif
+
+            If Main.bThermostatDebug Then Main.WriteDebugLog("[Thermostat] Requested temp is : " & IIf(fRequestedTemp = NO_TEMP, "NONE (turn off)", fRequestedTemp) & " / Measured temp is : " & fMeasuredTemp)
+
             sDeviceName = Devices.FindNameForDevice(rHeat!device)
             sStatusDev = Devices.GetValueForDevice(sDeviceName)
+
             If rHeat!regulator <> 0 Then
               sRegulatorName = Devices.FindNameForDevice(rHeat!regulator)
               If sRegulatorName Then
@@ -108,6 +124,7 @@ Public Sub DoTheJob()
               sOnReg = "On"
               sOffReg = "Off"
             Endif
+
             bOutOfDeviceOffset = False
             If Not (isInsideLatency(rHeat!device, rHeat!deviceLatency)) Then
               ' compare requested temp to sensor's one
@@ -119,6 +136,7 @@ Public Sub DoTheJob()
                   Devices.SetDevice(sDeviceName, sOnDev)
                   sStatusDev = sOnReg
                 Endif
+
                 If sRegulatorName Then
                   If String.Comp(sStatusReg, sOffReg, gb.IgnoreCase) = 0 Then
                     If Main.bThermostatDebug Then Main.WriteDebugLog("[Thermostat] Too cold here. Switching On regulator : " & sRegulatorName)
@@ -127,6 +145,7 @@ Public Sub DoTheJob()
                   Endif
                 Endif
               Endif
+
               If fMeasuredTemp - rHeat!deviceOffsetTop >= fRequestedTemp Then
                 ' too hot
                 bOutOfDeviceOffset = True
@@ -135,6 +154,7 @@ Public Sub DoTheJob()
                   Devices.SetDevice(sDeviceName, sOffDev)
                   sStatusDev = sOffReg
                 Endif
+
                 If sRegulatorName Then
                   If String.Comp(sStatusReg, sOnReg, gb.IgnoreCase) = 0 Then
                     If Main.bThermostatDebug Then Main.WriteDebugLog("[Thermostat] Too hot here. Switching Off regulator : " & sRegulatorName)
@@ -143,6 +163,7 @@ Public Sub DoTheJob()
                   Endif
                 Endif
               Endif
+
               If Not (bOutOfDeviceOffset) And (String.Comp(sStatusDev, sOnDev, gb.IgnoreCase) = 0) Then
                 If sRegulatorName Then
                   sStatusReg = Devices.GetValueForDevice(sRegulatorName)
@@ -154,6 +175,7 @@ Public Sub DoTheJob()
                       sStatusReg = sOnReg
                     Endif
                   Endif
+
                   If fMeasuredTemp - rHeat!regulatorOffsetTop >= fRequestedTemp Then
                     ' little hot
                     If String.Comp(sStatusReg, sOnReg, gb.IgnoreCase) = 0 Then
@@ -162,6 +184,7 @@ Public Sub DoTheJob()
                       sStatusReg = sOffReg
                     Endif
                   Endif
+
                 Endif
               Endif
             Endif
@@ -178,12 +201,15 @@ Private Function GetActiveScenario() As Integer
   Dim rResultScen As Result
 
   rResultScen = Main.hDB.Exec("SELECT id, name FROM thermostat_scenarii WHERE name=&1", Main.GetGlobalVar("Thermostat_Mode"))
+ 
   If rResultScen Then
     If rResultScen.Count >= 1 Then
-      If Main.bThermostatDebug Then Main.WriteDebugLog("[Thermostat] Active scenario is : " & Main.GetGlobalVar("Thermostat_Mode"))
+      If Main.bThermostatDebug Then Main.WriteDebugLog("[Thermostat] Active scenario is : " & rResultScen!name)
       Return rResultScen!id
     Endif
   Endif
+
+  If Main.bThermostatDebug Then Main.WriteDebugLog("[Thermostat] No active scenario for Thermostat Mode : " & Main.GetGlobalVar("Thermostat_Mode"))
   Return 0
 
 End
@@ -194,8 +220,10 @@ Public Function GetRequestedTempForHeating(iScenario As Integer, iHeating As Int
   Dim rTemp As Result
   Dim fReturn As Float
 
+  fReturn = NO_TEMP
+
   sSql = "SELECT curtime() as curtime, dayofweek(curdate()) as curday, day, time, value FROM `thermostat_schedule_entry` se , `thermostat_constant` "
-  sSql &= " c , `thermostat_heating` h where c.id=se.constant AND se.secondary=h.secondary AND dayofweek(curdate()) = Day AND se.scenario = &1 AND se.heating = &2 AND h.id=&2 order by Day, Time "
+  sSql &= " c , `thermostat_heating` h WHERE c.id=se.constant AND se.secondary=h.secondary AND dayofweek(curdate())=Day AND se.scenario=&1 AND se.heating=&2 AND h.id=&2 ORDER BY Day, Time"
   rTemp = Main.hDB.Exec(sSql, iScenario, iHeating)
   If rTemp Then
     If rTemp.Count Then
@@ -206,11 +234,13 @@ Public Function GetRequestedTempForHeating(iScenario As Integer, iHeating As Int
           Break
         Endif
       Next
+
       Return fReturn
     Else 
-      Return 0.0 'used when no secondary schedule is provided
+      Return NO_TEMP ' used when no secondary schedule is provided
     Endif
   Endif
+
   Return NO_TEMP
 
 End
@@ -222,7 +252,7 @@ Public Function GetNextRequestedTempForHeating(iScenario As Integer, iHeating As
   Dim fCurrentReq, fReturn As Float
 
   sSql = "SELECT curtime() as curtime,  time, value FROM `thermostat_schedule_entry` se , `thermostat_constant` "
-  sSql &= " c , `thermostat_heating` h where c.id=se.constant  AND se.secondary=h.secondary AND dayofweek(curdate()) = Day AND se.scenario = &1 AND se.heating = &2 AND h.id=&2 order by Time "
+  sSql &= " c , `thermostat_heating` h WHERE c.id=se.constant AND se.secondary=h.secondary AND dayofweek(curdate())=Day AND se.scenario=&1 AND se.heating=&2 AND h.id=&2 ORDER BY Time"
   rTemp = Main.hDB.Exec(sSql, iScenario, iHeating)
   If rTemp Then
     If rTemp.Count Then
@@ -245,8 +275,9 @@ Private Function isInsideLatency(iDevice As Integer, iLatency As Integer) As Boo
 
   If DateDiff(Devices.GetLastChangedForDevice(iDevice), Now(), gb.Minute) <= iLatency Then
     If Main.bThermostatDebug Then Main.WriteDebugLog("[Thermostat] Inside latency, nothing to do here.")
-      Return True
-    Endif
+    Return True
+  Endif
+
   Return False
 
 Catch ' used when heating device is new (never changed) which causes DateDiff to raises an overflow
@@ -312,7 +343,19 @@ Public Sub GetIsSecondary(iHeat As Integer) As Boolean
 
   Dim rResult As Result
 
-  rResult = Main.hDB.Exec("Select secondary from thermostat_heating WHERE id=&1", iHeat)
+  rResult = Main.hDB.Exec("Select secondary from thermostat_heating WHERE id = &1", iHeat)
   Return rResult!secondary
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetHeatSensor(iHeat As Integer) As Integer
+
+  Dim rResult As Result
+
+  rResult = Main.hDB.Exec("Select sensor from thermostat_heating WHERE id=&1", iHeat)
+  Try Return rResult!sensor
 
 End

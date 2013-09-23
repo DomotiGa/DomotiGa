@@ -93,6 +93,7 @@ xmlrpc_env env;
 xmlrpc_client* clientP;
 char url[35];
 bool debugging;
+bool running;
 
 static pthread_mutex_t g_criticalSection;
 
@@ -991,12 +992,39 @@ void RPC_NodeAdded( int homeID, int nodeID )
 
 //-----------------------------------------------------------------------------
 // <RPC_RemoveNode>
-//
+// Node is removed from the Z-Wave network. Is only done if the open-zwave wrapper is running.
 //-----------------------------------------------------------------------------
 
 void RPC_NodeRemoved( int homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "NodeRemoved: HomeId=%d Node=%d", homeID, nodeID );
+
+	if ( running == true )
+	{
+		// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
+		xmlrpc_env_init( &env );
+		xmlrpc_value* resultP = NULL;
+	 	xmlrpc_client_call2f(&env, clientP, url, "zwave.removenode", &resultP, "(i)", nodeID);
+
+		// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
+		if ( ! fault_occurred ( "zwave.removenode", &env ) )
+		{
+			xmlrpc_bool bvalue;
+
+			xmlrpc_read_bool( &env, resultP, &bvalue );
+
+			if ( ! bvalue )
+			{
+				WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.removenode\" returned FALSE" );
+			}
+		}
+
+		if ( resultP )
+		{
+			xmlrpc_DECREF( resultP );
+		}
+	}
+
 }
 
 //-----------------------------------------------------------------------------
@@ -1907,6 +1935,9 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	// Store debugging option, this only is valid for the wrapper. The open-zwave has its own configuration
 	debugging = enableLog;
 
+	// Set running variable to true - this is needed for the zwave.removenode
+	running = true;
+
 	// Open the logfile, required for errors and debug
 	logfile.open( logfile_name.c_str(), ios::app );
 	if ( ! logfile.is_open() )
@@ -1983,6 +2014,10 @@ void DomoZWave_AddSerialPort( const char* serialPort )
 
 void DomoZWave_Destroy( )
 {
+
+	// We are stopping, set variable to false
+	running = false;
+
 	pthread_mutex_lock( &g_criticalSection );
 
 	for ( list<string>::iterator it = serialPortName.begin(); it != serialPortName.end(); ++it )

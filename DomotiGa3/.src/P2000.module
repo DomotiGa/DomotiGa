@@ -94,7 +94,7 @@ Public Sub FetchFeedData()
   ' 3 = Politie
   ' 4 = KNRM
 
-  If Len(Main.sP2000Discipline) And If Main.sP2000Discipline <> "0" Then sURL = sURL & IIf(Main.sP2000Regios, "&", "?") & "d=" & Main.sP2000Discipline
+  If Len(Main.sP2000Disciplines) And If Main.sP2000Disciplines <> "0" Then sURL = sURL & IIf(Main.sP2000Regios, "&", "?") & "d=" & Main.sP2000Disciplines
 
   If Main.bP2000Debug Then Main.WriteDebugLog(("[P2000] Fetching data with request '") & sURL & "'")
 
@@ -124,7 +124,7 @@ Public Sub hP2000_Finished()
     Case 200
       ' too noisy
       ' If Main.bP2000Debug Then Main.WriteDebugLog(("[P2000] Received data '") & sBuffer & "'")
-      ParseP2000XML(sBuffer)
+      ParseP2000Data(sBuffer)
     Case Else
       If Main.bP2000Debug Then Main.WriteLog(("[P2000] Unknown error occured while trying to fetch P2000 feed data!"))
   End Select
@@ -143,23 +143,48 @@ Public Sub hP2000_Error()
 
 End
 
-Private Sub ParseP2000data(sData As String) 
+Private Sub ParseP2000Data(sData As String)
+
+  Dim sTitle, sMsg, sMap As String
+  Dim iCnt As Integer
 
   If Main.bP2000Debug Then Main.WriteDebugLog(("[P2000] Processing XML data."))
   ParseP2000XML(sBuffer)
+  'sMsg = "<html>"
+  For Each sTitle In cTitle
+    sMsg &= sTitle & "\n"
+    If Main.bP2000CreateMapLink Then
+      sMap = CreateImage(cGeoLat[cTitle.Key], cGeoLong[cTitle.Key])
+      sMsg &= sMap & "\n"
+    Endif
+    sMsg &= "\n"
+  Next
+  'sMsg &= "</html>"
+  Main.SetGlobalVar("P2000_Message", sMsg)
 
-' For Each sBr In cInfo
-'   Print cInfo.key & ": " & sBr
-' Next
 End
 
-Private Function ParseP2000XML(sBuffer As String) As String
+Private Sub CreateImage(fLat As String, fLon As String) As String
+
+  Dim sLink As String
+
+  fLat = Replace(fLat, ",", ".")
+  fLon = Replace(fLon, ",", ".")
+
+  'sLink = "<a href='http://maps.google.com/maps?q=" & fLat & "%" & fLon & "'></br>"
+  sLink = "<a href='https://www.google.com/maps/preview#!q=" & fLat & "&2" & fLon & "'></br>"
+  sLink &= "<img src='http://cbk3.google.com/cbk?output=thumbnail&cb_client=maps_sv&thumb=2&ll=" & fLat & "," & fLon & "&w=300&h=118'>"
+  Return sLink
+
+End
+
+Private Sub ParseP2000XML(sBuffer As String)
 
   Dim XmlR As New XmlReader
   Dim iMsg, iCnt As Integer
   Dim sFieldName, sFieldPos As String
   Dim sFieldHeader As New String[10]
-  Dim bItem As Boolean
+  Dim iMtrsAway As Long
 
   ' empty collections first
   cTitle.Clear
@@ -185,15 +210,21 @@ Private Function ParseP2000XML(sBuffer As String) As String
       If sFieldPos = "rss|channel|item|" Then 
         Select sFieldName
           Case "title"
+
+            ' if max number of messages is reached bail out
+            If iMsg = Main.iP2000Messages Then 
+              XmlR.Close
+              Break
+            End If
             cTitle.Add(XmlR.Node.value, iMsg)
             If Main.bP2000Debug Then Main.WriteDebugLog("[P2000] Title: " & XmlR.Node.Value)
           Case "link"
             cLink.Add(XmlR.Node.value, iMsg)
-             If Main.bP2000Debug Then Main.WriteDebugLog("[P2000] Link: " & XmlR.Node.Value)
+            If Main.bP2000Debug Then Main.WriteDebugLog("[P2000] Link: " & XmlR.Node.Value)
           Case "br"
             If XmlR.Node.Value <> "]]>" Then
               If Main.bP2000Debug Then Main.WriteDebugLog("[P2000] Info: " & XmlR.Node.Value)
-              If cInfo.Exist(iMsg) Then 
+              If cInfo.Exist(iMsg) Then
                 cInfo[iMsg] &= XmlR.Node.Value
               Else
                 cInfo.Add(XmlR.Node.value, iMsg)
@@ -206,15 +237,25 @@ Private Function ParseP2000XML(sBuffer As String) As String
             cGeoLong.Add(XmlR.Node.value, iMsg)
             If Main.bP2000Debug Then Main.WriteDebugLog("[P2000] GeoLong: " & XmlR.Node.Value)
 
-            ' if max number of messages is reached bail out
-            If iMsg = Main.iP2000Messages - 1 Then Return
-
-            ' if match text defined check if found in info text.
+            ' if match text defined check if found in info text
             If Len(Main.sP2000Filter) And If Not InStr(cTitle[iMsg], Main.sP2000Filter) Then
-              If Main.bP2000Debug Then Main.WriteDebugLog("[P2000] Match text '" & Main.sP2000Filter & "' not found in '" & cTitle[iMsg] & "', skipping Message.")
+              If Main.bP2000Debug Then Main.WriteDebugLog(("[P2000] Match text '") & Main.sP2000Filter & ("' not found in '") & cTitle[iMsg] & ("', skipping message."))
               RemoveCollection(iMsg)
+              Continue
+            Else
+              ' if location is within specified range keep msg
+              If Main.iP2000GeoRange Then
+                iMtrsAway = GetDistance(Main.iAstroLatitude, Main.iAstroLongitude, cGeoLat[iMsg], cGeoLong[iMsg])
+                If Main.bP2000Debug Then Main.WriteDebugLog(("[P2000] Location is ") & iMtrsAway & (" meters away from home."))
+                If iMtrsAway < Main.iP2000GeoRange Then
+                  If Main.bP2000Debug Then Main.WriteDebugLog(("[P2000] Which is inside range specified."))
+                Else
+                  If Main.bP2000Debug Then Main.WriteDebugLog(("[P2000] Which is outside range specified, skipping message."))
+                  RemoveCollection(iMsg)
+                  Continue
+                Endif
+              End If
             End If
-
             Inc iMsg
           Case "description"
             cDescription.Add(XmlR.Node.value, iMsg)
@@ -243,5 +284,61 @@ Private Function RemoveCollection(sKey As String)
   cInfo.Remove(sKey)
   cGeoLat.Remove(sKey)
   cGeoLong.Remove(sKey)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' calculate the distance
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetDistance(fLat As String, fLon As String, fLatMsg As String, fLonMsg As String) As Long
+
+  Dim theta As Float
+  Dim dist As Float
+
+  theta = Val(fLon) - Val(fLonMsg)
+  dist = Sin(deg2rad(Val(fLat))) * Sin(deg2rad(Val(fLatMsg))) + Cos(deg2rad(Val(fLat))) * Cos(deg2rad(Val(fLatMsg))) * Cos(deg2rad(theta))
+  dist = ACos(dist)
+  dist = rad2deg(dist)
+  dist = dist * 60 * 1.1515
+  ' convert from miles to meters
+  dist = (dist * 1.609344) * 1000
+  Return CLong(dist)
+
+End
+
+'
+'  This function get the arccos function from arctan function    
+'
+Private Function acos(fRad As Float) As Float
+
+  Dim fPi As Float = 3.14159265358979323846
+
+  If Abs(fRad) <> 1 Then
+    Return fPi / 2 - ATan(fRad / Sqr(1 - fRad * fRad))
+  Else If fRad = -1 Then
+    Return fPi
+  End If
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'  this function converts decimal degrees to radians
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function deg2rad(fDeg As Float) As Float
+
+  Dim fPi As Float = 3.14159265358979323846
+
+  Return (fDeg * fPi / 180)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'  this function converts radians to decimal degrees
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function rad2deg(fRad As Float) As Float
+
+  Dim fPi As Float = 3.14159265358979323846
+
+  Return (fRad * 180 / fPi)
 
 End

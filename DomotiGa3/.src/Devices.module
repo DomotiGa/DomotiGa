@@ -396,6 +396,29 @@ Public Sub SetDevice(vDeviceName As Variant, sValue As String) As Boolean
       Else
         Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because DMXPlayer interface is disabled!"))
       End If
+    Case 49 ' GenericIO Interface
+      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] GenericIO Interface: Calling SendCommand with Address='" & sAddress & "' and command='" & sValue & "'")
+      If Main.hGenericIO Then
+        Main.hGenericIO.SendCommand(sAddress, sValue)
+        ' Note: Unlike many of the above interface commands, this does not update the value.
+        '       Value needs to be updated by the device we have sent the command to.
+        '       ie. we send a command to turn on a relay. Device then responds that the relay is on (which updates Value).
+        sText = ("Switched ") & sDeviceName & " " & sValue
+      Else
+        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because GenericIO interface is disabled!"))
+      Endif
+    Case 51 ' RaZberry Interface
+      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] RaZberry Interface: " & sAddress & " " & sValue)
+      If Main.hRaZberry Then
+        iDeviceId = Find(sAddress, iInterface)
+        If iDeviceId Then
+          Main.hRaZberry.SendCommand(sAddress, sValue)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
+          sText = ("Switched ") & sDeviceName & " " & sValue
+        End If
+      Else
+        Main.WriteDebugLog(("[Devices] Can't control device '") & sDeviceName & ("' because RaZberry interface is disabled!"))
+      End If
     Case -1
       Main.WriteDebugLog(("[Devices] Interface for device '") & sDeviceName & ("' does not support Write!"))
       Return False
@@ -454,7 +477,10 @@ Public Function CorrectValue(sValue As String, sFormula As String, rResult As Re
     AddDeviceToContext(cContext, rResult)
     ' evaluate the formula
     Try sResult = Eval(Replace(sFormula, "\n", " "), cContext)
-    If Error Then sResult = ("Error: ") & Error.Text
+    If Error Then
+      sResult = "ERROR: " & Error.Text
+      If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] CorrectValue failed. sValue=" & sValue & ", sFormula=" & sFormula & ". Message=" & sResult)
+    Endif
     Return sResult
   Else
     ' nothing to calibrate
@@ -662,6 +688,19 @@ Public Sub FindLogForDevice(iDeviceId As Integer) As String
   If Not Error And If rDevice.Available Then Return rDevice!log
 
 End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return address string for device with id
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub FindAddressForDeviceId(iDeviceId As Integer) As String
+
+  Dim rDevice As Result
+
+  Try rDevice = Main.hDB.Exec("SELECT address FROM devices WHERE id = &1", iDeviceId)
+  If Not Error And If rDevice.Available Then Return rDevice!address
+
+End
+
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' return print boolean for device with id
@@ -926,13 +965,13 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' find device with sAddress and iInterface, return id if found.
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Find(sAddress As String, iInterface As Integer, Optional sDevice As String) As Integer
+Public Sub Find(sAddress As String, iInterface As Integer, Optional sDevice As String, sPrefName As String) As Integer
 
   Dim rDeviceFind As Result
 
   If iInterface Then
     Try rDeviceFind = Main.hDB.Exec("SELECT * FROM devices WHERE address LIKE &1 AND interface = &2 AND enabled is TRUE", sAddress, iInterface)
-    If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, sDevice)
+    If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, sDevice, sPrefName)
   Else
     Main.WriteDebugLog(("[Devices] Interface for device '") & sDevice & ("' with address '") & sAddress & ("' not found!"))
     Return 0
@@ -969,7 +1008,7 @@ Public Sub FindAll(sAddress As String, iInterface As Integer, Optional sDevice A
 
 End
 
-Public Sub FindDevice(rDevice As Result, sAddress As String, iInterface As Integer, Optional sDevice As String) As Integer
+Public Sub FindDevice(rDevice As Result, sAddress As String, iInterface As Integer, Optional sDevice As String, sPrefName As String) As Integer
 
   Dim rResult As Result
 
@@ -991,12 +1030,12 @@ Public Sub FindDevice(rDevice As Result, sAddress As String, iInterface As Integ
   Else
     If Not IsBlacklisted(sAddress, iInterface) Then
       If sDevice Then
-        Main.WriteDebugLog(("[Devices] Device " & IIf(Len(sDevice), "of type '" & sDevice & "' ", "") & "with address '") & sAddress & ("' and interface '") & FindNameForInterface(iInterface) & ("' not found!"))
+        Main.WriteDebugLog(("[Devices] Device of type '" & sDevice & "' with address '") & sAddress & ("' and interface '") & FindNameForInterface(iInterface) & ("' not found!"))
       Else
         Main.WriteDebugLog(("[Devices] Device with address '") & sAddress & ("' and interface '") & FindNameForInterface(iInterface) & ("' not found!"))
       End If
       If Main.bAutoDeviceCreate Then
-        Return AutoCreateDevice(sAddress, iInterface, sDevice)
+        Return AutoCreateDevice(sAddress, iInterface, sDevice, sPrefName)
       Else
         Return 0
       Endif
@@ -1097,9 +1136,11 @@ Public Sub ValueUpdate(iId As Integer, vValue As Variant, vValue2 As Variant, vV
       bUpdated = True
       If rDevice!log Then vValUpdated["value"] = vValue
       If rDevice!dimable = True Or If rDevice!switchable = True Then Main.RefreshControlPage()
+      ' Move EndIf down further so that RPC calls from zwave devices where the value has not actually changed do not cause "spam" messages
+      If Main.hIViewer Then Main.hIViewer.SendUpdateDevice(iId, sName, vValue, IIf(sType, sType, "value"))
+      If Main.hMQTT Then Main.hMQTT.PublishMsg(sName & "/value", vValue)
+      If Main.hSmartVisuServer Then Main.hSmartVisuServer.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value"))
     Endif
-    If Main.hMQTT Then Main.hMQTT.PublishMsg(sName & "/value", vValue)
-    If Main.hSmartVisuServer Then Main.hSmartVisuServer.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value"))
   Endif
   If vValue2 <> Null Then
     If Comp(vValue2, sValue2, gb.IgnoreCase) <> 0 Then
@@ -1108,9 +1149,11 @@ Public Sub ValueUpdate(iId As Integer, vValue As Variant, vValue2 As Variant, vV
       EventLoop.DeviceChanged(iId, 2, vValue2, sLabel2)
       bUpdated = True
       If rDevice!log Then vValUpdated["value2"] = vValue2
+      ' Move EndIf down further so that RPC calls from zwave devices where the value has not actually changed do not cause "spam" messages
+      If Main.hIViewer Then Main.hIViewer.SendUpdateDevice(iId, sName, vValue2, IIf(sType, sType, "value2"))
+      If Main.hMQTT Then Main.hMQTT.PublishMsg(sName & "/value2", vValue2)
+      If Main.hSmartVisuServer Then Main.hSmartVisuServer.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value2"))
     Endif
-    If Main.hMQTT Then Main.hMQTT.PublishMsg(sName & "/value2", vValue2)
-    If Main.hSmartVisuServer Then Main.hSmartVisuServer.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value2"))
   Endif
   If vValue3 <> Null Then
     If Comp(vValue3, sValue3, gb.IgnoreCase) <> 0 Then
@@ -1119,9 +1162,11 @@ Public Sub ValueUpdate(iId As Integer, vValue As Variant, vValue2 As Variant, vV
       EventLoop.DeviceChanged(iId, 3, vValue3, sLabel3)
       bUpdated = True
       If rDevice!log Then vValUpdated["value3"] = vValue3
+      ' Move EndIf down further so that RPC calls from zwave devices where the value has not actually changed do not cause "spam" messages
+      If Main.hIViewer Then Main.hIViewer.SendUpdateDevice(iId, sName, vValue3, IIf(sType, sType, "value3"))
+      If Main.hMQTT Then Main.hMQTT.PublishMsg(sName & "/value3", vValue3)
+      If Main.hSmartVisuServer Then Main.hSmartVisuServer.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value3"))
     Endif
-    If Main.hMQTT Then Main.hMQTT.PublishMsg(sName & "/value3", vValue3)
-    If Main.hSmartVisuServer Then Main.hSmartVisuServer.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value3"))
   Endif
   If vValue4 <> Null Then
     If Comp(vValue4, sValue4, gb.IgnoreCase) <> 0 Then
@@ -1130,9 +1175,11 @@ Public Sub ValueUpdate(iId As Integer, vValue As Variant, vValue2 As Variant, vV
       EventLoop.DeviceChanged(iId, 4, vValue4, sLabel4)
       bUpdated = True
       If rDevice!log Then vValUpdated["value4"] = vValue4
+      ' Move EndIf down further so that RPC calls from zwave devices where the value has not actually changed do not cause "spam" messages
+      If Main.hIViewer Then Main.hIViewer.SendUpdateDevice(iId, sName, vValue4, IIf(sType, sType, "value4"))
+      If Main.hMQTT Then Main.hMQTT.PublishMsg(sName & "/value4", vValue4)
+      If Main.hSmartVisuServer Then Main.hSmartVisuServer.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value4"))
     Endif
-    If Main.hMQTT Then Main.hMQTT.PublishMsg(sName & "/value4", vValue4)
-    If Main.hSmartVisuServer Then Main.hSmartVisuServer.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value4"))
   Endif
   If Not bUpdated Then
     rResult = Main.hDB.Exec("UPDATE devices SET lastseen = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), iId)
@@ -1243,10 +1290,14 @@ End
 Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, sType As String, Optional sPrefName As String) As Integer
 
   Dim rResult As Result
-  Dim sName As String = FindUniqueName(sType & " device #")
+  Dim sName As String
   Dim iType As Integer
 
-  If sPrefName <> Null Then sName = sPrefName
+  If sPrefName Then
+    sName = FindUniqueName(Trim(sPrefName) & " #")
+  Else
+    sName = FindUniqueName(sType & " device #")
+  Endif
 
   ' try to select correct device type
   Select UCase(sType)
@@ -1482,6 +1533,16 @@ Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, sType As 
       iType = 298
     Case "KMTRONIC OUTPUT"
       iType = 299
+    Case "GENERICIO"
+      iType = 301
+    Case "BINARY POWER SWITCH"
+      iType = 61
+    Case "ROUTING MULTILEVEL SWITCH", "MULTILEVEL SWITCH"
+      iType = 62
+    Case "ROUTING BINARY SENSOR", "BINARY SENSOR"
+      iType = 63
+    Case "DOOR LOCK"
+      iType = 333
     Case Else
       Main.WriteDebugLog(("[Devices] Auto create device '" & sName & "' failed, because of unknown type!"))
       Main.WriteDebugLog(("[Devices] Please report device type '" & sType & "' with address '" & sAddress & "' and interface '" & FindNameForInterface(iInterface) & "' (" & iInterface & ") to support@domotiga.nl"))
@@ -1605,7 +1666,10 @@ Public Sub FindIdForDevice(sDeviceName As String) As Integer
   Else
     Main.WriteDebugLog(("[Devices] Device with name '") & sDeviceName & ("' not found!"))
     Return 0
-  End If
+  Endif
+
+Catch
+  Main.WriteDebugLog(("[Devices] Error while trying to find id: ") & Error.Text & (" at ") & Error.Where)
 
 End
 

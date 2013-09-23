@@ -2,7 +2,7 @@
 
 ' Description:
 ' CMQTT.class
-' Connect to a MQTT broker to publish device data and listen for incoming.
+' Connect to a MQTT broker to publish device data and listen for incoming data.
 
 ' Development Status:
 ' Just started.
@@ -22,6 +22,8 @@ Property Password As String
 Property PubTopic As String
 Property SubTopic As String
 Property HeartBeat As Integer
+Property Retain As Boolean
+Property Qos As Integer
 Property MQTTDebug As Boolean
 
 Private sTCPHost As String
@@ -31,11 +33,19 @@ Private sPassword As String
 Private sPubTopic As String
 Private sSubTopic As String
 Private iHeartBeat As Integer
+Private bRetain As Boolean
+Private iQos As Integer
 Private bMQTTDebug As Boolean
 
 Public hMQTT As New Socket
-Private RecBuf As New Byte[30]
-Private RecBytes As Byte
+Public tMQTTPing As Timer
+Public tMQTTBusy As Timer
+Private RecBuf As New String[255]
+Private RecBytes As Integer
+
+' queue and command buffer stuff
+Private cQueue As New Collection  ' command buffer
+Private bBusy As Boolean          ' waiting for delay timer to finish
 
 ' message types
 Const MQTTCONNECT As Byte = &H10
@@ -43,6 +53,15 @@ Const MQTTCONNACK As Byte = &H20
 Const MQTTPUBLISH As Byte = &H30
 Const MQTTPINGRESP As Byte = &D0
 Const MQTTSUBSCRIBE As Byte = &H80
+Const MQTTPUBACK As Byte = &H90
+
+' message types
+Const MQTT_CONNECT As Integer = 1
+Const MQTT_CONNACK As Integer = 2
+Const MQTT_PUBLISH As Integer = 3
+Const MQTT_PUBACK As Integer = 4
+Const MQTT_SUBACK As Integer = 9
+Const MQTT_PINGRESP As Integer = 13
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
@@ -70,8 +89,12 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Disconnect() As Boolean
 
-  ' first tell MQTT broker that we want to disconnect
+  ' tell MQTT broker that we want to disconnect
   ClientDisconnect()
+
+  ' try stop running timers
+  Try tMQTTPing.Stop
+  Try tMQTTBusy.Stop
 
   ' try to close the connection
   Try hMQTT.Close
@@ -109,7 +132,7 @@ Public Sub MQTT_Read()
   Dim bByte As Byte
 
   Try bByte = Read #hMQTT As Byte
-  If Error Then Main.WriteDebugLog(("[MQTT] Error reading data from network socket! -> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(("[MQTT] Error reading data from network socket! -> ") & Error.Text & (" at ") & Error.Where)
 
   ParseMessage(bByte)
 
@@ -118,23 +141,39 @@ End
 Public Sub MQTT_Ready()
 
   Main.WriteLog(("MQTT socket connected."))
+
+    ' start ping timer
+  tMQTTPing = New Timer As "tMQTTPing"
+  tMQTTPing.Delay = iHeartBeat * 1000 ' multiply for seconds
+  tMQTTPing.Start
+
+  ' define timer for busy
+  tMQTTBusy = New Timer As "tMQTTBusy"
+  tMQTTBusy.Stop
+
   ClientConnect("DomotiGa")
   SubscribeTopic(sSubTopic)
+
+End
+
+Public Sub tMQTTPing_Timer()
+
+  ClientHeartBeat()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send connect message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ClientConnect(sId As String)
+Private Sub ClientConnect(sId As String)
 
-  Dim bBuf As New Byte[128]
+  Dim bBuf As New Byte[255]
   Dim iCnt As Integer
 
   ' fixed header
   bBuf[0] = MQTTCONNECT ' connect
-  bBuf[1] = 12 + Len(sId) + 2 ' remaining length
-
+  ' bBuf[1] = 12 + Len(sId) + 2 ' remaining length
+  bBuf[1] = 12 + Len(sId) + 2 + Len(sUsername) + Len(sPassword) ' remaining length
   ' var header
   bBuf[2] = &H0   ' 0
   bBuf[3] = &H6   ' 6
@@ -145,7 +184,16 @@ Public Sub ClientConnect(sId As String)
   bBuf[8] = &H64  ' d
   bBuf[9] = &H70  ' p
   bBuf[10] = &H3  ' protocol version = 3
+
+  ' connect flag
   bBuf[11] = &H2  ' clean session only
+  If sUsername Then bBuf[11] = BSet(bBuf[11], 7)
+  If sPassword And If Not sUsername Then
+    If bMQTTDebug Then Main.WriteDebugLog(("[MQTT] You cannot supply a password without a username!"))
+    Return
+  Else
+    bBuf[11] = BSet(bBuf[11], 6)
+  Endif
   bBuf[12] = &H0  ' MSB keepalive
   bBuf[13] = iHeartBeat ' LSB
   bBuf[14] = &H0  ' ID string length MSB
@@ -156,15 +204,30 @@ Public Sub ClientConnect(sId As String)
     bBuf.Add(Asc(Mid(sId, iCnt, 1)), 15 + iCnt)
   Next
 
+  ' username
+  If sUsername Then
+    For iCnt = 1 To Len(sUsername)
+      bBuf.Add(Asc(Mid(sUsername, iCnt, 1)), 15 + iCnt + Len(sId))
+    Next
+  Endif
+
+  ' password
+  If sPassword Then
+    For iCnt = 1 To Len(sPassword)
+      bBuf.Add(Asc(Mid(sPassword, iCnt, 1)), 15 + iCnt + Len(sId) + Len(sUsername))
+    Next
+  Endif
+
   If bMQTTDebug Then Main.WriteDebugLog(("[MQTT] Connecting to broker."))
-  WriteMessage(bBuf, 2 + bBuf[1])
+  bBuf.Resize(2 + bBuf[1])
+  QueueCommand(bBuf)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send disconnect message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ClientDisconnect()
+Private Sub ClientDisconnect()
 
   Dim bBuf As New Byte[2]
 
@@ -172,31 +235,31 @@ Public Sub ClientDisconnect()
   bBuf[1] = &H0
 
   If bMQTTDebug Then Main.WriteDebugLog(("[MQTT] Disconnecting from broker."))
-  WriteMessage(bBuf, 2)
+  QueueCommand(bBuf)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send heartbeat message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SendHeartBeat()
+Private Sub ClientHeartBeat()
 
   Dim bBuf As New Byte[2]
 
-  bBuf[0] = -&H7F + &5F
+  bBuf[0] = &HC0
   bBuf[1] = &H0
 
-  If bMQTTDebug Then Main.WriteDebugLog(("[MQTT] Disconnecting from broker."))
-  WriteMessage(bBuf, 2)
+  If bMQTTDebug Then Main.WriteDebugLog(("[MQTT] Sending heartbeat to broker."))
+  QueueCommand(bBuf)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' subscribe message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SubscribeTopic(sTopic As String)
+Private Sub SubscribeTopic(sTopic As String)
 
-  Dim bBuf As New Byte[128]
+  Dim bBuf As New Byte[255]
   Dim iCnt, iTopicLen As Integer
 
   iTopicLen = Len(sTopic)
@@ -215,7 +278,8 @@ Public Sub SubscribeTopic(sTopic As String)
   bBuf.Add(&H0, 5 + Len(sTopic) + iCnt + 1)
 
   If bMQTTDebug Then Main.WriteDebugLog(("[MQTT] Subscribing to Topic '") & sTopic & ("'"))
-  WriteMessage(bBuf, &H7 + Len(sTopic))
+  bBuf.Resize(&H7 + Len(sTopic))
+  QueueCommand(bBuf)
 
 End
 
@@ -235,10 +299,25 @@ Public Sub PublishMsg(sTopic As String, sMsg As String)
   sTopic = Replace(sTopic, "#", " ")
   sTopic = Replace(sTopic, "+", " ")
 
-  bBuf[0] = BSet(MQTTPUBLISH, 0)     ' publish as QoS 0 with retain enabled
+  ' publish with retain enabled if set
+  If bRetain Then bBuf[0] = BSet(MQTTPUBLISH, 0)
+
+  ' set chosen QoS
+  Select Case iQoS
+    Case 0
+      ' default
+    Case 1
+      bBuf[0] = BSet(bBuf[0], 1)
+    Case 2
+      bBuf[0] = BSet(bBuf[0], 2)
+    Case Else
+      If bMQTTDebug Then Main.WriteDebugLog(("[MQTT] Invalid QoS value '") & iQoS & ("' set!"))
+      Return
+  End Select
+
   bBuf[1] = iTopicLen + iMsgLen + 2 ' remaining length
-  bBuf[2] = iTopicLen / 128 ' MSB topic length
-  bBuf[3] = iTopicLen Mod 128 ' LSB
+  bBuf[2] = iTopicLen / 128         ' MSB topic length
+  bBuf[3] = iTopicLen Mod 128       ' LSB
   For iCnt = 1 To Len(sTopic)
     bBuf.Add(Asc(sTopic, iCnt), 3 + iCnt)
   Next
@@ -247,31 +326,81 @@ Public Sub PublishMsg(sTopic As String, sMsg As String)
   Next
 
   If bMQTTDebug Then Main.WriteDebugLog(("[MQTT] Publishing Message '") & sMsg & ("' to Topic '") & sTopic & ("'"))
-  WriteMessage(bBuf, &H4 + Len(sTopic) + Len(sMsg))
+  bBuf.Resize(&H4 + Len(sTopic) + Len(sMsg))
+  QueueCommand(bBuf)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub QueueCommand(aPacket As Byte[])
+
+  ' add command to queue
+  cQueue.Add(aPacket, Rnd)
+
+  ' if not busy process it
+  If bBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DoQueue()
+
+  Dim aPacket As Byte[] = Null
+
+  For Each aPacket In cQueue
+    WriteCommand(aPacket, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tMQTTBusy_Timer()
+
+  bBusy = False
+  tMQTTBusy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If bMQTTDebug Then Main.WriteDebugLog(("[MQTT] Sending next command from Queue (count = " & cQueue.Count & ")"))
+    DoQueue()
+  Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' writes the packets
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub WriteMessage(bBuffer As Byte[], iLength As Integer)
+Private Sub WriteCommand(bBuffer As Byte[], sKey As String)
 
   Dim iCnt As Integer
   Dim bByte As Byte
 
   If Not bMQTTDebug Then
-    bBuffer.Write(hMQTT, 0, iLength)
+    bBuffer.Write(hMQTT, 0, bBuffer.Length)
     Return
   Endif
 
   Main.WriteDebugLog("[MQTT] >", True)
   For Each bByte In bBuffer
-    If iCnt >= iLength Then Break
-    Write #hMQTT, CByte(bByte) As Byte
+    If iCnt >= bBuffer.Length Then Break
+    Try Write #hMQTT, CByte(bByte) As Byte
     Main.WriteRFXDebugLog(" " & Hex(bByte, 2), True)
     Inc iCnt
   Next
   Main.WriteRFXDebugLog("\n", True)
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  tMQTTBusy.Delay = 50 ' 50mS (initial test value)
+  tMQTTBusy.Start
+  If bBusy = False Then bBusy = True
 
 Catch
    Main.WriteDebugLog(("[MQTT] Not connected to MQTT Broker, cannot Publish! "))
@@ -279,24 +408,110 @@ Catch
 
 End
 
-Public Sub ParseMessage(bByte As Byte)
+Private Sub ParseMessage(bByte As Byte)
 
+  Dim iType As Integer
+  
   If RecBytes = 0 Then ' 1st byte of a packet received
+    ' clear
+    RecBuf[0] = 0
+    RecBuf[1] = 0
     If bByte <> 0 Then
       If bMQTTDebug Then Main.WriteRFXDebugLog("[MQTT] < ", 0)
     Endif
   Endif
 
+  iType = Lsr(Val(RecBuf[0]), 4)
+
+
   Try RecBuf[RecBytes] = bByte ' store received byte
   Inc RecBytes  ' increment byte counter
 
-  If RecBuf[0] = &H20 And If RecBytes = 4 Then ' all bytes of connack packet received
-    If bMQTTDebug Then Main.WriteRFXDebugLog(Hex(bByte, 2) & "\n", 1)
-    'Decode_Messages()  ' decode message
+  ' connack
+  'If RecBuf[0] = MQTTCONNACK And If RecBytes = 4 Then
+  If iType = MQTT_CONNACK And If RecBytes = 4 Then
+    If bMQTTDebug Then
+      Main.WriteRFXDebugLog(Hex(bByte, 2) & "\n", 1)
+      DecodeConnAck(RecBuf)
+    Endif
+    RecBytes = 0  ' set to zero to receive next message
+  ' puback
+  'Else If RecBuf[0] = MQTTPUBACK And If RecBytes = RecBuf[1] + 2 Then
+  Else If iType = MQTT_PUBACK And If RecBytes = RecBuf[1] + 2 Then
+    If bMQTTDebug Then
+      Main.WriteRFXDebugLog(Hex(bByte, 2) & "\n", 1)
+      DecodePubAck(RecBuf)
+    Endif
+    RecBytes = 0  ' set to zero to receive next message
+  ' pingresp
+  'Else If RecBuf[0] = MQTTPINGRESP And If RecBytes = 2 Then
+  Else If iType = MQTT_PINGRESP And If RecBytes = 2 Then
+    If bMQTTDebug Then
+      Main.WriteRFXDebugLog(Hex(bByte, 2) & "\n", 1)
+      Main.WriteDebugLog(("[MQTT] Server replied with alive packet."))
+    Endif
+    RecBytes = 0  ' set to zero to receive next message
+  Else If iType = MQTT_SUBACK And If RecBytes = RecBuf[1] + 2 Then
+    If bMQTTDebug Then
+      Main.WriteRFXDebugLog(Hex(bByte, 2) & "\n", 1)
+      'DecodeSubAck(RecBuf)
+      Main.WriteDebugLog(("[MQTT] Subscription ack packet."))
+    Endif
+    RecBytes = 0  ' set to zero to receive next message
+  'Else If RecBuf[0] And &H30 And If RecBytes = RecBuf[1] Then
+  Else If iType = MQTT_PUBLISH And If RecBytes = RecBuf[1] Then
+    ' If bMQTTDebug Then
+    '   Main.WriteRFXDebugLog(Hex(bByte, 2) & "\n", 1)
+    '   Main.WriteDebugLog(("[MQTT] Received published data."))
+    '   DecodePublish(RecBuf)
+    ' Endif
     RecBytes = 0  ' set to zero to receive next message
   Else
-    If bMQTTDebug Then Main.WriteRFXDebugLog(Hex(bByte, 2), 1) ' write the output to the screen
+    'Print RecBytes & " -> " & Hex(bByte, 2)
+    If bMQTTDebug Then Main.WriteRFXDebugLog(Hex(bByte, 2) & " ", 1) ' write the output to the screen
   Endif
+
+End
+
+Private Sub DecodePublish(bBuffer As String[])
+
+  Dim bByte As Byte
+  Dim iCnt As Integer
+
+  Main.WriteDebugLog("[MQTT] Received: ", True)
+  For iCnt = 4 To RecBytes - 5
+    Main.WriteRFXDebugLog(Chr(bBuffer[iCnt]), True)
+  Next
+  Main.WriteRFXDebugLog("\n", True)
+
+End
+
+Private Sub DecodeConnAck(bBuffer As String[])
+
+  ' 20020000
+  Select Case bBuffer[3]
+    Case 0
+      Main.WriteDebugLog(("[MQTT] Connection accepted by server."))
+    Case 1
+      Main.WriteDebugLog(("[MQTT] Connection refused by server, wrong protocol version."))
+    Case 2
+      Main.WriteDebugLog(("[MQTT] Connection refused by server, identifier refused."))
+    Case 3
+      Main.WriteDebugLog(("[MQTT] Connection refused by server, MQTT service unavailable."))
+    Case 4
+      Main.WriteDebugLog(("[MQTT] Connection refused by server, bad username or password."))
+    Case 5
+      Main.WriteDebugLog(("[MQTT] Connection refused by server, client is not authorized."))
+    Case Else
+      Main.WriteDebugLog(("[MQTT] Received unknown CONNACK status code!"))
+  End Select
+
+End
+
+Private Sub DecodePubAck(bRecBuf As String[])
+
+  Main.WriteDebugLog(("[MQTT] Subscription accepted by broker."))
+  ' TODO: implement decode message id and QoS granted
 
 End
 
@@ -394,5 +609,29 @@ End
 Private Sub HeartBeat_Write(Value As Integer)
 
   iHeartBeat = Value
+
+End
+
+Private Function Qos_Read() As Integer
+
+  Return iQoS
+
+End
+
+Private Sub Qos_Write(Value As Integer)
+
+  iQoS = Value
+
+End
+
+Private Function Retain_Read() As Boolean
+
+  Return bRetain
+
+End
+
+Private Sub Retain_Write(Value As Boolean)
+
+  bRetain = Value
 
 End

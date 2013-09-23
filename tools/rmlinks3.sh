@@ -30,6 +30,7 @@ cp ../../DomotiGa3/.src/CEIB.class .
 cp ../../DomotiGa3/.src/CEZcontrol.class .
 cp ../../DomotiGa3/.src/CFritzBox.class .
 cp ../../DomotiGa3/.src/CGPS.class .
+cp ../../DomotiGa3/.src/CGenericIO.class .
 cp ../../DomotiGa3/.src/CHomeMatic.class .
 cp ../../DomotiGa3/.src/CIPort.class .
 cp ../../DomotiGa3/.src/CIRMan.class .
@@ -54,6 +55,7 @@ cp ../../DomotiGa3/.src/CPLCBUS.class .
 cp ../../DomotiGa3/.src/CPlugwise.class .
 cp ../../DomotiGa3/.src/CPioneer.class .
 cp ../../DomotiGa3/.src/CPwrCtrl.class .
+cp ../../DomotiGa3/.src/CRaZberry.class .
 cp ../../DomotiGa3/.src/CRFXComRX.class .
 cp ../../DomotiGa3/.src/CRFXComTX.class .
 cp ../../DomotiGa3/.src/CRFXComTRX.class .
