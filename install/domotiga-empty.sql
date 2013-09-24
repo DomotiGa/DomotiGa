@@ -2371,7 +2371,7 @@ LOCK TABLES `settings_mochad` WRITE;
 /*!40000 ALTER TABLE `settings_mochad` DISABLE KEYS */;
 INSERT INTO `settings_mochad` VALUES (0,0,'192.168.1.23',1099,0,0),(1,0,'192.168.1.23',1099,0,0);
 /*!40000 ALTER TABLE `settings_mochad` ENABLE KEYS */;
-UNLOCK TABLES:
+UNLOCK TABLES;
 
 --
 -- Table structure for table 'settings_genericio'
