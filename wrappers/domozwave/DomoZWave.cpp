@@ -129,6 +129,7 @@ typedef struct
 	list<m_cmdItem>	m_cmd;
 	uint8		m_userCodeEnrollNode;
 	time_t		m_userCodeEnrollTime;
+	time_t		m_lastWriteXML;
 } m_structCtrl;
 
 static list<m_structCtrl*> g_allControllers;
@@ -1251,6 +1252,7 @@ void RPC_DriverReady( int homeID, int nodeID )
 	ctrl->m_controllerAllQueried = 0;
 	ctrl->m_controllerBusy = false;
 	ctrl->m_nodeId = 0;
+	ctrl->m_lastWriteXML = 0;
 
 	g_allControllers.push_back( ctrl );
 
@@ -1387,6 +1389,22 @@ void OnNotification
 				nodeInfo->m_LastSeen = time( NULL );
 				nodeInfo->m_DeviceState = DZType_Alive;
 			}
+
+			// Check if zwcfg*xml has been written 3600+ sec, then flush to disk
+			m_structCtrl* ctrl = GetControllerInfo( (int)data->GetHomeId() );
+			if ( ctrl->m_lastWriteXML > 0 )
+			{
+				double seconds;
+				seconds = difftime( time( NULL ), ctrl->m_lastWriteXML );
+
+				if ( seconds > 3600 )
+				{
+					Manager::Get()->WriteConfig( (int)data->GetHomeId() );
+					WriteLog( LogLevel_Debug, true, "DomoZWave_WriteConfig: HomeId=%d (%.f seconds)", (int)data->GetHomeId(), seconds );
+					ctrl->m_lastWriteXML = time( NULL );
+				}
+			}	
+
 			break;
 		}
 		case Notification::Type_Group:
@@ -1474,7 +1492,11 @@ void OnNotification
 
 			if ( ctrl->m_controllerAllQueried == 0 )
 			{ 
+				// Write zwcfg*xml file
 				Manager::Get()->WriteConfig( (int)data->GetHomeId() );
+
+				// The zwcfg*xml is written, save the current time
+				ctrl->m_lastWriteXML = time( NULL );
 
 				// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
 				xmlrpc_env_init( &env );
