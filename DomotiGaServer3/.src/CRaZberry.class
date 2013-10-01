@@ -30,7 +30,7 @@ Private iPollTime As Integer
 Private bRaZberryDebug As Boolean
 
 Public hRaZberryInit As HttpClient
-Public hRaZberryUpdate As HttpClient
+Public hRaZberryCmd As HttpClient
 Public bInit As Boolean
 Public iUpdateTime As Integer
 Public sBuffer As String
@@ -50,6 +50,13 @@ Public sAPIVersion As String
 
 Public sSoftwareVersion As String
 Public sSoftwareDate As String
+
+' node data
+Private cCommandClassId As New Collection
+
+' queue and command buffer stuff
+Private cQueue As New Collection   ' command buffer
+Private bHttpBusy As Boolean       ' already fetching?
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' init
@@ -75,23 +82,23 @@ End
 
 Public Sub tRaZberry_Timer()
 
-  Update()
+  GetUpdates()
 
 End
 
-Private Sub GetURL() As String
+Private Sub GetURL(sCmd As String) As String
 
   If sUsername And If sPassword Then
-    Return "http://" & sUsername & ":" & sPassword & "@" & sTCPHost & ":" & iTCPPort & "/ZWaveAPI/Data/" & iUpdateTime
+    Return "https://" & sUsername & ":" & sPassword & "@" & sTCPHost & ":" & iTCPPort & sCmd
   Else
-    Return "http://" & sTCPHost & ":" & iTCPPort & "/ZWaveAPI/Data/" & iUpdateTime
+    Return "http://" & sTCPHost & ":" & iTCPPort & sCmd
   Endif
 
 End
 
 Private Sub Initialize() As Boolean
 
-  Dim sURL As String = GetURL()
+  Dim sURL As String = GetURL("/ZWaveAPI/Data/" & iUpdateTime)
 
   If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Initializing data by fetching '") & sURL & "'")
 
@@ -206,9 +213,9 @@ Private Sub ParseInitDevices(cDevices As Collection)
 
   Dim cNode, cInstance As New Collection
   Dim iNode, iBasicType, iGenericType, iSpecificType, iInstance, iBattery, iScaleId, iSensorType, iScaleMulti, iDeviceId As Integer
-  Dim sVendor, sDeviceType, sValue, sValue2, sValue3, sValue4, sValueTemp, sScale As String
+  Dim sVendor, sDeviceType, sScale As String
   Dim bIsListening, bIsSensor250, bIsSensor1000, bHasWakeup, bHasBattery, bIsFLiRS, bHasMultiInstances As Boolean
-  Dim vValue As Variant
+  Dim vValues, vValue, vValue2, vValue3, vValue4, vValueTemp As Variant
 
   ' devices found?
   If cDevices.Count Then
@@ -256,16 +263,18 @@ Private Sub ParseInitDevices(cDevices As Collection)
         Main.WriteDebugLog(("[RaZberry] BasicType: ") & iBasicType)
         Main.WriteDebugLog(("[RaZberry] GenericType: ") & iGenericType)
         Main.WriteDebugLog(("[RaZberry] SpecificType: ") & iSpecificType)
-        Main.WriteDebugLog(("[RaZberry] Is Listening: ") & Main.DisplayBool(bIsListening))
-        Main.WriteDebugLog(("[RaZberry] Does WakeUp: ") & Main.DisplayBool(bHasWakeup))
-        Main.WriteDebugLog(("[RaZberry] Has Battery: ") & Main.DisplayBool(bHasBattery))
-        Main.WriteDebugLog(("[RaZberry] Is FLiRS device: ") & Main.DisplayBool(bIsFLiRS))
-        Main.WriteDebugLog(("[RaZberry] Has Multiple Instances: ") & Main.DisplayBool(bHasMultiInstances))
+        Main.WriteDebugLog(("[RaZberry] Is Listening: ") & DisplayBool(bIsListening))
+        Main.WriteDebugLog(("[RaZberry] Does WakeUp: ") & DisplayBool(bHasWakeup))
+        Main.WriteDebugLog(("[RaZberry] Has Battery: ") & DisplayBool(bHasBattery))
+        Main.WriteDebugLog(("[RaZberry] Is FLiRS device: ") & DisplayBool(bIsFLiRS))
+        Main.WriteDebugLog(("[RaZberry] Has Multiple Instances: ") & DisplayBool(bHasMultiInstances))
       Endif
       ' go through each instance
       For Each cInstance In cNode["instances"]
+
         ' devices.2.instances.0.data
         Try iInstance = Scan(cInstance["data"]["name"], "*.*.*.*.*")[3]
+
         ' skip instance 0 if it has more, since it should be mapped to other instances
         If iInstance = 0 And If bHasMultiInstances Then Continue
         If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Instance #") & iInstance)
@@ -276,24 +285,55 @@ Private Sub ParseInitDevices(cDevices As Collection)
         ' dimmer
         ' use SwitchMultilevel first, if not available use SwitchBinary
         If cInstance["commandClasses"]["38"] Then
-          sValue = "Dim " & cInstance["commandClasses"]["38"]["data"]["level"]["value"]
-          If sValue = "Dim 99" Then sValue = "On"
-          If sValue = "Dim 0" Then sValue = "Off"
-          If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Dimmer Device: ") & sValue)
+
+          Try cCommandClassId.Add(38, iNode & ":" & iInstance)
+          vValue = cInstance["commandClasses"]["38"]["data"]["level"]["value"]
+          If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Dimmer Device: ") & vValue)
+          Select vValue
+            Case "99"
+              vValue = "On"
+            Case "0"
+              vValue = "Off"
+            Case Else
+              vValue = "Dim " & vValue
+          End Select
+
           ' update device
         ' switch
         Else If cInstance["commandClasses"]["37"] Then
-          sValue = IIf(cInstance["commandClasses"]["37"]["data"]["level"]["value"] = 255, "On", "Off")
-          If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Switch Device: ") & sValue)
+
+          Try cCommandClassId.Add(37, iNode & ":" & iInstance)
+          vValue = cInstance["commandClasses"]["37"]["data"]["level"]["value"]
+          If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Switch Device: ") & vValue)
+          vValue = IIf(vValue = 255, "On", "Off")
           ' update device
         Endif
 
         ' sensor multilevel, binary switch eg pir
         If cInstance["commandClasses"]["48"] Then
-          ' TODO: fix values depending on type
-          sValue = IIf(cInstance["commandClasses"]["48"]["data"]["level"]["value"] = True, "Open", "Close")
-          If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Multilevel binary switch device: ") & sValue)
-          ' update device
+          If sSoftwareVersion = "v1.3.1" Then
+            vValue = cInstance["commandClasses"]["48"]["data"][cInstance["commandClasses"]["48"]["data"].Key]["level"]["value"]
+          Else ' 1.4 or higher
+            For Each vValues In cInstance["commandClasses"]["48"]["data"]
+              If IsNumber(cInstance["commandClasses"]["48"]["data"].Key) Then
+                Select Case cInstance["commandClasses"]["48"]["data"][cInstance["commandClasses"]["48"]["data"].Key]["sensorTypeString"]["value"]
+                  Case "General purpose"
+                    vValue = cInstance["commandClasses"]["48"]["data"][cInstance["commandClasses"]["48"]["data"].Key]["level"]["value"]
+                    If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] General purpose: ") & vValue)
+                  Case Else
+                    If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Unknown commandclass 48 type: ") & cInstance["commandClasses"]["48"]["data"][cInstance["commandClasses"]["48"]["data"].Key]["sensorTypeString"]["value"])
+                    Continue
+                End Select
+                ' update device
+
+                If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Multilevel binary switch device: ") & DisplayBool(vValue))
+                Select Case sVendor & " " & sDeviceType
+                  Case "Aeon Labs Routing Binary Sensor"
+                    vValue = IIf(vValue = True, "Open", "Close")
+                End Select
+              Endif
+            Next
+          Endif
         Endif
 
         ' sensor humid, light, temp or power
@@ -301,16 +341,16 @@ Private Sub ParseInitDevices(cDevices As Collection)
 
           For Each vValue In cInstance["commandClasses"]["49"]["data"]
             If IsNumber(cInstance["commandClasses"]["49"]["data"].Key) Then
-              sValue = cInstance["commandClasses"]["49"]["data"][cInstance["commandClasses"]["49"]["data"].Key]["val"]["value"]
+              vValue4 = cInstance["commandClasses"]["49"]["data"][cInstance["commandClasses"]["49"]["data"].Key]["val"]["value"]
               Select Case cInstance["commandClasses"]["49"]["data"][cInstance["commandClasses"]["49"]["data"].Key]["sensorTypeString"]["value"]
                 Case "Power"
-                  If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Power Sensor: ") & sValue)
+                  If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Power Sensor: ") & vValue4)
                 Case "Temperature"
-                  If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Temp Sensor: ") & sValue)
+                  If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Temp Sensor: ") & vValue4)
                 Case "Humidity"
-                  If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Humid Sensor: ") & sValue)
+                  If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Humid Sensor: ") & vValue4)
                 Case "Luminiscence"
-                  If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Luminiscence Sensor: ") & sValue)
+                  If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Luminiscence Sensor: ") & vValue4)
               End Select
               ' update device
             Endif
@@ -319,12 +359,12 @@ Private Sub ParseInitDevices(cDevices As Collection)
 
         ' security
         If cInstance["commandClasses"]["99"] Then
-          For Each vValue In cInstance["commandClasses"]["99"]["data"]
+          For Each vValues In cInstance["commandClasses"]["99"]["data"]
             If IsNumber(cInstance["commandClasses"]["99"]["data"].Key) Then
-              sValueTemp = cInstance["commandClasses"]["99"]["data"].Key
-              If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] User Id: ") & sValueTemp)
-              sValueTemp = cInstance["commandClasses"]["99"]["data"][cInstance["commandClasses"]["99"]["data"].Key]["status"]["value"]
-              If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] User Code: ") & sValueTemp)
+              vValueTemp = cInstance["commandClasses"]["99"]["data"].Key
+              If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] User Id: ") & vValueTemp)
+              vValueTemp = cInstance["commandClasses"]["99"]["data"][cInstance["commandClasses"]["99"]["data"].Key]["status"]["value"]
+              If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] User Code: ") & vValueTemp)
               ' update device
             Endif
           Next
@@ -332,7 +372,8 @@ Private Sub ParseInitDevices(cDevices As Collection)
 
         ' meter sensors
         If cInstance["commandClasses"]["50"] Then
-          For Each vValue In cInstance["commandClasses"]["50"]["data"]
+
+          For Each vValues In cInstance["commandClasses"]["50"]["data"]
             If IsNumber(cInstance["commandClasses"]["50"]["data"].Key) Then
               iScaleId = cInstance["commandClasses"]["50"]["data"].Key
               iSensorType = cInstance["commandClasses"]["50"]["data"][cInstance["commandClasses"]["50"]["data"].Key]["sensorType"]["value"]
@@ -344,13 +385,13 @@ Private Sub ParseInitDevices(cDevices As Collection)
                     iScaleMulti = 1000
                   Endif
                 Endif
-                sValueTemp = cInstance["commandClasses"]["50"]["data"][cInstance["commandClasses"]["50"]["data"].Key]["val"]["value"]
-                If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Meter Sensor: ") & sValueTemp & sScale)
+                vValueTemp = cInstance["commandClasses"]["50"]["data"][cInstance["commandClasses"]["50"]["data"].Key]["val"]["value"]
+                If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Meter Sensor: ") & vValueTemp & sScale)
                 ' update values
                 If iScaleId = 0 Then
-                  sValue3 = sValueTemp
+                  vValue3 = vValueTemp
                 Else If iScaleId = 2 Then
-                  sValue2 = sValueTemp
+                  vValue2 = vValueTemp
                 Endif
               Endif
             Endif
@@ -360,7 +401,7 @@ Private Sub ParseInitDevices(cDevices As Collection)
 
         ' true meters
         If cInstance["commandClasses"]["50"] Then
-          For Each vValue In cInstance["commandClasses"]["50"]["data"]
+          For Each vValues In cInstance["commandClasses"]["50"]["data"]
             If IsNumber(cInstance["commandClasses"]["50"]["data"].Key) Then
               iScaleId = cInstance["commandClasses"]["50"]["data"].Key
               iSensorType = cInstance["commandClasses"]["50"]["data"][cInstance["commandClasses"]["50"]["data"].Key]["sensorType"]["value"]
@@ -372,15 +413,15 @@ Private Sub ParseInitDevices(cDevices As Collection)
               If sScale = "kWh" Then
                 iScaleMulti = 1000
               Endif
-              sValueTemp = cInstance["commandClasses"]["50"]["data"][cInstance["commandClasses"]["50"]["data"].Key]["val"]["value"]
+              vValueTemp = cInstance["commandClasses"]["50"]["data"][cInstance["commandClasses"]["50"]["data"].Key]["val"]["value"]
               If iScaleId = 0 Then
                 ' KwH value3
-                If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Meter Value2: ") & sValueTemp & sScale)
-                sValue3 = sValueTemp
+                If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Meter Value2: ") & vValueTemp & sScale)
+                vValue3 = vValueTemp
               Else If iScaleId = 2 Then
                 ' W value2
-                If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Meter Value3: ") & sValueTemp & sScale)
-                sValue2 = sValueTemp
+                If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Meter Value3: ") & vValueTemp & sScale)
+                vValue2 = vValueTemp
               Endif
               ' update
             Endif
@@ -390,10 +431,11 @@ Private Sub ParseInitDevices(cDevices As Collection)
 
         ' thermostat
         If cInstance["commandClasses"]["67"] Then
-          For Each vValue In cInstance["commandClasses"]["67"]["data"]
+          For Each vValues In cInstance["commandClasses"]["67"]["data"]
             If IsNumber(cInstance["commandClasses"]["67"]["data"].Key) Then
-              sValue = cInstance["commandClasses"]["67"]["data"][cInstance["commandClasses"]["67"]["data"].Key]["val"]["value"]
-              If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Thermostat Value: ") & sValue & sScale)
+              Try cCommandClassId.Add(67, iNode & ":" & iInstance)
+              vValue = cInstance["commandClasses"]["67"]["data"][cInstance["commandClasses"]["67"]["data"].Key]["val"]["value"]
+              If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Thermostat Value: ") & vValue & sScale)
               ' update
             Endif
           Next
@@ -403,21 +445,21 @@ Private Sub ParseInitDevices(cDevices As Collection)
         ' update device value(s)
         iDeviceId = Devices.Find(iNode & If((iInstance), ":" & iInstance, ""), Devices.FindInterface("RaZberry Z-Wave Interface"), UCase(sDeviceType), sVendor & " " & sDeviceType)
         If iDeviceId Then
-          Devices.ValueUpdate(iDeviceId, sValue, sValue2, sValue3, sValue4)
+          Devices.ValueUpdate(iDeviceId, vValue, vValue2, vValue3, vValue4)
           If bHasBattery Then Devices.Battery(iDeviceId, iBattery)
         Endif
         If Main.bRaZberryDebug Then
-          If sValue Then Main.WriteDebugLog(("[RaZberry] Value1: ") & sValue)
-          If sValue2 Then Main.WriteDebugLog(("[RaZberry] Value2: ") & sValue2)
-          If sValue3 Then Main.WriteDebugLog(("[RaZberry] Value3: ") & sValue3)
-          If sValue4 Then Main.WriteDebugLog(("[RaZberry] Value4: ") & sValue4)
+          If vValue Then Main.WriteDebugLog(("[RaZberry] Value1: ") & vValue)
+          If vValue2 Then Main.WriteDebugLog(("[RaZberry] Value2: ") & vValue2)
+          If vValue3 Then Main.WriteDebugLog(("[RaZberry] Value3: ") & vValue3)
+          If vValue4 Then Main.WriteDebugLog(("[RaZberry] Value4: ") & vValue4)
         Endif
 
         ' reset vars for next device
-        sValue = ""
-        sValue2 = ""
-        sValue3 = ""
-        sValue4 = ""
+        vValue = ""
+        vValue2 = ""
+        vValue3 = ""
+        vValue4 = ""
         sScale = ""
       Next
     Next
@@ -431,37 +473,110 @@ Catch ' some errors
 
 End
 
-Public Sub SendCommand(sAddress As String, sCmd As String)
+Public Sub DisplayBool(bSwitch As Variant) As String
 
-  Dim iLevel As Integer
-
-  sCmd = UCase(sCmd)
-
-  If sCmd = "ON" Then
-    If bRaZberryDebug Then Main.WriteDebugLog("[RaZberry] Control not yet implemented. Address: " & sAddress & " Value: " & sCmd)
-  Else If sCmd = "OFF" Then
-    If bRaZberryDebug Then Main.WriteDebugLog("[RaZberry] Control not yet implemented. Address: " & sAddress & " Value: " & sCmd)
-  Else If InStr(sCmd, "DIM") Then
-    iLevel = Val(Replace(sCmd, "DIM ", ""))
-
-    If bRaZberryDebug Then Main.WriteDebugLog("[RaZberry] Control not yet implemented. Address: " & sAddress & " Value: " & iLevel)
+  If TypeOf(bSwitch) = gb.Boolean Then
+    Select bSwitch
+      Case True
+          Return ("True")
+      Case Else
+          Return ("False")
+    End Select
   Else
-    Main.WriteDebugLog(("[RaZberry] Unknown command '") & sCmd & ("' given!"))
+    Return bSwitch
   Endif
 
 End
 
-Private Sub Update() As Boolean
+Public Sub SendCommand(sAddress As String, sCmd As String)
 
-  Dim sURL As String = GetURL()
+  Dim iLevel, iCommandClassId As Integer
+  Dim aAddress As String[]
+  sCmd = UCase(sCmd)
 
-  If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Updating data by fetching '") & sURL & "'")
+  ' if instance is 0, add it to address
+  If Not InStr(sAddress, ":") Then sAddress &= ":0"
+  aAddress = Scan(sAddress, "*:*")
 
-  hRaZberryUpdate = New HttpClient As "hRaZberryUpdate"
-  hRaZberryUpdate.URL = sURL
-  hRaZberryUpdate.Async = True
-  hRaZberryUpdate.TimeOut = 3
-  hRaZberryUpdate.Get
+  Try iCommandClassId = cCommandClassId[sAddress]
+  If Error Then
+    If bRaZberryDebug Then Main.WriteDebugLog("[RaZberry] CommandClassId not found for device with address '" & sAddress & "', so I can't control it!")
+    Return
+  Else
+    If bRaZberryDebug Then Main.WriteDebugLog("[RaZberry] CommandClassId for device with address '" & sAddress & "' is '" & iCommandClassId & "'.")
+
+    If sCmd = "ON" Then
+      iLevel = 255
+    Else If sCmd = "OFF" Then
+      iLevel = 0
+    Else If InStr(sCmd, "DIM") Then
+      iLevel = Val(Replace(sCmd, "DIM ", ""))
+      If iLevel = 100 Then iLevel = 99
+    ' insert support for thermostat setpoints
+    Else
+      Main.WriteDebugLog(("[RaZberry] Unknown command '") & sCmd & ("' given!"))
+      Return
+    Endif
+    Print iLevel
+    QueueCommand(GetURL("/ZWaveAPI/Run/devices[" & aAddress[0] & "].instances[" & aAddress[1] & "].commandClasses[" & iCommandClassId & "].Set(" & iLevel & ")"))
+
+    ' Select iCommandClassId
+    '   Case 37
+    '     QueueCommand(GetURL("/ZWaveAPI/Run/devices[" & aAddress[0] & "].instances[" & aAddress[1] & "].Basic.Set(" & iLevel & ")"))
+    '   Case 38
+    '     QueueCommand(GetURL("/ZWaveAPI/Run/devices[" & aAddress[0] & "].instances[" & aAddress[1] & "].Basic.Set(" & iLevel & ")"))
+    ' End Select
+
+  Endif
+
+End
+
+Public Sub GetUpdates()
+
+  Dim sUrl As String = GetURL("/ZWaveAPI/Data/" & iUpdateTime)
+
+  If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Get update by fetching '") & sUrl & "'")
+  QueueCommand(sUrl)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub QueueCommand(sPacket As String)
+
+  ' add command to queue
+  cQueue.Add(sPacket, Rnd)
+
+  ' if not busy process it
+  If bHttpBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DoQueue()
+
+  Dim sPacket As String
+
+  For Each sPacket In cQueue
+    WriteCommand(sPacket, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+Private Sub WriteCommand(sBuffer As String, sKey As String)
+
+  hRaZberryCmd = New HttpClient As "hRaZberryCmd"
+  hRaZberryCmd.URL = sBuffer
+  hRaZberryCmd.Async = True
+  hRaZberryCmd.TimeOut = 3
+  hRaZberryCmd.Tag = sKey
+  hRaZberryCmd.Get
+  bHttpBusy = True
+  If Main.bRaZberryDebug Then Main.WriteDebugLog("[RaZberry] Send HTTPGet request '" & sBuffer & "'")
 
 Catch ' some errors
   Main.WriteLog(("RaZberry Error: ") & Error.Text & (" at ") & Error.Where)
@@ -471,7 +586,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' collect razberry data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub hRaZberryUpdate_Read()
+Public Sub hRaZberryCmd_Read()
 
   If Lof(Last) Then sBuffer &= Read #Last, Lof(Last)
 
@@ -480,9 +595,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' razberry data fetched
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub hRaZberryUpdate_Finished()
+Public Sub hRaZberryCmd_Finished()
 
-  Select hRaZberryUpdate.Code
+  Select hRaZberryCmd.Code
     Case 200
       ' too noisy
       If Main.bRaZberryDebug Then Main.WriteDebugLog("[RaZberry] Received data '" & sBuffer & "'")
@@ -491,17 +606,18 @@ Public Sub hRaZberryUpdate_Finished()
     Case Else
       Main.WriteDebugLog(("[RaZberry] Unknown error occured while trying to get razberry update data!"))
   End Select
-  Try hRaZberryUpdate.Close
+  Try hRaZberryCmd.Close
+  HttpBusy(hRaZberryCmd.Tag)
 
 End
 
-Public Sub hRaZberryUpdate_Error()
+Public Sub hRaZberryCmd_Error()
 
   Dim sString As String = "[RaZBerry] "
 
   If Not Main.bRaZberryDebug Then Return
   ' handle error
-  Select Case hRaZberryUpdate.Status
+  Select Case hRaZberryCmd.Status
     Case Net.UnableToConnect
       Main.WriteDebugLog(sString & ("Unable to connect."))
     Case Net.HostNotFound
@@ -513,12 +629,36 @@ Public Sub hRaZberryUpdate_Error()
     Case Net.CannotWrite
       Main.WriteLog(sString & ("Error writing data."))
   End Select
+  HttpBusy(hRaZberryCmd.Tag)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' http busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub HttpBusy(sKey As String)
+
+  bHttpBusy = False
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Sending command from Queue (count = " & cQueue.Count & ")"))
+    DoQueue()
+  Endif
 
 End
 
 Private Sub ParseUpdateData(sData As String)
 
-  Dim cUpdate As Collection = JSON.Decode(sData)
+  Dim cUpdate As Collection
+
+  If sData = "null" Then
+    If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Got a device control response."))
+    Return
+  Else
+    cUpdate = JSON.Decode(sData)
+  Endif
 
   If cUpdate Then
     iUpdateTime = cUpdate["updateTime"]
@@ -534,8 +674,8 @@ Private Sub ParseUpdateData(sData As String)
     If Main.bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Error received invalid JSON update data!"))
   Endif
 
-' Catch ' some errors
-'   Main.WriteDebugLog(("RaZberry Error: ") & Error.Text & (" at ") & Error.Where)
+Catch ' some errors
+  Main.WriteDebugLog(("RaZberry Error: ") & Error.Text & (" at ") & Error.Where)
 
 End
 
@@ -587,12 +727,13 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
         If aUpdate.Count = 8 Then
           iNode = aUpdate[1]
           iInstance = aUpdate[3]
-          vValue = IIf((cUpdate["value"] = True), "Open", "Closed")
+
           If bRaZberryDebug Then
             Main.WriteDebugLog(("[RaZberry] Node: #") & iNode)
             Main.WriteDebugLog(("[RaZberry] Instance: #") & iInstance)
             Main.WriteDebugLog(("[RaZberry] Sensor Multilevel Binary Value1 Update: ") & vValue)
           Endif
+          vValue = IIf((cUpdate["value"] = True), "Open", "Closed")
           ' update device value(s)
           iDeviceId = Devices.Find(iNode & If((iInstance), ":" & iInstance, ""), Devices.FindInterface("RaZberry Z-Wave Interface"))
           If iDeviceId Then
@@ -723,7 +864,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
         Endif
       Endif
       ' TODO: add commandClass 98
-  
+
       ' clear stuff
       vValue = ""
       vValue2 = ""
@@ -733,8 +874,12 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
     Endif
   Next
 
-' Catch ' some errors
-'   Main.WriteLog(("RaZberry Error: ") & Error.Text & (" at ") & Error.Where)
+Catch ' some errors
+  If Error.code <> 6 Then ' suppress reading updatetime as collection
+    Main.WriteDebugLog(("RaZberry Error: ") & Error.Text & (" at ") & Error.Where & " " & Error.Code)
+  Else
+    Error.Clear
+  Endif
 
 End
 
@@ -761,7 +906,7 @@ Public Function Disconnect() As Boolean
   Try tRaZberry.Stop
   '  try to close all connections
   Try hRaZberryInit.Close
-  Try hRaZberryUpdate.Close
+  Try hRaZberryCmd.Close
 
   ' all ok
   Return True
@@ -771,7 +916,7 @@ Catch ' some errors
   Return False
 
 End
-' 
+
 ' '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' ' create a record with node information in database
 ' '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -795,7 +940,7 @@ End
 '   If bRaZberryDebug Then Main.WriteDebugLog(("[RaZberry] Added node #" & iNodeId & " to the DomotiGa Z-Wave list."))
 '
 ' End
-' 
+
 ' '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' ' clear nodes table from database
 ' '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
