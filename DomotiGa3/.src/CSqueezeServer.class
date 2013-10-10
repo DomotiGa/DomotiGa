@@ -18,17 +18,74 @@
 
 ' Read file called COPYING for license details.
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "SqueezeServer"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "Squeeze Server"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Byte = 1
+
+Public KeyName As String
+Public LogLabel As String = "[SqueezeServer] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Public variables - will be removed in the future
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Property TCPHost As String
-Property TCPPort As String
+Property TCPPort As Integer
 Property SqueezeServerDebug As Boolean
 
-Private sTCPHost As String
-Private sTCPPort As String
-Private bSqueezeServerDebug As Boolean
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $bSqueezeServerDebug As Boolean
 
 Public hSqueezeServer As New Socket
 Public tSqueezeServer As Timer
 Private sBuffer As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $bSqueezeServerDebug = cPl.Settings["debug"]
+ 
+  ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
@@ -40,13 +97,23 @@ Public Function Connect() As Boolean
 
   ' get a new one
   hSqueezeServer = New Socket As "SqueezeServer"
-  hSqueezeServer.Connect(sTCPHost, sTCPPort)
+  hSqueezeServer.Connect($sTCPHost, $iTCPPort)
 
-  ' all ok
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(("Squeeze Server Error: ") & ERROR.Text)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
   Return False
 
 End
@@ -56,7 +123,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SqueezeServer_Closed()
 
-  Main.WriteLog(("Squeeze Server Error: TCP socket closed. (is server still running?)"))
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed. (is server still running?)")
 
 End
 
@@ -69,19 +136,21 @@ Public Sub SqueezeServer_Ready()
   Dim aPlayers, aPlayStr As String[]
   Dim sPlayer, sStatus As String
 
-  Main.WriteLog(("Squeeze Server TCP socket connected."))
-  Main.WriteLog(("Squeeze Server is running version ") & GetVersion() & ".")
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  Main.WriteLog(LogLabel & "Is running version " & GetVersion() & ".")
 
   aPlayers = GetPlayers()
   If aPlayers.Count Then
-    Main.WriteLog(("Current player list:"))
+    Main.WriteLog(LogLabel & "Current player list:")
     For Each sPlayer In aPlayers
       aPlayStr = Scan(sPlayer, "*^*^*")
       ' activate listen mode - retrieve information
       SendCmd("listen 1", aPlayStr[0])
       If aPlayStr.Count = 3 Then
         sStatus = IIf(aPlayStr[2] = "1", "Online", "Offline")
-        Main.WriteLog(("ID: ") & aPlayStr[0] & (" Name: ") & aPlayStr[1] & (" Status: ") & sStatus)
+        Main.WriteLog(LogLabel & "ID: " & aPlayStr[0] & " Name: " & aPlayStr[1] & " Status: " & sStatus)
         iDeviceId = Devices.Find(aPlayStr[0], Devices.FindInterface("SqueezeServer Interface"), "SQUEEZEPLAYER")
         If iDeviceId Then
           Devices.ValueUpdate(iDeviceId, sStatus, "", "", "")
@@ -89,9 +158,9 @@ Public Sub SqueezeServer_Ready()
       Endif
     Next
   Else
-    Main.WriteLog(("No players found."))
+    Main.WriteLog(LogLabel & "No players found.")
   Endif
-  Main.WriteLog(("Your SqueezeServer database holds ") & GetAlbumCount() & (" albums and ") & GetSongCount() & (" songs from ") & GetArtistCount() & (" artists."))
+  Main.WriteLog(LogLabel & "Your SqueezeServer database holds " & GetAlbumCount() & " albums and " & GetSongCount() & " songs from " & GetArtistCount() & " artists.")
 
 End
 
@@ -110,7 +179,7 @@ End
 Public Sub SendCmd(sCmd As String, Optional sPlayerId As String) As String
 
   If sPlayerId Then sCmd = URLEncode(sPlayerId) & " " & sCmd
-  If bSqueezeServerDebug Then Main.WriteDebugLog("[SqueezeServer] > " & sCmd)
+  If $bSqueezeServerDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
   Try Write #hSqueezeServer, sCmd & Chr(10), Len(sCmd) + 1
 
   Return ReceiveData()
@@ -122,7 +191,7 @@ Public Sub SqueezeServer_Read()
   Dim sData As String
 
   Try sData = Read #hSqueezeServer, 1
-  If Error Then Main.WriteDebugLog(("[SqueezeServer] Error reading data from the TCP port! -> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
   If sData = Chr(10) Then ' buffer until linefeed then parse
     If Len(sBuffer) > 1 Then ParseLine(sBuffer)
     sBuffer = Null
@@ -151,24 +220,24 @@ Private Sub ParseLine(sStr As String)
   Else
     Return
   Endif
-  If Main.bSqueezeServerDebug Then Main.WriteDebugLog(("[SqueezeServer] Received string: ") & sStr)
+  If $bSqueezeServerDebug Then Main.WriteDebugLog(LogLabel & "Received string: " & sStr)
 
   Select Case sCmd
     Case "unknownir"
       ' received IR command is not from Squeezebox remote
       ' maybe it's also necessary to take player id with
       sButton = Split(sRest, " ")[0]
-      If Main.bSqueezeServerDebug Then Main.WriteDebugLog("[SqueezeServer] Remote: " & sPlayer & " Button: " & sButton)
+      If $bSqueezeServerDebug Then Main.WriteDebugLog(LogLabel & "Remote: " & sPlayer & " Button: " & sButton)
       Events.CheckIRRemoteEvents(sPlayer, sButton)
     Case "power"
       sValue = IIf(Trim(sRest) = "0", "Off", "On")
-      If Main.bSqueezeServerDebug Then Main.WriteDebugLog("[SqueezeServer] Player " & sPlayer & " Power: " & sValue)
+      If $bSqueezeServerDebug Then Main.WriteDebugLog(LogLabel & "Player " & sPlayer & " Power: " & sValue)
       iDeviceId = Devices.Find(sPlayer, Devices.FindInterface("SqueezeServer Interface"))
       ' if found then update it's value
       If iDeviceId Then Devices.ValueUpdate(iDeviceId, sValue, "", "", "")
       Events.CheckIRRemoteEvents(sPlayer, sButton)
     Case Else
-      If Main.bSqueezeServerDebug Then Main.WriteDebugLog(("[SqueezeServer] Received Player: ") & sPlayer & (" Command: ") & sCmd & (" Rest: ") & sScan[2])
+      If $bSqueezeServerDebug Then Main.WriteDebugLog(LogLabel & "Received Player: " & sPlayer & " Command: " & sCmd & " Rest: " & sScan[2])
   End Select
 
 End
@@ -192,7 +261,7 @@ Public Sub SendCommandParams(sCmd As String, aParams As String[], Optional sPlay
     sCmd &= " " & UrlEncode(sParam)
   Next
   If sPlayerId Then sCmd = URLEncode(sPlayerId) & " " & sCmd
-  If bSqueezeServerDebug Then Main.WriteDebugLog("[SqueezeServer] > " & sCmd)
+  If $bSqueezeServerDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
   Try Write #hSqueezeServer, sCmd & Chr(10), Len(sCmd) + 1
 
   Return ReceiveData()
@@ -219,7 +288,7 @@ Public Sub ReceiveData() As String
     Endif
     Dec iTries
   Wend
-  If bSqueezeServerDebug Then Main.WriteDebugLog("[SqueezeServer] < " & URLDecode(sData))
+  If $bSqueezeServerDebug Then Main.WriteDebugLog(LogLabel & "< " & URLDecode(sData))
 
   Return URLDecode(sData)
 
@@ -672,13 +741,19 @@ Public Function Disconnect() As Boolean
   ' try to close the connection
   Try hSqueezeServer.Close
   Try tSqueezeServer.Stop
-  Main.WriteLog(("Squeeze Server TCP socket port close."))
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
 
   ' all ok
   Return True
 
-Catch ' some errors
-  Main.WriteLog(("Squeeze Server Error: ") & ERROR.Text)
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
 
 End
@@ -688,55 +763,46 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SqueezeServer_Error()
 
-  ' handle error
-  Select Case hSqueezeServer.Status
-    Case Net.CannotCreateSocket
-      Main.WriteLog(("Squeeze Server: The system does not allow to create a socket."))
-    Case Net.HostNotFound
-      Main.WriteLog(("Squeeze Server: Host '") & sTCPHost & ("' not found."))
-    Case Net.ConnectionRefused
-      Main.WriteLog(("Squeeze Server: Unable to connect to SqueezeServer. Connection refused."))
-    Case Net.CannotRead
-      Main.WriteLog(("Squeeze Server: Error reading data."))
-    Case Net.CannotWrite
-      Main.WriteLog(("Squeeze Server: Error writing data."))
-  End Select
+  Log.Plugin_TCP_Error(LogLabel, $sTCPHost, Last.Status)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' implement properties
 Private Function TCPHost_Read() As String
 
-  Return sTCPHost
+  Return $sTCPHost
 
 End
 
 Private Sub TCPHost_Write(Value As String)
 
-  sTCPHost = Value
+  $sTCPHost = Value
 
 End
 
-Private Function TCPPort_Read() As String
+Private Function TCPPort_Read() As Integer
 
-  Return sTCPPort
+  Return $iTCPPort
 
 End
 
-Private Function TCPPort_Write(Value As String)
+Private Function TCPPort_Write(Value As Integer)
 
-  sTCPPort = Value
+  $iTCPPort = Value
 
 End
 
 Private Function SqueezeServerDebug_Read() As Boolean
 
-  Return bSqueezeServerDebug
+  Return $bSqueezeServerDebug
 
 End
 
 Private Sub SqueezeServerDebug_Write(Value As Boolean)
 
-  bSqueezeServerDebug = Value
+  $bSqueezeServerDebug = Value
 
 End

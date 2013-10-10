@@ -18,17 +18,42 @@
 
 ' Read file called COPYING for license details.
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Name As String = "CTX35"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "Xanura CTX35 X10"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Byte = 1
+
+Public KeyName As String
+Public LogLabel As String = "[CTX35] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Public variables - will be removed in the future
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Property Port As String
 Property Baud As String
 Property PollTime As Integer
 Property GlobalX10 As Boolean
 Property CTX35Debug As Boolean
 
-Private sPort As String
-Private sBaud As String
-Private iPollTime As Integer
-Private bGlobalX10 As Boolean
-Private bCTX35Debug As Boolean
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sSerPort As String
+Private $sBaud As String
+Private $iPollTime As Integer
+Private $bGlobalX10 As Boolean
+Private $bCTX35Debug As Boolean
 
 Private RecBuf As String
 
@@ -42,6 +67,40 @@ Private bControllerBusy As Boolean  ' waiting for delay timer to finish
 Private aCTX As New String[3, 7]    ' buffer received commands
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sSerPort = cPl.Settings["serialport"]
+  $sBaud = cPl.Settings["baudrate"]
+  $iPollTime = cPl.Settings["polltime"]
+  $bGlobalX10 = cPl.Settings["globalx10"]
+  $bCTX35Debug = cPl.Settings["debug"]
+ 
+  ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Connect() As Boolean
@@ -53,8 +112,8 @@ Public Function Connect() As Boolean
   hCTX35 = New Serialport As "CTX35"
 
   With hCTX35
-    .PortName = sPort
-    .Speed = sBaud
+    .PortName = $sSerPort
+    .Speed = $sBaud
     .Parity = 0
     .DataBits = 8
     .StopBits = 1
@@ -71,11 +130,24 @@ Public Function Connect() As Boolean
   tCTX35Busy = New Timer As "tCTX35Busy"
   tCTX35Busy.Stop
 
-  ' all ok
+  tCTX35Poll = New Timer As "tCTX35Poll"
+  tCTX35Poll.Delay = $iPollTime
+  tCTX35Poll.Start
+
+  ' Write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  IsRunning = True
+
+  ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(("CTX35 Error: ") & ERROR.Text)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
   Return False
 
 End
@@ -93,25 +165,23 @@ Public Function Disconnect() As Boolean
   ' try to close the connection
   Try hCTX35.Close
 
-  Main.WriteLog(("CTX35 serial port close."))
+  Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
 
   ' all ok
   Return True
 
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
 Catch ' some errors
-  Main.WriteLog(("CTX35 Error: ") & ERROR.Text)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
 
 End
 
-Public Sub Run()
-
-  tCTX35Poll = New Timer As "tCTX35Poll"
-  tCTX35Poll.Delay = iPollTime
-  tCTX35Poll.Start
-
-End
-
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessReceivedChar(sData As String)
 
   Main.ControlLed("X10", "On")
@@ -139,24 +209,24 @@ Private Sub ProcessX10(sStr As String)
   Dim sChar As String
 
   RecBuf = ""
-  If Main.bCTX35Debug Then Main.WriteDebugLog("[CTX35] < " & sStr)
+  If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "< " & sStr)
 
   ' process special packets
   Select sStr
     Case "$<2800!4B#" ' ack packet
-      If Main.bCTX35Debug Then Main.WriteDebugLog("[CTX35] < Ack received!")
+      If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "< Ack received!")
       Return
     Case "$<2800?69#" ' wrong checksum received
-      If Main.bCTX35Debug Then Main.WriteDebugLog("[CTX35] < Wrong checksum!")
+      If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "< Wrong checksum!")
       Return
     Case "$<2800!S0CE#" ' interface buffer full
-      If Main.bCTX35Debug Then Main.WriteDebugLog("[CTX35] < Buffer is full!")
+      If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "< Buffer is full!")
       Return
   End Select
 
   ' check checksum first
   If Not TestCheckSum(sStr) Then
-    If Main.bCTX35Debug Then Main.WriteDebugLog(("[CTX35] Checksum error!"))
+    If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "Checksum error!")
     Return
   Endif
 
@@ -201,7 +271,7 @@ Private Sub ProcessCode(sType As String, sValue As String)
     Select sType
       Case "Code"
         bCodefound = False
-        If Main.bCTX35Debug Then Main.WriteDebugLog("[CTX35] Code: " & sValue)
+        If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "Code: " & sValue)
         For iCnt2 = 0 To 2
           If aCTX[iCnt, 0] = sValue And Not aCTX[iCnt, 5] Then bCodefound = True
         Next
@@ -222,7 +292,7 @@ Private Sub ProcessCode(sType As String, sValue As String)
           aCTX[iCnt, 6] = ""
           Return
         Else If DateDiff(Time, aCTX[iCnt, 4], gb.Second) > 10 Then ' incomplete code/status, overwrite
-          Main.WriteDebugLog(("[CTX35] Received Code without Status : ") & aCTX[iCnt, 0] & " " & aCTX[iCnt, 1] & " " & aCTX[iCnt, 2] & " " & aCTX[iCnt, 3] & " " & aCTX[iCnt, 4] & " " & aCTX[iCnt, 5] & " " & aCTX[iCnt, 6])
+          Main.WriteDebugLog(LogLabel & "Received Code without Status : " & aCTX[iCnt, 0] & " " & aCTX[iCnt, 1] & " " & aCTX[iCnt, 2] & " " & aCTX[iCnt, 3] & " " & aCTX[iCnt, 4] & " " & aCTX[iCnt, 5] & " " & aCTX[iCnt, 6])
           aCTX[iCnt, 0] = sValue
           aCTX[iCnt, 1] = ""
           aCTX[iCnt, 2] = ""
@@ -233,7 +303,7 @@ Private Sub ProcessCode(sType As String, sValue As String)
           Return
         Endif
       Case "Status Request"
-        If Main.bCTX35Debug Then Main.WriteDebugLog(("[CTX35] Status Request ") & sValue)
+        If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "Status Request " & sValue)
         If aCTX[iCnt, 0] = "" Then
           Return
         Else If Left$(aCTX[iCnt, 0], 1) = Left$(sValue, 1) And aCTX[iCnt, 5] = "" Then
@@ -241,7 +311,7 @@ Private Sub ProcessCode(sType As String, sValue As String)
           Return
         Endif
       Case "Status"
-        If Main.bCTX35Debug Then Main.WriteDebugLog(("[CTX35] Status: ") & sValue)
+        If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & " Status: " & sValue)
         If aCTX[iCnt, 2] = "" And Left$(aCTX[iCnt, 0], 1) = Left$(sValue, 1) Then
           aCTX[iCnt, 5] = "OK"
           aCTX[iCnt, 4] = Time
@@ -261,9 +331,9 @@ Private Sub UpdateX10(sCode As String, sCommand As String)
 
   Dim iDeviceId As Integer
 
-  If Main.bCTX35Debug Then Main.WriteDebugLog(("[CTX35] Received command '") & sCommand & ("' for device '") & sCode & "'")
+  If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "Received command '" & sCommand & "' for device '" & sCode & "'")
 
-  If bGlobalX10 Then
+  If $bGlobalX10 Then
     iDeviceId = Devices.FindAll(sCode, 9999, "X10")
   Else
     iDeviceId = Devices.Find(sCode, Devices.FindInterface("Xanura CTX35"), "X10")
@@ -287,7 +357,7 @@ Public Sub tCTX35Busy_Timer()
   tCTX35Busy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If bCTX35Debug Then Main.WriteDebugLog(("[CTX35] Sending next command from Queue (count = " & cQueue.Count & ")"))
+    If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "Sending next command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
 
@@ -334,11 +404,11 @@ Public Sub CTX35_Read()
 
   Dim bData As Byte
 
-  Try bData = Read #hCTX35 As Byte
+  Try bData = Read #Last As Byte
   If Not Error Then
     ProcessReceivedChar(Chr(bData))
   Else
-    Main.WriteDebugLog(("[CTX35] Error reading data from the serial port! ->") & ERROR.Text)
+    Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! ->" & ERROR.Text)
   Endif
 
 End
@@ -351,10 +421,10 @@ Private Sub WriteCommand(sBuffer As String, sKey As String)
   Main.ControlLed("X10", "On")
   If Main.bServer Then tCTX35Led.Start
 
-  If bCTX35Debug Then Main.WriteDebugLog("[CTX35] > " & sBuffer)
+  If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "> " & sBuffer)
 
   Try Print #hCTX35, sBuffer
-  If Error Then Main.WriteDebugLog(("[CTX35] Error writing data to the serial port! ->") & ERROR.Text)
+  If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! ->" & ERROR.Text)
 
   ' remove sent command from queue
   cQueue.Remove(sKey)
@@ -379,7 +449,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
 
   ' check if it contains a valid address
   If Not (sAddress Like "[A-P][0-1][0-9]*") Then
-    If Main.bCTX35Debug Then Main.WriteDebugLog(("[CTX35] Got invalid address " & sAddress & "!"))
+    If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "Got invalid address " & sAddress & "!")
     Return
   Endif
 
@@ -389,7 +459,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
   ' translate to CTX command
   sStr = X10toCTX(sValue)
   If Len(sStr) = 0 Then ' not valid
-    If Main.bCTX35Debug Then Main.WriteDebugLog(("[CTX35] Got invalid command " & sValue & "!"))
+    If $bCTX35Debug Then Main.WriteDebugLog(LogLabel & "Got invalid command " & sValue & "!")
     Return
   Endif
 
@@ -468,63 +538,65 @@ Private Sub X10toCTX(sCommand As String) As String
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' implement properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Function Port_Read() As String
 
-  Return sPort
+  Return $sSerPort
 
 End
 
 Sub Port_Write(Value As String)
 
-  sPort = Value
+  $sSerPort = Value
 
 End
 
 Private Function Baud_Read() As String
 
-  Return sBaud
+  Return $sBaud
 
 End
 
 Private Sub Baud_Write(Value As String)
 
-  sBaud = Value
+  $sBaud = Value
 
 End
 
 Private Function CTX35Debug_Read() As Boolean
 
-  Return bCTX35Debug
+  Return $bCTX35Debug
 
 End
 
 Private Sub CTX35Debug_Write(Value As Boolean)
 
-  bCTX35Debug = Value
+  $bCTX35Debug = Value
 
 End
 
 Private Function PollTime_Read() As Integer
 
-  Return iPollTime
+  Return $iPollTime
 
 End
 
 Private Sub PollTime_Write(Value As Integer)
 
-  iPollTime = Value
+  $iPollTime = Value
 
 End
 
 Private Function GlobalX10_Read() As Boolean
 
-  Return bGlobalX10
+  Return $bGlobalX10
 
 End
 
 Private Sub GlobalX10_Write(Value As Boolean)
 
-  bGlobalX10 = Value
+  $bGlobalX10 = Value
 
 End

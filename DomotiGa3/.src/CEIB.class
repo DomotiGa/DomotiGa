@@ -17,19 +17,76 @@
 
 ' Read file called COPYING for license details.
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "EIB"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "KNX/EIB"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Byte = 1
+
+Public KeyName As String
+Public LogLabel As String = "[EIB] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Public variables - will be removed in the future
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Property TCPHost As String
-Property TCPPort As String
+Property TCPPort As Integer
 Property EIBDebug As Boolean
 
-Private sTCPHost As String
-Private sTCPPort As String
-Private bEIBDebug As Boolean
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $bEIBDebug As Boolean
 
 Public hEIB As New Socket
 Public tEIB As Timer
 
 Private Const CmdOn As Byte = &H81
 Private Const CmdOff As Byte = &H80
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $bEIBDebug = cPl.Settings["debug"]
+ 
+  ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
@@ -41,18 +98,28 @@ Public Function Connect() As Boolean
 
   ' get a new one
   hEIB = New Socket As "eib"
-  hEIB.Connect(sTCPHost, sTCPPort)
+  hEIB.Connect($sTCPHost, $iTCPPort)
 
   ' start poll timer for KNX/EIB status LED
   tEIB = New Timer As "tEIBLED"
   tEIB.Delay = 250
   tEIB.Stop
 
-  ' all ok
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(("KNX/EIB Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
   Return False
 
 End
@@ -64,7 +131,9 @@ Public Sub EIB_Ready()
 
   Dim bCommand As Byte[] = [CByte(&H00), CByte(&H26), CByte(&H00), CByte(&H00), CByte(&H00)]
 
-  Main.WriteLog(("KNX/EIB TCP socket connected."))
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
   TX(bCommand)
 
   ' request status of all devices
@@ -77,7 +146,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub EIB_Closed()
 
-  Main.WriteLog(("KNX/EIB Error: TCP socket closed."))
+  Main.WriteLog(LogLabel & "TCP socket closed.")
 
 End
 
@@ -119,8 +188,8 @@ Private Sub TX(bCommand As Byte[])
     bCommand.Add(Hex(iLen), 1)
     bCommand.Write(hEIB, 0, bCommand.Length)
 
-    If Not bEIBDebug Then Return
-    Main.WriteDebugLog("[KNX/EIB] >", True)
+    If Not $bEIBDebug Then Return
+    Main.WriteDebugLog(LogLabel & ">", True)
     For Each bData In bCommand
       Main.WriteRFXDebugLog(" " & Hex(bData, 2), True)
     Next
@@ -128,7 +197,7 @@ Private Sub TX(bCommand As Byte[])
   Endif
 
 Catch
-  Main.WriteDebugLog(("[KNX/EIB] Error while trying to send: ") & ERROR.Text & (" at ") & ERROR.Where)
+  Main.WriteDebugLog(LogLabel & " Error while trying to send: " & ERROR.Text & " at " & ERROR.Where)
 
 End
 
@@ -139,32 +208,26 @@ Public Function Disconnect() As Boolean
 
   ' try to close the connection
   Try hEIB.Close
-  Main.WriteLog(("KNX/EIB TCP socket port close."))
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
 
   ' all ok
   Return True
 
-Catch ' some errors
-  Main.WriteLog(("KNX/EIB Error: ") & ERROR.Text & (" at ") & ERROR.Where)
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
 
 End
 
 Public Sub EIB_Error()
 
-  ' handle error
-  Select Case hEIB.Status
-    Case Net.CannotCreateSocket
-      Main.WriteLog(("KNX/EIB: The system does not allow to create a socket."))
-    Case Net.HostNotFound
-      Main.WriteLog(("KNX/EIB: Host '") & sTCPHost & ("' not found."))
-    Case Net.ConnectionRefused
-      Main.WriteLog(("KNX/EIB: Unable to connect to eibd. Connection refused."))
-    Case Net.CannotRead
-      Main.WriteLog(("KNX/EIB: Error reading data."))
-    Case Net.CannotWrite
-      Main.WriteLog(("KNX/EIB: Error writing data."))
-  End Select
+  Log.Plugin_TCP_Error(LogLabel, $sTCPHost, Last.Status)
 
 End
 
@@ -193,11 +256,11 @@ Public Sub EIB_Read()
 
   Select Hex$(bMyBuf[3])
     Case 26 ' open group socket reply
-      If Main.bEIBDebug Then Main.WriteDebugLog("[KNX/EIB] Got a group socket reply.")
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Got a group socket reply.")
     Case 27 ' group packet
       sDevice = Addr2Str((Hex$(bMyBuf[4], 2)) & (Hex(bMyBuf[5], 2)), False)
       sAddress = Addr2Str((Hex$(bMyBuf[6], 2)) & (Hex$(bMyBuf[7], 2)), True)
-      If Main.bEIBDebug Then Main.WriteDebugLog("[KNX/EIB] Received packet data from '" & sDevice & "' to '" & sAddress & "'")
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Received packet data from '" & sDevice & "' to '" & sAddress & "'")
       For iCnt = 9 To bMyBuf.Length - 1 ' bMyBuf[1]
         sReceived.Add(Hex(bMyBuf[iCnt], 2))
       Next
@@ -208,15 +271,15 @@ Public Sub EIB_Read()
       Endif
   End Select
 
-  If Not bEIBDebug Then Return
-  Main.WriteDebugLog("[KNX/EIB] <", True)
+  If Not $bEIBDebug Then Return
+  Main.WriteDebugLog(LogLabel & "<", True)
   For iCnt = 0 To bMyBuf[1] + 2
     Main.WriteRFXDebugLog(" " & Hex(bMyBuf[iCnt], 2), True)
   Next
   Main.WriteRFXDebugLog("\n", True)
 
 Catch
-  Main.WriteDebugLog("[KNX/EIB] Error '" & Error.Text & "' at '" & Error.Where & "'")
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -240,7 +303,7 @@ Private Sub LookupEIS(sAddress As String, sReceived As String[])
       Case "EIS 5" ' Values
         EIS5(iDeviceId, sReceived)
       Case Else
-        Main.WriteDebugLog("[KNX/EIB] EIS Unknown for address '" & sAddress & "' and data '" & sReceived & "'")
+        Main.WriteDebugLog(LogLabel & "EIS Unknown for address '" & sAddress & "' and data '" & sReceived & "'")
     End Select
   Endif
 
@@ -255,10 +318,10 @@ Private Sub EIS1(iDeviceId As Integer, sReceived As String[])
   Select Case sReceived[0]
     Case 40, 80
       Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
-      If bEIBDebug Then Main.WriteDebugLog("[KNX/EIB] EIS1: " & Devices.FindNameForDevice(iDeviceId) & " Off")
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS1: " & Devices.FindNameForDevice(iDeviceId) & " Off")
     Case 41, 81
       Devices.ValueUpdate(iDeviceId, "On", "", "", "")
-      If bEIBDebug Then Main.WriteDebugLog("[KNX/EIB] EIS1: " & Devices.FindNameForDevice(iDeviceId) & " On")
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS1: " & Devices.FindNameForDevice(iDeviceId) & " On")
   End Select
 
 End
@@ -288,11 +351,11 @@ Private Sub EIS2(iDeviceId As Integer, sReceived As String[])
         Devices.ValueUpdate(iDeviceId, "Dim " & CStr(iPercentage), "", "", "")
       Endif
     Case 41
-      If bEIBDebug Then Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " On")
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " On")
         Devices.ValueUpdate(iDeviceId, "On", "", "", "")
         iPercentage = Val("&H" & sReceived[1]) / 255 * 100
         If iPercentage <> "0" And iPercentage <> "100" Then
-          If bEIBDebug Then Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " Dim")
+          If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " Dim")
           Devices.ValueUpdate(iDeviceId, "Dim " & CStr(iPercentage), "", "", "")
       Endif
     Case 80
@@ -305,16 +368,16 @@ Private Sub EIS2(iDeviceId As Integer, sReceived As String[])
         Else
           Devices.ValueUpdate(iDeviceId, "Dim " & CStr(iPercentage), "", "", "")
         Endif
-        If bEIBDebug Then Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " Dim " & iPercentage & "%")
+        If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " Dim " & iPercentage & "%")
       Else
-        If bEIBDebug Then Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " Off")
+        If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " Off")
         Devices.ValueUpdate(iDeviceId, "Off", "", "", "")
       Endif
     Case 81
-      If bEIBDebug Then Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " On")
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " On")
       Devices.ValueUpdate(iDeviceId, "On", "", "", "")
     Case 89
-      If bEIBDebug Then Main.WriteDebugLog("[KNX/EIB] EIS2: " & sDeviceName & " Dim")
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " Dim")
   End Select
 
 End
@@ -331,7 +394,7 @@ Private Sub EIS3(iDeviceId As Integer, sReceived As String[])
   Select Case sReceived[0]
     Case 80
       sTime = DecodeEIS3(sReceived)
-      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS3: ") & Devices.FindNameForDevice(iDeviceId) & " " & sTime)
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS3: " & Devices.FindNameForDevice(iDeviceId) & " " & sTime)
       Devices.ValueUpdate(iDeviceId, sTime, "", "", "")
     Case 00
       sAddressSplit = Split(Devices.FindAddressForDevice(Devices.FindNameForDevice(iDeviceId)), "/")
@@ -345,7 +408,7 @@ Private Sub EIS3(iDeviceId As Integer, sReceived As String[])
       bCommand[7] = Hex$(Minute(Now))
       bCommand[8] = Hex$(Second(Now))
       TX(bCommand)
-      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS3: Time ") & Time(Now) & (" send to bus."))
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS3: Time " & Time(Now) & " send to bus.")
   End Select
 
 End
@@ -386,7 +449,7 @@ Private Sub EIS4(iDeviceId As Integer, sReceived As String[])
   Select Case sReceived[0]
     Case 80
       sDate = DecodeEIS4(sReceived)
-      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS4: ") & Devices.FindNameForDevice(iDeviceId) & " " & sDate)
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS4: " & Devices.FindNameForDevice(iDeviceId) & " " & sDate)
       Devices.ValueUpdate(iDeviceId, sDate, "", "", "")
     Case 00
       sAddressSplit = Split(Devices.FindAddressForDevice(Devices.FindNameForDevice(iDeviceId)), "/")
@@ -400,7 +463,7 @@ Private Sub EIS4(iDeviceId As Integer, sReceived As String[])
       bCommand[7] = Hex$(Month(Now))
       bCommand[8] = Hex$(Right$(CStr(Year(Now)), 2))
       TX(bCommand)
-      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS4: Date ") & Day(Now) & "/" & Month(Now) & "/" & Year(Now) & (" send to bus."))
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS4: Date " & Day(Now) & "/" & Month(Now) & "/" & Year(Now) & " send to bus.")
   End Select
 
 End
@@ -436,7 +499,7 @@ Private Sub EIS5(iDeviceId As Integer, sReceived As String[])
   Select Case sReceived[0] ' receive
     Case 80, 40
       fValue = DecodeEIS5(sReceived[1] & sReceived[2])
-      If bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] EIS5: ") & Devices.FindNameForDevice(iDeviceId) & " " & fValue)
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS5: " & Devices.FindNameForDevice(iDeviceId) & " " & fValue)
       Devices.ValueUpdate(iDeviceId, fValue, "", "", "")
   End Select
 
@@ -474,7 +537,7 @@ Private Sub SendGroup(sAddress As String)
   Dim sAddressSplit As String[]
   Dim bCommand As New Byte[5]
 
-  If Main.bEIBDebug Then Main.WriteDebugLog(("[KNX/EIB] Requesting status packet for device with address '") & sAddress & "'")
+  If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Requesting status packet for device with address '" & sAddress & "'")
   sAddressSplit = Split(sAddress, "/")
   If sAddressSplit.Count = 3 Then
     sAddress = Str2Addr(sAddressSplit[0], sAddressSplit[1], sAddressSplit[2])
@@ -535,7 +598,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
             TX(bCommand)
         End Select
       Else
-        Main.WriteDebugLog("[KNX/EIB] Invalid address format for EIS1 device: '" & sAddress & "', should be '0/1/2'")
+        Main.WriteDebugLog(LogLabel & "Invalid address format for EIS1 device: '" & sAddress & "', should be '0/1/2'")
       Endif
     Case "EIS 2"
       ' EIB type 2. Dimmer switch items.
@@ -576,7 +639,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
             Endif
         End Select
       Else
-        Main.WriteDebugLog("[KNX/EIB] Invalid address format for EIS2 device: '" & sAddress & "', should be '0/1/2|0/3/4|0/5/6'")
+        Main.WriteDebugLog(LogLabel & "Invalid address format for EIS2 device: '" & sAddress & "', should be '0/1/2|0/3/4|0/5/6'")
       Endif
   End Select
 
@@ -602,39 +665,42 @@ Public Function Str2Addr(sA1 As String, sA2 As String, sA3 As String) As String
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' implement properties
 Private Function TCPHost_Read() As String
 
-  Return sTCPHost
+  Return $sTCPHost
 
 End
 
 Private Sub TCPHost_Write(Value As String)
 
-  sTCPHost = Value
+  $sTCPHost = Value
 
 End
 
-Private Function TCPPort_Read() As String
+Private Function TCPPort_Read() As Integer
 
-  Return sTCPPort
+  Return $iTCPPort
 
 End
 
-Private Function TCPPort_Write(Value As String)
+Private Function TCPPort_Write(Value As Integer)
 
-  sTCPPort = Value
+  $iTCPPort = Value
 
 End
 
 Private Function EIBDebug_Read() As Boolean
 
-  Return bEIBDebug
+  Return $bEIBDebug
 
 End
 
 Private Sub EIBDebug_Write(Value As Boolean)
 
-  bEIBDebug = Value
+  $bEIBDebug = Value
 
 End

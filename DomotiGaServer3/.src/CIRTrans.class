@@ -17,13 +17,38 @@
 
 ' Read file called COPYING for license details.
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "IRTans"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "IRTrans"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Byte = 1
+
+Public KeyName As String
+Public LogLabel As String = "[IRTrans] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Public variables - will be removed in the future
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Property TCPHost As String
-Property TCPPort As String
+Property TCPPort As Integer
 Property IRTransDebug As Boolean
 
-Private sTCPHost As String
-Private iTCPPort As String
-Private bIRTransDebug As Boolean
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $bIRTransDebug As Boolean
 
 Public hIRTrans As New Socket
 Public sBuffer As String
@@ -32,22 +57,64 @@ Private iConnectRetry As Integer = 0 ' retries
 Private iConnectDelay As Integer = 60000 ' 1 minute
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $bIRTransDebug = cPl.Settings["debug"]
+ 
+  ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Public Function Connect(Optional bFirstStart As Boolean = True) As Boolean
 
   ' try to close the connection
   Try hIRTrans.Close
 
   ' get a new one
   hIRTrans = New Socket As "IRTrans"
-  hIRTrans.Connect(sTCPHost, iTCPPort)
+  hIRTrans.Connect($sTCPHost, $iTCPPort)
 
-  ' all ok
+  ' Write to main logfile we are trying to connect
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(("IRTrans Error: ") & ERROR.Text)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
   Return False
 
 End
@@ -57,7 +124,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub IRTrans_Ready()
 
-  Main.WriteLog(("IRTrans TCP socket connected."))
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
 
   ' initialise the ASCII communication
   Try Write #hIRTrans, "ASCI", 4
@@ -74,9 +142,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub IRTrans_Closed()
 
-  Main.WriteLog(("IRTrans Error: TCP socket closed."))
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed.")
   If iConnectRetry < 6 Then
-    Main.WriteDebugLog(("[IRTrans] Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", ".")))
+    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
     tIRTransConnect.Start
   Endif
 
@@ -87,7 +155,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tIRTransConnect_Timer()
 
-  If Not Connect() Then
+  If Not Connect(False) Then
     Inc iConnectRetry
     iConnectDelay *= iConnectRetry
     tIRTransConnect.Delay = iConnectDelay
@@ -103,20 +171,26 @@ Public Function Disconnect() As Boolean
   ' try to close the connection
   Try tIRTransConnect.Stop
   Try hIRTrans.Close
-  Main.WriteLog(("IRTrans TCP socket close."))
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
 
   ' all ok
   Return True
 
-Catch ' some errors
-  Main.WriteLog(("IRTrans Error: ") & ERROR.Text)
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
 
 End
 
 Public Sub IRTrans_Found()
 
-  Main.WriteLog(("IRTrans IP address resolved."))
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
@@ -125,19 +199,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub IRTrans_Error()
 
-  ' handle error
-  Select Case hIRTrans.Status
-    Case Net.CannotCreateSocket
-      Main.WriteLog(("IRTrans: The system does not allow to create a socket."))
-    Case Net.HostNotFound
-      Main.WriteLog(("IRTrans: Host '") & sTCPHost & ("' not found."))
-    Case Net.ConnectionRefused
-      Main.WriteLog(("IRTrans: Unable to connect to interface. Connection refused."))
-    Case Net.CannotRead
-      Main.WriteLog(("IRTrans: Error reading data."))
-    Case Net.CannotWrite
-      Main.WriteLog(("IRTrans: Error writing data."))
-  End Select
+  Log.Plugin_TCP_Error(LogLabel, $sTCPHost, Last.Status)
 
 End
 
@@ -146,9 +208,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sCmd As String)
 
-  If Main.bIRTransDebug Then Main.WriteDebugLog(("[IRTrans] Send command: ") & sCmd)
+  If $bIRTransDebug Then Main.WriteDebugLog(LogLabel & "Send command: " & sCmd)
   Try Write #hIRTrans, sCmd & Chr$(10), Len(sCmd) + 1
-  If Error Then Main.WriteDebugLog(("[IRTrans] Error writing data to the TCP port! -> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & Error.Text)
 
 End
 
@@ -157,10 +219,10 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendIRCommand(sCmd As String)
 
-  If Main.bIRTransDebug Then Main.WriteDebugLog(("[IRTrans] Send IR command: ") & sCmd)
+  If $bIRTransDebug Then Main.WriteDebugLog(LogLabel & "Send IR command: " & sCmd)
   sCmd = "Asnd " & sCmd
   Try Write #hIRTrans, sCmd & Chr$(10), Len(sCmd) + 1
-  If Error Then Main.WriteDebugLog(("[IRTrans] Error writing data to the TCP port! -> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & Error.Text)
 
 End
 
@@ -172,7 +234,7 @@ Public Sub IRTrans_Read()
   Dim sData As String
 
   Try sData = Read #hIRTrans, 1
-  If Error Then Main.WriteDebugLog(("[IRTrans] Error reading data from the TCP port! -> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
   If sData = Chr(10) Then ' buffer until linefeed then parse
     If Len(sBuffer) > 1 Then ParseLine(sBuffer)
     sBuffer = Null
@@ -190,7 +252,7 @@ Private Sub ParseLine(sStr As String)
   Dim sScan As String[]
   Dim sRemote, sButton As String
 
-  If Main.bIRTransDebug Then Main.WriteDebugLog(("[IRTrans] Received string: ") & sStr)
+  If $bIRTransDebug Then Main.WriteDebugLog(LogLabel & "Received string: " & sStr)
 
   If InStr(sStr, "RCV_COM") Then
     ' received IR command
@@ -202,59 +264,62 @@ Private Sub ParseLine(sStr As String)
       sRemote = sScan[0]
       sButton = sScan[1]
       Events.CheckIRRemoteEvents(sRemote, sButton)
-      If Main.bIRTransDebug Then Main.WriteDebugLog(("[IRTrans] Remote: ") & sRemote & (" Button: ") & sButton & (" Bus: ") & sScan[2] & (" Device: ") & sScan[3])
+      If $bIRTransDebug Then Main.WriteDebugLog(LogLabel & "Remote: " & sRemote & " Button: " & sButton & " Bus: " & sScan[2] & " Device: " & sScan[3])
     Endif
     Return
   Endif
 
   If InStr(sStr, "RESULT OK") Then
-    If Main.bIRTransDebug Then Main.WriteDebugLog(("[IRTrans] Command successfully received by interface."))
+    If $bIRTransDebug Then Main.WriteDebugLog(LogLabel & "Command successfully received by interface.")
     Return
   Endif
 
   If InStr(sStr, "RESULT ERROR") Then
-    If Main.bIRTransDebug Then Main.WriteDebugLog(("[IRTrans] Error received from interface.") & sStr)
+    If $bIRTransDebug Then Main.WriteDebugLog(LogLabel & "Error received from interface." & sStr)
     Return
   Endif
 
   ' unsupported result
-  If Main.bIRTransDebug Then Main.WriteDebugLog(("[IRTrans] Unsupported response received: ") & sStr)
+  If $bIRTransDebug Then Main.WriteDebugLog(LogLabel & "Unsupported response received: " & sStr)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' implement properties
 Private Function TCPHost_Read() As String
 
-  Return sTCPHost
+  Return $sTCPHost
 
 End
 
 Private Sub TCPHost_Write(Value As String)
 
-  sTCPHost = Value
+  $sTCPHost = Value
 
 End
 
-Private Function TCPPort_Read() As String
+Private Function TCPPort_Read() As Integer
 
-  Return iTCPPort
+  Return $iTCPPort
 
 End
 
-Private Sub TCPPort_Write(Value As String)
+Private Sub TCPPort_Write(Value As Integer)
 
-  iTCPPort = Value
+  $iTCPPort = Value
 
 End
 
 Private Function IRTransDebug_Read() As Boolean
 
-  Return bIRTransDebug
+  Return $bIRTransDebug
 
 End
 
 Private Sub IRTransDebug_Write(Value As Boolean)
 
-  bIRTransDebug = Value
+  $bIRTransDebug = Value
 
 End

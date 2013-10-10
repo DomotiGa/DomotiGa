@@ -15,6 +15,27 @@
 
 ' Read file called COPYING for license details.
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "RFXComTRX"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "RFXCom Transceiver"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Byte = 1
+
+Public KeyName As String
+Public LogLabel As String = "[RFXComTRX] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Public variables - will be removed in the future
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Property TCPHost As String
 Property TCPPort As Integer
 Property Interface As String
@@ -25,15 +46,20 @@ Property RelayPort As Integer
 Property GlobalX10 As Boolean
 Property OldAddrFmt As Boolean
 
-Private sTCPHost As String
-Private iTCPPort As Integer
-Private sInterface As String
-Private sSerPort As String
-Private sBaud As String
-Private bRFXComTRXDebug As Boolean
-Private iRelayPort As Integer
-Private bGlobalX10 As Boolean
-Private bOldAddrFmt As Boolean
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
+Private $sSerPort As String
+Private $sBaud As String
+Private $bRFXComTRXDebug As Boolean
+Private $iRelayPort As Integer
+Private $bGlobalX10 As Boolean
+Private $bOldAddrFmt As Boolean
+Private $bRelayEnabled As Boolean
 
 Public hRFXComTRX As New Socket
 Public hRFXComTRXSer As New SerialPort
@@ -368,9 +394,55 @@ Const sTypeFS20 As Byte = &H0
 Const sTypeFHT8V As Byte = &H1
 Const sTypeFHT80 As Byte = &H2
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sInterface = cPl.Settings["type"]
+  $sSerPort = cPl.Settings["serialport"]
+  $sBaud = cPl.Settings["baudrate"]
+  $bRelayEnabled = cPl.Settings["relayenabled"]
+  $iRelayPort = cPl.Settings["relayport"]
+  $bGlobalX10 = cPl.Settings["globalx10"]
+  $bOldAddrFmt = cPl.Settings["oldaddrfmt"]
+  $bRFXComTRXDebug = cPl.Settings["debug"]
+ 
+  ' Connect/Initialize connection
+  If InStr($sInterface, "tcp") Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub RFXComTRX_Ready()
 
-  Main.WriteLog(("RFXCom transceiver TCP socket connected."))
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
   ResetInterface()
 
   ' define timer for RFXComTRX reconnect
@@ -421,7 +493,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tRFXComTRXConnect_Timer()
 
-  If Not ConnectTCP() Then
+  If Not ConnectTCP(False) Then
     Inc iConnectRetry
     iConnectDelay *= iConnectRetry
     tRFXComTRXConnect.Delay = iConnectDelay
@@ -443,7 +515,7 @@ Public Function StartRelay() As Boolean
 
   hRFXComTRXRelay = New ServerSocket As "RFXComTRXRelay"
   hRFXComTRXRelay.Type = Net.Internet
-  hRFXComTRXRelay.Port = iRelayPort
+  hRFXComTRXRelay.Port = $iRelayPort
   ' we start listening for max 1 connection
   hRFXComTRXRelay.Listen(1)
 
@@ -460,20 +532,30 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP() As Boolean
+Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
 
   ' try to close the connection
   Try hRFXComTRX.Close
 
   ' get a new one
   hRFXComTRX = New Socket As "RFXComTRX"
-  hRFXComTRX.Connect(sTCPHost, iTCPPort)
+  hRFXComTRX.Connect($sTCPHost, $iTCPPort)
 
-  ' all ok
+  ' Write to main logfile we are trying to connect
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(("RFXCom transceiver Error: ") & Error.Text & " at " & Error.Where)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
   Return False
 
 End
@@ -494,8 +576,8 @@ Public Function ConnectSerial() As Boolean
   ' get a new one
   hRFXComTRXSer = New Serialport As "RFXComTRXSer"
   With hRFXComTRXSer
-    .PortName = sSerPort
-    .Speed = sBaud
+    .PortName = $sSerPort
+    .Speed = $sBaud
     .Parity = 0
     .DataBits = 8
     .StopBits = 1
@@ -512,11 +594,22 @@ Public Function ConnectSerial() As Boolean
   tRFXComTRXBusy = New Timer As "tRFXComTRXBusy"
   tRFXComTRXBusy.Stop
 
-  ' all ok
+  ' Write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  IsRunning = True
+
+  ResetInterface()
+
+  ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(("RFXCom transceiver Error: ") & Error.Text & " at " & Error.Where)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
   Return False
 
 End
@@ -526,12 +619,12 @@ Public Sub RFXComTRXRelay_Connection(sHost As String)
   hRelayTRXSocket = New Socket As "RelayTRXSocket"
   ' accept client
   If hRFXComTRXRelay.Status <= Net.Inactive Then Return
-  If Main.bRFXComTRXDebug Then Main.WriteDebugLog(("[RFXComTRXRelay] Connection request from client ") & sHost)
+  If $bRFXComTRXDebug Then Main.WriteDebugLog(LogLabel & "Relay connection request from client " & sHost)
 
   hRelayTRXSocket = hRFXComTRXRelay.Accept()
   hRelayTRXClient.Add(hRelayTRXSocket)
-  If Main.bRFXComTRXDebug Then
-    If hRelayTRXSocket.Status = Net.Connected Then Main.WriteLog(("RFXCom transceiver Relay client connection from ip address ") & hRelayTRXSocket.RemoteHost & " (" & DNS.ResolveHost(hRelayTRXSocket.RemoteHost) & (" ) accepted."))
+  If $bRFXComTRXDebug Then
+    If hRelayTRXSocket.Status = Net.Connected Then Main.WriteLog(LogLabel & "Relay client connection from ip address " & hRelayTRXSocket.RemoteHost & " (" & DNS.ResolveHost(hRelayTRXSocket.RemoteHost) & " ) accepted.")
   Endif
 
 End
@@ -550,18 +643,18 @@ Public Sub RFXComTRXRelay_Error()
   ' handle error
   Select Case hRFXComTRXRelay.Status
     Case Net.CannotCreateSocket
-      Main.WriteDebugLog(("[RFXComTRXRelay] The system does not allow to create a socket."))
+      Main.WriteDebugLog(LogLabel & "Relay the system does not allow to create a socket.")
     Case Net.CannotBindSocket
-      Main.WriteDebugLog(("[RFXComTRXRelay] Cannot bind socket."))
+      Main.WriteDebugLog(LogLabel & "Relay cannot bind socket.")
     Case Net.CannotListen
-      Main.WriteDebugLog(("[RFXComTRXRelay] Cannot listen on port."))
+      Main.WriteDebugLog(LogLabel & "Relay cannot listen on port.")
   End Select
 
 End
 
 Public Sub Socket_Closed()
 
-  Main.WriteLog(("RFXCom transceiver Relay client connection closed."))
+  Main.WriteLog(LogLabel & "Relay client connection closed.")
   hRelayTRXClient.Remove(hRelayTRXClient.Find(Last))
 
 End
@@ -601,7 +694,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
     Case "X10SEC" ' Security1
       Security1(sType, sAddress, sCmd)
     Case Else
-      Main.WriteDebugLog(("[RFXComTRX] " & sType & " protocol is not (yet) supported by RFXComTRX code!"))
+      Main.WriteDebugLog(LogLabel & "" & sType & " protocol is not (yet) supported by RFXComTRX code!")
       Return
   End Select
 
@@ -664,19 +757,19 @@ Public Function ProtocolSetup(sType As String, Optional aMode As Byte[])
 
   If sType = "RESET" Then
     tRFXComTRXReset.Start
-    If Main.bRFXComTRXDebug Then Main.WriteDebugLog(("[RFXComTRX] Resetting interface, 1Sec. timer started."))
+    If $bRFXComTRXDebug Then Main.WriteDebugLog(LogLabel & "Resetting interface, 1Sec. timer started.")
   Endif
   If sType = "STATUS" Then bResetActive = False
 
-  If Not bRFXComTRXDebug Then Return
-  Main.WriteRFXDebugLog("[RFXComTRX] " & sText & ": ")
+  If Not $bRFXComTRXDebug Then Return
+  Main.WriteRFXDebugLog(LogLabel & sText & ": ")
   For Each b In bCmd
     WriteMessage(Hex(b, 2) & " ", True)
   Next
   Main.WriteRFXDebugLog("\n", True)
 
 Catch ' some errors
-  Main.WriteLog(("RFXCom transceiver Error: ") & Error.Text & " at " & Error.Where)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
 
 End
 
@@ -727,16 +820,16 @@ Public Function WriteCommand(bBuffer As Byte[], sKey As String)
   For iCnt = 0 To bBuffer[0]
     sMessage &= Hex(bBuffer[iCnt], 2)
   Next
-  If Main.bRFXComTRXDebug Then Main.WriteDebugLog("[RFXComTRX] > " & sMessage)
+  If $bRFXComTRXDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
 
-  If sInterface = "tcp" Then
+  If $sInterface = "tcp" Then
     ' send the message to the tcp stream
     Try bBuffer.Write(hRFXComTRX, 0, bBuffer.Length)
-    If Error Then Main.WriteRFXDebugLog(("[RFXComTRX] Unable to write to TCP port! -> ") & Error.Text)
+    If Error Then Main.WriteRFXDebugLog(LogLabel & "Unable to write to TCP port! -> " & Error.Text)
   Else
     ' send the message to the serial port
     Try bBuffer.Write(hRFXComTRXSer, 0, bBuffer.Length)
-    If Error Then Main.WriteRFXDebugLog(("[RFXComTRX] Unable to write to serial port! -> ") & Error.Text)
+    If Error Then Main.WriteRFXDebugLog(LogLabel & "Unable to write to serial port! -> " & Error.Text)
   Endif
   Inc iSeq
   If iSeq = 256 Then iSeq = 1
@@ -759,7 +852,7 @@ Public Sub tRFXComTRXBusy_Timer()
   tRFXComTRXBusy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If bRFXComTRXDebug Then Main.WriteDebugLog(("[RFXComTRX] Sending command from Queue (count = " & cQueue.Count & ")"))
+    If $bRFXComTRXDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
 
@@ -779,13 +872,22 @@ Public Function Disconnect() As Boolean
   Try tRFXComTRXReset.Stop
   Try hRelayTRXClient.Remove
 
-  Main.WriteLog(("RFXCom transceiver " & IIf(InStr(sInterface, "tcp"), "TCP socket", "serial port") & " close."))
+  If InStr($sInterface, "tcp") Then
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  Else
+    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  Endif
 
   ' all ok
   Return True
 
-Catch ' some errors
-  Main.WriteLog(("RFXCom transceiver Error: ") & Error.Text & " at " & Error.Where)
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
 
 End
@@ -797,7 +899,7 @@ Public Sub Simulate(sPacket As String)
 
   Dim iCnt As Integer
 
-  If bRFXComTRXDebug Then Main.WriteRFXDebugLog(("RFXCom transceiver Simulate String: ") & sPacket & "\n")
+  If $bRFXComTRXDebug Then Main.WriteRFXDebugLog(("RFXCom transceiver Simulate String: ") & sPacket & "\n")
 
   For iCnt = 1 To Len(sPacket) Step 2
     ProcessReceivedChar(Val("&H" & Mid(sPacket, iCnt, 2)))
@@ -805,15 +907,15 @@ Public Sub Simulate(sPacket As String)
   bSimulate = False
 
 Catch ' some errors
-  Main.WriteLog(("RFXCom transceiver Error: ") & Error.Text & " at " & Error.Where)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
 
 End
 
 Public Sub RFXComTRX_Closed()
 
-  Main.WriteDebugLog(("[RFXComTRX] ERROR: TCP socket closed by peer."))
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
   If iConnectRetry < 6 Then
-    Main.WriteDebugLog(("[RFXComTRX] Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", ".")))
+    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
     tRFXComTRXConnect.Start
   Endif
 
@@ -821,21 +923,7 @@ End
 
 Public Sub RFXComTRX_Error()
 
-  Dim sString As String = "RFXCom transceiver: "
-
-  ' handle error
-  Select Case hRFXComTRX.Status
-    Case Net.CannotCreateSocket
-      Main.WriteLog(sString & ("The system does not allow to create a socket."))
-    Case Net.HostNotFound
-      Main.WriteLog(sString & ("Host '") & sTCPHost & ("' not found."))
-    Case Net.ConnectionRefused
-      Main.WriteLog(sString & ("Unable to connect. Connection refused."))
-    Case Net.CannotRead
-      Main.WriteLog(sString & ("Error reading data."))
-    Case Net.CannotWrite
-      Main.WriteLog(sString & ("Error writing data."))
-  End Select
+  Log.Plugin_TCP_Error(LogLabel, $sTCPHost, Last.Status)
 
 End
 
@@ -844,7 +932,7 @@ Public Sub RFXComTRX_Read()
   Dim sData As Byte
 
   Try sData = Read #hRFXComTRX As Byte
-  If Error Then Main.WriteDebugLog(("[RFXComTRX] Error reading data from the TCP port! -> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
   If bSimulate = False Then ProcessReceivedChar(sData)
 
 End
@@ -877,7 +965,7 @@ Public Sub RFXComTRXSer_Read()
 
     If bWriteToLog Then
       dReadErrorLDate = Now
-      Main.WriteDebugLog(("[RFXComTRX] Error reading data from the serial port! -> ") & Error.Text & " (Count: " & iReadErrorCount & ")")
+      Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! -> " & Error.Text & " (Count: " & iReadErrorCount & ")")
     Endif
 
   Else If iReadErrorCount > 0 Then
@@ -901,7 +989,7 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   Main.ControlLed("RFXCom", "On")
   If RecBytes = 0 Then ' 1st char of a packet received
     If bTemp <> 0 Then
-      If bRFXComTRXDebug Then Main.WriteRFXDebugLog("[RFXComTRX] < ", 0)
+      If $bRFXComTRXDebug Then Main.WriteRFXDebugLog(LogLabel & "< ", 0)
     Else
       Return  ' ignore 1st char if 0
     Endif
@@ -916,11 +1004,11 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   Inc RecBytes  ' increment char counter
 
   If RecBytes > RecBuf[0] Then ' all bytes of the packet received?
-    If bRFXComTRXDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2) & "\n", 1)
+    If $bRFXComTRXDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2) & "\n", 1)
     Decode_Messages()  ' decode message
     RecBytes = 0  ' set to zero to receive next message
   Else
-    If bRFXComTRXDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2), 1) ' write the output to the screen
+    If $bRFXComTRXDebug Then Main.WriteRFXDebugLog(Hex(bTemp, 2), 1) ' write the output to the screen
   Endif
 
 End
@@ -1073,7 +1161,7 @@ Private Sub ConvertAddress(sAddr As String) As String
 
   Dim aAddress As String[] = Split(sAddr, " ")
 
-  If bOldAddrFmt Then
+  If $bOldAddrFmt Then
     Return UCase(aAddress[0] & "[" & Replace(aAddress[1], "0x", "") & "]")
   Else
     Return LCase(aAddress[0] & " 0x" & Hex(aAddress[1]))
@@ -3329,11 +3417,11 @@ End
 
 Private Sub WriteMessage(sText As String, Optional bNoReturn As Boolean)
 
-  If bRFXComTRXDebug Then
+  If $bRFXComTRXDebug Then
     If bNoReturn Then
       Main.WriteRFXDebugLog(sText, True)
     Else
-      Main.WriteDebugLog("[RFXComTRX] " & sText)
+      Main.WriteDebugLog(LogLabel & sText)
     Endif
   Endif
 
@@ -4006,12 +4094,12 @@ Public Sub Lighting1(sType As String, sAddress As String, sCommand As String, Op
     Case "PHILIPSSBC"
       bBuf[2] = 7
     Case Else
-      WriteMessage("[RFXComTRX] Not a valid Lighting1 type : " & sType)
+      WriteMessage(LogLabel & "Not a valid Lighting1 type : " & sType)
       Return
   End Select
 
   If (Len(sAddress) <> 3) Then
-    WriteMessage("[RFXComTRX] Not a valid X10 address: " & sAddress)
+    WriteMessage(LogLabel & "Not a valid X10 address: " & sAddress)
     Return
   Endif
 
@@ -4019,31 +4107,31 @@ Public Sub Lighting1(sType As String, sAddress As String, sCommand As String, Op
     Case sTypeX10, sTypeARC, sTypeWaveman
       ' check A-P and 1-16
       If Not (Left$(sAddress, 1) Like "[A-P]") Or If Not (Right$(sAddress, 1) Like "[0-9]")
-        WriteMessage("[RFXComTRX] Not a valid X10 address: " & sAddress)
+        WriteMessage(LogLabel & "Not a valid X10 address: " & sAddress)
         Return
       Endif
     Case sTypeAB400D, sTypeIMPULS
       ' check A-P and 1-64
       If Not (Left$(sAddress, 1) Like "[A-P]") Or If Not (Right$(sAddress, 1) Like "[0-9]")
-        WriteMessage("[RFXComTRX] Not a valid AB400 or IMPULS address: " & sAddress)
+        WriteMessage(LogLabel & "Not a valid AB400 or IMPULS address: " & sAddress)
         Return
       Endif
     Case sTypePhilips
       ' check A-P and 1-8
       If Not (Left$(sAddress, 1) Like "[A-P]") Or If Not (Right$(sAddress, 1) Like "[1-8]")
-        WriteMessage("[RFXComTRX] Not a valid Philips SBC address: " & sAddress)
+        WriteMessage(LogLabel & "Not a valid Philips SBC address: " & sAddress)
         Return
       Endif
     Case sTypeRisingSun
       ' check A-P and 1-4
       If Not (Left$(sAddress, 1) Like "[A-P]") Or If Not (Right$(sAddress, 1) Like "[1-4]")
-        WriteMessage("[RFXComTRX] Not a valid RisingSun address: " & sAddress)
+        WriteMessage(LogLabel & "Not a valid RisingSun address: " & sAddress)
         Return
       Endif
     Case sTypeEMW200
       ' check A-C and 1-4
       If Not (Left$(sAddress, 1) Like "[A-C]") Or If Not (Right$(sAddress, 1) Like "[1-4]")
-        WriteMessage("[RFXComTRX] Not a valid EMW200 address: " & sAddress)
+        WriteMessage(LogLabel & "Not a valid EMW200 address: " & sAddress)
         Return
       Endif
   End Select
@@ -4069,13 +4157,13 @@ Public Sub Lighting1(sType As String, sAddress As String, sCommand As String, Op
       bBuf[6] = 6
     Case "CHIME"
       If bBuf[2] <> sTypeARC Then
-        Main.WriteDebugLog(("[RFXComTRX] Invalid Lighting1 command '") & sCmd & ("' given for '") & sType & ("' type!"))
+        Main.WriteDebugLog(LogLabel & "Invalid Lighting1 command '" & sCmd & "' given for '" & sType & "' type!")
         Return
       Endif
       bBuf[6] = 7
       bBuf[5] = 8
     Case Else
-      Main.WriteDebugLog(("[RFXComTRX] Unknown Lighting1 command '") & sCmd & ("' given!"))
+      Main.WriteDebugLog(LogLabel & "Unknown Lighting1 command '" & sCmd & "' given!")
       Return
   End Select
   bBuf[7] = 0
@@ -4123,7 +4211,7 @@ Public Sub Lighting2(sType As String, sAddress As String, sCommand As String, Op
     Case "ANSLUT"
       bBuf[2] = 2
     Case Else
-      WriteMessage("[RFXComTRX] Not a valid Lighting2 type : " & sType)
+      WriteMessage(LogLabel & "Not a valid Lighting2 type : " & sType)
       Return
   End Select
 
@@ -4139,14 +4227,14 @@ Public Sub Lighting2(sType As String, sAddress As String, sCommand As String, Op
       sUnit = 0
     Endif
   Else
-    Main.WriteDebugLog(("[RFXComTRX] Address has wrong format, use '<Device> <Unit>'!"))
+    Main.WriteDebugLog(LogLabel & "Address has wrong format, use '<Device> <Unit>'!")
     Return
   Endif
 
   If Len(sAddress) = 9 And If Left(sAddress, 2) = "0x" Then
     sAddress = Right(sAddress, 7)
   Else If Len(sAddress) <> 7 Then
-    Main.WriteDebugLog(("[RFXComTRX] Device address length must be 7 characters!"))
+    Main.WriteDebugLog(LogLabel & "Device address length must be 7 characters!")
     Return
   Endif
 
@@ -4184,7 +4272,7 @@ Public Sub Lighting2(sType As String, sAddress As String, sCommand As String, Op
         iDim = Round(0.15 * iBrightness) ' 16 steps
         bBuf[10] = CByte(iDim)
       Else
-        Main.WriteDebugLog(("[RFXComTRX] Unknown Lighting2 command '") & sCmd & ("' given!"))
+        Main.WriteDebugLog(LogLabel & "Unknown Lighting2 command '" & sCmd & "' given!")
         Return
       Endif
   End Select
@@ -4246,7 +4334,7 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
     Case "BBSB"
       bBuf[2] = 2
     Case Else
-      WriteMessage("[RFXComTRX] Not a valid Lighting5 type : " & sType)
+      WriteMessage(LogLabel & "Not a valid Lighting5 type : " & sType)
       Return
   End Select
 
@@ -4255,13 +4343,13 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
     sAddress = aAddr[0]
     sUnit = aAddr[1]
   Else
-    Main.WriteDebugLog(("[RFXComTRX] Lighting5 address has wrong format, use '<Device> <Unit>'!"))
+    Main.WriteDebugLog(LogLabel & "Lighting5 address has wrong format, use '<Device> <Unit>'!")
     Return
   Endif
 
   If Len(sAddress) = 8 And If Left(sAddress, 2) = "0x" Then sAddress = Right(sAddress, 6)
   If Len(sAddress) <> 6 Then
-    Main.WriteDebugLog(("[RFXComTRX] Lighting5 device address length must be 6 characters!"))
+    Main.WriteDebugLog(LogLabel & "Lighting5 device address length must be 6 characters!")
     Return
   Endif
 
@@ -4315,7 +4403,7 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
             iDim = Round(0.31 * iBrightness) ' 32 steps
             bBuf[9] = CByte(iDim)
           Else
-            Main.WriteDebugLog(("[RFXComTRX] Invalid Lighting5 command '") & sCmd & ("' for type '") & sType & ("' given!"))
+            Main.WriteDebugLog(LogLabel & "Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
             Return
           Endif
       End Select
@@ -4328,7 +4416,7 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
         Case "LEARN"
           bBuf[8] = 2
         Case Else
-          Main.WriteDebugLog(("[RFXComTRX] Invalid Lighting5 command '") & sCmd & ("' for type '") & sType & ("' given!"))
+          Main.WriteDebugLog(LogLabel & "Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
           Return
       End Select
     Case sTypeBBSB
@@ -4342,11 +4430,11 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
         Case "ALL ON", "GROUP ON"
           bBuf[8] = 3
         Case Else
-          Main.WriteDebugLog(("[RFXComTRX] Invalid Lighting5 command '") & sCmd & ("' for type '") & sType & ("' given!"))
+          Main.WriteDebugLog(LogLabel & "Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
           Return
       End Select
     Case Else
-        Main.WriteDebugLog(("[RFXComTRX] Unknown Lighting5 type '") & bBuf[2] & ("' given!"))
+        Main.WriteDebugLog(LogLabel & "Unknown Lighting5 type '" & bBuf[2] & "' given!")
   End Select
   QueueCommand(bBuf)
 
@@ -4386,7 +4474,7 @@ Public Sub Lighting6(sType As String, sAddress As String, sCommand As String)
   Dim sUnit As String
 
   If iFirmWareVersion < 47 Then
-    WriteMessage(("[RFXComTRX] For Lighting6 the firmware version must be > 47, flash your RFXtrx433 with the latest firmware!"))
+    WriteMessage((LogLabel & "For Lighting6 the firmware version must be > 47, flash your RFXtrx433 with the latest firmware!"))
     Return
   Endif
 
@@ -4395,7 +4483,7 @@ Public Sub Lighting6(sType As String, sAddress As String, sCommand As String)
     Case "BLYSS"
       bBuf[2] = 0
     Case Else
-      WriteMessage("[RFXComTRX] Not a valid Lighting6 type : " & sType)
+      WriteMessage(LogLabel & "Not a valid Lighting6 type : " & sType)
       Return
   End Select
 
@@ -4408,19 +4496,19 @@ Public Sub Lighting6(sType As String, sAddress As String, sCommand As String)
     '   sUnit = 0
     ' ENDIF
   Else
-    Main.WriteDebugLog(("[RFXComTRX] Address has wrong format, use '<Device> <Unit>'!"))
+    Main.WriteDebugLog(LogLabel & "Address has wrong format, use '<Device> <Unit>'!")
     Return
   Endif
 
   If Len(sAddress) = 6 And If Left(sAddress, 2) = "0x" Then
     sAddress = Right(sAddress, 4)
   Else If Len(sAddress) <> 4 Then
-    Main.WriteDebugLog(("[RFXComTRX] Lighting6 device ID address length must be 4 characters or 6 with 0x in front!"))
+    Main.WriteDebugLog(LogLabel & "Lighting6 device ID address length must be 4 characters or 6 with 0x in front!")
     Return
   Endif
 
   If sAddress = "0000" Then
-    WriteMessage("[RFXComTRX] Use a Lighting6 address ID different than '0000'!")
+    WriteMessage(LogLabel & "Use a Lighting6 address ID different than '0000'!")
     Return
   Endif
 
@@ -4443,7 +4531,7 @@ Public Sub Lighting6(sType As String, sAddress As String, sCommand As String)
     Case "ALL ON", "GROUP ON"
       bBuf[8] = 3
     Case Else
-      Main.WriteDebugLog(("[RFXComTRX] Unknown Lighting6 command '") & sCmd & ("' given!"))
+      Main.WriteDebugLog(LogLabel & "Unknown Lighting6 command '" & sCmd & "' given!")
       Return
   End Select
   bBuf[9] = iLighting6CmndSeqNbr
@@ -4479,12 +4567,12 @@ Public Sub Security1(sType As String, sAddress As String, sCommand As String)
   '   Case "PHILIPSSBC"
   '     bBuf[2] = 7
   '   Case Else
-  '     WriteMessage("[RFXComTRX] Not a valid Lighting1 type : " & sType)
+  '     WriteMessage(LogLabel & "Not a valid Lighting1 type : " & sType)
   '     Return
   ' End Select
 
   ' If (Len(sAddress) <> 3) Then
-  '   WriteMessage("[RFXComTRX] Not a valid X10 address: " & sAddress)
+  '   WriteMessage(LogLabel & "Not a valid X10 address: " & sAddress)
   '   Return
   ' Endif
 
@@ -4510,13 +4598,13 @@ Public Sub Security1(sType As String, sAddress As String, sCommand As String)
   '     bBuf[6] = 6
   '   Case "CHIME"
   '     If bBuf[2] <> sTypeARC Then
-  '       Main.WriteDebugLog(("[RFXComTRX] Invalid Lighting1 command '") & sCmd & ("' given for '") & sType & ("' type!"))
+  '       Main.WriteDebugLog(LogLabel & "Invalid Lighting1 command '") & sCmd & ("' given for '") & sType & ("' type!"))
   '       Return
   '     Endif
   '     bBuf[6] = 7
   '     bBuf[5] = 8
   '   Case Else
-  '     Main.WriteDebugLog(("[RFXComTRX] Unknown Lighting1 command '") & sCmd & ("' given!"))
+  '     Main.WriteDebugLog(LogLabel & "Unknown Lighting1 command '") & sCmd & ("' given!"))
   '     Return
   ' End Select
   ' bBuf[7] = 0
@@ -4548,12 +4636,12 @@ Public Sub Curtain(sType As String, sAddress As String, sCommand As String)
   Select Case UCase(sType)
     Case "HARRISON"
       If Not (Left$(sAddress, 1) Like "[A-P]") Or If Not (Right$(sAddress, 1) Like "[0-9]")
-        WriteMessage("[RFXComTRX] Not a valid Harrison address: " & sAddress)
+        WriteMessage(LogLabel & "Not a valid Harrison address: " & sAddress)
         Return
       Endif
       bBuf[2] = &H0
     Case Else
-      WriteMessage("[RFXComTRX] Not a valid Curtain type : " & sType)
+      WriteMessage(LogLabel & "Not a valid Curtain type : " & sType)
       Return
   End Select
 
@@ -4573,7 +4661,7 @@ Public Sub Curtain(sType As String, sAddress As String, sCommand As String)
     Case "PROGRAM"
       bBuf[6] = 3
     Case Else
-      Main.WriteDebugLog(("[RFXComTRX] Unknown Curtain command '") & UCase(sCmd) & ("' given!"))
+      Main.WriteDebugLog(LogLabel & "Unknown Curtain command '" & UCase(sCmd) & "' given!")
       Return
   End Select
   bBuf[7] = 0
@@ -4601,11 +4689,11 @@ Public Sub Thermostat2(sType As String, sAddress As String, sCommand As String)
 
   If Len(sAddress) = 2 Then
     If Not (Left$(sAddress, 1) Like "[0-1]") Or If Not (Right$(sAddress, 1) Like "[0-F]")
-      WriteMessage("[RFXComTRX] Not a valid " & sType & " address: " & sAddress)
+      WriteMessage(LogLabel & "Not a valid " & sType & " address: " & sAddress)
       Return
     Endif
   Else
-    WriteMessage("[RFXComTRX] Not a valid " & sType & " address (invalid lenght): " & sAddress)
+    WriteMessage(LogLabel & "Not a valid " & sType & " address (invalid lenght): " & sAddress)
     Return
   Endif
 
@@ -4615,7 +4703,7 @@ Public Sub Thermostat2(sType As String, sAddress As String, sCommand As String)
     Case "RTS10"
       bBuf[2] = &H1
     Case Else
-      WriteMessage("[RFXComTRX] Not a valid Thermostat2 type : " & sType)
+      WriteMessage(LogLabel & "Not a valid Thermostat2 type : " & sType)
       Return
   End Select
 
@@ -4632,7 +4720,7 @@ Public Sub Thermostat2(sType As String, sAddress As String, sCommand As String)
     Case "PROGRAM"
       bBuf[5] = 2
     Case Else
-      Main.WriteDebugLog(("[RFXComTRX] Unknown Thermostat2 command '") & UCase(sCmd) & ("' given!"))
+      Main.WriteDebugLog(LogLabel & "Unknown Thermostat2 command '" & UCase(sCmd) & "' given!")
       Return
   End Select
   bBuf[6] = 0
@@ -4640,111 +4728,114 @@ Public Sub Thermostat2(sType As String, sAddress As String, sCommand As String)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' implement properties
 Private Function TCPHost_Read() As String
 
-  Return sTCPHost
+  Return $sTCPHost
 
 End
 
 Private Sub TCPHost_Write(Value As String)
 
-  sTCPHost = Value
+  $sTCPHost = Value
 
 End
 
 Private Function TCPPort_Read() As Integer
 
-  Return iTCPPort
+  Return $iTCPPort
 
 End
 
 Private Sub TCPPort_Write(Value As Integer)
 
-  iTCPPort = Value
+  $iTCPPort = Value
 
 End
 
 Private Function Interface_Read() As String
 
-  Return sInterface
+  Return $sInterface
 
 End
 
 Private Sub Interface_Write(Value As String)
 
-  sInterface = Value
+  $sInterface = Value
 
 End
 
 Private Function Baud_Read() As String
 
-  Return sBaud
+  Return $sBaud
 
 End
 
 Private Sub Baud_Write(Value As String)
 
-  sBaud = Value
+  $sBaud = Value
 
 End
 
 Private Function SerPort_Read() As String
 
-  Return sSerPort
+  Return $sSerPort
 
 End
 
 Private Sub SerPort_Write(Value As String)
 
-  sSerPort = Value
+  $sSerPort = Value
 
 End
 
 Private Function RFXComDebug_Read() As Boolean
 
-  Return bRFXComTRXDebug
+  Return $bRFXComTRXDebug
 
 End
 
 Private Sub RFXComDebug_Write(Value As Boolean)
 
-  bRFXComTRXDebug = Value
+  $bRFXComTRXDebug = Value
 
 End
 
 Private Function RelayPort_Read() As Integer
 
-  Return iRelayPort
+  Return $iRelayPort
 
 End
 
 Private Sub RelayPort_Write(Value As Integer)
 
-  iRelayPort = Value
+  $iRelayPort = Value
 
 End
 
 Private Function GlobalX10_Read() As Boolean
 
-  Return bGlobalX10
+  Return $bGlobalX10
 
 End
 
 Private Sub GlobalX10_Write(Value As Boolean)
 
-  bGlobalX10 = Value
+  $bGlobalX10 = Value
 
 End
 
 Private Function OldAddrFmt_Read() As Boolean
 
-  Return bOldAddrFmt
+  Return $bOldAddrFmt
 
 End
 
 Private Sub OldAddrFmt_Write(Value As Boolean)
 
-  bOldAddrFmt = Value
+  $bOldAddrFmt = Value
 
 End

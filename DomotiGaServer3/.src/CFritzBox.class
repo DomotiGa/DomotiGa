@@ -14,11 +14,36 @@
 
 ' Read file called COPYING for license details.
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "FritzBox"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "Fritz!Box API"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Byte = 1
+
+Public KeyName As String
+Public LogLabel As String = "[FritzBox] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Public variables - will be removed in the future
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Property TCPHost As String
 Property FritzBoxDebug As Boolean
 
-Private sTCPHost As String
-Private bFritzBoxDebug As Boolean
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $bFritzBoxDebug As Boolean
 
 Private hFritzBox As New Socket
 Private sBuffer As String
@@ -27,42 +52,84 @@ Private iConnectRetry As Integer = 0 ' retries
 Private iConnectDelay As Integer = 60000 ' 1 minute
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $bFritzBoxDebug = cPl.Settings["debug"]
+ 
+  ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Public Function Connect(Optional bFirstStart As Boolean = True) As Boolean
 
   ' try to close the connection
   Try hFritzBox.Close
 
   ' get a new one
   hFritzBox = New Socket As "FritzBox"
-  hFritzBox.Connect(sTCPHost, 1012)
+  hFritzBox.Connect($sTCPHost, 1012)
 
-  ' all ok
+  ' Write to main logfile we are trying to connect
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":1012")
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(("Fritz!Box Error: ") & ERROR.Text)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":1012")
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
   Return False
 
 End
 
 Public Sub FritzBox_Ready()
 
-  Main.WriteLog(("Fritz!Box TCP socket connected."))
-
   ' define timer for FritzBox reconnect
   tFritzBoxConnect = New Timer As "FritzBoxConnect"
   tFritzBoxConnect.Delay = iConnectRetry
   tFritzBoxConnect.Stop
 
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
 End
 
 Public Sub FritzBox_Closed()
 
-  Main.WriteLog(("ERROR: Fritz!Box TCP socket connection is lost."))
+  Main.WriteLog(LogLabel & "ERROR: Fritz!Box TCP socket connection is lost.")
   If iConnectRetry < 6 Then
-    Main.WriteDebugLog(("[Fritz!Box] Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", ".")))
+    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
     tFritzBoxConnect.Start
   Endif
 
@@ -73,7 +140,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tFritzBoxConnect_Timer()
 
-  If Not Connect() Then
+  If Not Connect(False) Then
     Inc iConnectRetry
     iConnectDelay *= iConnectRetry
     tFritzBoxConnect.Delay = iConnectDelay
@@ -83,7 +150,7 @@ End
 
 Public Sub FritzBox_Found()
 
-  Main.WriteLog(("Fritz!Box IP address resolved."))
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
@@ -95,13 +162,19 @@ Public Function Disconnect() As Boolean
   ' try to close the connection
   Try tFritzBoxConnect.Stop
   Try hFritzBox.Close
-  Main.WriteLog(("Fritz!Box TCP socket port close."))
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
 
   ' all ok
   Return True
 
-Catch ' some errors
-  Main.WriteLog(("Fritz!Box Error: ") & ERROR.Text)
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
 
 End
@@ -127,15 +200,15 @@ Private Sub ParseLine(sStr As String)
   Dim iId As Integer
   Dim sName As String
 
-  If Main.bFritzBoxDebug Then Main.WriteDebugLog("[Fritz!Box] " & sStr)
+  If $bFritzBoxDebug Then Main.WriteDebugLog(LogLabel & sStr)
   ' 20.01.09 20:29:10;RING;0;0XXXXXXXXX;0XXXXXXXXX;POTS;
   If InStr(sStr, ";RING;") Then
     aScan = Scan(sStr, "*;RING;*;*;*;*;")
     If aScan.Count = 5 Then
       sName = CallerID.ReturnCallerID(aScan[2])
-      Main.WriteLog("Incoming phone call from " & IIf(aScan[2], aScan[2] & " (" & sName & ")", "0000000000") & ".")
+      Main.WriteLog(LogLabel & "Incoming phone call from " & IIf(aScan[2], aScan[2] & " (" & sName & ")", "0000000000") & ".")
       Main.SetGlobalVar("PhoneCall_Incoming", aScan[2] & " (" & sName & ") at " & Format(Now(), "hh:nn:ss dd-mm-yyyy"))
-      If Main.bFritzBoxDebug Then Main.WriteDebugLog(("[Fritz!Box] Incoming call [id=") & aScan[1] & ("] from ") & aScan[2] & (" on line ") & aScan[3] & " (" & aScan[4] & ")")
+      If $bFritzBoxDebug Then Main.WriteDebugLog(LogLabel & "Incoming call [id=" & aScan[1] & "] from " & aScan[2] & " on line " & aScan[3] & " (" & aScan[4] & ")")
       ' write data to cdr table
       Main.hDB.Begin()
       rResult = Main.hDB.Create("cdr")
@@ -150,15 +223,15 @@ Private Sub ParseLine(sStr As String)
       Main.hDB.Commit()
       Main.RefreshPhoneCallList()
     Else
-      Main.WriteDebugLog(("[Fritz!Box] Error couldn't parse: ") & sStr)
+      Main.WriteDebugLog(LogLabel & "Error couldn't parse: " & sStr)
     Endif
   Endif
   ' 20.01.09 20:29:19;CONNECT;0;0;0XXXXXXXXX;
   If InStr(sStr, ";CONNECT;") Then
     aScan = Scan(sStr, "*;CONNECT;*;*;*;")
     If aScan.Count = 4 Then
-      Main.WriteLog("Phone call answered.")
-      If Main.bFritzBoxDebug Then Main.WriteDebugLog(("[Fritz!Box] Call [id=") & aScan[1] & ("] to/from ") & aScan[3] & (" answered"))
+      Main.WriteLog(LogLabel & "Phone call answered.")
+      If $bFritzBoxDebug Then Main.WriteDebugLog(LogLabel & "Call [id=" & aScan[1] & "] to/from " & aScan[3] & " answered")
       aScan[3] = IIf(aScan[3], aScan[3], "0000000000")
       rResult = Main.hDB.Exec("SELECT * FROM cdr WHERE clid = &1 ORDER BY calldate DESC LIMIT 1", aScan[3])
       If rResult Then
@@ -169,15 +242,15 @@ Private Sub ParseLine(sStr As String)
         Endif
       Endif
     Else
-      Main.WriteDebugLog(("[Fritz!Box] Error couldn't parse: ") & sStr)
+      Main.WriteDebugLog(LogLabel & "Error couldn't parse: " & sStr)
     Endif
   Endif
   ' 20.01.09 20:50:11;DISCONNECT;0;1253;
   If InStr(sStr, ";DISCONNECT;") Then
     aScan = Scan(sStr, "*;DISCONNECT;*;*;")
     If aScan.Count = 3 Then
-      Main.WriteLog(("Phone call ended."))
-      If Main.bFritzBoxDebug Then Main.WriteDebugLog(("[Fritz!Box] Call [id=") & aScan[1] & ("] duration was ") & aScan[2] & (" seconds"))
+      Main.WriteLog(LogLabel & "Phone call ended.")
+      If $bFritzBoxDebug Then Main.WriteDebugLog(LogLabel & "Call [id=" & aScan[1] & "] duration was " & aScan[2] & " seconds")
       rResult = Main.hDB.Exec("SELECT * FROM cdr ORDER BY calldate DESC LIMIT 1")
       If rResult.Available Then
         iId = rResult!id
@@ -185,7 +258,7 @@ Private Sub ParseLine(sStr As String)
         Main.RefreshPhoneCallList()
       Endif
     Else
-      Main.WriteDebugLog(("[Fritz!Box] Error couldn't parse: ") & sStr)
+      Main.WriteDebugLog(LogLabel & "Error couldn't parse: " & sStr)
     Endif
   Endif
   ' 20.01.09 22:28:50;CALL;0;0;0XXXXXXXXX;0XXXXXXXXX;POTS;
@@ -193,9 +266,9 @@ Private Sub ParseLine(sStr As String)
     aScan = Scan(sStr, "*;CALL;*;*;*;*;*;")
     If aScan.Count = 6 Then
       sName = CallerID.ReturnCallerID(aScan[4])
-      Main.WriteLog("Outgoing phone call to " & aScan[4] & " (" & sName & ")")
+      Main.WriteLog(LogLabel & "Outgoing phone call to " & aScan[4] & " (" & sName & ")")
       Main.SetGlobalVar("PhoneCall_Outgoing", aScan[4] & " (" & sName & ") at " & Format(Now(), "hh:nn:ss dd-mm-yyyy"))
-      If Main.bFritzBoxDebug Then Main.WriteDebugLog(("[Fritz!Box] Outgoing call [id=") & aScan[1] & ("] to ") & aScan[4] & (" with line ") & aScan[3])
+      If $bFritzBoxDebug Then Main.WriteDebugLog(LogLabel & " Outgoing call [id=" & aScan[1] & "] to " & aScan[4] & " with line " & aScan[3])
       ' write data to cdr table
       Main.hDB.Begin()
       rResult = Main.hDB.Create("cdr")
@@ -211,7 +284,7 @@ Private Sub ParseLine(sStr As String)
       Main.hDB.Commit()
       Main.RefreshPhoneCallList()
     Else
-      Main.WriteDebugLog(("[Fritz!Box] Error couldn't parse: ") & sStr)
+      Main.WriteDebugLog(LogLabel & "Error couldn't parse: " & sStr)
     Endif
   Endif
 
@@ -219,45 +292,34 @@ End
 
 Public Sub FritzBox_Error()
 
-  Dim sString As String = "Fritz!Box: "
-
-  ' handle error
-  Select Case hFritzBox.Status
-    Case Net.CannotCreateSocket
-      Main.WriteLog(sString & ("The system does not allow to create a socket."))
-    Case Net.HostNotFound
-      Main.WriteLog(sString & ("Host '") & sTCPHost & ("' not found."))
-    Case Net.ConnectionRefused
-      Main.WriteLog(sString & ("Unable to connect. Connection refused."))
-    Case Net.CannotRead
-      Main.WriteLog(sString & ("Error reading data."))
-    Case Net.CannotWrite
-      Main.WriteLog(sString & ("Error writing data."))
-  End Select
+  Log.Plugin_TCP_Error(LogLabel, $sTCPHost, Last.Status)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' implement properties
 Private Function TCPHost_Read() As String
 
-  Return sTCPHost
+  Return $sTCPHost
 
 End
 
 Private Sub TCPHost_Write(Value As String)
 
-  sTCPHost = Value
+  $sTCPHost = Value
 
 End
 
 Private Function FritzBoxDebug_Read() As Boolean
 
-  Return bFritzBoxDebug
+  Return $bFritzBoxDebug
 
 End
 
 Private Sub FritzBoxDebug_Write(Value As Boolean)
 
-  bFritzBoxDebug = Value
+  $bFritzBoxDebug = Value
 
 End

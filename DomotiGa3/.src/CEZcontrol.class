@@ -15,19 +15,76 @@
 
 ' Read file called COPYING for license details.
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "EZcontrol"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "EZcontrol"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Byte = 1
+
+Public KeyName As String
+Public LogLabel As String = "[EZcontrol] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Public variables - will be removed in the future
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Property UDPHost As String
-Property UDPPort As String
+Property UDPPort As Integer
 Property EZcontrolDebug As Boolean
 
-Private sUDPHost As String
-Private sUDPPort As String
-Private bEZcontrolDebug As Boolean
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sUDPHost As String
+Private $iUDPPort As Integer
+Private $bEZcontrolDebug As Boolean
 
 Public hEZcontrol As New UdpSocket
 
 ' Constants
 Private Const PRESET_MODE As Short = &HAB01
 Private Const MANUAL_MODE As Short = &HAB02
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sUDPHost = cPl.Settings["udphost"]
+  $iUDPPort = 7042
+  $bEZcontrolDebug = cPl.Settings["debug"]
+ 
+  ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
@@ -42,11 +99,21 @@ Public Function Connect() As Boolean
   hEZcontrol.Port = 0
   hEZcontrol.Bind()
 
-  ' all ok
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " UDP interface setup for " & $sUDPHost & ":" & $iUDPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(("EZcontrol Error: ") & ERROR.Text)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " UDP interface FAILED to setup for " & $sUDPHost & ":" & $iUDPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
   Return False
 
 End
@@ -58,13 +125,19 @@ Public Function Disconnect() As Boolean
 
   ' try to close the connection
   Try hEZcontrol.Close
-  Main.WriteLog(("EZcontrol UDP socket unbind."))
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " UDP interface closed.")
 
   ' all ok
   Return True
 
-Catch ' some errors
-  Main.WriteLog(("EZcontrol Error: ") & ERROR.Text)
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
 
 End
@@ -77,20 +150,20 @@ Public Sub SendUDPPacket(bBuf As Short[])
   Dim bData As Short
 
   ' sent it to configured interface
-  hEZcontrol.TargetPort = sUDPPort
-  hEZcontrol.TargetHost = sUDPHost
+  hEZcontrol.TargetPort = $iUDPPort
+  hEZcontrol.TargetHost = $sUDPHost
 
   bBuf.Write(hEZcontrol, 0, bBuf.Length)
-  If Not bEZcontrolDebug Then Return
+  If Not $bEZcontrolDebug Then Return
 
-  Main.WriteDebugLog("[EZcontrol] >", True)
+  Main.WriteDebugLog(LogLabel & ">", True)
   For Each bData In bBuf
     Main.WriteRFXDebugLog(" " & Hex(bData, 4), True)
   Next
   Main.WriteRFXDebugLog("\n", True)
 
 Catch
-  Main.WriteLog(("ERROR: Cannot send UDP message! ") & ERROR.Text & (" at ") & ERROR.Where)
+  Main.WriteLog(LogLabel & "ERROR: Cannot send UDP message! " & ERROR.Text & " at " & ERROR.Where)
 
 End
 
@@ -99,17 +172,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub EZcontrol_Error()
 
-  ' handle error
-  Select Case hEZcontrol.Status
-    Case Net.CannotCreateSocket
-      Main.WriteLog(("EZcontrol: The system does not allow to create a socket."))
-    Case Net.CannotBindSocket
-      Main.WriteLog(("EZcontrol: Unable to bind a socket."))
-    Case Net.CannotRead
-      Main.WriteLog(("EZcontrol: Error reading data."))
-    Case Net.CannotWrite
-      Main.WriteLog(("EZcontrol: Error writing data."))
-  End Select
+  Log.Plugin_TCP_Error(LogLabel, "", Last.Status)
 
 End
 
@@ -137,13 +200,13 @@ Public Sub SendCommand(sAddress As String, sCmd As String, iDeviceId As Integer)
         If iDim = 0 Then Inc iDim
         SendPreset(sAddress, iDim)
       Else
-        Main.WriteDebugLog(("[EZcontrol] Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!"))
+        Main.WriteDebugLog(LogLabel & "Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!")
       Endif
     Case "FS10", "RS200", "AB400", "AB601", "REV", "BS-QU", "MARMI", "OA-FM", "KO-FC", "RS862"
       ' hc|0|address|repeat
       aScan = Scan(sAddress, "*|0|*|*")
       If aScan.Count = 3 Then
-        If Main.bEZcontrolDebug Then Main.WriteDebugLog(("[EZcontrol] FS10...RS862 HomeCode = " & aScan[0] & " Address = " & aScan[1] & " Repeat = " & aScan[2]))
+        If $bEZcontrolDebug Then Main.WriteDebugLog(LogLabel & "FS10...RS862 HomeCode = " & aScan[0] & " Address = " & aScan[1] & " Repeat = " & aScan[2])
         If sCmd = "ON"
           SendManual(aScan[1], &HFF, GetSystem(sDeviceType), aScan[0], 0, 0, aScan[2])
         Else If sCmd = "OFF"
@@ -154,17 +217,17 @@ Public Sub SendCommand(sAddress As String, sCmd As String, iDeviceId As Integer)
           If iDim = 0 Then Inc iDim
           SendManual(aScan[1], iDim, GetSystem(sDeviceType), aScan[0], 0, 0, aScan[2])
         Else
-          Main.WriteDebugLog(("[EZcontrol] Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!"))
+          Main.WriteDebugLog(LogLabel & "Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!")
         Endif
       Else
-        Main.WriteDebugLog(("[EZcontrol] Invalid address specified for " & sDeviceType & " type device!"))
+        Main.WriteDebugLog(LogLabel & "Invalid address specified for " & sDeviceType & " type device!")
       Endif
     Case "FS20"
       ' hc|hc2|address|repeat or
       ' hc|hc2|address|repeat|arg
       aScan = Scan(sAddress, "*|*|*|*|*")
       If aScan.Count = 5 Then
-        If Main.bEZcontrolDebug Then Main.WriteDebugLog(("[EZcontrol] FS20 HomeCode = " & aScan[0] & " HomeCode2 = " & aScan[1] & " Address = " & aScan[2] & " Repeat = " & aScan[3] & " Arg = " & aScan[4]))
+        If $bEZcontrolDebug Then Main.WriteDebugLog(LogLabel & "FS20 HomeCode = " & aScan[0] & " HomeCode2 = " & aScan[1] & " Address = " & aScan[2] & " Repeat = " & aScan[3] & " Arg = " & aScan[4])
         If sCmd = "ON"
           SendManual(aScan[2], &HFF, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
         Else If sCmd = "OFF"
@@ -177,12 +240,12 @@ Public Sub SendCommand(sAddress As String, sCmd As String, iDeviceId As Integer)
         Else If InStr(sCmd, "ARG ") Then ' ARG <value>
           ' not implemented yet
         Else
-          Main.WriteDebugLog(("[EZcontrol] Only DIM, ARG and ON/OFF commands are supported for " & sDeviceType & " devices!"))
+          Main.WriteDebugLog(LogLabel & "Only DIM, ARG and ON/OFF commands are supported for " & sDeviceType & " devices!")
         Endif
       Else
         aScan = Scan(sAddress, "*|*|*|*")
         If aScan.Count = 4 Then
-          If Main.bEZcontrolDebug Then Main.WriteDebugLog(("[EZcontrol] FS20 HomeCode = " & aScan[0] & " HomeCode2 = " & aScan[1] & " Address = " & aScan[2] & " Repeat = " & aScan[3]))
+          If $bEZcontrolDebug Then Main.WriteDebugLog(LogLabel & "FS20 HomeCode = " & aScan[0] & " HomeCode2 = " & aScan[1] & " Address = " & aScan[2] & " Repeat = " & aScan[3])
           If sCmd = "ON"
             SendManual(aScan[2], &HFF, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
           Else If sCmd = "OFF"
@@ -193,17 +256,17 @@ Public Sub SendCommand(sAddress As String, sCmd As String, iDeviceId As Integer)
             If iDim <= 0 Then Inc iDim
             SendManual(aScan[2], iDim, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
           Else
-            Main.WriteDebugLog(("[EZcontrol] Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!"))
+            Main.WriteDebugLog(LogLabel & "Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!")
           Endif
         Else
-          Main.WriteDebugLog(("[EZcontrol] Invalid address specified for " & sDeviceType & " type device!"))
+          Main.WriteDebugLog(LogLabel & "Invalid address specified for " & sDeviceType & " type device!")
         Endif
       Endif
     Case "IT"
       ' hc|hc2|address|repeat
       aScan = Scan(sAddress, "*|*|*|*")
       If aScan.Count = 4 Then
-        If Main.bEZcontrolDebug Then Main.WriteDebugLog(("[EZcontrol] IT HomeCode = " & aScan[0] & " HomeCode2 = " & aScan[1] & " Address = " & aScan[2] & " Repeat = " & aScan[3]))
+        If $bEZcontrolDebug Then Main.WriteDebugLog(LogLabel & "IT HomeCode = " & aScan[0] & " HomeCode2 = " & aScan[1] & " Address = " & aScan[2] & " Repeat = " & aScan[3])
         If sCmd = "ON"
           SendManual(aScan[2], &HFF, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
         Else If sCmd = "OFF"
@@ -214,13 +277,13 @@ Public Sub SendCommand(sAddress As String, sCmd As String, iDeviceId As Integer)
           If iDim <= 0 Then Inc iDim
           SendManual(aScan[2], iDim, GetSystem(sDeviceType), aScan[0], aScan[1], 0, aScan[3])
         Else
-          Main.WriteDebugLog(("[EZcontrol] Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!"))
+          Main.WriteDebugLog(LogLabel & "Only DIM and ON/OFF commands are supported for " & sDeviceType & " devices!")
         Endif
       Else
-        Main.WriteDebugLog(("[EZcontrol] Invalid address specified for " & sDeviceType & " type device!"))
+        Main.WriteDebugLog(LogLabel & "Invalid address specified for " & sDeviceType & " type device!")
       Endif
     Case Else
-        Main.WriteDebugLog(("[EZcontrol] Device type '" & sDeviceType & "' is unsupported!"))
+        Main.WriteDebugLog(LogLabel & "Device type '" & sDeviceType & "' is unsupported!")
   End Select
 
 End
@@ -295,38 +358,41 @@ Private Sub ChkSum(sData As Short[], iLen As Integer) As Short
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Function UDPHost_Read() As String
 
-  Return sUDPHost
+  Return $sUDPHost
 
 End
 
 Private Sub UDPHost_Write(Value As String)
 
-  sUDPHost = Value
+  $sUDPHost = Value
 
 End
 
-Private Function UDPPort_Read() As String
+Private Function UDPPort_Read() As Integer
 
-  Return sUDPPort
+  Return $iUDPPort
 
 End
 
-Private Sub UDPPort_Write(Value As String)
+Private Sub UDPPort_Write(Value As Integer)
 
-  sUDPPort = Value
+  $iUDPPort = Value
 
 End
 
 Private Function EZcontrolDebug_Read() As Boolean
 
-  Return bEZcontrolDebug
+  Return $bEZcontrolDebug
 
 End
 
 Private Sub EZcontrolDebug_Write(Value As Boolean)
 
-  bEZcontrolDebug = Value
+  $bEZcontrolDebug = Value
 
 End

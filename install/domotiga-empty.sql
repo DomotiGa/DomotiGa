@@ -2756,7 +2756,7 @@ CREATE TABLE `settings_plugwise` (
 
 LOCK TABLES `settings_plugwise` WRITE;
 /*!40000 ALTER TABLE `settings_plugwise` DISABLE KEYS */;
-INSERT INTO `settings_plugwise` VALUES (0,1,'/dev/ttyUSB7',300,0),(1,0,'/dev/ttyUSB7',300,0);
+INSERT INTO `settings_plugwise` VALUES (0,0,'/dev/ttyUSB7',300,0),(1,0,'/dev/ttyUSB7',300,0);
 /*!40000 ALTER TABLE `settings_plugwise` ENABLE KEYS */;
 UNLOCK TABLES;
 

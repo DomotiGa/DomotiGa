@@ -14,13 +14,39 @@
 
 ' Read file called COPYING for license details.
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Ncid"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "Ncid API"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Byte = 1
+
+Public KeyName As String
+Public LogLabel As String = "[Ncid] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Public variables - will be removed in the future
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Property TCPHost As String
 Property TCPPort As Integer
 Property NcidDebug As Boolean
 
-Private sTCPHost As String
-Private iTCPPort As Integer
-Private bNcidDebug As Boolean
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $bNcidDebug As Boolean
+
 Public tNcidConnect As Timer
 
 Private iConnectRetry As Integer = 0 ' retries
@@ -29,12 +55,45 @@ Private iConnectDelay As Integer = 60000 ' 1 minute
 Private hNcid As New Socket
 Private sBuffer As String
 
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $bNcidDebug = cPl.Settings["debug"]
+ 
+  ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' reconnect routine
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tNcidConnect_Timer()
 
-  If Not Connect() Then
+  If Not Connect(False) Then
     Inc iConnectRetry
     iConnectDelay *= iConnectRetry
     tNcidConnect.Delay = iConnectDelay
@@ -44,39 +103,51 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Public Function Connect(Optional bFirstStart As Boolean = True) As Boolean
 
   ' try to close the connection
   Try hNcid.Close
 
   ' get a new one
   hNcid = New Socket As "Ncid"
-  hNcid.Connect(sTCPHost, iTCPPort)
+  hNcid.Connect($sTCPHost, $iTCPPort)
 
-  ' all ok
+  ' Write to main logfile we are trying to connect
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(("Ncid Error: ") & ERROR.Text)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
   Return False
 
 End
 
 Public Sub Ncid_Ready()
 
-  Main.WriteLog(("Ncid TCP socket connected."))
    ' define timer for Ncid reconnect
   tNcidConnect = New Timer As "tNcidConnect"
   tNcidConnect.Delay = iConnectRetry
   tNcidConnect.Stop
 
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
 End
 
 Public Sub Ncid_Closed()
 
-  Main.WriteLog(("ERROR: Ncid TCP socket connection is lost."))
+  Main.WriteLog(LogLabel & "ERROR: TCP socket connection is lost.")
   If iConnectRetry < 6 Then
-    Main.WriteDebugLog(("[Ncid] Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", ".")))
+    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
     tNcidConnect.Start
   Endif
 
@@ -91,13 +162,19 @@ Public Function Disconnect() As Boolean
   ' try to close the connection
   Try hNcid.Close
   Try tNcidConnect.Stop
-  Main.WriteLog(("Ncid TCP socket port close."))
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
 
   ' all ok
   Return True
 
-Catch ' some errors
-  Main.WriteLog(("Ncid Error: ") & ERROR.Text)
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
 
 End
@@ -122,16 +199,16 @@ Private Sub ParseLine(sStr As String)
   Dim rResult As Result
   Dim sName As String
 
-  If Main.bNcidDebug Then Main.WriteDebugLog("[Ncid] " & sStr)
+  If $bNcidDebug Then Main.WriteDebugLog(LogLabel & sStr)
   ' CID: *DATE*12102011*TIME*1326*LINE*-*NMBR*0612954340*MESG*NONE*NAME*NO NAME*
   If InStr(sStr, "CID:") Then
     sStr = Replace(sStr, "*", ";")
     aScan = Scan(sStr, "CID: ;DATE;*;TIME;*;LINE;*;NMBR;*;MESG;*;NAME;*;")
     If aScan.Count = 6 Then
       sName = CallerID.ReturnCallerID(aScan[3])
-      Main.WriteLog("Incoming phone call from " & IIf(aScan[3], aScan[3] & " (" & sName & ")", "0000000000") & ".")
+      Main.WriteLog(LogLabel & "Incoming phone call from " & IIf(aScan[3], aScan[3] & " (" & sName & ")", "0000000000") & ".")
       Main.SetGlobalVar("PhoneCall_Incoming", aScan[3] & " (" & sName & ") at " & Format(Now(), "hh:nn:ss dd-mm-yyyy"))
-      If Main.bNcidDebug Then Main.WriteDebugLog(("[Ncid] Incoming call [id=") & aScan[0] & aScan[1] & ("] from ") & aScan[3] & (" on line ") & aScan[2] & " (" & aScan[5] & ")")
+      If $bNcidDebug Then Main.WriteDebugLog(LogLabel & "Incoming call [id=" & aScan[0] & aScan[1] & "] from " & aScan[3] & " on line " & aScan[2] & " (" & aScan[5] & ")")
       ' write data to cdr table
       Main.hDB.Begin()
       rResult = Main.hDB.Create("cdr")
@@ -146,7 +223,7 @@ Private Sub ParseLine(sStr As String)
       Main.hDB.Commit()
       Main.RefreshPhoneCallList()
     Else
-      Main.WriteDebugLog(("[Ncid] Error couldn't parse: ") & sStr)
+      Main.WriteDebugLog(LogLabel & "Error couldn't parse: " & sStr)
     Endif
   Endif
 
@@ -154,57 +231,46 @@ End
 
 Public Sub Ncid_Error()
 
-  Dim sString As String = "Ncid: "
-
-  ' handle error
-  Select Case hNcid.Status
-    Case Net.CannotCreateSocket
-      Main.WriteLog(sString & ("The system does not allow to create a socket."))
-    Case Net.HostNotFound
-      Main.WriteLog(sString & ("Host '") & sTCPHost & ("' not found."))
-    Case Net.ConnectionRefused
-      Main.WriteLog(sString & ("Unable to connect. Connection refused."))
-    Case Net.CannotRead
-      Main.WriteLog(sString & ("Error reading data."))
-    Case Net.CannotWrite
-      Main.WriteLog(sString & ("Error writing data."))
-  End Select
+  Log.Plugin_TCP_Error(LogLabel, $sTCPHost, Last.Status)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' implement properties
 Private Function TCPHost_Read() As String
 
-  Return sTCPHost
+  Return $sTCPHost
 
 End
 
 Private Sub TCPHost_Write(Value As String)
 
-  sTCPHost = Value
+  $sTCPHost = Value
 
 End
 
 Private Function TCPPort_Read() As Integer
 
-  Return iTCPPort
+  Return $iTCPPort
 
 End
 
 Private Sub TCPPort_Write(Value As Integer)
 
-  iTCPPort = Value
+  $iTCPPort = Value
 
 End
 
 Private Function NcidDebug_Read() As Boolean
 
-  Return bNcidDebug
+  Return $bNcidDebug
 
 End
 
 Private Sub NcidDebug_Write(Value As Boolean)
 
-  bNcidDebug = Value
+  $bNcidDebug = Value
 
 End

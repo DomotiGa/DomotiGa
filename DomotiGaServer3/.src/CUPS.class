@@ -13,20 +13,78 @@
 
 ' Read file called COPYING for license details.
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Name As String = "UPS"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "UPS"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+
+Public KeyName As String
+Public LogLabel As String = "[UPS] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Public variables - will be removed in the future
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Property Host As String
 Property Port As Integer
 Property PollTime As Integer
 Property UPSDebug As Boolean
 
-Private sTCPHost As String
-Private iTCPPort As Integer
-Private iPollTime As Integer
-Private bUPSDebug As Boolean
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $iPollTime As Integer
+Private $bUPSDebug As Boolean
 
 Public hUPS As New Socket
 Public tUPS As Timer
 Public sBuffer As String
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $iPollTime = cPl.Settings["polltime"]
+  $bUPSDebug = cPl.Settings["debug"]
+ 
+  ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub CheckUPS()
 
   Dim rResult As Result
@@ -36,11 +94,11 @@ Public Sub CheckUPS()
   If Not Error Then
     If rResult.Count Then
       For Each rResult
-        If bUPSDebug Then Main.WriteDebugLog(("[UPS] checking UPS named '") & rResult!name & ("' with address '") & rResult!address & "'")
+        If $bUPSDebug Then Main.WriteDebugLog(LogLabel & "checking UPS named '" & rResult!name & "' with address '" & rResult!address & "'")
         Check(rResult!address, rResult!module)
       Next
     Else
-      Main.WriteLog(("UPS: no UPS(s) found in device table!"))
+      Main.WriteLog(LogLabel & "no UPS(s) found in device table!")
     Endif
   Endif
 
@@ -56,13 +114,23 @@ Public Function Connect() As Boolean
 
   ' get a new one
   hUPS = New Socket As "UPS"
-  hUPS.Connect(sTCPHost, iTCPPort)
+  hUPS.Connect($sTCPHost, $iTCPPort)
 
-  ' all ok
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(("UPS Error: ") & ERROR.Text)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
   Return False
 
 End
@@ -74,32 +142,26 @@ Public Function Disconnect() As Boolean
 
   ' try to close the connection
   Try hUPS.Close
-  Main.WriteLog(("UPS socket close."))
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
 
   ' all ok
   Return True
 
-Catch ' some errors
-  Main.WriteLog(("UPS Error: ") & ERROR.Text)
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
 
 End
 
 Public Sub UPS_Error()
 
-  ' handle error
-  Select Case hUPS.Status
-    Case Net.CannotCreateSocket
-      Main.WriteLog(("UPS: The system does not allow to create a socket."))
-    Case Net.HostNotFound
-      Main.WriteLog(("UPS: Host '") & sTCPHost & ("' not found."))
-    Case Net.ConnectionRefused
-      Main.WriteLog(("UPS: Unable to connect. Connection refused."))
-    Case Net.CannotRead
-      Main.WriteLog(("UPS: Error reading data."))
-    Case Net.CannotWrite
-      Main.WriteLog(("UPS: Error writing data."))
-  End Select
+  Log.Plugin_TCP_Error(LogLabel, $sTCPHost, Last.Status)
 
 End
 
@@ -108,7 +170,7 @@ Public Sub UPS_Read()
   Dim sData As String
 
   Try sData = Read #hUPS, 1
-  If Error Then Main.WriteDebugLog(("[UPS] Error reading data from network socket! -> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from network socket! -> " & Error.Text)
   If sData = Chr(10) Then ' buffer until newline then parse
     If Len(sBuffer) > 1 Then ParseLine(sBuffer)
     sBuffer = Null
@@ -123,7 +185,7 @@ Public Sub ParseLine(sBuf As String)
   Dim sValue, sAddress As String
   Dim iDeviceId As Integer
 
-  If bUPSDebug Then Main.WriteDebugLog(sBuf)
+  If $bUPSDebug Then Main.WriteDebugLog(LogLabel & sBuf)
 
   ' try to find address and deviceid
   If InStr(sBuf, "ERR") = 0 Then
@@ -165,12 +227,13 @@ End
 
 Public Sub UPS_Ready()
 
-  Main.WriteLog(("UPS socket connected."))
-
   ' start poll timer for UPS
   tUPS = New Timer As "tUPS"
-  tUPS.Delay = iPollTime * 1000 ' multiply for seconds
+  tUPS.Delay = $iPollTime * 1000 ' multiply for seconds
   tUPS.Start
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
 
 End
 
@@ -184,13 +247,13 @@ Public Sub Check(sAddress As String, iModule As Integer)
 
   Dim sCmd As String = "GET VAR " & sAddress & " ups.status"
 
-  If bUPSDebug Then Main.WriteDebugLog("[UPS] " & sCmd)
+  If $bUPSDebug Then Main.WriteDebugLog(LogLabel & sCmd)
   Try Print #hUPS, sCmd
-  If Error Then Main.WriteDebugLog(("[UPS] Error writing data to network socket! -> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to network socket! -> " & Error.Text)
   sCmd = "GET VAR " & sAddress & " ups.load"
-  If bUPSDebug Then Main.WriteDebugLog("[UPS] " & sCmd)
+  If $bUPSDebug Then Main.WriteDebugLog(LogLabel & sCmd)
   Try Print #hUPS, sCmd
-  If Error Then Main.WriteDebugLog(("[UPS] Error writing data to network socket! -> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to network socket! -> " & Error.Text)
 
   Select Case Devices.FindDescrForDeviceType(iModule)
     Case "BackUPS" ' APC BackUPS
@@ -200,57 +263,60 @@ Public Sub Check(sAddress As String, iModule As Integer)
     Case Else ' APC SmartUPS
       sCmd = "GET VAR " & sAddress & " ups.temperature"
   End Select
-  If bUPSDebug Then Main.WriteDebugLog("[UPS] " & sCmd)
+  If $bUPSDebug Then Main.WriteDebugLog(LogLabel & sCmd)
   Try Print #hUPS, sCmd
-  If Error Then Main.WriteDebugLog(("[UPS] Error writing data to network socket! -> ") & Error.Text)
+  If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to network socket! -> " & Error.Text)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' implement properties
 Private Function Host_Read() As String
 
-  Return sTCPHost
+  Return $sTCPHost
 
 End
 
 Private Sub Host_Write(Value As String)
 
-  sTCPHost = Value
+  $sTCPHost = Value
 
 End
 
 Private Function Port_Read() As Integer
 
-  Return iTCPPort
+  Return $iTCPPort
 
 End
 
 Private Sub Port_Write(Value As Integer)
 
-  iTCPPort = Value
+  $iTCPPort = Value
 
 End
 
 Private Function UPSDebug_Read() As Boolean
 
-  Return bUPSDebug
+  Return $bUPSDebug
 
 End
 
 Private Sub UPSDebug_Write(Value As Boolean)
 
-  bUPSDebug = Value
+  $bUPSDebug = Value
 
 End
 
 Private Function PollTime_Read() As Integer
 
-  Return iPollTime
+  Return $iPollTime
 
 End
 
 Private Sub PollTime_Write(Value As Integer)
 
-  iPollTime = Value
+  $iPollTime = Value
 
 End
