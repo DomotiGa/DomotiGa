@@ -27,6 +27,14 @@
 Public cPluginList As New Collection
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' cPluginRunTask contains the modules/interfaces list which 
+' have to be called every minute for crontab check. This
+' only applies for OpenZWave and DSC.
+' NOTE: The module/class will have "PluginRunTask=True"
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public cPluginRunTask As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Constants
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Const Type_Unknown As Integer = 0 ' When unitialized
@@ -201,7 +209,14 @@ Public Sub Register(sType As Byte, sPluginName As String, sClassName As String, 
   cPl.Name = sPluginName
   cPl.KeyName = sPluginName & "#0"
   cPl.Instance = 0
-  cPl.Interface = Null
+
+  ' Store for modules the *.module in instance #0, this one will always exist
+  If sType = Type_Module Then
+    cPl.Interface = oModule
+  Else
+    cPl.Interface = Null
+  Endif
+
   cPl.MaxInstances = oTemp.PluginMaxInstances
 
   ' Store the ClassName if it is a Type_Class
@@ -233,13 +248,13 @@ Public Sub Register(sType As Byte, sPluginName As String, sClassName As String, 
     cPl.Instance = rResult!id
     cPl.MaxInstances = oTemp.PluginMaxInstances
 
+    cPl.Interface = Null
+
     Select sType
       Case Type_Module
         cPl.ClassName = ""
-        cPl.Interface = oModule
       Case Type_Class
         cPl.ClassName = sClassName
-        cPl.Interface = Null
     End Select
 
     For Each hField In rResult.Fields
@@ -259,6 +274,7 @@ Public Sub StartAll()
 
   Dim cPl As CPluginEntry
   Dim cReported As New Collection
+  Dim bRunTask As Boolean
 
   ' Loop through all inteface and start them
   For Each cPl In cPluginList
@@ -284,6 +300,15 @@ Public Sub StartAll()
         If Error Then
           Main.WriteLog("[Plugin] ERROR: Module/Interface '" & cPl.Name & "' doesn't have a StartPlugin Function")
         Endif
+
+        ' Check if the PluginRunTask exist, then we need to call it every minute
+        Try bRunTask = cPl.Interface.PluginRunTask
+        If Not Error Then
+          If bRunTask Then
+            cPluginRunTask[cPl.KeyName] = "active"
+          Endif
+        Endif
+
       Endif
     Endif
   Next
@@ -303,8 +328,18 @@ Public Sub StopAll()
 
     ' Skip the #0 entries, these can't be stopped
     If InStr(cPl.KeyName, "#0") = 0 Then
-      Try Object.Call(cPl.Interface, "StopPlugin", [cPl])
-      cPl.Interface = Null
+      Try Object.Call(cPl.Interface, "StopPlugin")
+
+      ' If it is a Class type, destroy the object
+      If cPl.Type = Type_Class Then
+        cPl.Interface = Null
+      Endif
+
+      ' Remove possible RunTask
+      If cPluginRunTask.Exist(cPl.KeyName) Then
+        cPluginRunTask.Remove(cPl.KeyName)
+      Endif
+
     Endif
   Next
 
@@ -319,6 +354,7 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
   Dim cPl As CPluginEntry
   Dim cPlNew As CPluginEntry
   Dim hField As ResultField
+  Dim bRunTask As Boolean
   Dim sTableName As String = "settings_" & LCase(sPluginName)
 
   ' First instance *has* to exist
@@ -334,6 +370,11 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
   Endif
 
   rResult = GetSettingsTable(sTableName, iInstance)
+
+  ' Remove possible RunTask
+  If cPluginRunTask.Exist(LCase(sPluginName) & "#" & iInstance) Then
+    cPluginRunTask.Remove(LCase(sPluginName) & "#" & iInstance)
+  Endif
 
   ' Module/Interface exists - if something changed we need to restart
   ' Covers an interface removed or modified
@@ -376,27 +417,39 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
         Endif
 
         Try Object.Call(cPl.Interface, "StartPlugin", [cPl])
+
+        ' Check if the PluginRunTask exist, then we need to call it every minute
+        Try bRunTask = cPl.Interface.PluginRunTask
+        If Not Error Then
+          If bRunTask Then
+            cPluginRunTask[LCase(sPluginName) & "#" & iInstance] = "active"
+          Endif
+        Endif
+
       Endif
 
     Endif
 
   Else
 
-    cPl = cPluginList[LCase(sPluginName) & "#" & iInstance]
+    ' TODO: Interface = Null - this doesn't work nicely for Type=Module
 
-    ' Copy information from instance 1
+    ' Instance doesn't exist yet, we need to initialize it
+    cPl = cPluginList[LCase(sPluginName) & "#0"]
+
+    ' Copy information from instance 0
     cPlNew = New CPluginEntry
     cPlNew.Type = cPl.Type
     cPlNew.Name = cPl.Name
-    cPlNew.KeyName = sPluginName & "#" & rResult!id
-    cPlNew.Instance = rResult!id
+    cPlNew.KeyName = LCase(sPluginName) & "#" & iInstance
+    cPlNew.Instance = iInstance
     cPlNew.ClassName = cPl.sClassName
     cPlNew.Interface = Null
     For Each hField In rResult.Fields
       cPlNew.Settings[LCase(hField.Name)] = rResult[hField.Name]
     Next
 
-    cPluginList[LCase(sPluginName) & "#" & rResult!id] = cPlNew
+    cPluginList[LCase(sPluginName) & "#" & iInstance] = cPlNew
 
     ' If the module is enabled start now
     If cPlNew.Settings["enabled"] Then
@@ -407,6 +460,15 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
       Endif
 
       Try Object.Call(cPlNew.Interface, "StartPlugin", [cPlNew])
+
+      ' Check if the PluginRunTask exist, then we need to call it every minute
+      Try bRunTask = cPlNew.Interface.PluginRunTask
+      If Not Error Then
+        If bRunTask Then
+          cPluginRunTask[LCase(sPluginName) & "#" & iInstance] = "active"
+        Endif
+      Endif
+
     Endif
 
   Endif
@@ -414,46 +476,120 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return if plugin is registerd
+' return if plugin is registered
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub hasPluginRegistered(sPluginName As String, Optional iInstance As Byte = 1) As Boolean
-  Return cPluginList.Exist(sPluginName & "#" & iInstance)
+Public Sub IsPluginRegistered(sPluginName As String, Optional iInstance As Byte = 1) As Boolean
+
+  If cPluginList.Exist(LCase(sPluginName) & "#" & iInstance) Then
+    Return True
+  Else
+    ' If the Instance doesn't exist, check for #0 and error if not existing
+    If cPluginList.Exist(LCase(sPluginName) & "#0") = False Then
+      Main.WriteLog("[Plugin] ERROR: Module/Interface '" & sPluginName & "' isn't properly initialized")
+    Endif
+
+    Return False
+  Endif
+
 End 
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return if plugin is enabled
+' Return True if plugin is enabled
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub isPluginRunning(sPluginName As String, Optional iInstance As Byte = 1) As Boolean
-  If hasPluginRegistered(sPluginName, iInstance) Then
-    Return GetPluginObject(sPluginName, iInstance).Interface.IsRunning
+Public Sub IsPluginEnabled(sPluginName As String, Optional iInstance As Byte = 1) As Boolean
+
+  Dim bEnabled As Boolean
+
+  ' First check if the Plugin & Instance do exist in our Plugin list
+  If IsPluginRegistered(sPluginName, iInstance) Then
+
+    ' First check if the module/interface is enabled
+    Try bEnabled = GetPluginObject(sPluginName, iInstance).Settings["enabled"]
+
+    ' Check for errors, it is possible the Object doesn't have a valid "Settings[enabled]" (faulty module/interface)
+    If Error Then
+      Main.WriteLog("[Plugin] ERROR: Module/Interface '" & sPluginName & "' looks to be invalid, the 'Settings[enabled]' is missing")
+      bEnabled = False
+    Endif
   Else
-    Return False
+    bEnabled = False
   Endif
+
+  Return bEnabled
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return if plugin is enabled and running
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub IsPluginRunning(sPluginName As String, Optional iInstance As Byte = 1) As Boolean
+
+  Dim bRunning As Boolean
+
+  ' First check if the Plugin & Instance do exist in our Plugin list
+  If IsPluginRegistered(sPluginName, iInstance) Then
+
+    ' First check/try IsRunning variable
+    Try bRunning = GetPluginObject(sPluginName, iInstance).Interface.IsRunning
+
+    ' Check for errors, it is possible the Object doesn't have an "IsRunning" (faulty module/interface)
+    If Error Then
+      Main.WriteLog("[Plugin] ERROR: Module/Interface '" & sPluginName & "' looks to be invalid, the 'IsRunning' is missing")
+      bRunning = False
+    Endif
+  Else
+    bRunning = False
+  Endif
+
+  Return bRunning
+
 End 
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Pointer to the Object ... Don't modify data !
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetPluginObject(sPluginName As String, Optional iInstance As Byte = 1) As Object
-  If hasPluginRegistered(sPluginName, iInstance) Then
-    Return cPluginList[sPluginName & "#" & iInstance]
+
+  If cPluginList.Exist(LCase(sPluginName) & "#" & iInstance) Then
+    Try Return cPluginList[LCase(sPluginName) & "#" & iInstance]
   Else
-    Main.WriteDebugLog("[Plugin] Unable to get " & sPluginName & " with instance " & iInstance & " because it is not registerd")
-    Return
+    Return Null
   Endif
 End 
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Send command to plugin
+' Send command to plugin. The "SendCommand" routine is a
+' fixed name, but doesn't have to exist
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sPluginName As String, iInstance As Byte, sAddress As String, sCmd As String) As Boolean
-  If isPluginRunning(sPluginName, iInstance) Then
-    GetPluginObject(sPluginName, iInstance).interface.SendCommand(sAddress, sCmd)
+
+  ' The Plugin needs to be enabled
+  If isPluginEnabled(sPluginName, iInstance) Then
+
+    ' The Plugin needs to be in IsRunning state
+    If isPluginRunning(sPluginName, iInstance) Then
+
+      ' Send the command to the right interface/instance
+      Try GetPluginObject(sPluginName, iInstance).Interface.SendCommand(sAddress, sCmd)
+
+      ' Throw an error, because we are sending a SendCommand to a plugin without the routine
+      If Not Error Then
+        Return True
+      Else
+        Main.WriteDebug("[Plugin] Module/Interface '" & sPluginName & "' doesn't have a 'SendCommand' function, most likely you are trying to control a ReadOnly interface")
+        Return False
+      Endif
+    Else
+      Main.WriteLog("[Plugin] ERROR: Can't control device because '" & sPluginName & "' is error state!")
+      Return False 
+    Endif
+
   Else
-    Main.WriteDebugLog("[Plugin] Can't control device because " & sPluginName & " is disabled or not registerd!")
+    Main.WriteDebugLog("[Plugin] Can't control device because '" & sPluginName & "' is disabled!")
     Return False 
   Endif
 End
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Check if settings_* table exists in the database
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -496,6 +632,31 @@ Public Sub GetSettingsTable(sTableName As String, Optional iRow As Integer = -1)
   Else
     Try Return Main.hDB.Exec("SELECT * FROM " & sTableName & " WHERE id >= 1 AND id <= 9")
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' The RunTask will be called every minute by EventLoop
+' In registered, it should only do crontab alike checks
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RunTask()
+
+  Dim vValue As Variant
+
+  ' Go through the whole list, and try to start RunTask
+  For Each vValue In cPluginRunTask
+    If cPluginList.Exist(cPluginRunTask.Key) Then
+      Try Object.Call(cPluginList[cPluginRunTask.Key].Interface, "RunTask")
+
+      If Error Then
+        Main.WriteLog("[Plugin] ERROR: Module/Interface '" & cPluginRunTask.Key & "' doesn't have a StartPlugin Function, but it has the 'PluginRunTask=True'")
+
+        ' Remove the entry, because it isn't usefull to run it in the next minute
+        ' NOTE: After a restart it will show up again, this is per design
+        cPluginRunTask.Remove(cPluginRunTask.Key)
+      Endif
+    Endif
+  Next
 
 End
 
