@@ -7,6 +7,8 @@ UPDATE `settings_k8055` SET `enabled`=0 WHERE `id`='0';
 
 UPDATE `settings_plugwise` SET `enabled`=0 WHERE `id`='0';
 
+UPDATE `settings_plcbus` SET `ack`=0 WHERE `ack`=NULL;
+
 --
 -- Finally update to 1.0.011
 --

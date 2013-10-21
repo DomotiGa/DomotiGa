@@ -2745,7 +2745,7 @@ CREATE TABLE `settings_plcbus` (
 
 LOCK TABLES `settings_plcbus` WRITE;
 /*!40000 ALTER TABLE `settings_plcbus` DISABLE KEYS */;
-INSERT INTO `settings_plcbus` VALUES (0,0,'/dev/ttyUSB4','9600',0,'250',0,'A,B',NULL,0),(1,0,'/dev/ttyUSB4','9600',0,'250',0,'A,B',NULL,0);
+INSERT INTO `settings_plcbus` VALUES (0,0,'/dev/ttyUSB4','9600',0,'250',0,'A,B',0,0),(1,0,'/dev/ttyUSB4','9600',0,'250',0,'A,B',0,0);
 /*!40000 ALTER TABLE `settings_plcbus` ENABLE KEYS */;
 UNLOCK TABLES;
 
