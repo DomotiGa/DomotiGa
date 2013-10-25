@@ -169,7 +169,7 @@ foreach ($data AS $item) {
    foreach ($datas AS $items) {	
       if ($item['id'] == $items['id']) { 
          echo "<div id=\"optionpanel".$item['id']."\" style=\"display: none\">\n";
-         echo "<p><a class=\"green button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['devicename']."&value=On\">On</a> <a href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['devicename']."&value=Off\" class=\"red button\">Off</a><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
+         echo "<p><a class=\"green button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['id']."&value=On\">On</a> <a href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['id']."&value=Off\" class=\"red button\">Off</a><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
 	 echo "</div>\n";
       }
    }
@@ -180,11 +180,11 @@ foreach ($data AS $item) {
       if (substr($itemd['devicevalue'],0,3) == "Dim"){ preg_match_all('!\d+!', $itemd['devicevalue'], $dimlevel); $dimlevel=implode($dimlevel[0]); };
       if ($item['id'] == $itemd['id']) {
          echo "<div id=\"optionpanel".$item['id']."\" style=\"display: none\">\n";
-         echo "<p><a class=\"green button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['devicename']."&value=On\">On</a></p>";
-         echo "<p><a class=\"red button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['devicename']."&value=Off\">Off</a></p>";
+         echo "<p><a class=\"green button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['id']."&value=On\">On</a></p>";
+         echo "<p><a class=\"red button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['id']."&value=Off\">Off</a></p>";
          // Slider to dim lights
          echo "<p id=\"dimmer".$item['id']."\" class=\"button slider\" style=\"width: 94%; height: 30px; margin-left: 3%;\">".$dimlevel."</p>\n";
-         echo "<p><a class=\"white button\" onclick=\"dim_light('".$item['devicelocation']."', '".$item['devicename']."', $('#dimmer".$item['id']."').text())\">Ok</a></p>";
+         echo "<p><a class=\"white button\" onclick=\"dim_light('".$item['devicelocation']."', '".$item['id']."', $('#dimmer".$item['id']."').text())\">Ok</a></p>";
          echo "<p><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
          echo "</div>\n";
       }
