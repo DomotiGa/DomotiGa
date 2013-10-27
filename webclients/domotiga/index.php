@@ -60,7 +60,7 @@ if ($_SESSION['view']=="pachube") {
 
 if(isset($_GET['action'])){
    echo "<h3>Requested to turn ".$_GET['name']." ".$_GET['action'].".</h3>";
-   $request = xmlrpc_encode_request("device.setdevice",array( $_GET['name'], $_GET['action'] ) );
+   $request = xmlrpc_encode_request("device.setdevice",array( $_GET['deviceid'], $_GET['action'] ) );
    $response = do_xmlrpc($request);
    header("Location: index.php?setview=control");
 }
@@ -225,8 +225,8 @@ if ($_SESSION['view']=="control") {
       echo "<div class='imgcol' style='width:20px;' id='i".$item['id']."deviceicon'>&nbsp;".$item['deviceicon']."</div>\n";
       echo "<div class='datacol' style='width:170px;' id='i".$item['id']."devicename'>&nbsp;".$item['devicename']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue'>&nbsp;".$item['devicevalue']."</div>\n";
-      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue2'>&nbsp;<a href='?action=On&name=".urlencode($item['devicename'])."'>On</a></div>\n";
-      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue3'>&nbsp;<a href='?action=Off&name=".urlencode($item['devicename'])."'>Off</a></div>\n";
+      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue2'>&nbsp;<a href='?action=On&deviceid=".urlencode($item['id'])."'>On</a></div>\n";
+      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue3'>&nbsp;<a href='?action=Off&deviceid=".urlencode($item['id'])."'>Off</a></div>\n";
       echo "<div class='datacollast' style='width:190px;' id='i".$item['id']."devicelastseen'>&nbsp;".$item['devicelastseen']."</div>\n";
       echo "<div class='spacer'>&nbsp</div>\n";
       echo "</div>\n"; // End of thisrow div
