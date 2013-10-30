@@ -12,6 +12,17 @@
 ' Read file called COPYING for license details.
 
 '***************************************************************************
+' Supported:
+' 1) json-rpc in body
+' 2) json-rpc in url - http://<your-ip>:<your-port>/jsonrpc?request=<url-encoded-request>
+
+' TODO:
+' Accept: audio/*; q=0.2, audio/basic
+' SHOULD be interpreted as "I prefer audio/basic, but send me any audio type if it is the best available after an 80% mark-down in quality."
+
+' If no Accept header field is present, then it is assumed that the client accepts all media types. If an Accept header field is present, and if the server cannot send a response which is acceptable according to the combined Accept field value, then the server SHOULD send a 406 (not acceptable) response.
+
+'***************************************************************************
 Private Const ParseError As Integer = -32700
 Private Const InvalidRequest As Integer = -32600
 Private Const MethodNotFound As Integer = -32601
@@ -26,7 +37,6 @@ Private hProt As Byte[]
 Private hLen As Integer[]
 Private hConn As Integer[]
 Private hType As Byte[]
-Private hId As Variant[]
 Private hReply As Variant
 
 Event CheckMethod(sMethod As String)
@@ -54,7 +64,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Create a Json Collection with a specific error message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub JsonError(iError As Integer) As Collection
+Private Sub JsonError(iError As Integer, Optional vId As Variant = Null) As Collection
 
   Dim cJsonData As New Collection
   Dim cError As New Collection
@@ -81,7 +91,11 @@ Private Sub JsonError(iError As Integer) As Collection
   ' The "id": "null" will be replaced by "id": null later
   cJsonData["jsonrpc"] = "2.0"
   cJsonData["error"] = cError
-  cJsonData["id"] = "null"
+  If vId = Null Then
+    cJsonData["id"] = "null"
+  Else
+    cJsonData["id"] = vId
+  Endif
 
   Return cJsonData
 
@@ -90,7 +104,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 '
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub JsonToRpc(vId As Variant, cJsonResponse As Variant) As Collection
+Private Sub JsonToRpc(cJsonResponse As Variant, vId As Variant) As Collection
 
   Dim cJsonData As New Collection
   Dim sJsonData As String
@@ -131,12 +145,15 @@ Private Sub JsonSend(hS As Socket, vJsonData As Variant)
   ' Replace the "id": "null", because Gamas doesn't support it
   sJsonData = Replace(sJsonData, "\"id\": \"null\"", "\"id\": null")
 
+  ' TODO: Reply with same content-type as the request
+  ' TODO: Reject accept-content types which aren't e.g. application/json
+
   hS.Begin
   hS.EndOfLine = gb.Windows
   Print #hS, "HTTP/1.1 200 OK"
   Print #hS, "Connection: close"
   Print #hS, "Content-Length: " & Len(sJsonData)
-  Print #hS, "Content-Type: application/json-rpc"
+  Print #hS, "Content-Type: application/json"
   Print #hS, "Server: Gambas RPC Server"
   Print #hS, ""
   Write #hS, sJsonData, Len(sJsonData)
@@ -157,6 +174,7 @@ Private Sub ProcessQuery(hS As Socket, Buf As String)
   Dim vJsonData As New Variant[]
   Dim Entry As Variant
   Dim vOutput As New Variant[]
+  Dim sJSONVersion As String
   Dim sMethod As String
   Dim bMethod As Boolean
   Dim cParams As New Collection
@@ -192,29 +210,44 @@ Private Sub ProcessQuery(hS As Socket, Buf As String)
 
   For Each Entry In vJsonData
 
+    Try sJSONVersion = Entry["jsonrpc"]
     ' Check if we got a method name
-    Try sMethod = Entry["method"]
-    If Error Then
-      vOutput.Add(JsonError(InvalidRequest))
-    Else
-      If TypeOf(Entry["method"]) = gb.String Then
-        Try vId = Entry["id"]
 
-        ' Check if the method is registered
-        bMethod = Raise CheckMethod(sMethod)
-        If bMethod Then
-          vOutput.Add(JsonError(MethodNotFound))
-        Else
-          hReply = Null
-          Raise ProcessData(Entry)
-
-          ' If id=Null then it is most likely a Json-Rpc notification
-          ' we shouldn't respond to it
-          If vId <> Null Then vOutput.Add(JsonToRpc(vId, hReply))
-        Endif
-      Else
+    If sJSONVersion = "2.0" Then
+      ' Check if we got a method name
+      Try sMethod = Entry["method"]
+      If Error Then
         vOutput.Add(JsonError(InvalidRequest))
+      Else
+        If TypeOf(Entry["method"]) = gb.String Then
+          Try vId = Entry["id"]
+
+          ' Check if the method is registered
+          bMethod = Raise CheckMethod(sMethod)
+          If bMethod Then
+            vOutput.Add(JsonError(MethodNotFound, vId))
+          Else
+            hReply = Null
+            Raise ProcessData(Entry)
+
+            ' If id=Null then it is most likely a Json-Rpc notification
+            ' we shouldn't respond to it
+            If vId <> Null Then
+
+              ' The response from JSON-RPC handle can't be empty!
+              If hReply = Null Then
+                vOutput.Add(JsonError(InternalError, vId))
+              Else
+                vOutput.Add(JsonToRpc(hReply, vId))
+              Endif
+            Endif
+          Endif
+        Else
+          vOutput.Add(JsonError(InvalidRequest))
+        Endif
       Endif
+    Else
+      vOutput.Add(JsonError(InvalidRequest))
     Endif
 
   Next
@@ -416,7 +449,6 @@ Private Sub RemoveSocket(hS As Socket)
       hProt.Remove(Bucle)
       hConn.Remove(Bucle)
       hType.Remove(Bucle)
-      hId.Remove(Bucle)
       Break
     End If
 
@@ -432,7 +464,6 @@ Public Sub Http_Connection(RemoteHost As String)
   hLen.Add(-1)
   hConn.Add(0)
   hType.Add(0)
-  hId.Add(Null)
 
 End
 
@@ -480,7 +511,6 @@ Public Sub _New()
     hLen = New Integer[]
     hConn = New Integer[]
     hType = New Byte[]
-    hId = New Variant[]
 End
 
 Public Sub _Free()
