@@ -1,3 +1,27 @@
+--
+-- Update GlobalVar system variables with the "right" datatype
+--
+
+UPDATE `globalvars` SET `datatype`=9 WHERE `var`='Program_Start';
+UPDATE `globalvars` SET `datatype`=4 WHERE `var`='Second';
+UPDATE `globalvars` SET `datatype`=4 WHERE `var`='Minute';
+UPDATE `globalvars` SET `datatype`=9 WHERE `var`='Program_Uptime';
+UPDATE `globalvars` SET `datatype`=4 WHERE `var`='Hour';
+UPDATE `globalvars` SET `datatype`=4 WHERE `var`='Day';
+UPDATE `globalvars` SET `datatype`=4 WHERE `var`='Month';
+UPDATE `globalvars` SET `datatype`=4 WHERE `var`='Weekday';
+UPDATE `globalvars` SET `datatype`=9 WHERE `var`='Time_Of_Day';
+UPDATE `globalvars` SET `datatype`=4 WHERE `var`='Year';
+UPDATE `globalvars` SET `datatype`=9 WHERE `var`='Sunrise';
+UPDATE `globalvars` SET `datatype`=9 WHERE `var`='Sunrise_Twilight';
+UPDATE `globalvars` SET `datatype`=9 WHERE `var`='Sunset';
+UPDATE `globalvars` SET `datatype`=9 WHERE `var`='Sunset_Twilight';
+UPDATE `globalvars` SET `datatype`=9 WHERE `var`='Season';
+UPDATE `globalvars` SET `datatype`=9 WHERE `var`='Tagline';
+UPDATE `globalvars` SET `datatype`=1 WHERE `var`='Weekend';
+UPDATE `globalvars` SET `datatype`=1 WHERE `var`='Dark';
+UPDATE `globalvars` SET `datatype`=9 WHERE `var`='House_Mode';
+UPDATE `globalvars` SET `datatype`=1 WHERE `var`='Mute';
 
 --
 -- Table structure for table `settings_jsonrpc`
