@@ -22,6 +22,7 @@ ln -s ../../DomotiGa3/.src/CCUL.class
 ln -s ../../DomotiGa3/.src/CCTX35.class
 ln -s ../../DomotiGa3/.src/CCurrentCost.class
 ln -s ../../DomotiGa3/.src/CDenon.class
+ln -s ../../DomotiGa3/.src/CDigitemp.class
 ln -s ../../DomotiGa3/.src/CDomotica.class
 ln -s ../../DomotiGa3/.src/CDSC.class
 ln -s ../../DomotiGa3/.src/CELVMAX.class
@@ -36,6 +37,7 @@ ln -s ../../DomotiGa3/.src/CIRMan.class
 ln -s ../../DomotiGa3/.src/CIRTrans.class
 ln -s ../../DomotiGa3/.src/CIViewer.class
 ln -s ../../DomotiGa3/.src/CJeeLabs.class
+ln -s ../../DomotiGa3/.src/CJSONRPC.class
 ln -s ../../DomotiGa3/.src/CK8055.class
 ln -s ../../DomotiGa3/.src/CKMTronicUDP.class
 ln -s ../../DomotiGa3/.src/CLEDMatrix.class
@@ -51,6 +53,7 @@ ln -s ../../DomotiGa3/.src/COnkyo.class
 ln -s ../../DomotiGa3/.src/COWFS.class
 ln -s ../../DomotiGa3/.src/COWW.class
 ln -s ../../DomotiGa3/.src/CPLCBUS.class
+ln -s ../../DomotiGa3/.src/CPluginEntry.class
 ln -s ../../DomotiGa3/.src/CPlugwise.class
 ln -s ../../DomotiGa3/.src/CPioneer.class
 ln -s ../../DomotiGa3/.src/CPwrCtrl.class
@@ -71,6 +74,7 @@ ln -s ../../DomotiGa3/.src/CVISCA.class
 ln -s ../../DomotiGa3/.src/CTelnetServer.class
 ln -s ../../DomotiGa3/.src/CWeeder.class
 ln -s ../../DomotiGa3/.src/CWebSocket.class
+ln -s ../../DomotiGa3/.src/CX10Cmd.class
 ln -s ../../DomotiGa3/.src/CXMLRPC.class
 ln -s ../../DomotiGa3/.src/CXBMCxPL.class
 ln -s ../../DomotiGa3/.src/CxPL.class
@@ -80,20 +84,20 @@ ln -s ../../DomotiGa3/.src/CYouLess.class
 ln -s ../../DomotiGa3/.src/CZWave.class
 ln -s ../../DomotiGa3/.src/Calendar.module
 ln -s ../../DomotiGa3/.src/Devices.module
-ln -s ../../DomotiGa3/.src/Digitemp.module
 ln -s ../../DomotiGa3/.src/DNS.module
 ln -s ../../DomotiGa3/.src/DMXPlayer.module
 ln -s ../../DomotiGa3/.src/Energy.module
 ln -s ../../DomotiGa3/.src/EventLoop.module
 ln -s ../../DomotiGa3/.src/Events.module
 ln -s ../../DomotiGa3/.src/HDDTemp.module
-ln -s ../../DomotiGa3/.src/X10Cmd.module
+ln -s ../../DomotiGa3/.src/Log.module
 ln -s ../../DomotiGa3/.src/Shell.module
 ln -s ../../DomotiGa3/.src/Mail.module
 ln -s ../../DomotiGa3/.src/NMA.module
 ln -s ../../DomotiGa3/.src/P2000.module
 ln -s ../../DomotiGa3/.src/Pachube.module
 ln -s ../../DomotiGa3/.src/Ping.module
+ln -s ../../DomotiGa3/.src/Plugin.module
 ln -s ../../DomotiGa3/.src/Pushover.module
 ln -s ../../DomotiGa3/.src/Prowl.module
 ln -s ../../DomotiGa3/.src/PVoutput.module
@@ -107,3 +111,7 @@ ln -s ../../DomotiGa3/.src/Twitter.module
 ln -s ../../DomotiGa3/.src/VideoServer.module
 ln -s ../../DomotiGa3/.src/VoiceText.module
 ln -s ../../DomotiGa3/.src/WeatherUG.module
+ln -s ../../DomotiGa3/.src/JsonRpc/JsonMiniServer.class
+ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class
+ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class
+
