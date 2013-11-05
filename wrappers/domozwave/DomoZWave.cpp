@@ -273,7 +273,7 @@ ostream &OZW_datetime(ostream &stream)
 	char localt[100];
 	snprintf( localt, sizeof(localt), "%04d-%02d-%02d %02d:%02d:%02d:%03d",
 		tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-		tm->tm_hour, tm->tm_min, tm->tm_sec, tv.tv_usec / 1000 );
+		tm->tm_hour, tm->tm_min, tm->tm_sec, (int)(tv.tv_usec / 1000) );
 
 	stream << localt;
 
@@ -3869,6 +3869,84 @@ bool DomoZWave_SetNodeUserCodeRemove( int32 home, int32 node, int32 usercode )
 	}
 
 	return true;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeWakeUpInterval>
+// Returns the Wake-Up interval in seconds
+// Return -1 if we can't find the value
+//-----------------------------------------------------------------------------
+
+long DomoZWave_GetNodeWakeUpInterval( int32 home, int32 node )
+{
+	int32 int_value;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeWakeUpInterval" ) == false ) return 0;
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the wake-up interval of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_WAKE_UP ) && ( v.GetGenre() == ValueID::ValueGenre_System ) && ( v.GetInstance() == 1 ))
+			{
+				// Only return proper value if it is the right label and integer value 
+				if (( Manager::Get()->GetValueLabel( v ) == "Wake-up Interval" ) && ( v.GetType() == ValueID::ValueType_Int )) {
+					Manager::Get()->GetValueAsInt( v, &int_value );
+					WriteLog( LogLevel_Debug, false, "Wake-Up Value=%d seconds", int_value );
+					return int_value;
+				}
+			}
+		}
+
+		WriteLog( LogLevel_Debug, false, "Wake-Up value can't be found (not a sleeping device?" );
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Value=None (node doesn't exist)" );
+	}
+
+	return -1;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetNodeWakeUpInterval>
+//-----------------------------------------------------------------------------
+
+bool DomoZWave_SetNodeWakeUpInterval( int32 home, int32 node, int32 interval )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetNodeWakeUpInterval" ) == false ) return false;
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Find the wake-up interval of this node 
+			if (( v.GetCommandClassId() == COMMAND_CLASS_WAKE_UP ) && ( v.GetGenre() == ValueID::ValueGenre_System ) && ( v.GetInstance() == 1 ))
+			{
+				// Only return proper value if it is the right label and integer value 
+				if (( Manager::Get()->GetValueLabel( v ) == "Wake-up Interval" ) && ( v.GetType() == ValueID::ValueType_Int )) {
+					Manager::Get()->SetValue( v, interval );
+					WriteLog( LogLevel_Debug, false, "Wake-Up Value=%d seconds", interval );
+					return true;
+				}
+			}
+		}
+
+		WriteLog( LogLevel_Debug, false, "Wake-Up value can't be found (not a sleeping device?" );
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Value=None (node doesn't exist)" );
+	}
+
+	return false;
 }
 
 //-----------------------------------------------------------------------------

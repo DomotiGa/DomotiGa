@@ -214,6 +214,10 @@ bool DomoZWave_SetNodeUserCodeStart( int32 home, int32 node );
 bool DomoZWave_SetNodeUserCodeStop( int32 home );
 bool DomoZWave_SetNodeUserCodeRemove( int32 home, int32 node, int32 usercode );
 
+// Request or set Wake-Up of a sleeping node
+long DomoZWave_GetNodeWakeUpInterval( int32 home, int32 node );
+bool DomoZWave_SetNodeWakeUpInterval( int32 home, int32 node, int32 interval );
+
 // Soft or hard reset the controller
 void DomoZWave_ControllerSoftReset( int32 home );
 void DomoZWave_ControllerHardReset( int32 home );
