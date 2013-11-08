@@ -111,7 +111,7 @@ cp ../../DomotiGa3/.src/Twitter.module .
 cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
 cp ../../DomotiGa3/.src/WeatherUG.module .
-cp ../../DomotiGa3/.src/JsonRpc/JsonMiniServer.class .
-cp ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class .
-cp ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class .
+cp ../../DomotiGa3/.src/JsonRpc/JsonMiniServer.class ./JsonRpc/.
+cp ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class ./JsonRpc/.
+cp ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class ./JsonRpc/.
 

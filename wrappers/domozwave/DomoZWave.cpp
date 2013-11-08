@@ -690,6 +690,15 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 
 			break;
 		}
+		case COMMAND_CLASS_THERMOSTAT_SETPOINT:
+		{
+			if ( label == "Heating 1" )
+			{
+				value_no = 1;
+			}
+
+			break;
+		}
 	}
 
 	// We want to skip "add" values, because they are coming from the content of the zwcfg*xml. Normally
@@ -816,6 +825,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 				if ( nodeInfo->instanceLabel[instanceID].find("Relative Humidity") != string::npos ) { str_tmp.append("Relative Humidity|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("|Luminance|") != string::npos ) { str_tmp.append("Luminance|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("Alarm Level") != string::npos ) { str_tmp.append("Alarm Level|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("Heating 1") != string::npos ) { str_tmp.append("Heating 1|"); }
 
 				// Replace the previous string with the newly generated
 				nodeInfo->instanceLabel[instanceID] = str_tmp;

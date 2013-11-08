@@ -12,9 +12,6 @@
 ' Read file called COPYING for license details.
 
 '***************************************************************************
-' Supported:
-' 1) json-rpc in body
-' 2) json-rpc in url - http://<your-ip>:<your-port>/jsonrpc?request=<url-encoded-request>
 
 ' TODO:
 ' Accept: audio/*; q=0.2, audio/basic
@@ -38,6 +35,7 @@ Private hProt As Byte[]
 Private hLen As Integer[]
 Private hConn As Integer[]
 Private hType As Byte[]
+Private hGzip As Boolean[]
 Private hReply As Variant
 Private iReply As Integer
 
@@ -135,9 +133,11 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 '
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub JsonSend(hS As Socket, vJsonData As Variant)
+Private Sub JsonSend(hS As Socket, vJsonData As Variant, Optional bGzip As Boolean = False)
 
   Dim sJsonData As String
+  Dim sGzipData As String
+  Dim cCz As New Compress
 
   Try sJsonData = JSON.Encode(vJsonData)
   If Error Then
@@ -156,15 +156,42 @@ Private Sub JsonSend(hS As Socket, vJsonData As Variant)
   ' TODO: Reply with same content-type as the request
   ' TODO: Reject accept-content types which aren't e.g. application/json
 
+  ' If we *send* send a compressed stream, try to compress
+  If bGzip Then
+    cCz.Type = "zlib"
+    Try sGzipData = cCz.String(sJsonData)
+    If Not Error Then
+      If Len(sGzipData) >= Len(sJsonData) Then
+        ' Most likely the string/data is to small
+        bGzip = False
+      Endif
+    Else
+      ' don't do anything
+      bGzip = False
+    Endif
+  Endif
+
   hS.Begin
   hS.EndOfLine = gb.Windows
   Print #hS, "HTTP/1.1 200 OK"
   Print #hS, "Connection: close"
-  Print #hS, "Content-Length: " & Len(sJsonData)
+  If bGzip Then
+    Print #hS, "Content-Length: " & Len(sGzipData)
+  Else
+    Print #hS, "Content-Length: " & Len(sJsonData)
+  Endif
   Print #hS, "Content-Type: application/json"
+  If bGzip Then Print #hS, "Content-Encoding: gzip"
   Print #hS, "Server: Gambas RPC Server"
   Print #hS, ""
-  Write #hS, sJsonData, Len(sJsonData)
+
+  ' Writes compress data when possible
+  If bGzip Then
+    Write #hS, sGzipData, Len(sGzipData)
+  Else
+    Write #hS, sJsonData, Len(sJsonData)
+  Endif
+
   Try hS.Send
 
 Catch
@@ -175,7 +202,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 '
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ProcessQuery(hS As Socket, Buf As String)
+Private Sub ProcessQuery(hS As Socket, Buf As String, Optional bGzip As Boolean = False)
 
   Dim sJsonData As String
   Dim vTestData As Variant
@@ -271,9 +298,9 @@ Private Sub ProcessQuery(hS As Socket, Buf As String)
 
   If vOutput.Count >= 1 Then
     If JsonBatch Then
-      JsonSend(hS, vOutput)
+      JsonSend(hS, vOutput, bGzip)
     Else
-      JsonSend(hS, vOutput[0])
+      JsonSend(hS, vOutput[0], bGzip)
     Endif
   Endif
 
@@ -360,6 +387,16 @@ Public Sub Socket_Read()
     If hType[Bucle] = 0 Then
       Buf = Left(hBuffer[Bucle], InStr(hBuffer[Bucle], Chr(13) & Chr(10) & Chr(13) & Chr(10)))
 
+      ' Check for "Accept-Encoding" header, the format can be "gzip" or "gzip, deflate"
+      If InStr(UCase(Buf), "ACCEPT-ENCODING:") > 0 Then
+        sCad = Mid(Buf, InStr(UCase(Buf), "ACCEPT-ENCODING:") + 16)
+        sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
+        If InStr(UCase(sCad), "GZIP") Then
+          ' The client support gzip
+          hGzip[Bucle] = True
+        Endif
+      Endif
+
       If InStr(UCase(Buf), "CONTENT-TYPE:") > 0 Then
         sCad = Mid(Buf, InStr(UCase(Buf), "CONTENT-TYPE:") + 13)
         sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
@@ -385,11 +422,41 @@ Public Sub Socket_Read()
           RemoveSocket(hS)
           Return
         End If
+
+        If hLen[Bucle] < 0 Then
+          hError(hS, "400 Bad Request")
+          RemoveSocket(hS)
+          Return
+        Endif
       Else
-        hError(hS, "411 Length Required")
-        RemoveSocket(hS)
-        Return
+        hLen[Bucle] = -1
       End If
+
+      ' We should check if the request is in the URL
+      If hLen[Bucle] = 0 Or If hLen[Bucle] = -1 Then
+        ' First get the first line, this is the URL and remove the HTTP/1.x
+        sCad = Trim(Left(hBuffer[Bucle], InStr(hBuffer[Bucle], Chr(13)) - 9))
+        If InStr(sCad, "?request=") Then
+          sCad = Mid(sCad, InStr(sCad, "?request=") + 9)
+          Try sCad = URL.Decode(sCad)
+          If Error Then
+            hError(hS, "400 Bad Request")
+            RemoveSocket(hS)
+            Return
+          Endif
+
+          ' We seem to have a valid request, append mandatory characters and process it
+          ProcessQuery(hS, Chr(13) & Chr(10) & Chr(13) & Chr(10) & sCad, hGzip[Bucle])
+          RemoveSocket(hS)
+          Return
+        Endif
+
+        If hLen[Bucle] = -1 Then
+          hError(hS, "411 Length Required")
+          RemoveSocket(hS)
+          Return
+        Endif
+      Endif
 
     Endif
   Endif
@@ -416,7 +483,7 @@ Public Sub Socket_Read()
     End If
 
     If cLen = hLen[Bucle] Then 
-      ProcessQuery(hS, hBuffer[Bucle])
+      ProcessQuery(hS, hBuffer[Bucle], hGzip[Bucle])
       RemoveSocket(hS)
       Return
     Else
@@ -466,6 +533,7 @@ Private Sub RemoveSocket(hS As Socket)
       hProt.Remove(Bucle)
       hConn.Remove(Bucle)
       hType.Remove(Bucle)
+      hGzip.Remove(Bucle)
       Break
     End If
 
@@ -481,6 +549,7 @@ Public Sub Http_Connection(RemoteHost As String)
   hLen.Add(-1)
   hConn.Add(0)
   hType.Add(0)
+  hGZip.Add(False)
 
 End
 
@@ -531,6 +600,8 @@ Public Sub _New()
     hLen = New Integer[]
     hConn = New Integer[]
     hType = New Byte[]
+    hGzip = New Boolean[]
+
 End
 
 Public Sub _Free()

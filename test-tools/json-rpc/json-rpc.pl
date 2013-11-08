@@ -60,6 +60,7 @@ while (<FIN>) {
 
   # Execute Curl command 
   # -H == --header
+  #    == --compress is supported
   @CURL = `curl -sS -X POST -H "Content-Type: application/json" -H "Accept: application/json" -d '$JSONIN' $JSONHOST 2>$ERRFILE`; 
   $RC = $?;
 

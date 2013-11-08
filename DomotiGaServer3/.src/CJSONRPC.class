@@ -160,6 +160,8 @@ Public Function Connect() As Boolean
   ' ### Device methods ###
   hRpcFunc = New JsonRpcFunction("device.list")
   hJSONRPC.Register(hRpcFunc)
+  hRpcFunc = New JsonRpcFunction("device.get")
+  hJSONRPC.Register(hRpcFunc)
   hRpcFunc = New JsonRpcFunction("device.set")
   hJSONRPC.Register(hRpcFunc)
 
@@ -185,6 +187,10 @@ Public Function Connect() As Boolean
   hRpcFunc = New JsonRpcFunction("prowl.send")
   hJSONRPC.Register(hRpcFunc)
   hRpcFunc = New JsonRpcFunction("pushover.send")
+  hJSONRPC.Register(hRpcFunc)
+
+  ' ### Event methods ###
+  hRpcFunc = New JsonRpcFunction("event.list")
   hJSONRPC.Register(hRpcFunc)
 
   ' ---------------------------------------------------------
@@ -290,6 +296,8 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As Collection)
     ' ### Device methods ###
     Case "device.list"
       Call_Device_List(cData)
+    Case "device.get"
+      Call_Device_Get(cData)
     Case "device.set"
       Call_Device_Set(cData)
     ' ## Location methods ###
@@ -311,6 +319,9 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As Collection)
       Call_Prowl_Send(cData)
     Case "pushover.send"
       Call_Pushover_Send(cData)
+    ' ### Event methods ###
+    Case "event.list"
+      Call_Event_List(cData)
     Default
       hJSONRPC.SetReply(-32601, Null)
       Return
@@ -397,6 +408,137 @@ Private Sub CheckParmString(cData As Collection, sParam As String, Optional bNot
   Endif
 
   Return True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Do filtering of fields - trying to keep it generic as possible
+' iType: 1=Device, 2=Event, 3=Location
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub FilterFields(iType As Integer, aFields As String[], rResult As Result, cMap As Collection, cValue As Collection) As Boolean
+
+  Dim sAttrName As String
+  Dim sKey As String
+  Dim vAttrValue As Variant
+
+  If aFields = Null Then
+    WriteDebugLogError("No fields list supplied")
+    hJSONRPC.SetReply(-32602, Null)
+    Return False
+  Endif
+
+  For Each sAttrName In aFields
+
+    ' Determine if a mapping is in place
+    If cMap.Exist(sAttrName) Then
+      sKey = cMap[sAttrName]
+    Else
+      sKey = sAttrName
+    Endif
+
+    ' First we test if the field exists
+    Try vAttrValue = rResult[sKey]
+
+    ' Somebody passed an invalid field - bail now
+    If Error Then
+      ' Put exceptions here
+      If iType = 1 And If sKey = "NA" Then
+      Else
+        WriteDebugLogError("Field '" & sAttrName & IIf(cMap.Exist(sAttrName), "/" & sKey, "") & "' doesn't exist in the devices database")
+        hJSONRPC.SetReply(-32602, Null)
+        Return False
+      Endif
+    Endif
+
+    ' Override values
+    Select sAttrName
+      Case "value1"
+        Try vAttrValue = Devices.CorrectValue(rResult!value, rResult!correction, rResult)
+        If Error Then vAttrValue = ""
+      Case "value2"
+        Try vAttrValue = Devices.CorrectValue(rResult!value2, rResult!correction2, rResult)
+        If Error Then vAttrValue = ""
+      Case "value3"
+        Try vAttrValue = Devices.CorrectValue(rResult!value3, rResult!correction3, rResult)
+        If Error Then vAttrValue = ""
+      Case "value4"
+        Try vAttrValue = Devices.CorrectValue(rResult!value4, rResult!correction4, rResult)
+        If Error Then vAttrValue = ""
+      Case "icon" 'status icon - only valid for devices table
+        If iType = 1 Then
+          If Not IsNull(rResult!onicon) Or Not IsNull(rResult!officon) Then
+            If UCase$(rResult!value) = "ON" Or UCase$(rResult!value) = "OPEN" Or UCase$(rResult!value) = "MOTION" Then
+              vAttrValue = rResult!onicon
+            Else
+              vAttrValue = rResult!officon
+            Endif
+          Else
+            vAttrValue = ""
+          Endif
+        Endif
+      Case "lastchanged" 'last seen
+        Try vAttrValue = Replace$(Str$(Format(rResult!lastchanged, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
+        If Error Then vAttrValue = "Never"
+      Case "firstseen" 'last seen
+        Try vAttrValue = Replace$(Str$(Format(rResult!firstseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
+        If Error Then vAttrValue = "Never"
+      Case "lastseen" 'last seen
+        Try vAttrValue = Replace$(Str$(Format(rResult!lastseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
+        If Error Then vAttrValue = "Never"
+    End Select
+
+    If TypeOf(vAttrValue) = gb.String Or If TypeOf(vAttrValue) = gb.Null Then
+      cValue[sAttrName] = ToEmptyString(vAttrValue)
+    Else
+      cValue[sAttrName] = vAttrValue
+    Endif
+  Next
+
+  Return True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Build up the ALL filter fields
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub BuildFilterFields(iType As Integer, rResult As Result, cMap As Collection, GetField As String[])
+
+  Dim bFound As Boolean
+  Dim hField As ResultField
+  Dim hsField, mField As String
+
+  GetField.Clear()
+
+  For Each hField In rResult.Fields
+
+    bFound = False
+    If InStr(hField.Name, ".") Then
+      hsField = Mid(hField.Name, RInStr(hField.Name, ".") + 1)
+    Else
+      hsField = hField.Name
+    Endif
+
+    For Each mField In cMap
+      If hsField = mField Then
+        GetField.Add(cMap.Key)
+
+        If iType = 1 Then ' Devices - Also add valueX if we found rawvalueX
+          If InStr(cMap.Key, "rawvalue") = 1 Then
+            GetField.Add("value" & Mid(cMap.Key, 9))
+          Endif
+        Endif
+
+        bFound = True
+        Break
+      Endif
+    Next
+
+    If Not bFound Then GetField.Add(hsField)
+  Next
+
+  If iType = 1 Then ' For devices add the icon
+    GetField.Add("icon")
+  Endif
 
 End
 
@@ -749,13 +891,10 @@ Private Sub Call_Device_List(cData As Collection)
   Dim MapField As New Collection
   Dim GetField As New String[]
   Dim GetGroup As New String[]
-  Dim vAttrValue As Variant
-  Dim sAttrName As String
   Dim bFound As Boolean
 
   ' Mapping of attribute names from SQL to JSON. Hopefully to be removed in the future
   MapField.Add("id", "deviceid")
-  MapField.Add("name", "devicename")
   MapField.Add("label", "label1")
   MapField.Add("correction", "correction1")
   MapField.Add("valuerrddsname", "value1rrddsname")
@@ -764,7 +903,16 @@ Private Sub Call_Device_List(cData As Collection)
   MapField.Add("floorplan", "floorplanid")
   MapField.Add("module", "devicetypeid")
   MapField.Add("interface", "interfaceid")
-
+  MapField.Add("value", "rawvalue1")
+  MapField.Add("value2", "rawvalue2")
+  MapField.Add("value3", "rawvalue3")
+  MapField.Add("value4", "rawvalue4")
+  MapField.Add("NA", "value1")
+  MapField.Add("NA", "value2")
+  MapField.Add("NA", "value3")
+  MapField.Add("NA", "value4")
+  MapField.Add("NA", "icon")
+  
   ' Determine if we got a "list" parameter/value
   If cData <> Null Then
     If cData["list"] <> Null And If TypeOf(cData["list"]) <> gb.String Then
@@ -774,6 +922,9 @@ Private Sub Call_Device_List(cData As Collection)
     Endif
 
     sList = cData["list"]
+    If sList = "" Then
+      sList = "enabled"
+    Endif
 
     ' Detect if the "fields" parameter is supplied, it has to be an array of strings
     If cData["fields"] <> Null And If TypeOf(cData["fields"]) = gb.Object Then
@@ -796,6 +947,20 @@ Private Sub Call_Device_List(cData As Collection)
     Endif
   Endif
 
+  ' If we got a field list, we don't know what to retrieve exactly, so we will do it all
+  If GetField.Count >= 1 Then
+    sList &= "+ext"
+  Endif
+
+  ' Retrieve the information from the database
+  rResult = Devices.GetDeviceList(sList)
+
+  If Not rResult.Available Then
+    Main.WriteLog(LogLabel & "ERROR: No devices found in table 'devices'!")
+    hJSONRPC.SetReply(0, aValue)
+    Return
+  Endif
+
   ' If we didn't get a field list, use the defaults
   If GetField.Count = 0 Then
     If InStr(sList, "ext") Then
@@ -803,14 +968,11 @@ Private Sub Call_Device_List(cData As Collection)
     Else
       GetField = ["deviceid", "name", "icon", "value1", "label1", "value2", "label2", "value3", "label3", "value4", "label4", "lastseen", "enabled", "hide", "dimable", "switchable", "batterystatus", "locationid", "locationname"]
     Endif
-  Endif
-
-  rResult = Devices.GetDeviceList(sList)
-
-  If Not rResult.Available Then
-    Main.WriteLog(LogLabel & "ERROR: No devices found in table 'devices'!")
-    hJSONRPC.SetReply(0, aValue)
-    Return
+  Else
+    ' If get "ALL", then just return all fields
+    If GetField.Count = 1 And If GetField.Exist("ALL") Then
+      BuildFilterFields(1, rResult, MapField, GetField)
+    Endif
   Endif
 
   For iCnt = 0 To rResult.Max
@@ -828,66 +990,10 @@ Private Sub Call_Device_List(cData As Collection)
       If Not bFound Then Continue
     Endif
 
-    For Each sAttrName In GetField
-
-      Select sAttrName
-        Case "value1"
-          Try vAttrValue = Devices.CorrectValue(rResult!value, rResult!correction, rResult)
-          If Error Then vAttrValue = ""
-        Case "value2"
-          Try vAttrValue = Devices.CorrectValue(rResult!value2, rResult!correction2, rResult)
-          If Error Then vAttrValue = ""
-        Case "value3"
-          Try vAttrValue = Devices.CorrectValue(rResult!value3, rResult!correction3, rResult)
-          If Error Then vAttrValue = ""
-        Case "value4"
-          Try vAttrValue = Devices.CorrectValue(rResult!value4, rResult!correction4, rResult)
-          If Error Then vAttrValue = ""
-        Case "rawvalue1"
-          vAttrValue = rResult!value
-        Case "rawvalue2"
-          vAttrValue = rResult!value2
-        Case "rawvalue3"
-          vAttrValue = rResult!value3
-        Case "rawvalue4"
-          vAttrValue = rResult!value4
-        Case "icon" 'status icon
-          If Not IsNull(rResult!onicon) Or Not IsNull(rResult!officon) Then
-            If UCase$(rResult!value) = "ON" Or UCase$(rResult!value) = "OPEN" Or UCase$(rResult!value) = "MOTION" Then
-              vAttrValue = rResult!onicon
-            Else
-              vAttrValue = rResult!officon
-            Endif
-          Else
-            vAttrValue = ""
-          Endif
-        Case "lastseen" 'last seen
-          Try vAttrValue = Replace$(Str$(Format(rResult!lastseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
-          If Error Then vAttrValue = "Never"
-        Default
-
-          ' First determine if a mapping is in place
-          If MapField.Exist(sAttrName) Then
-            Try vAttrValue = rResult[MapField[sAttrName]]
-          Else
-            Try vAttrValue = rResult[sAttrName]
-          Endif
-
-          ' Somebody passed an invalid field - bail now
-          If Error Then
-            WriteDebugLogError("Field '" & sAttrName & IIf(MapField.Exist(sAttrName), "/" & MapField[sAttrName], "") & "' doesn't exist in the devices database")
-            hJSONRPC.SetReply(-32602, Null)
-            Return
-          Endif
-
-      End Select
-
-      If TypeOf(vAttrValue) = gb.String Then
-        cValue[sAttrName] = ToEmptyString(vAttrValue)
-      Else
-        cValue[sAttrName] = vAttrValue
-      Endif
-    Next
+    ' Filter out the fields - if get get a False, an error happened
+    If Not FilterFields(1, GetField, rResult, MapField, cValue) Then
+      Return
+    Endif
 
     aValue.Add(cValue)
 
@@ -903,6 +1009,31 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Call_Device_Get(cData As Collection)
 
+  Dim cValue As New Collection
+  Dim GetField As New String[]
+  Dim rResult As Result
+  Dim MapField As New Collection
+
+  ' Mapping of attribute names from SQL to JSON. Hopefully to be removed in the future
+  MapField.Add("id", "deviceid")
+  MapField.Add("label", "label1")
+  MapField.Add("correction", "correction1")
+  MapField.Add("valuerrddsname", "value1rrddsname")
+  MapField.Add("valuerrdtype", "value1rrdtype")
+  MapField.Add("location", "locationid")
+  MapField.Add("floorplan", "floorplanid")
+  MapField.Add("module", "devicetypeid")
+  MapField.Add("interface", "interfaceid")
+  MapField.Add("value", "rawvalue1")
+  MapField.Add("value2", "rawvalue2")
+  MapField.Add("value3", "rawvalue3")
+  MapField.Add("value4", "rawvalue4")
+  MapField.Add("NA", "value1")
+  MapField.Add("NA", "value2")
+  MapField.Add("NA", "value3")
+  MapField.Add("NA", "value4")
+  MapField.Add("NA", "icon")
+
   If cData = Null Then
     WriteDebugLogError("params 'deviceid' is missing")
     hJSONRPC.SetReply(-32602, Null)
@@ -915,8 +1046,40 @@ Private Sub Call_Device_Get(cData As Collection)
     hJSONRPC.SetReply(-32602, Null)
     Return
   Endif
+
+  ' Detect if the "fields" parameter is supplied, it has to be an array of strings
+  If cData["fields"] <> Null And If TypeOf(cData["fields"]) = gb.Object Then
+    Try GetField = cData["fields"]
+    If Error Then
+      WriteDebugLogError("params 'fields' is not an array of strings")
+      hJSONRPC.SetReply(-32602, Null)
+      Return
+    Endif
+  Endif
   
-  ' TODO
+  ' Retrieve the information from the database, we will filter out in the next steps
+  rResult = Devices.GetDeviceList("all+ext")
+
+  If Not rResult.Available Then
+    Main.WriteLog(LogLabel & "ERROR: No devices found in table 'devices'!")
+    hJSONRPC.SetReply(0, cValue)
+    Return
+  Endif
+
+  If GetField.Count = 0 Then
+    BuildFilterFields(1, rResult, MapField, GetField)
+  Else
+    If GetField.Count = 1 And If GetField.Exist("ALL") Then
+      BuildFilterFields(1, rResult, MapField, GetField)
+    Endif
+  Endif
+
+  ' Filter out the fields - if get get a False, an error happened
+  If Not FilterFields(1, GetField, rResult, MapField, cValue) Then
+    Return
+  Endif
+
+  hJSONRPC.SetReply(0, cValue)
 
 End
 
@@ -931,8 +1094,6 @@ Private Sub Call_Location_List(cData As Collection)
   Dim iCnt As Integer
   Dim MapField As New Collection
   Dim GetField As New String[]
-  Dim vAttrValue As Variant
-  Dim sAttrName As String
 
   MapField.Add("id", "locationid")
 
@@ -950,28 +1111,10 @@ Private Sub Call_Location_List(cData As Collection)
 
     cValue = New Collection
 
-    For Each sAttrName In GetField
-
-      ' First determine if a mapping is in place
-      If MapField.Exist(sAttrName) Then
-        Try vAttrValue = rResult[MapField[sAttrName]]
-      Else
-        Try vAttrValue = rResult[sAttrName]
-      Endif
-
-      ' Somebody passed an invalid field - bail now
-      If Error Then
-        WriteDebugLogError("Field '" & sAttrName & IIf(MapField.Exist(sAttrName), "/" & MapField[sAttrName], "") & "' doesn't exist in the devices database")
-        hJSONRPC.SetReply(-32602, Null)
-        Return
-      Endif
-
-      If TypeOf(vAttrValue) = gb.String Then
-        cValue[sAttrName] = ToEmptyString(vAttrValue)
-      Else
-        cValue[sAttrName] = vAttrValue
-      Endif
-    Next
+    ' Filter out the fields - if get get a False, an error happened
+    If Not FilterFields(3, GetField, rResult, MapField, cValue) Then
+      Return
+    Endif
 
     aValue.Add(cValue)
 
@@ -1149,4 +1292,65 @@ Private Sub Call_Pushover_Send(cData As Collection)
   Endif
 
 End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Method=event.list
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Call_Event_List(cData As Collection)
+
+  Dim cValue As New Collection
+  Dim aValue As New Collection[]
+  Dim rResult As Result
+  Dim iCnt As Integer
+  Dim MapField As New Collection
+  Dim GetField As New String[]
+
+  ' Mapping of attribute names from SQL to JSON. Hopefully to be removed in the future
+  MapField.Add("id", "eventid")
+
+  ' Determine if we got a "list" parameter/value
+  If cData <> Null Then
+
+    ' Detect if the "fields" parameter is supplied, it has to be an array of strings
+    If cData["fields"] <> Null And If TypeOf(cData["fields"]) = gb.Object Then
+      Try GetField = cData["fields"]
+      If Error Then
+        WriteDebugLogError("params 'fields' is not an array of strings")
+        hJSONRPC.SetReply(-32602, Null)
+        Return
+      Endif
+    Endif
+
+  Endif
+
+  rResult = Events.GetEventList()
+
+  If Not rResult.Available Then
+    Main.WriteLog(LogLabel & "ERROR: No events found in table 'events'!")
+    hJSONRPC.SetReply(0, aValue)
+    Return
+  Endif
+
+  If GetField.Count = 0 Then
+    BuildFilterFields(2, rResult, MapField, GetField)
+  Endif
+
+  For iCnt = 0 To rResult.Max
+
+    cValue = New Collection
+
+    ' Filter out the fields - if get get a False, an error happened
+    If Not FilterFields(2, GetField, rResult, MapField, cValue) Then
+      Return
+    Endif
+
+    aValue.Add(cValue)
+
+    rResult.MoveNext
+  Next
+
+  hJSONRPC.SetReply(0, aValue)
+
+End
+
 

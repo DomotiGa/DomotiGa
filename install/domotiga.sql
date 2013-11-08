@@ -835,7 +835,7 @@ CREATE TABLE `globalvars` (
 
 LOCK TABLES `globalvars` WRITE;
 /*!40000 ALTER TABLE `globalvars` DISABLE KEYS */;
-INSERT INTO `globalvars` VALUES (1,'House_Mode','normal',NULL),(2,'Program_Start','02/16/2013 19:51:20.431',NULL),(3,'Second','50',NULL),(4,'Minute','51',NULL),(5,'Program_Uptime','0 days, 0 hrs, 0 mins, and 29 secs.',NULL),(6,'Hour','19',NULL),(7,'Day','16',NULL),(8,'Month','2',NULL),(9,'Weekday','6',NULL),(10,'Time_Of_Day','evening',NULL),(11,'Year','2012',NULL),(12,'Sunrise','08:45',NULL),(13,'Sunset','17:29',NULL),(14,'Sunrise_Twilight','08:07',NULL),(15,'Sunset_Twilight','18:07',NULL),(16,'Season','fall',NULL),(17,'Tagline','43% of all statistics are totally worthless !!!',NULL),(18,'NextPlanning','00:00:00',NULL),(19,'Weekend','T',NULL),(20,'Dark','T',NULL),(21,'Mute','',NULL);
+INSERT INTO `globalvars` VALUES (1,'House_Mode','normal',9),(2,'Program_Start','02/16/2013 19:51:20.431',9),(3,'Second','50',4),(4,'Minute','51',4),(5,'Program_Uptime','0 days, 0 hrs, 0 mins, and 29 secs.',9),(6,'Hour','19',4),(7,'Day','16',4),(8,'Month','2',4),(9,'Weekday','6',4),(10,'Time_Of_Day','evening',9),(11,'Year','2012',4),(12,'Sunrise','08:45',9),(13,'Sunset','17:29',9),(14,'Sunrise_Twilight','08:07',9),(15,'Sunset_Twilight','18:07',9),(16,'Season','fall',9),(17,'Tagline','43% of all statistics are totally worthless !!!',9),(18,'NextPlanning','00:00:00',9),(19,'Weekend','T',1),(20,'Dark','T',1),(21,'Mute','',1);
 /*!40000 ALTER TABLE `globalvars` ENABLE KEYS */;
 UNLOCK TABLES;
 
