@@ -759,7 +759,7 @@ CREATE TABLE `events_actions` (
 
 LOCK TABLES `events_actions` WRITE;
 /*!40000 ALTER TABLE `events_actions` DISABLE KEYS */;
-INSERT INTO `events_actions` VALUES (1,1,1,0),(2,2,1,0),(3,3,1,0),(4,5,1,0),(5,6,1,0),(6,7,1,0),(9,2,0,0);
+INSERT INTO `events_actions` VALUES (1,1,0,0),(2,2,0,0),(3,3,0,0),(4,5,0,0),(5,6,0,0),(6,7,0,0),(9,2,0,0);
 /*!40000 ALTER TABLE `events_actions` ENABLE KEYS */;
 UNLOCK TABLES;
 

@@ -30,6 +30,7 @@ cp ../../DomotiGa3/.src/CELVMAX.class .
 cp ../../DomotiGa3/.src/CEIB.class .
 cp ../../DomotiGa3/.src/CEZcontrol.class .
 cp ../../DomotiGa3/.src/CFritzBox.class .
+cp ../../DomotiGa3/.src/CGMail.class .
 cp ../../DomotiGa3/.src/CGPS.class .
 cp ../../DomotiGa3/.src/CGenericIO.class .
 cp ../../DomotiGa3/.src/CHomeMatic.class .

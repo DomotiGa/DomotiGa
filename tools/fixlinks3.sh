@@ -29,6 +29,7 @@ ln -s ../../DomotiGa3/.src/CELVMAX.class
 ln -s ../../DomotiGa3/.src/CEIB.class
 ln -s ../../DomotiGa3/.src/CEZcontrol.class
 ln -s ../../DomotiGa3/.src/CFritzBox.class
+ln -s ../../DomotiGa3/.src/CGMail.class
 ln -s ../../DomotiGa3/.src/CGPS.class
 ln -s ../../DomotiGa3/.src/CGenericIO.class
 ln -s ../../DomotiGa3/.src/CHomeMatic.class
