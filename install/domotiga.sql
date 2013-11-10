@@ -2555,7 +2555,7 @@ CREATE TABLE `settings_mqtt` (
 
 LOCK TABLES `settings_mqtt` WRITE;
 /*!40000 ALTER TABLE `settings_mqtt` DISABLE KEYS */;
-INSERT INTO `settings_mqtt` VALUES (0,0,'localhost',1883,'domotiga','broker','domotiga','raw',30,0,0,0),(1,0,'localhost',1883,'domotiga','broker','domotiga','raw',30,0,0,0);
+INSERT INTO `settings_mqtt` VALUES (0,0,'localhost',1883,'domotiga','broker','domotiga','raw/#',30,0,0,0),(1,0,'localhost',1883,'domotiga','broker','domotiga','raw/#',30,0,0,0);
 /*!40000 ALTER TABLE `settings_mqtt` ENABLE KEYS */;
 UNLOCK TABLES;
 

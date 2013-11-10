@@ -23,6 +23,13 @@ UPDATE `globalvars` SET `datatype`=1 WHERE `var`='Dark';
 UPDATE `globalvars` SET `datatype`=9 WHERE `var`='House_Mode';
 UPDATE `globalvars` SET `datatype`=1 WHERE `var`='Mute';
 
+
+--
+-- Update mqtt default topic 
+--
+UPDATE `settings_mqtt` SET `subtopic`='raw/#' WHERE `id`='0';
+
+
 --
 -- Table structure for table `settings_jsonrpc`
 --
