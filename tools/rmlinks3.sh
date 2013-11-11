@@ -115,4 +115,5 @@ cp ../../DomotiGa3/.src/WeatherUG.module .
 cp ../../DomotiGa3/.src/JsonRpc/JsonMiniServer.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class ./JsonRpc/.
+cp ../../DomotiGa3/.src/JsonRpc/JsonRpcClient.class ./JsonRpc/.
 
