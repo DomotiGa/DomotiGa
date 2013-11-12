@@ -1403,7 +1403,6 @@ CREATE TABLE `scenes` (
   `lastrun` datetime DEFAULT NULL,
   `comments` text,
   `category` int(11) DEFAULT NULL,
-  `location_id` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
