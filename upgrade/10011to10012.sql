@@ -31,6 +31,12 @@ UPDATE `settings_mqtt` SET `subtopic`='raw/#' WHERE `id`='0';
 
 
 --
+-- Add location id to scenes
+--
+ALTER TABLE `scenes` ADD `location_id` int(11);
+
+
+--
 -- Table structure for table `settings_jsonrpc`
 --
 
