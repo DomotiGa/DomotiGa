@@ -4019,11 +4019,11 @@ CREATE TABLE `settings_zwave` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   `polltimesleeping` varchar(16) DEFAULT NULL,
-  `enablepollsleeping` int(1) DEFAULT NULL,
+  `enablepollsleeping` tinyint(1) DEFAULT NULL,
   `enablepolllistening` tinyint(1) DEFAULT NULL,
   `polltimelistening` varchar(16) DEFAULT NULL,
   `updateneighbor` varchar(16) DEFAULT NULL,
-  `enableupdateneighbor` int(1) DEFAULT NULL,
+  `enableupdateneighbor` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -4034,7 +4034,7 @@ CREATE TABLE `settings_zwave` (
 
 LOCK TABLES `settings_zwave` WRITE;
 /*!40000 ALTER TABLE `settings_zwave` DISABLE KEYS */;
-INSERT INTO `settings_zwave` VALUES (0,0,'/dev/ttyUSB3','115200',0,0,0,'*/30 * * * *',0,NULL,NULL,'30 23 * * *',0),(1,0,'/dev/ttyUSB3','115200',0,0,0,'*/30 * * * *',0,NULL,NULL,'30 23 * * *',0);
+INSERT INTO `settings_zwave` VALUES (0,0,'/dev/ttyUSB3','115200',0,0,0,'*/30 * * * *',0,0,'*/30 * * * *','30 23 * * *',0),(1,0,'/dev/ttyUSB3','115200',0,0,0,'*/30 * * * *',0,0,'*/30 * * * *','30 23 * * *',0);
 /*!40000 ALTER TABLE `settings_zwave` ENABLE KEYS */;
 UNLOCK TABLES;
 

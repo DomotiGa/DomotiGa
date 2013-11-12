@@ -23,6 +23,14 @@ UPDATE `globalvars` SET `datatype`=1 WHERE `var`='Dark';
 UPDATE `globalvars` SET `datatype`=9 WHERE `var`='House_Mode';
 UPDATE `globalvars` SET `datatype`=1 WHERE `var`='Mute';
 
+--
+-- Update `settings_zwave`
+--
+
+ALTER TABLE `settings_zwave` CHANGE COLUMN `enablepollsleeping` `enablepollsleeping` TINYINT(1) NULL DEFAULT NULL, CHANGE COLUMN `enableupdateneighbor` `enableupdateneighbor` TINYINT(1) NULL DEFAULT NULL;
+
+UPDATE `settings_zwave` SET `enablepolllistening`=0 WHERE `enablepolllistening`= NULL;
+UPDATE `settings_zwave` SET `polltimelistening`='*/30 * * * *' WHERE `polltimelistening`=NULL;
 
 --
 -- Update mqtt default topic 
