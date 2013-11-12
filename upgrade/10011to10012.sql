@@ -31,9 +31,11 @@ UPDATE `settings_mqtt` SET `subtopic`='raw/#' WHERE `id`='0';
 
 
 --
--- Add location id to scenes
+-- Update scenes system
 --
 ALTER TABLE `scenes` ADD `location_id` int(11);
+ALTER TABLE `scenes` ADD `event_id` int(11);
+DROP TABLE IF EXISTS `scenes_actions`;
 
 
 --
