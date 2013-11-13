@@ -103,6 +103,7 @@ ln -s ../../DomotiGa3/.src/Pushover.module
 ln -s ../../DomotiGa3/.src/Prowl.module
 ln -s ../../DomotiGa3/.src/PVoutput.module
 ln -s ../../DomotiGa3/.src/RRDTool.module
+ln -s ../../DomotiGa3/.src/Scenes.module
 ln -s ../../DomotiGa3/.src/ServerStats.module
 ln -s ../../DomotiGa3/.src/Sounds.module
 ln -s ../../DomotiGa3/.src/TemperaturNu.module

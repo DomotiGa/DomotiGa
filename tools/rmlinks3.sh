@@ -103,6 +103,7 @@ cp ../../DomotiGa3/.src/Pushover.module .
 cp ../../DomotiGa3/.src/Prowl.module .
 cp ../../DomotiGa3/.src/PVoutput.module .
 cp ../../DomotiGa3/.src/RRDTool.module .
+cp ../../DomotiGa3/.src/Scenes.module .
 cp ../../DomotiGa3/.src/ServerStats.module .
 cp ../../DomotiGa3/.src/Sounds.module .
 cp ../../DomotiGa3/.src/TemperaturNu.module .
