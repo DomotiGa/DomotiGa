@@ -140,111 +140,111 @@ void DomoZWave_AddSerialPort( const char* serialPort );
 void DomoZWave_Destroy( );
 
 // Write zwcfg*xml, normally this happens automatically when the open-wave initialized or exits
-void DomoZWave_WriteConfig( int32 home );
+void DomoZWave_WriteConfig( uint32 home );
 
 // Retrieve wrapper and controller information
-bool DomoZWave_ControllerBusy( int32 home );
+bool DomoZWave_ControllerBusy( uint32 home );
 const char* DomoZWave_Version( );
 const char* DomoZWave_OZWVersion( );
-const char* DomoZWave_GetLibraryVersion( int32 home );
-const char* DomoZWave_GetLibraryTypeName( int32 home );
-const char* DomoZWave_ControllerType( int32 home );
+const char* DomoZWave_GetLibraryVersion( uint32 home );
+const char* DomoZWave_GetLibraryTypeName( uint32 home );
+const char* DomoZWave_ControllerType( uint32 home );
 
 // Enable/disable polling of the devices by open-zwave
-void DomoZWave_EnablePolling( int32 home, int32 node, int32 polltime );
-void DomoZWave_DisablePolling( int32 home, int32 node );
+void DomoZWave_EnablePolling( uint32 home, int32 node, int32 polltime );
+void DomoZWave_DisablePolling( uint32 home, int32 node );
 
 // Retrieve or set node information
-const char* DomoZWave_GetNodeQueryStage( int32 home, int32 node );
-const char* DomoZWave_GetNodeManufacturerName( int32 home, int32 node );
-const char* DomoZWave_GetNodeProductName( int32 home, int32 node );
-const char* DomoZWave_GetNodeName( int32 home, int32 node );
-const char* DomoZWave_GetNodeLocation( int32 home, int32 node );
-const char* DomoZWave_GetNodeManufacturerId( int32 home, int32 node );
-const char* DomoZWave_GetNodeProductType( int32 home, int32 node );
-const char* DomoZWave_GetNodeProductId( int32 home, int32 node );
-void DomoZWave_SetNodeManufacturerName( int32 home, int32 node, const char* manufacturerName );
-void DomoZWave_SetNodeProductName( int32 home, int32 node, const char* productName );
-void DomoZWave_SetNodeName( int32 home, int32 node, const char* nodeName );
-void DomoZWave_SetNodeLocation( int32 home, int32 node, const char* nodeLocation );
-const char* DomoZWave_GetNodeLibraryVersion( int32 home, int32 node );
-const char* DomoZWave_GetNodeProtocolVersion( int32 home, int32 node );
-const char* DomoZWave_GetNodeApplicationVersion( int32 home, int32 node );
+const char* DomoZWave_GetNodeQueryStage( uint32 home, int32 node );
+const char* DomoZWave_GetNodeManufacturerName( uint32 home, int32 node );
+const char* DomoZWave_GetNodeProductName( uint32 home, int32 node );
+const char* DomoZWave_GetNodeName( uint32 home, int32 node );
+const char* DomoZWave_GetNodeLocation( uint32 home, int32 node );
+const char* DomoZWave_GetNodeManufacturerId( uint32 home, int32 node );
+const char* DomoZWave_GetNodeProductType( uint32 home, int32 node );
+const char* DomoZWave_GetNodeProductId( uint32 home, int32 node );
+void DomoZWave_SetNodeManufacturerName( uint32 home, int32 node, const char* manufacturerName );
+void DomoZWave_SetNodeProductName( uint32 home, int32 node, const char* productName );
+void DomoZWave_SetNodeName( uint32 home, int32 node, const char* nodeName );
+void DomoZWave_SetNodeLocation( uint32 home, int32 node, const char* nodeLocation );
+const char* DomoZWave_GetNodeLibraryVersion( uint32 home, int32 node );
+const char* DomoZWave_GetNodeProtocolVersion( uint32 home, int32 node );
+const char* DomoZWave_GetNodeApplicationVersion( uint32 home, int32 node );
 
 // Request or update node state
-bool DomoZWave_RequestNodeState( int32 home, int32 node );
-bool DomoZWave_RequestNodeDynamic( int32 home, int32 node );
-bool DomoZWave_RequestNodeNeighborUpdate( int32 home, int32 node, bool addqueue );
-bool DomoZWave_RefreshNodeInfo(int32 home, int32 node );
-bool DomoZWave_RequestNodeVersion( int32 home, int32 node );
-bool DomoZWave_RequestNodeMeter( int32 home, int32 node );
-bool DomoZWave_SetValue( int32 home, int32 node, int32 instance, int32 value );
+bool DomoZWave_RequestNodeState( uint32 home, int32 node );
+bool DomoZWave_RequestNodeDynamic( uint32 home, int32 node );
+bool DomoZWave_RequestNodeNeighborUpdate( uint32 home, int32 node, bool addqueue );
+bool DomoZWave_RefreshNodeInfo( uint32 home, int32 node );
+bool DomoZWave_RequestNodeVersion( uint32 home, int32 node );
+bool DomoZWave_RequestNodeMeter( uint32 home, int32 node );
+bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value );
 
 // Request or update node configuration
-bool DomoZWave_SetConfigParam( int32 home, int32 node, int32 param, int32 value, int32 size );
-bool DomoZWave_SetConfigParamList( int32 home, int32 node, int32 param, const char* value );
-void DomoZWave_RequestConfigParam( int32 home, int32 node, int32 param );
-void DomoZWave_RequestAllConfigParams( int32 home, int32 node );
-const char* DomoZWave_GetNodeConfigValue( int32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigList( int32 home, int32 node );
-const char* DomoZWave_GetNodeConfigLabel( int32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigHelp( int32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigValue( int32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigValueType( int32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigValueList( int32 home, int32 node, int32 item );
-bool DomoZWave_GetNodeConfigValueReadOnly( int32 home, int32 node, int32 item );
+bool DomoZWave_SetConfigParam( uint32 home, int32 node, int32 param, int32 value, int32 size );
+bool DomoZWave_SetConfigParamList( uint32 home, int32 node, int32 param, const char* value );
+void DomoZWave_RequestConfigParam( uint32 home, int32 node, int32 param );
+void DomoZWave_RequestAllConfigParams( uint32 home, int32 node );
+const char* DomoZWave_GetNodeConfigValue( uint32 home, int32 node, int32 item );
+const char* DomoZWave_GetNodeConfigList( uint32 home, int32 node );
+const char* DomoZWave_GetNodeConfigLabel( uint32 home, int32 node, int32 item );
+const char* DomoZWave_GetNodeConfigHelp( uint32 home, int32 node, int32 item );
+const char* DomoZWave_GetNodeConfigValue( uint32 home, int32 node, int32 item );
+const char* DomoZWave_GetNodeConfigValueType( uint32 home, int32 node, int32 item );
+const char* DomoZWave_GetNodeConfigValueList( uint32 home, int32 node, int32 item );
+bool DomoZWave_GetNodeConfigValueReadOnly( uint32 home, int32 node, int32 item );
 
 // Retrieve the node neighborhood list or commandclass list
-const char* DomoZWave_GetNodeNeighborsList( int32 home, int32 node );
-const char* DomoZWave_GetNodeCommandClassList( int32 home, int32 node, int32 instance );
+const char* DomoZWave_GetNodeNeighborsList( uint32 home, int32 node );
+const char* DomoZWave_GetNodeCommandClassList( uint32 home, int32 node, int32 instance );
 
 // Request or update the group/association of a node
-int DomoZWave_GetNodeGroupCount( int32 home, int32 node );
-const char* DomoZWave_GetNodeGroupList( int32 home, int32 node, int32 ogroup );
-int DomoZWave_GetNodeGroupMax( int32 home, int32 node, int32 ogroup );
-const char* DomoZWave_GetNodeGroupLabel( int32 home, int32 node, int32 ogroup );
-void DomoZWave_AddAssociation( int32 home, int32 node, int group, int otherNode );
-void DomoZWave_RemoveAssociation( int32 home, int32 node, int group, int otherNode );
+int DomoZWave_GetNodeGroupCount( uint32 home, int32 node );
+const char* DomoZWave_GetNodeGroupList( uint32 home, int32 node, int32 ogroup );
+int DomoZWave_GetNodeGroupMax( uint32 home, int32 node, int32 ogroup );
+const char* DomoZWave_GetNodeGroupLabel( uint32 home, int32 node, int32 ogroup );
+void DomoZWave_AddAssociation( uint32 home, int32 node, int group, int otherNode );
+void DomoZWave_RemoveAssociation( uint32 home, int32 node, int group, int otherNode );
 
 // Request or set UserCode of a node
-int DomoZWave_GetNodeUserCodeCount( int32 home, int32 node );
-const char* DomoZWave_GetNodeUserCodeLabel( int32 home, int32 node, int32 usercode );
-const char* DomoZWave_GetNodeUserCodeValue( int32 home, int32 node, int32 usercode );
-bool DomoZWave_SetNodeUserCodeStart( int32 home, int32 node );
-bool DomoZWave_SetNodeUserCodeStop( int32 home );
-bool DomoZWave_SetNodeUserCodeRemove( int32 home, int32 node, int32 usercode );
+int DomoZWave_GetNodeUserCodeCount( uint32 home, int32 node );
+const char* DomoZWave_GetNodeUserCodeLabel( uint32 home, int32 node, int32 usercode );
+const char* DomoZWave_GetNodeUserCodeValue( uint32 home, int32 node, int32 usercode );
+bool DomoZWave_SetNodeUserCodeStart( uint32 home, int32 node );
+bool DomoZWave_SetNodeUserCodeStop( uint32 home );
+bool DomoZWave_SetNodeUserCodeRemove( uint32 home, int32 node, int32 usercode );
 
 // Request or set Wake-Up of a sleeping node
-long DomoZWave_GetNodeWakeUpInterval( int32 home, int32 node );
-bool DomoZWave_SetNodeWakeUpInterval( int32 home, int32 node, int32 interval );
+long DomoZWave_GetNodeWakeUpInterval( uint32 home, int32 node );
+bool DomoZWave_SetNodeWakeUpInterval( uint32 home, int32 node, int32 interval );
 
 // Soft or hard reset the controller
-void DomoZWave_ControllerSoftReset( int32 home );
-void DomoZWave_ControllerHardReset( int32 home );
+void DomoZWave_ControllerSoftReset( uint32 home );
+void DomoZWave_ControllerHardReset( uint32 home );
 
 // Controller commands
-bool DomoZWave_CancelControllerCommand( int32 home );
-bool DomoZWave_AddDevice( int32 home );
-bool DomoZWave_RemoveDevice( int32 home );
-bool DomoZWave_AssignReturnRoute( int32 home, int32 node, int32 destnode );
-bool DomoZWave_DeleteAllReturnRoutes( int32 home, int32 node );
-bool DomoZWave_RequestNetworkUpdate( int32 home, int32 node );
-bool DomoZWave_CreateNewPrimary( int32 home );
-bool DomoZWave_TransferPrimaryRole( int32 home );
-bool DomoZWave_ReceiveConfiguration( int32 home );
-bool DomoZWave_HasNodeFailed( int32 home, int32 node, bool addqueue );
-bool DomoZWave_RemoveFailedNode( int32 home, int32 node );
-bool DomoZWave_ReplaceFailedNode( int32 home, int32 node );
-bool DomoZWave_SendNodeInformation( int32 home, int32 node );
-bool DomoZWave_ReplicationSend( int32 home, int32 node );
-void DomoZWave_HealNetworkNode( int32 home, int32 node, bool doRR );
-void DomoZWave_HealNetwork( int32 home, bool doRR );
-void DomoZWave_TestNetworkNode( int32 home, int32 node, int32 count );
-void DomoZWave_TestNetwork( int32 home, int32 count );
+bool DomoZWave_CancelControllerCommand( uint32 home );
+bool DomoZWave_AddDevice( uint32 home );
+bool DomoZWave_RemoveDevice( uint32 home );
+bool DomoZWave_AssignReturnRoute( uint32 home, int32 node, int32 destnode );
+bool DomoZWave_DeleteAllReturnRoutes( uint32 home, int32 node );
+bool DomoZWave_RequestNetworkUpdate( uint32 home, int32 node );
+bool DomoZWave_CreateNewPrimary( uint32 home );
+bool DomoZWave_TransferPrimaryRole( uint32 home );
+bool DomoZWave_ReceiveConfiguration( uint32 home );
+bool DomoZWave_HasNodeFailed( uint32 home, int32 node, bool addqueue );
+bool DomoZWave_RemoveFailedNode( uint32 home, int32 node );
+bool DomoZWave_ReplaceFailedNode( uint32 home, int32 node );
+bool DomoZWave_SendNodeInformation( uint32 home, int32 node );
+bool DomoZWave_ReplicationSend( uint32 home, int32 node );
+void DomoZWave_HealNetworkNode( uint32 home, int32 node, bool doRR );
+void DomoZWave_HealNetwork( uint32 home, bool doRR );
+void DomoZWave_TestNetworkNode( uint32 home, int32 node, int32 count );
+void DomoZWave_TestNetwork( uint32 home, int32 count );
 
 // Statistical information
-const char* DomoZWave_GetDriverStatistics( int32 home );
-long DomoZWave_GetSendQueueCount( int32 home );
+const char* DomoZWave_GetDriverStatistics( uint32 home );
+long DomoZWave_GetSendQueueCount( uint32 home );
 
 // Make certain information readable
 const char* DomoZWave_CommandClassIdName( int class_value );
