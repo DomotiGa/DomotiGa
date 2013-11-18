@@ -23,6 +23,8 @@ Property Async As Boolean
 Property Id As Integer
 Property User As String
 Property Password As String
+Property Reply As Variant
+Property Status As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Private variables
@@ -34,6 +36,9 @@ Private $bAsync As Boolean
 Private $iId As Integer
 Private $sUser As String
 Private $sPassword As String
+Private $vReply As Variant
+Private $sStatus As String
+Private sBuffer As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Events to be raised
@@ -64,18 +69,18 @@ Public Function Call(cParams As Collection) As Boolean
   If hHttpClient Then
     If hHttpClient.Status > 0 Then
       Error.Raise("Still active")
-      Return
+      Return False
     Endif
   Endif
 
   If Not $sMethod Then
     Error.Raise("Invalid Method")
-    Return
+    Return False
   Endif
 
   If Not $sURL Then
     Error.Raise("Invalid URL")
-    Return
+    Return False
   Endif
 
   ' If the id isn't known yet, generate a new one
@@ -84,7 +89,7 @@ Public Function Call(cParams As Collection) As Boolean
     $iId = Int(Rnd(1, 32768))
   Endif
 
-  hHttpClient = New HttpClient As "HttpClient"
+  hHttpClient = New HttpClient As "hHttpClient"
 
   ' Build up the JSON-RPC request
   cJsonData["jsonrpc"] = "2.0"
@@ -104,14 +109,17 @@ Public Function Call(cParams As Collection) As Boolean
 
   hHttpClient.URL = $sURL
   hHttpClient.Async = $bAsync
-  hHttpClient.TimeOut = 10
+  hHttpClient.TimeOut = 5
 
   ' Set authentication if user & password are set
-  If Not $sUser And If Not $sPassword Then
+  If $sUser And If $sPassword Then
     hHttpClient.Auth = Net.AuthBasic
     hHttpClient.User = $sUser
     hHttpClient.Password = $sPassword
   Endif
+
+  ' Also store method & id for Async calls
+  hHttpClient.Tag = $sMethod & "|" & $iId
 
   ' Post the json data
   hHttpClient.Post("application/json", sJsonData)
@@ -121,10 +129,147 @@ Public Function Call(cParams As Collection) As Boolean
     ' Check if we got an error
     ' True - no error - place return values in Collection
     ' False - an error
+
+    ' Make variables empty
+    sJsonData = ""
+    cJsonData.Clear()
+
+    ' Status needs to be positive
+    If hHttpClient.Status < 0 Then
+      $sStatus = Log.CURL_Error_To_Text(hHttpClient.Status)
+      Return False
+    Endif
+
+    ' We only accept HTTP 200
+    If hHttpClient.Code <> 200 Then
+      $sStatus = Log.HTTP_Error_To_Text(hHttpClient.Code) & " Not Supported"
+      Return False
+    Endif
+
+    ' Async = False, so we read the data
+    Try Read #hHttpClient, sJsonData, Lof(hHttpClient)
+
+    If Not sJsonData Then Return False
+
+    ' Replace "" with Chr(1), Gambas can't handle empty strings
+    sJsonData = Replace(sJsonData, " \"\"", " \"\\u0001\"")
+    sJsonData = Replace(sJsonData, "[\"\"", "[\"\\u0001\"")
+
+    ' Try to decode JSON
+    Try cJsonData = JSON.Decode(sJsonData)
+    If Error Then Return False
+
+    ' Valid JSON data, check if it is JSON-RPC
+    If cJsonData["jsonrpc"] <> "2.0" Then Return False
+
+    ' Check if the id is the same
+    If cJsonData["id"] <> $iId Then Return False
+
+    ' Check for an error
+    If cJsonData.Exist("error") Then Return False
+
+    ' No error - we got valid data
+    $vReply = cJsonData["result"]
+    Return True
+
   Else
     ' If Async, always return True
     Return True
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hHttpClient_Error()
+
+  Raise BadReply(Log.CURL_Error_To_Text(hHttpClient.Status))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hHttpClient_Read()
+
+  Dim sCad As String
+
+  ' If seems to be a bogus request, read the data and return
+  If Not $bAsync Then
+    Try Read #hHttpClient, sCad, Lof(hHttpClient)
+    Return
+  Endif
+
+  Try Read #hHttpClient, sCad, Lof(hHttpClient)
+  If Not Error Then sBuffer &= sCad
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hHttpClient_Finished()
+
+  Dim sCad As String
+  Dim cJsonData As New Collection
+  Dim sJsonData As String
+  Dim aStr As New String[]
+
+  ' If seems to be a bogus request, read the data and return
+  If Not $bAsync Then
+    Try Read #hHttpClient, sCad, Lof(hHttpClient)
+    Return
+  Endif
+
+  ' We only accept HTTP 200
+  If hHttpClient.Code <> 200 Then
+    Raise BadReply(Log.HTTP_Error_To_Text(hHttpClient.Code) & " Not Supported")
+    Return
+  Endif
+
+  Try Read #hHttpClient, sCad, Lof(hHttpClient)
+  If Not Error Then sBuffer &= sCad
+
+  sJsonData = sBuffer
+
+  If Not sJsonData Then Return
+
+  ' Get id from the tag field. 0=Method, 1=id
+  aStr = Scan(hHttpClient.Tag, "*|*")
+
+  ' Replace "" with Chr(1), Gambas can't handle empty strings
+  sJsonData = Replace(sJsonData, " \"\"", " \"\\u0001\"")
+  sJsonData = Replace(sJsonData, "[\"\"", "[\"\\u0001\"")
+
+    ' Try to decode JSON
+  Try cJsonData = JSON.Decode(sJsonData)
+  If Error Then
+    Raise BadReply("Failed to decode JSON")
+    Return
+  Endif
+
+  ' Valid JSON data, check if it is JSON-RPC
+  If cJsonData["jsonrpc"] <> "2.0" Then
+    Raise BadReply("No JSON-RPC 2.0 format")
+    Return
+  Endif
+
+    ' Check if the id is the same
+  If cJsonData["id"] <> aStr[1] Then 
+    Raise BadReply("Invalid id return")
+    Return
+  Endif
+
+  ' Check for an error
+  If cJsonData.Exist("error") Then
+    Raise BadReply("Error from JSON-RPC 2.0 server")
+    Return
+  Endif
+
+  ' No error - we got valid data
+  $vReply = cJsonData["result"]
+  Raise Reply($vReply)
 
 End
 
@@ -137,8 +282,8 @@ Sub URL_Write(NewURL As String)
     If hHttpClient.Status > 0 Then
       Error.Raise("Still active")
       Return
-    EndIf
-  EndIf
+    Endif
+  Endif
 
   $sURL = Trim(NewURL)
 
@@ -213,6 +358,30 @@ End
 Function Password_Read() As String
 
   Return $sPassword
+
+End
+
+Function Reply_Read() As Variant
+
+  Return $vReply
+
+End
+
+Function Reply_Write(vReply As Variant)
+
+  $vReply = vReply
+
+End
+
+Function Status_Read() As String
+
+  Return $sStatus
+
+End
+
+Function Status_Write(sStatus As String)
+
+  $sStatus = sStatus
 
 End
 
