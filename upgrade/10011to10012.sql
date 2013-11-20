@@ -81,9 +81,9 @@ UNLOCK TABLES;
 --
 -- Rename some tables
 --
-ALTER TABLE `settings_nta8130` RENAME TO `settings_smartmeter`;
-ALTER TABLE `settings_smartvisu` RENAME TO `settings_smartvisuserver`;
-ALTER TABLE `settings_zwave` RENAME TO `settings_openzwave`;
+ALTER TABLE `settings_nta8130` RENAME `settings_smartmeter`;
+ALTER TABLE `settings_smartvisu` RENAME `settings_smartvisuserver`;
+ALTER TABLE `settings_zwave` RENAME `settings_openzwave`;
 
 --
 -- Add column for debug settings
