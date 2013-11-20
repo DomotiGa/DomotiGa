@@ -37,6 +37,10 @@ UPDATE `settings_zwave` SET `polltimelistening`='*/30 * * * *' WHERE `polltimeli
 --
 UPDATE `settings_mqtt` SET `subtopic`='raw/#' WHERE `id`='0';
 
+--
+-- Update trigger device lastseen 
+--
+UPDATE `triggers` SET `type` = 8, `param2` = `param3`, `param3` = `param4`, `param4` = null WHERE `type` = 3 AND `param2` = 5;
 
 --
 -- Update scenes system
@@ -44,7 +48,6 @@ UPDATE `settings_mqtt` SET `subtopic`='raw/#' WHERE `id`='0';
 ALTER TABLE `scenes` ADD `location_id` int(11);
 ALTER TABLE `scenes` ADD `event_id` int(11);
 DROP TABLE IF EXISTS `scenes_actions`;
-
 
 --
 -- Table structure for table `settings_jsonrpc`
@@ -74,6 +77,21 @@ LOCK TABLES `settings_jsonrpc` WRITE;
 INSERT INTO `settings_jsonrpc` VALUES (0,-1,9090,10,0,0,0),(1,-1,9090,10,0,0,0);
 /*!40000 ALTER TABLE `settings_jsonrpc` ENABLE KEYS */;
 UNLOCK TABLES;
+
+--
+-- Rename some tables
+--
+ALTER TABLE `settings_nta8130` RENAME TO `settings_smartmeter`;
+ALTER TABLE `settings_smartvisu` RENAME TO `settings_smartvisuserver`;
+ALTER TABLE `settings_zwave` RENAME TO `settings_openzwave`;
+
+--
+-- Add column for debug settings
+--
+ALTER TABLE `settings_main` ADD COLUMN `debugplugin` TINYINT(1) NULL DEFAULT NULL  AFTER `debugenergy`;
+ALTER TABLE `settings_main` ADD COLUMN `debugglobalvar` TINYINT(1) NULL DEFAULT NULL  AFTER `debugplugin`;
+UPDATE `settings_main` SET `debugplugin`='0';
+UPDATE `settings_main` SET `debugglobalvar`='0';
 
 --
 -- Finally update to 1.0.012

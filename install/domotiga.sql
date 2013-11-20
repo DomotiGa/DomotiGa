@@ -1418,6 +1418,8 @@ CREATE TABLE `scenes` (
   `lastrun` datetime DEFAULT NULL,
   `comments` text,
   `category` int(11) DEFAULT NULL,
+  `location_id` int(11) DEFAULT NULL,
+  `event_id` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1429,30 +1431,6 @@ CREATE TABLE `scenes` (
 LOCK TABLES `scenes` WRITE;
 /*!40000 ALTER TABLE `scenes` DISABLE KEYS */;
 /*!40000 ALTER TABLE `scenes` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Table structure for table `scenes_actions`
---
-
-DROP TABLE IF EXISTS `scenes_actions`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `scenes_actions` (
-  `scene` bigint(20) NOT NULL,
-  `action` int(11) NOT NULL,
-  `order` int(11) NOT NULL,
-  PRIMARY KEY (`scene`,`order`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `scenes_actions`
---
-
-LOCK TABLES `scenes_actions` WRITE;
-/*!40000 ALTER TABLE `scenes_actions` DISABLE KEYS */;
-/*!40000 ALTER TABLE `scenes_actions` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -2291,6 +2269,35 @@ INSERT INTO `settings_jeelabs` VALUES (0,0,'/dev/ttyUSB8','57600',0),(1,0,'/dev/
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_jsonrpc`
+--
+
+DROP TABLE IF EXISTS `settings_jsonrpc`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_jsonrpc` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `httpport` int(11) DEFAULT NULL,
+  `maxconn` int(11) DEFAULT NULL,
+  `type` int(11) DEFAULT NULL,
+  `auth` int(11) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_jsonrpc`
+--
+
+LOCK TABLES `settings_jsonrpc` WRITE;
+/*!40000 ALTER TABLE `settings_jsonrpc` DISABLE KEYS */;
+INSERT INTO `settings_jsonrpc` VALUES (0,-1,9090,10,0,0,0),(1,-1,9090,10,0,0,0);
+/*!40000 ALTER TABLE `settings_jsonrpc` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `settings_k8055`
 --
 
@@ -2450,6 +2457,8 @@ CREATE TABLE `settings_main` (
   `debugevents` tinyint(1) DEFAULT NULL,
   `debugdevices` tinyint(1) DEFAULT NULL,
   `debugenergy` tinyint(1) DEFAULT NULL,
+  `debugplugin` tinyint(1) DEFAULT NULL,
+  `debugglobalvar` tinyint(1) DEFAULT NULL,
   `hometoppanel` varchar(256) DEFAULT NULL,
   `homeleftpanel` varchar(256) DEFAULT NULL,
   `homerightpanel` varchar(256) DEFAULT NULL,
@@ -2466,7 +2475,7 @@ CREATE TABLE `settings_main` (
 
 LOCK TABLES `settings_main` WRITE;
 /*!40000 ALTER TABLE `settings_main` DISABLE KEYS */;
-INSERT INTO `settings_main` VALUES (0,250,10000,0,15000,0,'FLogfiles',0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',NULL,NULL),(1,250,10000,0,15000,0,'FLogfiles',0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',NULL,NULL);
+INSERT INTO `settings_main` VALUES (0,250,10000,0,15000,0,'FLogfiles',0,0,0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',NULL,NULL),(1,250,10000,0,15000,0,'FLogfiles',0,0,0,NULL,NULL,'TagLine|Power Usage','House Mode','Outside','Main log',NULL,NULL);
 /*!40000 ALTER TABLE `settings_main` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2615,40 +2624,6 @@ INSERT INTO `settings_nma` VALUES (0,0,'ABCDEFGHIJKLMNOPQRSTUVWXYZ01234567890ABC
 UNLOCK TABLES;
 
 --
--- Table structure for table `settings_nta8130`
---
-
-DROP TABLE IF EXISTS `settings_nta8130`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `settings_nta8130` (
-  `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
-  `tcphost` varchar(32) DEFAULT NULL,
-  `tcpport` int(11) DEFAULT NULL,
-  `type` varchar(32) DEFAULT NULL,
-  `serialport` varchar(128) DEFAULT NULL,
-  `baudrate` varchar(32) DEFAULT NULL,
-  `databits` int(11) DEFAULT NULL,
-  `stopbits` int(11) DEFAULT NULL,
-  `parity` int(11) DEFAULT NULL,
-  `requestline` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `settings_nta8130`
---
-
-LOCK TABLES `settings_nta8130` WRITE;
-/*!40000 ALTER TABLE `settings_nta8130` DISABLE KEYS */;
-INSERT INTO `settings_nta8130` VALUES (0,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','9600',7,1,1,'',0),(1,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','9600',7,1,1,'',0);
-/*!40000 ALTER TABLE `settings_nta8130` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Table structure for table `settings_omniksol`
 --
 
@@ -2738,6 +2713,41 @@ LOCK TABLES `settings_opentherm` WRITE;
 /*!40000 ALTER TABLE `settings_opentherm` DISABLE KEYS */;
 INSERT INTO `settings_opentherm` VALUES (0,'Temporarily',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',1080,'serial',0,50000,0),(1,'Temporarily',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',1080,'serial',0,50000,0);
 /*!40000 ALTER TABLE `settings_opentherm` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `settings_openzwave`
+--
+
+DROP TABLE IF EXISTS `settings_openzwave`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_openzwave` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `serialport` varchar(128) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
+  `reloadnodes` tinyint(1) DEFAULT NULL,
+  `polltime` int(11) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  `polltimesleeping` varchar(16) DEFAULT NULL,
+  `enablepollsleeping` tinyint(1) DEFAULT NULL,
+  `enablepolllistening` tinyint(1) DEFAULT NULL,
+  `polltimelistening` varchar(16) DEFAULT NULL,
+  `updateneighbor` varchar(16) DEFAULT NULL,
+  `enableupdateneighbor` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_openzwave`
+--
+
+LOCK TABLES `settings_openzwave` WRITE;
+/*!40000 ALTER TABLE `settings_openzwave` DISABLE KEYS */;
+INSERT INTO `settings_openzwave` VALUES (0,0,'/dev/ttyUSB3','115200',0,0,0,'*/30 * * * *',0,0,'*/30 * * * *','30 23 * * *',0),(1,0,'/dev/ttyUSB3','115200',0,0,0,'*/30 * * * *',0,0,'*/30 * * * *','30 23 * * *',0);
+/*!40000 ALTER TABLE `settings_openzwave` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -3364,13 +3374,47 @@ INSERT INTO `settings_shell` VALUES (0,0,300,0),(1,0,300,0);
 UNLOCK TABLES;
 
 --
--- Table structure for table `settings_smartvisu`
+-- Table structure for table `settings_smartmeter`
 --
 
-DROP TABLE IF EXISTS `settings_smartvisu`;
+DROP TABLE IF EXISTS `settings_smartmeter`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `settings_smartvisu` (
+CREATE TABLE `settings_smartmeter` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `type` varchar(32) DEFAULT NULL,
+  `serialport` varchar(128) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
+  `databits` int(11) DEFAULT NULL,
+  `stopbits` int(11) DEFAULT NULL,
+  `parity` int(11) DEFAULT NULL,
+  `requestline` varchar(32) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_smartmeter`
+--
+
+LOCK TABLES `settings_smartmeter` WRITE;
+/*!40000 ALTER TABLE `settings_smartmeter` DISABLE KEYS */;
+INSERT INTO `settings_smartmeter` VALUES (0,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','9600',7,1,1,'',0),(1,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','9600',7,1,1,'',0);
+/*!40000 ALTER TABLE `settings_smartmeter` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `settings_smartvisuserver`
+--
+
+DROP TABLE IF EXISTS `settings_smartvisuserver`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_smartvisuserver` (
   `id` int(11) NOT NULL,
   `enabled` tinyint(1) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
@@ -3380,13 +3424,13 @@ CREATE TABLE `settings_smartvisu` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `settings_smartvisu`
+-- Dumping data for table `settings_smartvisuserver`
 --
 
-LOCK TABLES `settings_smartvisu` WRITE;
-/*!40000 ALTER TABLE `settings_smartvisu` DISABLE KEYS */;
-INSERT INTO `settings_smartvisu` VALUES (0,0,2121,0),(1,0,2121,0);
-/*!40000 ALTER TABLE `settings_smartvisu` ENABLE KEYS */;
+LOCK TABLES `settings_smartvisuserver` WRITE;
+/*!40000 ALTER TABLE `settings_smartvisuserver` DISABLE KEYS */;
+INSERT INTO `settings_smartvisuserver` VALUES (0,0,2121,0),(1,0,2121,0);
+/*!40000 ALTER TABLE `settings_smartvisuserver` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -4004,41 +4048,6 @@ INSERT INTO `settings_youless` VALUES (0,0,300,0),(1,0,300,0);
 UNLOCK TABLES;
 
 --
--- Table structure for table `settings_zwave`
---
-
-DROP TABLE IF EXISTS `settings_zwave`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `settings_zwave` (
-  `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
-  `serialport` varchar(128) DEFAULT NULL,
-  `baudrate` varchar(32) DEFAULT NULL,
-  `reloadnodes` tinyint(1) DEFAULT NULL,
-  `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
-  `polltimesleeping` varchar(16) DEFAULT NULL,
-  `enablepollsleeping` tinyint(1) DEFAULT NULL,
-  `enablepolllistening` tinyint(1) DEFAULT NULL,
-  `polltimelistening` varchar(16) DEFAULT NULL,
-  `updateneighbor` varchar(16) DEFAULT NULL,
-  `enableupdateneighbor` tinyint(1) DEFAULT NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `settings_zwave`
---
-
-LOCK TABLES `settings_zwave` WRITE;
-/*!40000 ALTER TABLE `settings_zwave` DISABLE KEYS */;
-INSERT INTO `settings_zwave` VALUES (0,0,'/dev/ttyUSB3','115200',0,0,0,'*/30 * * * *',0,0,'*/30 * * * *','30 23 * * *',0),(1,0,'/dev/ttyUSB3','115200',0,0,0,'*/30 * * * *',0,0,'*/30 * * * *','30 23 * * *',0);
-/*!40000 ALTER TABLE `settings_zwave` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Table structure for table `stock`
 --
 
@@ -4425,7 +4434,7 @@ CREATE TABLE `version` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `db` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=57 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=58 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4434,7 +4443,7 @@ CREATE TABLE `version` (
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187'),(23,'0.1.188'),(24,'0.1.189'),(25,'0.1.190'),(26,'0.1.191'),(27,'0.1.192'),(28,'0.1.193'),(29,'0.1.194'),(30,'0.1.195'),(31,'0.1.196'),(32,'0.1.197'),(33,'0.1.198'),(34,'0.1.199'),(35,'0.1.200'),(36,'0.1.201'),(37,'0.1.202'),(38,'0.1.203'),(39,'0.1.204'),(40,'0.1.205'),(41,'0.1.206'),(42,'0.1.207'),(43,'0.1.208'),(44,'0.1.209'),(45,'1.0.000'),(46,'1.0.001'),(47,'1.0.002'),(48,'1.0.003'),(49,'1.0.004'),(50,'1.0.005'),(51,'1.0.006'),(52,'1.0.007'),(53,'1.0.008'),(54,'1.0.009'),(55,'1.0.010'),(56,'1.0.011');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187'),(23,'0.1.188'),(24,'0.1.189'),(25,'0.1.190'),(26,'0.1.191'),(27,'0.1.192'),(28,'0.1.193'),(29,'0.1.194'),(30,'0.1.195'),(31,'0.1.196'),(32,'0.1.197'),(33,'0.1.198'),(34,'0.1.199'),(35,'0.1.200'),(36,'0.1.201'),(37,'0.1.202'),(38,'0.1.203'),(39,'0.1.204'),(40,'0.1.205'),(41,'0.1.206'),(42,'0.1.207'),(43,'0.1.208'),(44,'0.1.209'),(45,'1.0.000'),(46,'1.0.001'),(47,'1.0.002'),(48,'1.0.003'),(49,'1.0.004'),(50,'1.0.005'),(51,'1.0.006'),(52,'1.0.007'),(53,'1.0.008'),(54,'1.0.009'),(55,'1.0.010'),(56,'1.0.011'),(57,'1.0.012');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -4545,4 +4554,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2013-10-29 12:25:35
+-- Dump completed on 2013-11-20  9:16:20
