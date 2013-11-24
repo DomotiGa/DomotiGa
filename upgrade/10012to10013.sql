@@ -11,6 +11,14 @@ UPDATE `settings_main` SET `debugplugin`=0 WHERE `debugplugin`=NULL;
 UPDATE `settings_main` SET `debugglobalvar`=0 WHERE `debugglobalvar`=NULL;
 UPDATE `settings_main` SET `autodevicecreate`=0 WHERE `autodevicecreate`=NULL;
 
+
+--
+-- Drop unused table
+-- 
+DROP TABLE IF EXISTS `settings_webserver`;
+
+
+
 --
 -- Finally update to 1.0.013
 --
