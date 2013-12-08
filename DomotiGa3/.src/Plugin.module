@@ -52,6 +52,8 @@ Public Const Type_Unknown As Integer = 0 ' When unitialized
 Public Const Type_Module As Integer = 1 ' e.g. Email, NMA
 Public Const Type_Class As Integer = 2  ' e.g. UPS, RFXComTRX
 
+Public Const SubType_OpenZWave As Integer = 1
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Init - Register all known plugins
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -139,7 +141,7 @@ Public Sub Init()
   'Register(Type_Class, "XMLRPC", "CXMLRPC", Null)
   'Register(Type_Class, "xPL", "CxPL", Null)
   Register(Type_Class, "YouLess", "CYouLess", Null)
-  'Register(Type_Class, "ZWave", "CZWave", Null)
+  'Register(Type_Class, "OpenZWave", "COpenZWave", Null, SubType_OpenZWave)
 
 End
 
@@ -150,10 +152,10 @@ End
 ' sClassName = Class name, will loaded during Setup
 ' oModule = Object reference to *.module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Register(sType As Byte, sPluginName As String, sClassName As String, oModule As Object)
+Public Sub Register(iType As Integer, sPluginName As String, sClassName As String, oModule As Object, Optional iSubType As Integer = 0)
 
   Dim rResult As Result
-  Dim cPl As CPluginEntry
+  Dim cPl, cPlZero As CPluginEntry
   Dim hField As ResultField
   Dim oTemp As Object
   Dim sTemp As String
@@ -161,8 +163,8 @@ Public Sub Register(sType As Byte, sPluginName As String, sClassName As String, 
   Dim sTableName As String = "settings_" & LCase(sPluginName)
 
   ' Only allow module & class
-  If sType <> Type_Module And sType <> Type_Class Then
-    Main.WriteLog("[Plugin] ERROR: Unknown Module/Class type specific (" & sType & ")")
+  If iType <> Type_Module And iType <> Type_Class Then
+    Main.WriteLog("[Plugin] ERROR: Unknown Module/Class type specific (" & iType & ")")
     Return
   Endif 
 
@@ -190,7 +192,7 @@ Public Sub Register(sType As Byte, sPluginName As String, sClassName As String, 
 
   ' Assign the Module to the oTemp or create the Class temporary
   ' NOTE: We need to *only* cleanup the class at the end
-  Select sType
+  Select iType
     Case Type_Module
       oTemp = oModule
     Case Type_Class
@@ -232,37 +234,38 @@ Public Sub Register(sType As Byte, sPluginName As String, sClassName As String, 
     Return
   Endif
 
-  cPl = New CPluginEntry
-  cPl.Type = sType
-  cPl.Name = sPluginName
-  cPl.KeyName = LCase(sPluginName) & "#0"
-  cPl.Instance = 0
+  cPlZero = New CPluginEntry
+  cPlZero.Type = iType
+  cPlZero.SubType = iSubType
+  cPlZero.Name = sPluginName
+  cPlZero.KeyName = LCase(sPluginName) & "#0"
+  cPlZero.Instance = 0
 
   ' Store for modules the *.module in instance #0, this one will always exist
-  If sType = Type_Module Then
-    cPl.Interface = oModule
+  If iType = Type_Module Then
+    cPlZero.Interface = oModule
   Else
-    cPl.Interface = Null
+    cPlZero.Interface = Null
   Endif
 
-  Try cPl.MaxInstances = oTemp.PluginMaxInstances
+  Try cPlZero.MaxInstances = oTemp.PluginMaxInstances
   If Error Then
     Main.WriteLog("[Plugin] ERROR: Module/Class '" & sPluginName & "' looks to be invalid, the 'PluginMaxInstances' is missing")
     Return
   Endif
 
   ' Store the ClassName if it is a Type_Class
-  If sType = Type_Class Then
-    cPl.ClassName = sClassName
+  If iType = Type_Class Then
+    cPlZero.ClassName = sClassName
   Else
-    cPl.ClassName = ""
+    cPlZero.ClassName = ""
   Endif
 
   ' All initialized, put it in the collection
-  cPluginList[LCase(sPluginName) & "#0"] = cPl
+  cPluginList[LCase(sPluginName) & "#0"] = cPlZero
 
   ' Now retrieve row=1 for modules and all other rows for classes
-  If sType = Type_Module Then
+  If iType = Type_Module Then
     rResult = GetSettingsTable(sTableName, 1)
   Else
     rResult = GetSettingsTable(sTableName)
@@ -274,7 +277,8 @@ Public Sub Register(sType As Byte, sPluginName As String, sClassName As String, 
 
   For Each rResult
     cPl = New CPluginEntry
-    cPl.Type = sType
+    cPl.Type = iType
+    cPl.SubType = iSubType
     cPl.Name = sPluginName
     cPl.KeyName = LCase(sPluginName) & "#" & rResult!id
     cPl.Instance = rResult!id
@@ -282,7 +286,7 @@ Public Sub Register(sType As Byte, sPluginName As String, sClassName As String, 
 
     cPl.Interface = Null
 
-    Select sType
+    Select iType
       Case Type_Module
         cPl.ClassName = ""
       Case Type_Class
@@ -295,6 +299,19 @@ Public Sub Register(sType As Byte, sPluginName As String, sClassName As String, 
 
     ' All initialized, put it in the collection
     cPluginList[LCase(sPluginName) & "#" & rResult!id] = cPl
+
+    ' Do special things for e.g. OpenZWave
+    Select iSubType
+      Case SubType_OpenZWave
+        If cPlZero.Settings.Exist("debug") Then
+          If cPl.Settings["debug"] Then
+            cPlZero.Settings["debug"] = True
+          Endif
+        Else
+          cPlZero.Settings["debug"] = cPl.Settings["debug"]
+        Endif
+    End Select
+
   Next
 
 ' Don't crash DomotiGa if we hit an error
@@ -335,9 +352,19 @@ Public Sub StartAll()
           cReported[cPl.Name] = True
         Endif
 
+        ' Do special things for SubTypes. Normally we store it in Settings, gives us most flexiblity
+        Select cPl.SubType
+          Case SubType_OpenZWave
+            Try cPl.Settings["libdebug"] = cPluginList[Mid$(cPl.KeyName, 1, InStr(cPl.KeyName, "#")) & "0"].Settings["debug"]
+            If Error Then
+              cPl.Settings["libdebug"] = False
+            Endif
+        End Select
+
         Try Object.Call(cPl.Interface, "StartPlugin", [cPl])
         If Error Then
           Main.WriteLog("[Plugin] ERROR: Module/Class '" & cPl.Name & "' doesn't have a StartPlugin Function. ERROR: '" & Error.Text & "' at " & Error.Where)
+          Continue
         Endif
 
         ' Check if the PluginRunTask exist, then we need to call it every minute
@@ -398,7 +425,13 @@ Public Sub Restart(sPluginName As String, Optional iInstance As Integer = 1)
 
   ' First instance *has* to exist
   If cPluginList.Exist(LCase(sPluginName) & "#0") = False Then
-    Main.WriteLog("[Plugin] ERROR: Module/Class '" & sPluginName & "' isn't properly initialized")
+
+    ' Temporary workaround to allow restart of none managed modules
+    Try Object.Call(Main, "Restart_" & sPluginName)
+    If Error Then
+      Main.WriteLog("[Plugin] ERROR: Module/Class '" & sPluginName & "' isn't properly initialized")
+    Endif
+
     Return
   Endif 
 
@@ -594,7 +627,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' return if plugin is enabled and running
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub IsPluginRunning(sPluginName As String, Optional iInstance As Byte = 1) As Boolean
+Public Sub IsPluginRunning(sPluginName As String, Optional iInstance As Integer = 1) As Boolean
 
   Dim bRunning As Boolean
 
@@ -649,7 +682,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Pointer to the Object ... Don't modify data !
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GetPluginObject(sPluginName As String, Optional iInstance As Byte = 1) As Object
+Public Sub GetPluginObject(sPluginName As String, Optional iInstance As Integer = 1) As Object
 
   If cPluginList.Exist(LCase(sPluginName) & "#" & iInstance) Then
     Try Return cPluginList[LCase(sPluginName) & "#" & iInstance]
@@ -662,7 +695,7 @@ End
 ' Send command to plugin. The "SendCommand" routine is a
 ' fixed name, but doesn't have to exist
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SendCommand(sPluginName As String, iInstance As Byte, sAddress As String, sCmd As String) As Boolean
+Public Sub SendCommand(sPluginName As String, iInstance As Integer, sAddress As String, sCmd As String) As Boolean
 
   ' The Plugin needs to be enabled
   If isPluginEnabled(sPluginName, iInstance) Then
