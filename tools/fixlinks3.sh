@@ -50,6 +50,8 @@ ln -s ../../DomotiGa3/.src/CLGTV.class
 ln -s ../../DomotiGa3/.src/CLIRC.class
 ln -s ../../DomotiGa3/.src/CTemp08.class
 ln -s ../../DomotiGa3/.src/COpenTherm.class
+ln -s ../../DomotiGa3/.src/COpenZWave.class
+ln -s ../../DomotiGa3/.src/COpenZWaveEntry.class
 ln -s ../../DomotiGa3/.src/COnkyo.class
 ln -s ../../DomotiGa3/.src/COWFS.class
 ln -s ../../DomotiGa3/.src/COWW.class

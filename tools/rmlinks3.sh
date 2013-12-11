@@ -51,6 +51,8 @@ cp ../../DomotiGa3/.src/CLGTV.class .
 cp ../../DomotiGa3/.src/CLIRC.class .
 cp ../../DomotiGa3/.src/CTemp08.class .
 cp ../../DomotiGa3/.src/COpenTherm.class .
+cp ../../DomotiGa3/.src/COpenZWave.class .
+cp ../../DomotiGa3/.src/COpenZWaveEntry.class .
 cp ../../DomotiGa3/.src/COnkyo.class .
 cp ../../DomotiGa3/.src/COWFS.class .
 cp ../../DomotiGa3/.src/COWW.class .
