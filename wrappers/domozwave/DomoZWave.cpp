@@ -690,6 +690,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 			}
 
 			break;
+		}
 		case COMMAND_CLASS_SENSOR_MULTILEVEL:
 		{
 			if ( label == "Temperature" )
