@@ -673,6 +673,23 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 
 			break;
 		}
+		case COMMAND_CLASS_SENSOR_ALARM:
+		{
+			if ( label == "Flood" )
+			{
+				value_no = 1;
+
+				if ( strcmp( dev_value, "0" ) == 0 )
+				{
+					strcpy( dev_value, "Off" );
+				}
+				else
+				{
+					strcpy( dev_value, "On" );
+				}
+			}
+
+			break;
 		case COMMAND_CLASS_SENSOR_MULTILEVEL:
 		{
 			if ( label == "Temperature" )
@@ -780,13 +797,14 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 
 			// All possible labels (sorted in priority):
-			// Basic, Switch, Level, Sensor, Power, Energy, Temperature, Luminance, Relative Humidity, Alarm Level
+			// Basic, Switch, Level, Sensor, Power, Energy, Temperature, Luminance, Relative Humidity, Alarm Level, Flood
 
 			// NOTE: Basic+Switch+Level are normally same the for a switch/dimmer
 
 			// Known and supported combinations:
 			// Switch + Power + Energy + Alarm Level (e.g. GreenWave PowerNode 1)
 			// Sensor + Alarm Level (e.g. Everspring SP103) 
+			// Alarm Level (e.g. Everspring ST814) 
 			// Sensor + Temperature + Luminance + Humidity (e.g. Aeon 4in1)
 			// Sensor + Temperature + Alarm Level? (e.g. Digital Home System DHS-ZW-SNMT-01)
 
@@ -825,6 +843,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 				if ( nodeInfo->instanceLabel[instanceID].find("Relative Humidity") != string::npos ) { str_tmp.append("Relative Humidity|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("|Luminance|") != string::npos ) { str_tmp.append("Luminance|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("Alarm Level") != string::npos ) { str_tmp.append("Alarm Level|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("Flood") != string::npos ) { str_tmp.append("Flood|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("Heating 1") != string::npos ) { str_tmp.append("Heating 1|"); }
 
 				// Replace the previous string with the newly generated
