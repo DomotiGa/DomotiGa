@@ -38,7 +38,7 @@ CREATE TABLE `actions` (
   `param4` text,
   `param5` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=8 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -47,7 +47,7 @@ CREATE TABLE `actions` (
 
 LOCK TABLES `actions` WRITE;
 /*!40000 ALTER TABLE `actions` DISABLE KEYS */;
-INSERT INTO `actions` VALUES (1,'Switch Porch Light On',1,'','1','1','On','',''),(2,'Switch Porch Light Off',1,'','1','1','Off','',''),(3,'Switch Kitchen Light On',1,'','4','1','On','',''),(6,'Set Ventilation to High Speed',1,NULL,'29','1','3','',''),(5,'Switch Kitchen Light Off',1,'','4','1','Off','',''),(7,'Set Ventilation to Normal Speed',1,NULL,'29','1','1','','');
+INSERT INTO `actions` VALUES (1,'Switch Porch Light On',1,'','1','1','On','',''),(2,'Switch Porch Light Off',1,'','1','1','Off','',''),(3,'Switch Kitchen Light On',1,'','4','1','On','',''),(5,'Switch Kitchen Light Off',1,'','4','1','Off','',''),(6,'Set Ventilation to High Speed',1,NULL,'29','1','3','',''),(7,'Set Ventilation to Normal Speed',1,NULL,'29','1','1','','');
 /*!40000 ALTER TABLE `actions` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -62,7 +62,7 @@ CREATE TABLE `calendar` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `date` datetime DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -86,7 +86,7 @@ CREATE TABLE `capture_camera0` (
   `stamp` datetime DEFAULT NULL,
   `image` longblob,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=16 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -111,7 +111,7 @@ CREATE TABLE `capture_camera1` (
   `stamp` datetime DEFAULT NULL,
   `image` longblob,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -135,7 +135,7 @@ CREATE TABLE `capture_camera2` (
   `stamp` datetime DEFAULT NULL,
   `image` longblob,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -159,7 +159,7 @@ CREATE TABLE `capture_camera3` (
   `stamp` datetime DEFAULT NULL,
   `image` longblob,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -182,7 +182,7 @@ CREATE TABLE `category` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -191,7 +191,7 @@ CREATE TABLE `category` (
 
 LOCK TABLES `category` WRITE;
 /*!40000 ALTER TABLE `category` DISABLE KEYS */;
-INSERT INTO `category` VALUES (1,'Lighting'),(2,'Holiday'),(3,'Security'),(4,'E-mail'),(6,'Nightly'),(5,'Daytime'),(7,'Audio'),(8,'Video'),(9,'System');
+INSERT INTO `category` VALUES (1,'Lighting'),(2,'Holiday'),(3,'Security'),(4,'E-mail'),(5,'Daytime'),(6,'Nightly'),(7,'Audio'),(8,'Video'),(9,'System');
 /*!40000 ALTER TABLE `category` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -224,7 +224,7 @@ CREATE TABLE `cdr` (
   KEY `calldate` (`calldate`),
   KEY `dst` (`dst`),
   KEY `accountcode` (`accountcode`)
-) ENGINE=MyISAM AUTO_INCREMENT=40 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=40 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -250,7 +250,7 @@ CREATE TABLE `conditions` (
   `description` text,
   `formula` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -292,7 +292,7 @@ CREATE TABLE `contacts` (
   `firstseen` datetime DEFAULT NULL,
   `lastseen` datetime DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -313,24 +313,23 @@ DROP TABLE IF EXISTS `device_values`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `device_values` (
-  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  `deviceid` bigint(20) unsigned NOT NULL,
-  `valuenum` bigint(20) unsigned NOT NULL,
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `deviceid` int(11) unsigned NOT NULL,
+  `valuenum` int(11) unsigned NOT NULL,
   `value` text,
   `correction` text,
   `units` varchar(32) DEFAULT NULL,
-  `lastseen` datetime DEFAULT NULL,
-  `log` tinyint(1) DEFAULT NULL,
-  `rrd` tinyint(1) DEFAULT NULL,
-  `graph` tinyint(1) DEFAULT NULL,
+  `log` tinyint(1) DEFAULT '0',
+  `logdisplay` tinyint(1) DEFAULT '0',
+  `logspeak` tinyint(1) DEFAULT '0',
+  `rrd` tinyint(1) DEFAULT '0',
+  `graph` tinyint(1) DEFAULT '0',
   `valuerrddsname` varchar(32) DEFAULT NULL,
   `valuerrdtype` varchar(32) DEFAULT NULL,
-  `switchable` tinyint(1) DEFAULT NULL,
-  `dimable` tinyint(1) DEFAULT NULL,
   `lastchanged` datetime DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `deviceindex` (`deviceid`)
-) ENGINE=MyISAM AUTO_INCREMENT=121 DEFAULT CHARSET=latin1;
+  `lastseen` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=125 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -339,8 +338,34 @@ CREATE TABLE `device_values` (
 
 LOCK TABLES `device_values` WRITE;
 /*!40000 ALTER TABLE `device_values` DISABLE KEYS */;
-INSERT INTO `device_values` VALUES (1,1,1,'On',NULL,'','2008-12-14 18:00:00',-1,0,NULL,'','',-1,0,'2008-12-14 18:00:00'),(2,2,1,'4497256',NULL,'','2008-12-14 21:53:01',0,-1,NULL,'','',0,0,'2008-12-14 21:53:01'),(3,3,1,'Off',NULL,'','2008-10-16 20:04:51',1,0,NULL,'','',1,0,NULL),(4,4,1,'Off',NULL,'','2008-10-16 20:04:52',-1,0,0,'','',0,-1,NULL),(5,5,1,'2',NULL,'Level','2008-12-14 21:57:32',-1,0,NULL,'','',0,0,'2008-11-16 22:14:36'),(6,6,1,'18.6',NULL,'°C','2008-12-14 21:57:56',0,0,NULL,'','',0,0,'2008-12-14 21:57:56'),(7,9,1,'16.2',NULL,'°C','2008-12-14 21:57:44',0,0,NULL,'','',0,0,'2008-12-14 21:57:44'),(8,10,1,'6.8',NULL,'°C','2008-12-14 21:57:36',0,-1,NULL,'temp','GAUGE',0,0,'2008-12-14 21:57:36'),(9,11,1,'22.3',NULL,'°C','2008-12-13 14:29:23',0,-1,NULL,'temp','GAUGE',0,0,'2008-12-13 14:29:23'),(10,12,1,'',NULL,'','0000-00-00 00:00:00',0,0,NULL,'','',0,0,NULL),(11,13,1,'36',NULL,'°C','2008-12-14 22:03:13',1,1,NULL,'temp','GAUGE',0,0,'2008-12-14 21:20:55'),(12,16,1,'Sleeping',NULL,'','2010-11-04 13:42:30',1,0,NULL,'','',0,0,NULL),(13,17,1,'Online',NULL,'','2008-11-13 14:55:17',1,0,NULL,'','',0,0,'2008-11-13 14:55:17'),(14,18,1,'No Motion',NULL,'','2008-12-14 20:34:00',1,0,NULL,'','',0,0,'2008-12-14 20:33:59'),(15,19,1,'22.81',NULL,'°C','2008-12-14 21:57:45',0,0,NULL,'','',0,0,'2008-12-14 21:54:45'),(16,20,1,'',NULL,'mm','0000-00-00 00:00:00',0,0,NULL,'','',0,0,NULL),(17,21,1,'Idle',NULL,'','2008-11-24 15:55:22',-1,0,NULL,'','',0,0,'2008-11-24 15:55:22'),(18,22,1,'Open',NULL,'','2008-12-14 19:44:48',-1,0,NULL,'','',0,0,NULL),(19,23,1,'Closed',NULL,'','2008-12-14 20:28:23',-1,0,NULL,'','',0,0,NULL),(20,24,1,'Dark',NULL,'','2008-12-14 16:32:00',1,0,NULL,'','',0,0,'2008-12-14 16:32:00'),(21,25,1,'22.81',NULL,'°C','2008-12-14 21:57:46',0,1,NULL,'temp','GAUGE',0,0,'2008-12-14 21:57:46'),(22,27,1,'No Motion',NULL,'','2008-12-13 16:49:03',1,0,NULL,'','',0,0,'2008-12-13 16:49:03'),(23,28,1,'Dark',NULL,'','2008-12-13 16:48:09',1,0,NULL,'','',0,0,'2008-12-13 16:48:08'),(24,29,1,'.',NULL,'','2008-11-15 16:20:20',-1,0,NULL,'','',0,0,NULL),(25,30,1,'3',NULL,'Speed','2008-12-02 16:27:30',0,0,NULL,'','',0,0,'2008-11-19 20:02:02'),(26,34,1,'-22.1',NULL,'°C','2008-12-03 22:49:37',0,0,NULL,'','',0,0,'2008-12-03 22:49:37'),(27,35,1,'16.4',NULL,'°C','2008-12-04 15:32:25',0,0,NULL,'','',0,0,'2008-12-04 15:32:25'),(28,37,1,'On',NULL,'','2008-12-14 21:46:57',0,-1,NULL,'','',0,0,'2008-12-14 21:46:57'),(29,36,1,'Off',NULL,'','2008-12-14 21:46:57',-1,0,NULL,'','',-1,0,'2008-12-14 21:46:57'),(30,38,1,'',NULL,'',NULL,0,0,0,'','',0,0,NULL),(31,1,2,'',NULL,'','2008-12-14 18:00:00',-1,0,NULL,'','',-1,0,'2008-12-14 18:00:00'),(32,2,2,'0',NULL,'Watt','2008-12-14 21:53:01',0,-1,NULL,'watt','GAUGE',0,0,'2008-12-14 21:53:01'),(33,3,2,'',NULL,'','2008-10-16 20:04:51',1,0,NULL,'','',1,0,NULL),(34,4,2,'',NULL,'','2008-10-16 20:04:52',-1,0,0,'','',0,-1,NULL),(35,5,2,'Low',NULL,'','2008-12-14 21:57:32',-1,0,NULL,'','',0,0,'2008-11-16 22:14:36'),(36,6,2,'36',NULL,'%','2008-12-14 21:57:56',0,0,NULL,'','',0,0,'2008-12-14 21:57:56'),(37,9,2,'50',NULL,'%','2008-12-14 21:57:44',0,0,NULL,'','',0,0,'2008-12-14 21:57:44'),(38,10,2,'70',NULL,'%','2008-12-14 21:57:36',0,-1,NULL,'humid','GAUGE',0,0,'2008-12-14 21:57:36'),(39,11,2,'51',NULL,'%','2008-12-13 14:29:23',0,-1,NULL,'humid','GAUGE',0,0,'2008-12-13 14:29:23'),(40,12,2,'',NULL,'','0000-00-00 00:00:00',0,0,NULL,'','',0,0,NULL),(41,13,2,'',NULL,'','2008-12-14 22:03:13',1,1,NULL,'','',0,0,'2008-12-14 21:20:55'),(42,16,2,'',NULL,'','2010-11-04 13:42:30',1,0,NULL,'','',0,0,NULL),(43,17,2,'224.9',NULL,'Volt','2008-11-13 14:55:17',1,0,NULL,'','',0,0,'2008-11-13 14:55:17'),(44,18,2,'',NULL,'','2008-12-14 20:34:00',1,0,NULL,'','',0,0,'2008-12-14 20:33:59'),(45,19,2,'',NULL,'','2008-12-14 21:57:45',0,0,NULL,'','',0,0,'2008-12-14 21:54:45'),(46,20,2,'',NULL,'','0000-00-00 00:00:00',0,0,NULL,'','',0,0,NULL),(47,21,2,'',NULL,'','2008-11-24 15:55:22',-1,0,NULL,'','',0,0,'2008-11-24 15:55:22'),(48,22,2,'Secure',NULL,'','2008-12-14 19:44:48',-1,0,NULL,'','',0,0,NULL),(49,23,2,'Secure',NULL,'','2008-12-14 20:28:23',-1,0,NULL,'','',0,0,NULL),(50,24,2,'',NULL,'','2008-12-14 16:32:00',1,0,NULL,'','',0,0,'2008-12-14 16:32:00'),(51,25,2,'',NULL,'','2008-12-14 21:57:46',0,1,NULL,'','',0,0,'2008-12-14 21:57:46'),(52,27,2,'',NULL,'','2008-12-13 16:49:03',1,0,NULL,'','',0,0,'2008-12-13 16:49:03'),(53,28,2,'',NULL,'','2008-12-13 16:48:09',1,0,NULL,'','',0,0,'2008-12-13 16:48:08'),(54,29,2,'Away',NULL,'','2008-11-15 16:20:20',-1,0,NULL,'','',0,0,NULL),(55,30,2,'',NULL,'','2008-12-02 16:27:30',0,0,NULL,'','',0,0,'2008-11-19 20:02:02'),(56,34,2,'',NULL,'','2008-12-03 22:49:37',0,0,NULL,'','',0,0,'2008-12-03 22:49:37'),(57,35,2,'55',NULL,'%','2008-12-04 15:32:25',0,0,NULL,'','',0,0,'2008-12-04 15:32:25'),(58,37,2,'44.139',NULL,'W','2008-12-14 21:46:57',0,-1,NULL,'Watt','GAUGE',0,0,'2008-12-14 21:46:57'),(59,36,2,'0',NULL,'','2008-12-14 21:46:57',-1,0,NULL,'Watt','GAUGE',-1,0,'2008-12-14 21:46:57'),(60,38,2,'',NULL,'',NULL,0,0,0,'','',0,0,NULL),(61,1,3,'',NULL,'','2008-12-14 18:00:00',-1,0,NULL,'','',-1,0,'2008-12-14 18:00:00'),(62,2,3,'',NULL,'','2008-12-14 21:53:01',0,-1,NULL,'','',0,0,'2008-12-14 21:53:01'),(63,3,3,NULL,NULL,NULL,'2008-10-16 20:04:51',1,0,NULL,NULL,NULL,1,0,NULL),(64,4,3,'',NULL,'','2008-10-16 20:04:52',-1,0,0,'','',0,-1,NULL),(65,5,3,'',NULL,'','2008-12-14 21:57:32',-1,0,NULL,'','',0,0,'2008-11-16 22:14:36'),(66,6,3,'',NULL,'','2008-12-14 21:57:56',0,0,NULL,'','',0,0,'2008-12-14 21:57:56'),(67,9,3,'',NULL,'','2008-12-14 21:57:44',0,0,NULL,'','',0,0,'2008-12-14 21:57:44'),(68,10,3,'',NULL,'','2008-12-14 21:57:36',0,-1,NULL,'','',0,0,'2008-12-14 21:57:36'),(69,11,3,'',NULL,'','2008-12-13 14:29:23',0,-1,NULL,'','',0,0,'2008-12-13 14:29:23'),(70,12,3,'',NULL,'','0000-00-00 00:00:00',0,0,NULL,'','',0,0,NULL),(71,13,3,NULL,NULL,NULL,'2008-12-14 22:03:13',1,1,NULL,NULL,NULL,0,0,'2008-12-14 21:20:55'),(72,16,3,NULL,NULL,NULL,'2010-11-04 13:42:30',1,0,NULL,NULL,NULL,0,0,NULL),(73,17,3,NULL,NULL,NULL,'2008-11-13 14:55:17',1,0,NULL,NULL,NULL,0,0,'2008-11-13 14:55:17'),(74,18,3,NULL,NULL,NULL,'2008-12-14 20:34:00',1,0,NULL,NULL,NULL,0,0,'2008-12-14 20:33:59'),(75,19,3,NULL,NULL,NULL,'2008-12-14 21:57:45',0,0,NULL,NULL,NULL,0,0,'2008-12-14 21:54:45'),(76,20,3,NULL,NULL,NULL,'0000-00-00 00:00:00',0,0,NULL,NULL,NULL,0,0,NULL),(77,21,3,'',NULL,'','2008-11-24 15:55:22',-1,0,NULL,'','',0,0,'2008-11-24 15:55:22'),(78,22,3,'',NULL,'','2008-12-14 19:44:48',-1,0,NULL,'','',0,0,NULL),(79,23,3,'',NULL,'','2008-12-14 20:28:23',-1,0,NULL,'','',0,0,NULL),(80,24,3,NULL,NULL,NULL,'2008-12-14 16:32:00',1,0,NULL,NULL,NULL,0,0,'2008-12-14 16:32:00'),(81,25,3,NULL,NULL,NULL,'2008-12-14 21:57:46',0,1,NULL,NULL,NULL,0,0,'2008-12-14 21:57:46'),(82,27,3,NULL,NULL,NULL,'2008-12-13 16:49:03',1,0,NULL,NULL,NULL,0,0,'2008-12-13 16:49:03'),(83,28,3,NULL,NULL,NULL,'2008-12-13 16:48:09',1,0,NULL,NULL,NULL,0,0,'2008-12-13 16:48:08'),(84,29,3,'',NULL,'','2008-11-15 16:20:20',-1,0,NULL,'','',0,0,NULL),(85,30,3,NULL,NULL,NULL,'2008-12-02 16:27:30',0,0,NULL,NULL,NULL,0,0,'2008-11-19 20:02:02'),(86,34,3,NULL,NULL,NULL,'2008-12-03 22:49:37',0,0,NULL,NULL,NULL,0,0,'2008-12-03 22:49:37'),(87,35,3,'Normal',NULL,'','2008-12-04 15:32:25',0,0,NULL,'','',0,0,'2008-12-04 15:32:25'),(88,37,3,'0.044',NULL,'kWh','2008-12-14 21:46:57',0,-1,NULL,'','',0,0,'2008-12-14 21:46:57'),(89,36,3,'0',NULL,'','2008-12-14 21:46:57',-1,0,NULL,'','',-1,0,'2008-12-14 21:46:57'),(90,38,3,'',NULL,'',NULL,0,0,0,'','',0,0,NULL),(91,1,4,NULL,NULL,NULL,'2008-12-14 18:00:00',-1,0,NULL,NULL,NULL,-1,0,'2008-12-14 18:00:00'),(92,2,4,'',NULL,'','2008-12-14 21:53:01',0,-1,NULL,'','',0,0,'2008-12-14 21:53:01'),(93,3,4,NULL,NULL,NULL,'2008-10-16 20:04:51',1,0,NULL,NULL,NULL,1,0,NULL),(94,4,4,'',NULL,'','2008-10-16 20:04:52',-1,0,0,'','',0,-1,NULL),(95,5,4,'',NULL,'','2008-12-14 21:57:32',-1,0,NULL,'','',0,0,'2008-11-16 22:14:36'),(96,6,4,'',NULL,'','2008-12-14 21:57:56',0,0,NULL,'','',0,0,'2008-12-14 21:57:56'),(97,9,4,'',NULL,'','2008-12-14 21:57:44',0,0,NULL,'','',0,0,'2008-12-14 21:57:44'),(98,10,4,'',NULL,'','2008-12-14 21:57:36',0,-1,NULL,'','',0,0,'2008-12-14 21:57:36'),(99,11,4,'',NULL,'','2008-12-13 14:29:23',0,-1,NULL,'','',0,0,'2008-12-13 14:29:23'),(100,12,4,NULL,NULL,NULL,'0000-00-00 00:00:00',0,0,NULL,NULL,NULL,0,0,NULL),(101,13,4,NULL,NULL,NULL,'2008-12-14 22:03:13',1,1,NULL,NULL,NULL,0,0,'2008-12-14 21:20:55'),(102,16,4,NULL,NULL,NULL,'2010-11-04 13:42:30',1,0,NULL,NULL,NULL,0,0,NULL),(103,17,4,NULL,NULL,NULL,'2008-11-13 14:55:17',1,0,NULL,NULL,NULL,0,0,'2008-11-13 14:55:17'),(104,18,4,NULL,NULL,NULL,'2008-12-14 20:34:00',1,0,NULL,NULL,NULL,0,0,'2008-12-14 20:33:59'),(105,19,4,NULL,NULL,NULL,'2008-12-14 21:57:45',0,0,NULL,NULL,NULL,0,0,'2008-12-14 21:54:45'),(106,20,4,NULL,NULL,NULL,'0000-00-00 00:00:00',0,0,NULL,NULL,NULL,0,0,NULL),(107,21,4,'',NULL,'','2008-11-24 15:55:22',-1,0,NULL,'','',0,0,'2008-11-24 15:55:22'),(108,22,4,'',NULL,'','2008-12-14 19:44:48',-1,0,NULL,'','',0,0,NULL),(109,23,4,'',NULL,'','2008-12-14 20:28:23',-1,0,NULL,'','',0,0,NULL),(110,24,4,NULL,NULL,NULL,'2008-12-14 16:32:00',1,0,NULL,NULL,NULL,0,0,'2008-12-14 16:32:00'),(111,25,4,NULL,NULL,NULL,'2008-12-14 21:57:46',0,1,NULL,NULL,NULL,0,0,'2008-12-14 21:57:46'),(112,27,4,NULL,NULL,NULL,'2008-12-13 16:49:03',1,0,NULL,NULL,NULL,0,0,'2008-12-13 16:49:03'),(113,28,4,NULL,NULL,NULL,'2008-12-13 16:48:09',1,0,NULL,NULL,NULL,0,0,'2008-12-13 16:48:08'),(114,29,4,'',NULL,'','2008-11-15 16:20:20',-1,0,NULL,'','',0,0,NULL),(115,30,4,NULL,NULL,NULL,'2008-12-02 16:27:30',0,0,NULL,NULL,NULL,0,0,'2008-11-19 20:02:02'),(116,34,4,NULL,NULL,NULL,'2008-12-03 22:49:37',0,0,NULL,NULL,NULL,0,0,'2008-12-03 22:49:37'),(117,35,4,'',NULL,'','2008-12-04 15:32:25',0,0,NULL,'','',0,0,'2008-12-04 15:32:25'),(118,37,4,'',NULL,'','2008-12-14 21:46:57',0,-1,NULL,'','',0,0,'2008-12-14 21:46:57'),(119,36,4,NULL,NULL,NULL,'2008-12-14 21:46:57',-1,0,NULL,NULL,NULL,-1,0,'2008-12-14 21:46:57'),(120,38,4,'',NULL,'',NULL,0,0,0,'','',0,0,NULL);
+INSERT INTO `device_values` VALUES (1,1,1,'On',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 18:00:00','2008-12-14 18:00:00'),(2,2,1,'4497256',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:53:01','2008-12-14 21:53:01'),(3,3,1,'Off',NULL,'',1,NULL,NULL,0,NULL,'','',NULL,'2008-10-16 20:04:51'),(4,4,1,'Off',NULL,'',-1,0,0,0,0,'','',NULL,'2008-10-16 20:04:52'),(5,5,1,'2',NULL,'Level',-1,NULL,NULL,0,NULL,'','','2008-11-16 22:14:36','2008-12-14 21:57:32'),(6,6,1,'18.6',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:56','2008-12-14 21:57:56'),(7,9,1,'16.2',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:44','2008-12-14 21:57:44'),(8,10,1,'6.8',NULL,'°C',0,NULL,NULL,-1,NULL,'temp','GAUGE','2008-12-14 21:57:36','2008-12-14 21:57:36'),(9,11,1,'22.3',NULL,'°C',0,NULL,NULL,-1,NULL,'temp','GAUGE','2008-12-13 14:29:23','2008-12-13 14:29:23'),(10,12,1,'',NULL,'',0,NULL,NULL,0,NULL,'','',NULL,'0000-00-00 00:00:00'),(11,13,1,'36',NULL,'°C',1,NULL,NULL,1,NULL,'temp','GAUGE','2008-12-14 21:20:55','2008-12-14 22:03:13'),(12,16,1,'Sleeping',NULL,'',1,NULL,NULL,0,NULL,'','',NULL,'2010-11-04 13:42:30'),(13,17,1,'Online',NULL,'',1,NULL,NULL,0,NULL,'','','2008-11-13 14:55:17','2008-11-13 14:55:17'),(14,18,1,'No Motion',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-14 20:33:59','2008-12-14 20:34:00'),(15,19,1,'22.81',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-14 21:54:45','2008-12-14 21:57:45'),(16,20,1,'',NULL,'mm',0,NULL,NULL,0,NULL,'','',NULL,'0000-00-00 00:00:00'),(17,21,1,'Idle',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-24 15:55:22','2008-11-24 15:55:22'),(18,22,1,'Open',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 19:44:48'),(19,23,1,'Closed',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 20:28:23'),(20,24,1,'Dark',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-14 16:32:00','2008-12-14 16:32:00'),(21,25,1,'22.81',NULL,'°C',0,NULL,NULL,1,NULL,'temp','GAUGE','2008-12-14 21:57:46','2008-12-14 21:57:46'),(22,27,1,'No Motion',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-13 16:49:03','2008-12-13 16:49:03'),(23,28,1,'Dark',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-13 16:48:08','2008-12-13 16:48:09'),(24,29,1,'.',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-11-15 16:20:20'),(25,30,1,'3',NULL,'Speed',0,NULL,NULL,0,NULL,'','','2008-11-19 20:02:02','2008-12-02 16:27:30'),(26,34,1,'-22.1',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-03 22:49:37','2008-12-03 22:49:37'),(27,35,1,'16.4',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-04 15:32:25','2008-12-04 15:32:25'),(28,36,1,'Off',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57'),(29,37,1,'On',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57'),(30,38,1,'',NULL,'',0,0,0,0,0,'','',NULL,NULL),(32,1,2,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 18:00:00','2008-12-14 18:00:00'),(33,2,2,'0',NULL,'Watt',0,NULL,NULL,-1,NULL,'watt','GAUGE','2008-12-14 21:53:01','2008-12-14 21:53:01'),(34,3,2,'',NULL,'',1,NULL,NULL,0,NULL,'','',NULL,'2008-10-16 20:04:51'),(35,4,2,'',NULL,'',-1,0,0,0,0,'','',NULL,'2008-10-16 20:04:52'),(36,5,2,'Low',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-16 22:14:36','2008-12-14 21:57:32'),(37,6,2,'36',NULL,'%',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:56','2008-12-14 21:57:56'),(38,9,2,'50',NULL,'%',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:44','2008-12-14 21:57:44'),(39,10,2,'70',NULL,'%',0,NULL,NULL,-1,NULL,'humid','GAUGE','2008-12-14 21:57:36','2008-12-14 21:57:36'),(40,11,2,'51',NULL,'%',0,NULL,NULL,-1,NULL,'humid','GAUGE','2008-12-13 14:29:23','2008-12-13 14:29:23'),(41,12,2,'',NULL,'',0,NULL,NULL,0,NULL,'','',NULL,'0000-00-00 00:00:00'),(42,13,2,'',NULL,'',1,NULL,NULL,1,NULL,'','','2008-12-14 21:20:55','2008-12-14 22:03:13'),(43,16,2,'',NULL,'',1,NULL,NULL,0,NULL,'','',NULL,'2010-11-04 13:42:30'),(44,17,2,'224.9',NULL,'Volt',1,NULL,NULL,0,NULL,'','','2008-11-13 14:55:17','2008-11-13 14:55:17'),(45,18,2,'',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-14 20:33:59','2008-12-14 20:34:00'),(46,19,2,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-14 21:54:45','2008-12-14 21:57:45'),(47,20,2,'',NULL,'',0,NULL,NULL,0,NULL,'','',NULL,'0000-00-00 00:00:00'),(48,21,2,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-24 15:55:22','2008-11-24 15:55:22'),(49,22,2,'Secure',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 19:44:48'),(50,23,2,'Secure',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 20:28:23'),(51,24,2,'',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-14 16:32:00','2008-12-14 16:32:00'),(52,25,2,'',NULL,'',0,NULL,NULL,1,NULL,'','','2008-12-14 21:57:46','2008-12-14 21:57:46'),(53,27,2,'',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-13 16:49:03','2008-12-13 16:49:03'),(54,28,2,'',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-13 16:48:08','2008-12-13 16:48:09'),(55,29,2,'Away',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-11-15 16:20:20'),(56,30,2,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-11-19 20:02:02','2008-12-02 16:27:30'),(57,34,2,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-03 22:49:37','2008-12-03 22:49:37'),(58,35,2,'55',NULL,'%',0,NULL,NULL,0,NULL,'','','2008-12-04 15:32:25','2008-12-04 15:32:25'),(59,36,2,'0',NULL,'',-1,NULL,NULL,0,NULL,'Watt','GAUGE','2008-12-14 21:46:57','2008-12-14 21:46:57'),(60,37,2,'44.139',NULL,'W',0,NULL,NULL,-1,NULL,'Watt','GAUGE','2008-12-14 21:46:57','2008-12-14 21:46:57'),(61,38,2,'',NULL,'',0,0,0,0,0,'','',NULL,NULL),(63,1,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 18:00:00','2008-12-14 18:00:00'),(64,2,3,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:53:01','2008-12-14 21:53:01'),(65,3,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,NULL,'2008-10-16 20:04:51'),(66,4,3,'',NULL,'',-1,0,0,0,0,'','',NULL,'2008-10-16 20:04:52'),(67,5,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-16 22:14:36','2008-12-14 21:57:32'),(68,6,3,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:56','2008-12-14 21:57:56'),(69,9,3,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:44','2008-12-14 21:57:44'),(70,10,3,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:57:36','2008-12-14 21:57:36'),(71,11,3,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-13 14:29:23','2008-12-13 14:29:23'),(72,12,3,'',NULL,'',0,NULL,NULL,0,NULL,'','',NULL,'0000-00-00 00:00:00'),(73,13,3,NULL,NULL,NULL,1,NULL,NULL,1,NULL,NULL,NULL,'2008-12-14 21:20:55','2008-12-14 22:03:13'),(74,16,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,NULL,'2010-11-04 13:42:30'),(75,17,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-11-13 14:55:17','2008-11-13 14:55:17'),(76,18,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 20:33:59','2008-12-14 20:34:00'),(77,19,3,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 21:54:45','2008-12-14 21:57:45'),(78,20,3,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,NULL,'0000-00-00 00:00:00'),(79,21,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-24 15:55:22','2008-11-24 15:55:22'),(80,22,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 19:44:48'),(81,23,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 20:28:23'),(82,24,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 16:32:00','2008-12-14 16:32:00'),(83,25,3,NULL,NULL,NULL,0,NULL,NULL,1,NULL,NULL,NULL,'2008-12-14 21:57:46','2008-12-14 21:57:46'),(84,27,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-13 16:49:03','2008-12-13 16:49:03'),(85,28,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-13 16:48:08','2008-12-13 16:48:09'),(86,29,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-11-15 16:20:20'),(87,30,3,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-11-19 20:02:02','2008-12-02 16:27:30'),(88,34,3,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-12-03 22:49:37','2008-12-03 22:49:37'),(89,35,3,'Normal',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-04 15:32:25','2008-12-04 15:32:25'),(90,36,3,'0',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57'),(91,37,3,'0.044',NULL,'kWh',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57'),(92,38,3,'',NULL,'',0,0,0,0,0,'','',NULL,NULL),(94,1,4,NULL,NULL,NULL,-1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 18:00:00','2008-12-14 18:00:00'),(95,2,4,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:53:01','2008-12-14 21:53:01'),(96,3,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,NULL,'2008-10-16 20:04:51'),(97,4,4,'',NULL,'',-1,0,0,0,0,'','',NULL,'2008-10-16 20:04:52'),(98,5,4,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-16 22:14:36','2008-12-14 21:57:32'),(99,6,4,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:56','2008-12-14 21:57:56'),(100,9,4,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:44','2008-12-14 21:57:44'),(101,10,4,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:57:36','2008-12-14 21:57:36'),(102,11,4,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-13 14:29:23','2008-12-13 14:29:23'),(103,12,4,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,NULL,'0000-00-00 00:00:00'),(104,13,4,NULL,NULL,NULL,1,NULL,NULL,1,NULL,NULL,NULL,'2008-12-14 21:20:55','2008-12-14 22:03:13'),(105,16,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,NULL,'2010-11-04 13:42:30'),(106,17,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-11-13 14:55:17','2008-11-13 14:55:17'),(107,18,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 20:33:59','2008-12-14 20:34:00'),(108,19,4,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 21:54:45','2008-12-14 21:57:45'),(109,20,4,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,NULL,'0000-00-00 00:00:00'),(110,21,4,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-24 15:55:22','2008-11-24 15:55:22'),(111,22,4,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 19:44:48'),(112,23,4,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 20:28:23'),(113,24,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 16:32:00','2008-12-14 16:32:00'),(114,25,4,NULL,NULL,NULL,0,NULL,NULL,1,NULL,NULL,NULL,'2008-12-14 21:57:46','2008-12-14 21:57:46'),(115,27,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-13 16:49:03','2008-12-13 16:49:03'),(116,28,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-13 16:48:08','2008-12-13 16:48:09'),(117,29,4,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-11-15 16:20:20'),(118,30,4,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-11-19 20:02:02','2008-12-02 16:27:30'),(119,34,4,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-12-03 22:49:37','2008-12-03 22:49:37'),(120,35,4,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-04 15:32:25','2008-12-04 15:32:25'),(121,36,4,NULL,NULL,NULL,-1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 21:46:57','2008-12-14 21:46:57'),(122,37,4,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57'),(123,38,4,'',NULL,'',0,0,0,0,0,'','',NULL,NULL);
 /*!40000 ALTER TABLE `device_values` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `device_values_log`
+--
+
+DROP TABLE IF EXISTS `device_values_log`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `device_values_log` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `device_id` int(11) unsigned NOT NULL,
+  `valuenum` int(11) unsigned NOT NULL,
+  `value` text,
+  `lastchanged` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `device_values_log`
+--
+
+LOCK TABLES `device_values_log` WRITE;
+/*!40000 ALTER TABLE `device_values_log` DISABLE KEYS */;
+/*!40000 ALTER TABLE `device_values_log` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -356,7 +381,7 @@ CREATE TABLE `deviceblacklist` (
   `comments` text,
   `id` int(11) DEFAULT NULL,
   PRIMARY KEY (`blid`)
-) ENGINE=MyISAM AUTO_INCREMENT=6 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -381,18 +406,6 @@ CREATE TABLE `devices` (
   `address` varchar(64) DEFAULT NULL,
   `module` int(11) DEFAULT NULL,
   `location` int(11) DEFAULT NULL,
-  `value` text,
-  `value2` text,
-  `value3` text,
-  `value4` text,
-  `correction` text,
-  `correction2` text,
-  `correction3` text,
-  `correction4` text,
-  `label` varchar(32) DEFAULT NULL,
-  `label2` varchar(32) DEFAULT NULL,
-  `label3` varchar(32) DEFAULT NULL,
-  `label4` varchar(32) DEFAULT NULL,
   `onicon` varchar(32) DEFAULT NULL,
   `officon` varchar(32) DEFAULT NULL,
   `dimicon` varchar(32) DEFAULT NULL,
@@ -401,23 +414,10 @@ CREATE TABLE `devices` (
   `lastseen` datetime DEFAULT NULL,
   `enabled` tinyint(1) DEFAULT NULL,
   `hide` tinyint(1) DEFAULT NULL,
-  `log` tinyint(1) DEFAULT NULL,
-  `logdisplay` tinyint(1) DEFAULT NULL,
-  `logspeak` tinyint(1) DEFAULT NULL,
   `groups` varchar(128) DEFAULT NULL,
-  `rrd` tinyint(1) DEFAULT NULL,
-  `graph` tinyint(1) DEFAULT NULL,
   `batterystatus` varchar(32) DEFAULT NULL,
   `tampered` tinyint(1) DEFAULT NULL,
   `comments` text,
-  `valuerrddsname` varchar(32) DEFAULT NULL,
-  `value2rrddsname` varchar(32) DEFAULT NULL,
-  `value3rrddsname` varchar(32) DEFAULT NULL,
-  `value4rrddsname` varchar(32) DEFAULT NULL,
-  `valuerrdtype` varchar(32) DEFAULT NULL,
-  `value2rrdtype` varchar(32) DEFAULT NULL,
-  `value3rrdtype` varchar(32) DEFAULT NULL,
-  `value4rrdtype` varchar(32) DEFAULT NULL,
   `switchable` tinyint(1) DEFAULT NULL,
   `dimable` tinyint(1) DEFAULT NULL,
   `extcode` tinyint(1) DEFAULT NULL,
@@ -432,7 +432,7 @@ CREATE TABLE `devices` (
   `resetvalue` text,
   `poll` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=39 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=39 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -441,7 +441,7 @@ CREATE TABLE `devices` (
 
 LOCK TABLES `devices` WRITE;
 /*!40000 ALTER TABLE `devices` DISABLE KEYS */;
-INSERT INTO `devices` VALUES (1,'Porch Light','O02',10,6,'On','','',NULL,NULL,NULL,NULL,NULL,'','','',NULL,'light-on.png','light-off.png',NULL,2,'2008-09-06 13:56:53','2008-12-14 18:00:00',-1,0,-1,NULL,NULL,'|All Lights|Outside|',0,NULL,'',NULL,'','','','',NULL,'','','',NULL,-1,0,NULL,72,121,2,'2008-12-14 18:00:00',NULL,NULL,NULL,NULL,NULL,NULL),(2,'Power Usage','RFXMETER[512]M',9,13,'4497256','0','','',NULL,NULL,NULL,NULL,'','Watt','','','energy.png','energy.png','',1,'2008-08-31 22:39:31','2008-12-14 21:53:01',-1,0,0,NULL,NULL,'|Energy|',-1,NULL,'',NULL,'Measures power usage.','','watt','','','','GAUGE','','',0,0,0,0,0,1,'2008-12-14 21:53:01',NULL,NULL,NULL,NULL,NULL,NULL),(3,'Laundryroom Light','E04',2,11,'Off','',NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'light-on.png','light-off.png',NULL,2,'2008-08-26 23:12:16','2008-10-16 20:04:51',1,0,1,NULL,NULL,'|All Lights|',0,NULL,'',NULL,'None','','',NULL,NULL,'','',NULL,NULL,1,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(4,'Kitchen Light','E05',2,7,'Off','','','',NULL,NULL,NULL,NULL,'','','','','light-on.png','light-off.png','',2,'2008-08-26 22:20:11','2008-10-16 20:04:52',-1,0,-1,0,0,'|All Lights|',0,0,'',NULL,'None','','','','','','','','',0,-1,0,259,182,3,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(5,'UV Sensor','UV1[256]',8,8,'2','Low','','',NULL,NULL,NULL,NULL,'Level','','','','sun.png','sun.png','',1,'2008-08-27 00:19:48','2008-12-14 21:57:32',-1,0,-1,NULL,NULL,'|Outside|',0,NULL,'low',NULL,' Battery replaced at 2008-11-11 20:45:52 ','','','','','','','','',0,0,0,0,0,1,'2008-11-16 22:14:36',NULL,NULL,NULL,NULL,NULL,NULL),(6,'Livingroom Sensor','TH1[256]',7,2,'18.6','36','','',NULL,NULL,NULL,NULL,'°C','%','','','temp.gif','temp.gif','',1,'2008-07-31 13:35:50','2008-12-14 21:57:56',-1,0,0,NULL,NULL,'|Climate|Humidity|Temperature|',0,NULL,'',NULL,'','','','','','','','','',0,0,0,217,194,2,'2008-12-14 21:57:56',NULL,NULL,NULL,NULL,NULL,NULL),(9,'Bathroom Sensor','TH1[257]',7,3,'16.2','50','','',NULL,NULL,NULL,NULL,'°C','%','','','temp.gif','temp.gif','',1,'2008-07-31 13:36:06','2008-12-14 21:57:44',-1,0,0,NULL,NULL,'|Climate|Humidity|Temperature|',0,NULL,'',NULL,'','','','','','','','','',0,0,0,0,0,1,'2008-12-14 21:57:44',NULL,NULL,NULL,NULL,NULL,NULL),(10,'Fridge Sensor','TH1[258]',7,7,'6.8','70','','',NULL,NULL,NULL,NULL,'°C','%','','','temp.gif','temp.gif','',1,'2008-09-10 10:47:29','2008-12-14 21:57:36',-1,0,0,NULL,NULL,'|Climate|Humidity|Temperature|',-1,NULL,'',NULL,'','temp','humid','','','GAUGE','GAUGE','','',0,0,0,0,0,1,'2008-12-14 21:57:36',NULL,NULL,NULL,NULL,NULL,NULL),(11,'Outside Sensor','TH1[259]',7,8,'22.3','51','','',NULL,NULL,NULL,NULL,'°C','%','','','temp.gif','temp.gif','',1,'2008-09-09 16:00:58','2008-12-13 14:29:23',-1,0,0,NULL,NULL,'|Climate|Humidity|Outside|Temperature|',-1,NULL,'',NULL,'','temp','humid','','','GAUGE','GAUGE','','',0,0,0,0,0,1,'2008-12-13 14:29:23',NULL,NULL,NULL,NULL,NULL,NULL),(12,'Doorbell','D02',6,6,'','','',NULL,NULL,NULL,NULL,NULL,'','','',NULL,'button.gif','button.gif',NULL,2,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,0,NULL,NULL,'|Doors|',0,NULL,'',NULL,'http://www.waakzaamwonen.nl/catalog/pdf/sax35.pdf','','','',NULL,'','','',NULL,0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(13,'Harddrive /dev/sda','/dev/sda',11,10,'36','',NULL,NULL,NULL,NULL,NULL,NULL,'°C','',NULL,NULL,'hd.png','hd.png',NULL,4,'2008-09-06 14:01:08','2008-12-14 22:03:13',1,0,1,NULL,NULL,'|Server|',1,NULL,'',NULL,'','temp','',NULL,NULL,'GAUGE','',NULL,NULL,0,0,NULL,122,125,6,'2008-12-14 21:20:55',NULL,NULL,NULL,NULL,NULL,NULL),(16,'Rakker','192.168.100.4',13,2,'Sleeping','',NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'aibo.gif','aibo.gif',NULL,5,'2008-09-06 14:01:07','2010-11-04 13:42:30',1,0,1,NULL,NULL,'|',0,NULL,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(17,'SmartUPS','smartups1000',14,10,'Online','224.9',NULL,NULL,NULL,NULL,NULL,NULL,'','Volt',NULL,NULL,'ups.gif','ups.gif',NULL,6,'2008-09-07 19:55:53','2008-11-13 14:55:17',1,0,1,NULL,NULL,'|Server|',0,NULL,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-11-13 14:55:17',NULL,NULL,NULL,NULL,NULL,NULL),(18,'Kitchen Motion Sensor','M01',4,7,'No Motion','',NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-23 23:34:19','2008-12-14 20:34:00',1,0,1,NULL,NULL,'|Motion|Security|',0,NULL,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,115,62,2,'2008-12-14 20:33:59',NULL,NULL,NULL,NULL,NULL,NULL),(19,'Serverroom Temp','4D0000004FC78A26',15,10,'22.81','',NULL,NULL,NULL,NULL,NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',NULL,3,'2008-08-26 14:37:29','2008-12-14 21:57:45',1,0,0,NULL,NULL,'|Server|',0,NULL,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-14 21:54:45',NULL,NULL,NULL,NULL,NULL,NULL),(20,'Rainfall Sensor','',16,8,'','',NULL,NULL,NULL,NULL,NULL,NULL,'mm','',NULL,NULL,'rain.png','rain.png',NULL,3,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,0,NULL,NULL,'|Outside|',0,NULL,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(21,'Smoke Detector','DWS[C0CF54]S',17,5,'Idle','','','',NULL,NULL,NULL,NULL,'','','','','smoke.png','smoke.png','',1,'2008-11-24 15:55:22','2008-11-24 15:55:22',-1,0,-1,NULL,NULL,'|',0,NULL,'',NULL,'','','','','','','','','',0,0,0,0,0,1,'2008-11-24 15:55:22',NULL,NULL,NULL,NULL,NULL,NULL),(22,'Mailbox Sensor','DWS[323D34]S',1,6,'Open','Secure','','',NULL,NULL,NULL,NULL,'','','','','mail-on.png','mail-off.png','',1,'2008-09-03 20:27:09','2008-12-14 19:44:48',-1,0,-1,NULL,NULL,'|',0,NULL,'',NULL,'','','','','','','','','',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(23,'Front Door Sensor','DWS[D2DDD4]S',1,6,'Closed','Secure','','',NULL,NULL,NULL,NULL,'','','','','door-open.png','door-closed.png','',1,'2008-09-03 20:11:50','2008-12-14 20:28:23',-1,0,-1,NULL,NULL,'|Doors|Security|',0,NULL,'',NULL,'','','','','','','','','',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(24,'Kitchen Light Sensor','M02',5,7,'Dark','',NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-26 19:47:49','2008-12-14 16:32:00',1,0,1,NULL,NULL,'|Motion|',0,NULL,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,229,94,2,'2008-12-14 16:32:00',NULL,NULL,NULL,NULL,NULL,NULL),(25,'Hot Water','150008013A024910',15,17,'22.81','',NULL,NULL,NULL,NULL,NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',NULL,3,'2008-09-08 16:02:43','2008-12-14 21:57:46',1,0,0,NULL,NULL,'|HVAC|',1,NULL,'',NULL,'','temp','',NULL,NULL,'GAUGE','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-14 21:57:46',NULL,NULL,NULL,NULL,NULL,NULL),(27,'Toilet Motion Sensor','M03',4,4,'No Motion','',NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:37:49','2008-12-13 16:49:03',1,0,1,NULL,NULL,'|Motion|Security|',0,NULL,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-13 16:49:03',NULL,NULL,NULL,NULL,NULL,NULL),(28,'Toilet Light Sensor','M04',5,4,'Dark','',NULL,NULL,NULL,NULL,NULL,NULL,'','',NULL,NULL,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:40:57','2008-12-13 16:48:09',1,0,1,NULL,NULL,'|',0,NULL,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-13 16:48:08',NULL,NULL,NULL,NULL,NULL,NULL),(29,'My Phone','00:12:D1:A8:B6:10',18,16,'.','Away','','',NULL,NULL,NULL,NULL,'','','','','bt.png','bt.png',NULL,8,'0000-00-00 00:00:00','2008-11-15 16:20:20',-1,0,-1,NULL,NULL,'|Proximity|',0,NULL,'',NULL,'','','','','','','','','',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(30,'House Ventilation','A',19,7,'3','',NULL,NULL,NULL,NULL,NULL,NULL,'Speed','',NULL,NULL,'fan-on.gif','fan-off.gif',NULL,9,'2008-11-19 20:00:58','2008-12-02 16:27:30',0,0,0,NULL,NULL,'|HVAC|',0,NULL,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-11-19 20:02:02',NULL,NULL,NULL,NULL,NULL,NULL),(34,'Temp Sensor','08',12,7,'-22.1','',NULL,NULL,NULL,NULL,NULL,NULL,'°C','',NULL,NULL,'temp.gif','temp.gif',NULL,1,'2008-12-03 22:49:37','2008-12-03 22:49:37',0,0,0,NULL,NULL,'|',0,NULL,'',NULL,'','','',NULL,NULL,'','',NULL,NULL,0,0,NULL,0,0,1,'2008-12-03 22:49:37',NULL,NULL,NULL,NULL,NULL,NULL),(35,'Hygro Sensor','TH2[256]',26,1,'16.4','55','Normal','',NULL,NULL,NULL,NULL,'°C','%','','','','','',1,'2008-12-03 23:29:33','2008-12-04 15:32:25',-1,0,0,NULL,NULL,'|Climate|',0,NULL,'',NULL,'','','','','','','','','',0,0,0,0,0,1,'2008-12-04 15:32:25',NULL,NULL,NULL,NULL,NULL,NULL),(37,'DomotiGa Server','000D6F000023710F',28,10,'On','44.139','0.044','',NULL,NULL,NULL,NULL,'','W','kWh','','light-on.png','light-off.png',NULL,10,'2008-12-12 17:09:58','2008-12-14 21:46:57',-1,0,0,NULL,NULL,'|Server|',-1,NULL,'',NULL,'','','Watt','','','','GAUGE','','',0,0,NULL,0,0,1,'2008-12-14 21:46:57',NULL,NULL,NULL,NULL,NULL,NULL),(36,'Close-in Boiler','000D6F00001C8F22',27,7,'Off','0','0',NULL,NULL,NULL,NULL,NULL,'','','',NULL,'light-on.png','light-off.png',NULL,10,'2008-12-10 16:56:35','2008-12-14 21:46:57',-1,0,-1,NULL,NULL,'|All Lights|',0,NULL,'',NULL,'','','Watt','',NULL,'','GAUGE','',NULL,-1,0,NULL,0,0,1,'2008-12-14 21:46:57',NULL,NULL,NULL,NULL,NULL,NULL),(38,'Test FS20','1212',120,1,'','','','',NULL,NULL,NULL,NULL,'','','','','','','',32,NULL,NULL,0,0,0,0,0,'|',0,0,'',NULL,'','','','','','','','','',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devices` VALUES (1,'Porch Light','O02',10,6,'light-on.png','light-off.png',NULL,2,'2008-09-06 13:56:53','2008-12-14 18:00:00',-1,0,'|All Lights|Outside|','',NULL,'',-1,0,NULL,72,121,2,'2008-12-14 18:00:00',NULL,NULL,NULL,NULL,NULL,NULL),(2,'Power Usage','RFXMETER[512]M',9,13,'energy.png','energy.png','',1,'2008-08-31 22:39:31','2008-12-14 21:53:01',-1,0,'|Energy|','',NULL,'Measures power usage.',0,0,0,0,0,1,'2008-12-14 21:53:01',NULL,NULL,NULL,NULL,NULL,NULL),(3,'Laundryroom Light','E04',2,11,'light-on.png','light-off.png',NULL,2,'2008-08-26 23:12:16','2008-10-16 20:04:51',1,0,'|All Lights|','',NULL,'None',1,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(4,'Kitchen Light','E05',2,7,'light-on.png','light-off.png','',2,'2008-08-26 22:20:11','2008-10-16 20:04:52',-1,0,'|All Lights|','',NULL,'None',0,-1,0,259,182,3,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(5,'UV Sensor','UV1[256]',8,8,'sun.png','sun.png','',1,'2008-08-27 00:19:48','2008-12-14 21:57:32',-1,0,'|Outside|','low',NULL,' Battery replaced at 2008-11-11 20:45:52 ',0,0,0,0,0,1,'2008-11-16 22:14:36',NULL,NULL,NULL,NULL,NULL,NULL),(6,'Livingroom Sensor','TH1[256]',7,2,'temp.gif','temp.gif','',1,'2008-07-31 13:35:50','2008-12-14 21:57:56',-1,0,'|Climate|Humidity|Temperature|','',NULL,'',0,0,0,217,194,2,'2008-12-14 21:57:56',NULL,NULL,NULL,NULL,NULL,NULL),(9,'Bathroom Sensor','TH1[257]',7,3,'temp.gif','temp.gif','',1,'2008-07-31 13:36:06','2008-12-14 21:57:44',-1,0,'|Climate|Humidity|Temperature|','',NULL,'',0,0,0,0,0,1,'2008-12-14 21:57:44',NULL,NULL,NULL,NULL,NULL,NULL),(10,'Fridge Sensor','TH1[258]',7,7,'temp.gif','temp.gif','',1,'2008-09-10 10:47:29','2008-12-14 21:57:36',-1,0,'|Climate|Humidity|Temperature|','',NULL,'',0,0,0,0,0,1,'2008-12-14 21:57:36',NULL,NULL,NULL,NULL,NULL,NULL),(11,'Outside Sensor','TH1[259]',7,8,'temp.gif','temp.gif','',1,'2008-09-09 16:00:58','2008-12-13 14:29:23',-1,0,'|Climate|Humidity|Outside|Temperature|','',NULL,'',0,0,0,0,0,1,'2008-12-13 14:29:23',NULL,NULL,NULL,NULL,NULL,NULL),(12,'Doorbell','D02',6,6,'button.gif','button.gif',NULL,2,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,'|Doors|','',NULL,'http://www.waakzaamwonen.nl/catalog/pdf/sax35.pdf',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(13,'Harddrive /dev/sda','/dev/sda',11,10,'hd.png','hd.png',NULL,4,'2008-09-06 14:01:08','2008-12-14 22:03:13',1,0,'|Server|','',NULL,'',0,0,NULL,122,125,6,'2008-12-14 21:20:55',NULL,NULL,NULL,NULL,NULL,NULL),(16,'Rakker','192.168.100.4',13,2,'aibo.gif','aibo.gif',NULL,5,'2008-09-06 14:01:07','2010-11-04 13:42:30',1,0,'|','',NULL,'',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(17,'SmartUPS','smartups1000',14,10,'ups.gif','ups.gif',NULL,6,'2008-09-07 19:55:53','2008-11-13 14:55:17',1,0,'|Server|','',NULL,'',0,0,NULL,0,0,1,'2008-11-13 14:55:17',NULL,NULL,NULL,NULL,NULL,NULL),(18,'Kitchen Motion Sensor','M01',4,7,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-23 23:34:19','2008-12-14 20:34:00',1,0,'|Motion|Security|','',NULL,'',0,0,NULL,115,62,2,'2008-12-14 20:33:59',NULL,NULL,NULL,NULL,NULL,NULL),(19,'Serverroom Temp','4D0000004FC78A26',15,10,'temp.gif','temp.gif',NULL,3,'2008-08-26 14:37:29','2008-12-14 21:57:45',1,0,'|Server|','',NULL,'',0,0,NULL,0,0,1,'2008-12-14 21:54:45',NULL,NULL,NULL,NULL,NULL,NULL),(20,'Rainfall Sensor','',16,8,'rain.png','rain.png',NULL,3,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,'|Outside|','',NULL,'',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(21,'Smoke Detector','DWS[C0CF54]S',17,5,'smoke.png','smoke.png','',1,'2008-11-24 15:55:22','2008-11-24 15:55:22',-1,0,'|','',NULL,'',0,0,0,0,0,1,'2008-11-24 15:55:22',NULL,NULL,NULL,NULL,NULL,NULL),(22,'Mailbox Sensor','DWS[323D34]S',1,6,'mail-on.png','mail-off.png','',1,'2008-09-03 20:27:09','2008-12-14 19:44:48',-1,0,'|','',NULL,'',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(23,'Front Door Sensor','DWS[D2DDD4]S',1,6,'door-open.png','door-closed.png','',1,'2008-09-03 20:11:50','2008-12-14 20:28:23',-1,0,'|Doors|Security|','',NULL,'',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(24,'Kitchen Light Sensor','M02',5,7,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-26 19:47:49','2008-12-14 16:32:00',1,0,'|Motion|','',NULL,'',0,0,NULL,229,94,2,'2008-12-14 16:32:00',NULL,NULL,NULL,NULL,NULL,NULL),(25,'Hot Water','150008013A024910',15,17,'temp.gif','temp.gif',NULL,3,'2008-09-08 16:02:43','2008-12-14 21:57:46',1,0,'|HVAC|','',NULL,'',0,0,NULL,0,0,1,'2008-12-14 21:57:46',NULL,NULL,NULL,NULL,NULL,NULL),(27,'Toilet Motion Sensor','M03',4,4,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:37:49','2008-12-13 16:49:03',1,0,'|Motion|Security|','',NULL,'',0,0,NULL,0,0,1,'2008-12-13 16:49:03',NULL,NULL,NULL,NULL,NULL,NULL),(28,'Toilet Light Sensor','M04',5,4,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:40:57','2008-12-13 16:48:09',1,0,'|','',NULL,'',0,0,NULL,0,0,1,'2008-12-13 16:48:08',NULL,NULL,NULL,NULL,NULL,NULL),(29,'My Phone','00:12:D1:A8:B6:10',18,16,'bt.png','bt.png',NULL,8,'0000-00-00 00:00:00','2008-11-15 16:20:20',-1,0,'|Proximity|','',NULL,'',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(30,'House Ventilation','A',19,7,'fan-on.gif','fan-off.gif',NULL,9,'2008-11-19 20:00:58','2008-12-02 16:27:30',0,0,'|HVAC|','',NULL,'',0,0,NULL,0,0,1,'2008-11-19 20:02:02',NULL,NULL,NULL,NULL,NULL,NULL),(34,'Temp Sensor','08',12,7,'temp.gif','temp.gif',NULL,1,'2008-12-03 22:49:37','2008-12-03 22:49:37',0,0,'|','',NULL,'',0,0,NULL,0,0,1,'2008-12-03 22:49:37',NULL,NULL,NULL,NULL,NULL,NULL),(35,'Hygro Sensor','TH2[256]',26,1,'','','',1,'2008-12-03 23:29:33','2008-12-04 15:32:25',-1,0,'|Climate|','',NULL,'',0,0,0,0,0,1,'2008-12-04 15:32:25',NULL,NULL,NULL,NULL,NULL,NULL),(36,'Close-in Boiler','000D6F00001C8F22',27,7,'light-on.png','light-off.png',NULL,10,'2008-12-10 16:56:35','2008-12-14 21:46:57',-1,0,'|All Lights|','',NULL,'',-1,0,NULL,0,0,1,'2008-12-14 21:46:57',NULL,NULL,NULL,NULL,NULL,NULL),(37,'DomotiGa Server','000D6F000023710F',28,10,'light-on.png','light-off.png',NULL,10,'2008-12-12 17:09:58','2008-12-14 21:46:57',-1,0,'|Server|','',NULL,'',0,0,NULL,0,0,1,'2008-12-14 21:46:57',NULL,NULL,NULL,NULL,NULL,NULL),(38,'Test FS20','1212',120,1,'','','',32,NULL,NULL,0,0,'|','',NULL,'',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 /*!40000 ALTER TABLE `devices` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -460,7 +460,7 @@ CREATE TABLE `devices_bwired` (
   `devicelabel` varchar(16) DEFAULT NULL,
   `value` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=9 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -494,7 +494,7 @@ CREATE TABLE `devices_camera` (
   `passwd` varchar(64) DEFAULT NULL,
   `enabled` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=15 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=15 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -503,37 +503,8 @@ CREATE TABLE `devices_camera` (
 
 LOCK TABLES `devices_camera` WRITE;
 /*!40000 ALTER TABLE `devices_camera` DISABLE KEYS */;
-INSERT INTO `devices_camera` VALUES (1,'Example Local Video Cam','Video4Linux','tv:// -tv norm=auto:input=1:device=/dev/video0 -quiet','','','Sony VISCA','','Sony E31 on Dazzle s-video port',0,'','',-1),(2,'VideoServer Feed','Fetch Image','','http://192.168.1.70/image.jpg','','','','Channel #0 of IP9100',0,'','',-1),(3,'AXIS Camera','Stream MJPEG','','http://194.218.96.93/mjpg/video.mjpg','','','','Public AXIS Camera Somewhere',0,'','',-1),(14,'Example Local Video Cam 2','Video4Linux','tv:// -tv norm=pal:input=0:device=/dev/video0 -quiet','','','','','Elro wireless camera on Dazzle composite-video port',0,'','',-1),(7,'Public PTZ AXIS Camera','Stream MJPEG','-quiet','http://80.101.217.249:443/mjpg/video.mjpg','','AXIS API','http://80.101.217.249:443/axis-cgi/com/ptz.cgi?','Public PTZ AXIS Camera ;-)',0,'','',-1),(13,'Mobotix M1 Cam','Stream MJPEG','','http://82.79.20.52:40002/cgi-bin/faststream.jpg?.mjpg','','','','Mobotix Video Stream',0,'','',-1);
+INSERT INTO `devices_camera` VALUES (1,'Example Local Video Cam','Video4Linux','tv:// -tv norm=auto:input=1:device=/dev/video0 -quiet','','','Sony VISCA','','Sony E31 on Dazzle s-video port',0,'','',-1),(2,'VideoServer Feed','Fetch Image','','http://192.168.1.70/image.jpg','','','','Channel #0 of IP9100',0,'','',-1),(3,'AXIS Camera','Stream MJPEG','','http://194.218.96.93/mjpg/video.mjpg','','','','Public AXIS Camera Somewhere',0,'','',-1),(7,'Public PTZ AXIS Camera','Stream MJPEG','-quiet','http://80.101.217.249:443/mjpg/video.mjpg','','AXIS API','http://80.101.217.249:443/axis-cgi/com/ptz.cgi?','Public PTZ AXIS Camera ;-)',0,'','',-1),(13,'Mobotix M1 Cam','Stream MJPEG','','http://82.79.20.52:40002/cgi-bin/faststream.jpg?.mjpg','','','','Mobotix Video Stream',0,'','',-1),(14,'Example Local Video Cam 2','Video4Linux','tv:// -tv norm=pal:input=0:device=/dev/video0 -quiet','','','','','Elro wireless camera on Dazzle composite-video port',0,'','',-1);
 /*!40000 ALTER TABLE `devices_camera` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Table structure for table `devices_log`
---
-
-DROP TABLE IF EXISTS `devices_log`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `devices_log` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `deviceid` bigint(11) NOT NULL,
-  `value` varchar(32) NOT NULL,
-  `value2` varchar(32) DEFAULT NULL,
-  `value3` varchar(32) DEFAULT NULL,
-  `value4` varchar(32) DEFAULT NULL,
-  `lastchanged` datetime DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `devicesid_date` (`deviceid`,`lastchanged`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `devices_log`
---
-
-LOCK TABLES `devices_log` WRITE;
-/*!40000 ALTER TABLE `devices_log` DISABLE KEYS */;
-/*!40000 ALTER TABLE `devices_log` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -555,7 +526,7 @@ CREATE TABLE `devices_pachube` (
   `unittype` varchar(16) DEFAULT NULL,
   `value` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -591,7 +562,7 @@ CREATE TABLE `devices_zwave` (
   `speed` varchar(32) DEFAULT NULL,
   `classes` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -627,7 +598,7 @@ CREATE TABLE `devicetypes` (
   `label3` int(11) DEFAULT NULL,
   `label4` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=500 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=500 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -657,7 +628,7 @@ CREATE TABLE `devicetypes_homematic` (
   `type_code` varchar(4) DEFAULT NULL,
   `subtype_code` varchar(4) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=83 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=83 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -687,7 +658,7 @@ CREATE TABLE `dictionary` (
   `ModificationDate` char(12) NOT NULL,
   `FK_Users` int(11) NOT NULL,
   PRIMARY KEY (`RecID`)
-) ENGINE=MyISAM AUTO_INCREMENT=370 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=370 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -696,7 +667,7 @@ CREATE TABLE `dictionary` (
 
 LOCK TABLES `dictionary` WRITE;
 /*!40000 ALTER TABLE `dictionary` DISABLE KEYS */;
-INSERT INTO `dictionary` VALUES (127,'version','versie','Version','version','201002131249','201002131249',1),(129,'Login','Inloggen','Anmeldung','Connexion','201002131249','201002131249',1),(130,'Password','Wachtwoord','Passwort','Mot de passe','201002131249','201002131249',1),(131,'User not found !','Gebruiker niet gevonden!','User nicht gefunden!','L`utilisateur pas trouvé!','201002131249','201002131306',1),(132,'Filter','Filter','Filter','Filtre','201002131249','201002131249',1),(133,'View','Bekijk','Anzeigen','Affichage','201002131249','201002131252',1),(134,'First Name','Voornaam','Vorname','Prénom','201002131249','201002131249',1),(135,'Last Name','Achternaam','Nachname','Nom de famille','201002131249','201002131249',1),(136,'Home Email','HuisEmail','Heim Email','Maison Email','201002131249','201002131255',1),(137,'Home Telephone','Huistelefoon','Home Telefon','Téléphone à la maison','201002131249','201002131249',1),(138,'Home Mobile Phone','HuisGSM','Heim Handy','Maison GSM','201002131249','201002131256',1),(139,'Resultset','Resultaat','Ergebnismenge','ResultSet','201002131249','201002131257',1),(140,'Commands','Commando','Befehle','Commandes','201002131249','201002131249',1),(141,'Add','Toevoegen','Hinzufügen','Ajouter','201002131249','201002131249',1),(142,'Modify','Wijzigen','Ändern','Modifier','201002131249','201002131249',1),(143,'Copy','Kopiëren','Kopieren','Copier','201002131249','201002131249',1),(144,'Delete','Wissen','Löschen','Supprimer','201002131249','201002131249',1),(145,'Print','Afdrukken','Drucken','Imprimer','201002131249','201002131249',1),(146,'Select','Selecteer','Wählen Sie','Sélectionnez','201002131249','201002131249',1),(147,'Description','Beschrijving','Beschreibung','Description','201002131249','201002131249',1),(148,'Extension','Uitbreiding','Verlängerung','Extension','201002131249','201002131249',1),(149,'Remark','Opmerking','Bemerkung','Remarque','201002131249','201002131249',1),(150,'Last Modified','Laatst gewijzigd','Zuletzt geändert','Dernière mise à jour','201002131249','201002131249',1),(151,'Modified By','Gewijzigd door','Geändert von','Modifié par','201002131249','201002131249',1),(152,'US','US','US','US','201002131249','201002131307',1),(153,'NL','NL','NL','NL','201002131249','201002131249',1),(154,'DE','DE','DE','DE','201002131249','201002131249',1),(155,'FR','FR','FR','FR','201002131249','201002131249',1),(156,'Zipcode','Postcode','PLZ','Code postal','201002131249','201002131249',1),(157,'City','Stad','Stadt','Ville','201002131249','201002131249',1),(158,'Country','Land','Land','Pays','201002131249','201002131249',1),(159,'Name','Naam','Name','Nom','201002131249','201002131249',1),(160,'Street','Straat','Straße','Rue','201002131249','201002131257',1),(162,'Logged in as','Ingelogd als','Angemeldet als','Connecté en tant que','201002131249','201002131249',1),(163,'Settings','Instellingen','Einstellungen','Paramètres','201002131249','201002131249',1),(164,'Menu - Definition','Menu - Definitie','Menü - Definition','Menu - Définition','201002131249','201002131249',1),(165,'Cities - Administrate','Steden - Beheren','Städte - Verwalten','Villes - Administrer','201002131249','201002131249',1),(166,'Users - Administrate','Gebruikers - Beheren','Benutzer - Verwalten','Utilisateurs - Administrer','201002131249','201002131249',1),(167,'Icons - Library','Iconen - Bibliotheek','Icons - Bibliothek','Icônes - Bibliothèque','201002131249','201002131257',1),(168,'Dictionary','Woordenboek','Wörterbuch','Dictionnaire','201002131249','201002131249',1),(169,'Weather','Weer','Wetter','Temps','201002131249','201002131249',1),(170,'General','Algemeen','General','Général','201002131249','201002131249',1),(172,'Members - Administrate','Leden - Beheren','Mitglieder - Administration','Membres - Administrer','201002131249','201002131249',1),(173,'Your query results in more then 1000 items, continue ?','Uw zoekopdracht resulteert in meer dan 1000 artikelen, doorgaan?','Ihre Abfrage-Ergebnisse in mehr als 1000 Artikel, fortfahren?','Les résultats de votre requête dans plus de 1000 articles, continuer?','201002131250','201002131250',1),(174,'Yes','Ja','Ja','Oui','201002131250','201002131250',1),(175,'No','Nee','Nein','Non','201002131250','201002131250',1),(176,'Data','Data','Data','Data','201002131250','201002131250',1),(177,'By','Door','Von','Par','201002131250','201002131250',1),(178,'ID','ID','ID','ID','201002131250','201002131250',1),(179,'Created / Modified','Aangemaakt / Gewijzigd','Erstellt / Geändert','Créé / jour','201002131250','201002131250',1),(180,'Cancel','Annuleren','Abbrechen','Annuler','201002131250','201002131250',1),(181,'OK','OK','OK','OK','201002131250','201002131250',1),(182,'Street / Number','Straat / huisnummer','Straße / Hausnummer','Rue / Numéro','201002131251','201002131251',1),(183,'Zipcode / City','Postcode / Plaats','PLZ / Ort','Code postal / Ville','201002131251','201002131251',1),(184,'Website','Website','Website','Site','201002131251','201002131251',1),(185,'Birthday','Verjaardag','Geburtsdatum Tag','Jour de naissance','201002131251','201002131253',1),(186,'Browse','Bladeren','Navigieren','Parcourir','201002131251','201002131251',1),(187,'Clear','Wis','Klar','Clair','201002131251','201002131251',1),(188,'Personal','Persoonlijk','Personal','Personal','201002131251','201002131251',1),(189,'Repeat Password','Herhaal wachtwoord','Passwort wiederholen','Répéter Mot de passe','201002131251','201002131251',1),(190,'Home','Thuis','Heim','Maison','201002131251','201002131254',1),(191,'Telephone','Telefoon','Telefon','Téléphone','201002131251','201002131251',1),(192,'Mobile Phone','Mobiele Telefoon','Handy','Mobile Phone','201002131251','201002131251',1),(193,'Fax','Fax','Fax','Fax','201002131251','201002131251',1),(194,'Email','Email','E-Mail','Email','201002131251','201002151545',1),(195,'Work','Werk','Arbeit','Travailler','201002131251','201002131251',1),(196,'Send','Sturen','Senden','Envoyer','201002131251','201002131251',1),(197,'Server Name','Servernaam','Server Name','Nom du serveur','201002131251','201002131251',1),(198,'Server Port','Serverpoort','Server Port','Port du serveur','201002131251','201002131251',1),(199,'Encryption','Encryptie','Verschlüsselung','Cryptage','201002131251','201002131251',1),(200,'Server Protocol','Server Protocol','Server-Protokoll','Protocole du serveur','201002131251','201002131251',1),(201,'Receive','Ontvang','Empfangen','Recevoir','201002131251','201002131251',1),(202,'Communication','Communicatie','Mitteilung','Communication','201002131251','201002131251',1),(203,'Translate from internet','Vertalen van internet','Übersetzen von Internet','Traduire de l`internet','201002131251','201002131306',1),(204,'Weatherbug ID','WeatherBug ID','Weatherbug ID','WeatherBug ID','201002131407','201002131407',1),(205,'City Code','Stad Code','Stadt Code','Code de ville','201002131407','201002131435',1),(206,'Search','Zoeken','Suche','Recherche','201002131441','201002131441',1),(207,'Preview','Voorbeeld','Vorschau','Preview','201002131441','201002161840',1),(208,'Live Weather','Live Weer','Live Wetter','Météo Live','201002131442','201002151546',1),(209,'Weather Forecast','Weersvoorspelling','Wettervorhersage','Prévisions météorologiques','201002131442','201002131442',1),(210,'dew-point temperature:','dauwpunt temperatuur:','Taupunkttemperatur:','point de rosée:','201002131532','201002131532',1),(211,'Feels-like temperature:','Gevoels-temperatuur:','Feels-like Temperatur:','Se sent-comme la température:','201002131532','201002131609',1),(212,'Wind direction:','Windrichting:','Windrichtung:','Direction du vent:','201002131532','201002131532',1),(213,'Wind speed:','Windsnelheid:','Windgeschwindigkeit:','Vitesse du vent:','201002131532','201002131532',1),(214,'km/h','km/u','km/u','km/h','201002131532','201002131752',1),(215,'Humidity:','Vochtigheid:','Luftfeuchtigkeit:','Humidité:','201002131540','201002131540',1),(216,'Humidity (high):','Vochtigheid (hoog):','Luftfeuchtigkeit (hoch):','Humidité (élevé):','201002131540','201002131540',1),(217,'Humidity (low):','Vochtigheid (laag):','Luftfeuchtigkeit (niedrig):','Humidité (faible):','201002131540','201002131540',1),(218,'Pressure:','Druk:','Druck:','Pression:','201002131608','201002131608',1),(219,'Pressure (high):','Druk (hoog):','Druck (hoch):','(Haute pression):','201002131608','201002131608',1),(220,'Pressure (low):','Druk (laag):','Druck (niedrig):','Pression (faible):','201002131608','201002131610',1),(221,'Rain (this month):','Regen (deze maand):','Regen (in diesem Monat):','Pluie (ce mois-ci):','201002131608','201002132255',1),(222,'Rain (today):','Regen (vandaag):','Regen (heute):','Pluie (aujourd`hui):','201002131608','201002132255',1),(223,'Rain (this year):','Regen (dit jaar):','Regen (dieses Jahr):','Pluie (cette année):','201002131608','201002132255',1),(224,'Maximum:','Maximum:','Maximum:','Maximum:','201002131608','201002131608',1),(225,'Minimum:','Minimum:','Minimum:','Minimum:','201002131608','201002131608',1),(226,'Sunrise:','Zonsopgang:','Sonnenaufgang:','Lever du soleil:','201002131619','201002131619',1),(227,'Sunset:','Zonsondergang:','Sonnenuntergang:','Coucher du soleil:','201002131619','201002131619',1),(228,'Incorrect password !','Onjuist wachtwoord!','Falsches Passwort!','Mot de passe incorrect!','201002131702','201002131702',1),(229,'Wind gust direction:','Wind-vlagen richting:','Windböe Richtung:','Des rafales de vent de direction:','201002131751','201002131753',1),(230,'Wind gust speed:','Wind-vlagen snelheid:','Wind Windspitze:','Des rafales de vent de vitesse:','201002131751','201002131753',1),(344,'Date','Datum','Datum','Date','201002151626','201002151626',1),(345,'TV Channels','TV-kanalen','TV-Kanäle','Chaînes TV','201002151927','201002151927',1),(346,'Program Categories','Programma Categorieën','Programm-Kategorien','Catégories de Programmes','201002151927','201002151927',1),(232,'Average','Gemiddeld','Durchschnitt','Moyenne','201002131759','201002131759',1),(233,'Moon','Maan','Mond','Lune','201002131759','201002131759',1),(248,'Satellite images','Satellietbeelden','Satellitenbilder','Images satellite','201002141033','201002141033',1),(235,'Access Denied to given URL !','Toegang geweigerd tot bepaalde URL!','Zugang zu den angegebenen URL verweigert!','Accès refusé à l`URL donnée!','201002132040','201002132254',1),(236,'Sunday','Zondag','Sonntag','Dimanche','201002132221','201002132221',1),(237,'Monday','Maandag','Montag','Lundi','201002132221','201002132221',1),(238,'Tuesday','Dinsdag','Dienstag','Mardi','201002132221','201002132221',1),(239,'Wednesday','Woensdag','Mittwoch','Mercredi','201002132221','201002132221',1),(240,'Thursday','Donderdag','Donnerstag','Jeudi','201002132221','201002132221',1),(241,'Friday','Vrijdag','Freitag','Vendredi','201002132221','201002132221',1),(242,'Saturday','Zaterdag','Samstag','Samedi','201002132221','201002132221',1),(243,'High:','Hoog:','Hoch:','High:','201002132224','201002132225',1),(244,'Low:','Laag:','Niedrig:','Low:','201002132224','201002132225',1),(249,'Satellite','Satelliet','Satellite','Satellite','201002141041','201002141041',1),(250,'Image files','Afbeeldingsbestanden','Image-Dateien','Les fichiers d`image','201002141644','201002151547',1),(251,'Please select an image ...','Selecteer een afbeelding ...','Bitte wählen Sie ein Bild ...','S`il vous plaît sélectionnez une image ...','201002141644','201002151549',1),(252,'TV Guide','TV Gids','TV Guide','TV Guide','201002141647','201002141647',1),(253,'XML Grab Command','XML Grab Command','XML Grab Command','XML Grab Command','201002141925','201002141925',1),(254,'Info','Info','Info','Info','201002141925','201002141925',1),(255,'Grab','Grab','Grab','Grab','201002141925','201002141925',1),(256,'XML File Location','XML-bestand Locatie','XML-File Location','Emplacement du fichier XML','201002141925','201002141925',1),(271,'News','Nieuws','News','Nouvelles','201002151520','201002151520',1),(272,'Series','Series','Serie','Série','201002151520','201002151520',1),(273,'Interests','Interesses','Interessen','Centres d`intérêt','201002151520','201002151548',1),(274,'Sport','Sport','Sport','Sport','201002151520','201002151520',1),(258,'EPG - Valid from:','EPG - Geldig van:','EPG - gültig ab:','EPG - Valable à partir de:','201002142026','201002142026',1),(259,'EPG - Valid until:','EPG - Geldig tot:','EPG - Gültig bis:','EPG - Valide jusqu`au:','201002142026','201002151547',1),(260,'Identifier:','Identifier:','Identifier:','Identifier:','201002142026','201002142026',1),(261,'Summary:','Samenvatting:','Zusammenfassung:','Résumé:','201002142026','201002142026',1),(262,'Channels and','Kanalen en','Kanäle und','Chaînes et','201002151234','201002151234',1),(263,'Programs found !','Programmas gevonden!','Programme gefunden!','Programmes trouvés!','201002151234','201002151320',1),(264,'Downloading XML file ...','XML-bestand downloaden ...','XML-Datei herunter zu laden ...','Téléchargement de fichier XML ...','201002151306','201002151306',1),(265,'Parsing XML file ...','Verwerken XML-bestand ...','Parsen von XML-Datei ...','L`analyse du fichier XML ...','201002151307','201002151547',1),(278,'Current Affairs','Actualiteit','Current Affairs','Faits et événements','201002151520','201002151542',1),(279,'Documentary','Documentaire','Dokumentarfilm','Documentaire','201002151520','201002151520',1),(275,'Shows','Shows','Shows','Spectacles','201002151520','201002151520',1),(276,'Varia','Varia','Varia','Varia','201002151520','201002151520',1),(277,'Game Show','Spelshow','Game Show','Game Show','201002151520','201002151520',1),(270,'It can take a few minutes before the download and processing is completed, continue ?','Het kan een paar minuten duren voordat de download en de verwerking is voltooid, doorgaan?','Es kann einige Minuten dauern, bevor der Download und die Verarbeitung beendet ist, fahren Sie?','Il peut s`écouler quelques minutes avant le téléchargement et le traitement terminé, continuer?','201002151318','201002151548',1),(280,'Natural World','Natural World','Natural World','Natural World','201002151520','201002151520',1),(281,'Crime','Misdaad','Crime','Crime','201002151520','201002151542',1),(282,'Drama','Drama','Drama','Drame','201002151520','201002151520',1),(283,'Cookery','Kokkerellen','Cookery','Cookery','201002151520','201002151542',1),(284,'Winter Sports','Wintersport','Wintersport','Sports d`hiver','201002151520','201002151549',1),(285,'Reality TV','Reality TV','Reality TV','Reality TV','201002151520','201002151520',1),(286,'Football','Voetbal','Fußball','Football','201002151520','201002151520',1),(287,'Film','Film','Film','Film','201002151520','201002151520',1),(288,'Children','Kinderen','Kinder','Enfants','201002151520','201002151520',1),(289,'Music & Arts','Muziek & kunst','Musik & Kunst','Music & Arts','201002151520','201002151545',1),(290,'Religious','Religieus','Religious','Religieux','201002151520','201002151520',1),(291,'Comedy','Komedie','Comedy','Comédie','201002151520','201002151542',1),(292,'Business','Zakelijk','Geschäft','Entreprise','201002151520','201002151555',1),(293,'Cricket','Cricket','Cricket','Cricket','201002151520','201002151520',1),(294,'Movie','Film','Movie','Movie','201002151520','201002151520',1),(295,'Animation','Animatie','Animation','Animation','201002151520','201002151520',1),(296,'Drama Series','Dramaserie','Drama-Serie','Série dramatique','201002151520','201002151520',1),(297,'Entertainment','Entertainment','Entertainment','Divertissement','201002151520','201002151520',1),(298,'Magazine','Magazine','Magazine','Magazine','201002151520','201002151520',1),(299,'Jazz','Jazz','Jazz','Jazz','201002151520','201002151520',1),(300,'Classical Music','Klassieke Muziek','Klassische Musik','Musique classique','201002151520','201002151520',1),(301,'Pop and Rock','Pop en Rock','Pop-und Rock','Pop et Rock','201002151520','201002151520',1),(302,'Action','Actie','Action','Action','201002151520','201002151520',1),(303,'Education','Onderwijs','Bildung','Education','201002151520','201002151520',1),(304,'Science Fiction','Sciencefiction','Science Fiction','Science Fiction','201002151520','201002151520',1),(305,'Fantasy','Fantasie','Fantasy','Fantasy','201002151520','201002151543',1),(306,'Adult','Volwassen','Adult','Adulte','201002151520','201002151541',1),(307,'Horror','Horror','Horror','Horreur','201002151520','201002151520',1),(308,'Cinema','Bioscoop','Kino','Cinéma','201002151520','201002151541',1),(309,'Fashion','Mode','Mode','Mode','201002151520','201002151520',1),(310,'Architecture','Architectuur','Architektur','Architecture','201002151520','201002151520',1),(311,'Science','Wetenschap','Wissenschaft','Science','201002151520','201002151520',1),(312,'Athletics','Atletiek','Leichtathletik','Athlétisme','201002151520','201002151520',1),(313,'Health','Gezondheid','Gesundheit','Santé','201002151520','201002151520',1),(314,'Travel','Reizen','Reisen','Voyage','201002151520','201002151520',1),(315,'Consumer','Consument','Consumer','Consommateurs','201002151520','201002151520',1),(316,'Environment','Omgeving','Umgebung','Environnement','201002151520','201002151520',1),(317,'History','Geschiedenis','Geschichte','Histoire','201002151520','201002151520',1),(318,'Antiques','Antiek','Antiquitäten','Antiquités','201002151520','201002151520',1),(319,'Gardening','Tuinieren','Gardening','Jardinage','201002151520','201002151520',1),(320,'Motor Sports','Motorsport','Motor Sports','Sports automobiles','201002151520','201002151520',1),(321,'Art','Kunst','Kunst','Art','201002151520','201002151541',1),(322,'Ballet','Ballet','Ballett','Ballet','201002151520','201002151520',1),(323,'Opera','Opera','Opera','Opera','201002151520','201002151520',1),(324,'Dancing','Dansen','Dancing','Dancing','201002151520','201002151543',1),(325,'Leisure','Vrije tijd','Freizeit','Loisirs','201002151521','201002151546',1),(326,'Shopping','Winkelen','Shopping','Shopping','201002151521','201002151521',1),(327,'Film Shorts','Kortfilm','Film Shorts','Film Shorts','201002151521','201002151545',1),(328,'Equestrian','Paardensport','Pferdesport','Sports équestres','201002151521','201002151521',1),(329,'Civilisation','Beschaving','Civilisation','Civilisation','201002151521','201002151542',1),(330,'Stage Play','Toneelstuk','Sprechtheater','Pièce de théâtre','201002151521','201002151521',1),(331,'War','Oorlog','War','Guerre','201002151521','201002151521',1),(332,'Classic','Klassiek','Classic','Classic','201002151521','201002151542',1),(333,'Sitcoms','Sitcoms','Sitcoms','Sitcoms','201002151521','201002151521',1),(334,'Youth Culture','Jeugd Cultuur','Jugend Kultur','Youth Culture','201002151521','201002151521',1),(335,'Dance Music','Dans muziek','Dance Music','Dance Music','201002151522','201002151543',1),(336,'Talk Show','Praatprogramma','Talk Show','Talk Show','201002151522','201002151544',1),(337,'Martial Arts','Vechtsport','Martial Arts','Arts Martiaux','201002151522','201002151522',1),(338,'Golf','Golf','Golf','Golf','201002151522','201002151522',1),(339,'Processing Categories ...','Verwerking rubrieken ...','Processing Kategorien ...','Traitement de catégories ...','201002151523','201002151523',1),(340,'Processing SubCategories ...','Verwerking SubCategories ...','Processing SubCategories ...','Sous-catégories de traitement ...','201002151523','201002151523',1),(341,'Channels','Kanalen','Kanäle','Chaînes','201002151523','201002151523',1),(342,'Main Categories and','Hoofdcategorieën en','Hauptkategorien und','Principales catégories et','201002151523','201002151523',1),(343,'Programs processed !','Programmas verwerkt!','Programme bearbeitet!','Programmes traités!','201002151523','201002151553',1),(347,'Use','Gebruiken','Verwenden','Utiliser','201002152032','201002152032',1),(348,'Channel Name','Kanaal Naam','Channel Name','Channel Name','201002152032','201002152032',1),(351,'Sorting Order','Volgorde','Sortierreihenfolge','Lu0026#39;ordre de tri','201002152034','201002152034',1),(350,'Program Sub-Categories','Programma Sub-Categorieën','Programm Sub-Kategorien','Sous-Catégories','201002152032','201002152032',1),(352,'Program','Programma','Programm','Programme','201002152120','201002152120',1),(353,'Category','Categorie','Kategorie','Catégorie','201002152120','201002152120',1),(354,'Sub-Category','Subcategorie','Sub-Kategorie','Sous-catégorie','201002152120','201002152120',1),(355,'Summary','Samenvatting','Zusammenfassung','Sommaire','201002152120','201002152120',1),(356,'Channel ID','Kanaal ID','Sender ID','ID de canal','201002161152','201002161830',1),(357,'Category Name','Categorienaam','Kategorie Name','Nom de la catégorie','201002161514','201002161829',1),(358,'Back Color','Achtergrondkleur','Zurück Farbe','Couleur d`arrière','201002161515','201002161829',1),(359,'Fore Color','Voorgrondkleur','Textfarbe','Fore Color','201002161516','201002161831',1),(360,'Select Color','Selecteer kleur','Farbe auswählen','Sélectionner la couleur','201002161556','201002161830',1),(361,'Please select a foreground color ...','Selecteer een voorgrondkleur ...','Bitte wählen Sie eine Vordergrundfarbe ...','S`il vous plaît choisir une couleur de premier plan ...','201002161620','201002161831',1),(362,'Please select a background color ...','Kies een achtergrond kleur ...','Bitte wählen Sie eine Hintergrundfarbe ...','S`il vous plaît sélectionnez une couleur de fond ...','201002161620','201002161830',1),(363,'Program Name','Programmanaam','Programmname','Nom du programme','201002162120','201002162120',1),(364,'Begins at ...','Begint om ...','Beginnt am ...','Commence à ...','201002162120','201002162127',1),(365,'Ends at ...','Eindigt om ...','Endet am ...','Se termine à ...','201002162120','201002162128',1),(366,'Program Description','Programma Beschrijving','Programmbeschreibung','Description du programme','201002171814','201002171814',1),(367,'Channel','Kanaal','Channel','Channel','201002171815','201002171815',1),(368,'Results for search [','Resultaten voor zoeken [','Ergebnisse für die Suche [','Résultats pour la recherche [','201002171815','201002171815',1),(369,'In the period','In de periode','In der Zeit','Dans la période','201002171815','201002171815',1);
+INSERT INTO `dictionary` VALUES (127,'version','versie','Version','version','201002131249','201002131249',1),(129,'Login','Inloggen','Anmeldung','Connexion','201002131249','201002131249',1),(130,'Password','Wachtwoord','Passwort','Mot de passe','201002131249','201002131249',1),(131,'User not found !','Gebruiker niet gevonden!','User nicht gefunden!','L`utilisateur pas trouvé!','201002131249','201002131306',1),(132,'Filter','Filter','Filter','Filtre','201002131249','201002131249',1),(133,'View','Bekijk','Anzeigen','Affichage','201002131249','201002131252',1),(134,'First Name','Voornaam','Vorname','Prénom','201002131249','201002131249',1),(135,'Last Name','Achternaam','Nachname','Nom de famille','201002131249','201002131249',1),(136,'Home Email','HuisEmail','Heim Email','Maison Email','201002131249','201002131255',1),(137,'Home Telephone','Huistelefoon','Home Telefon','Téléphone à la maison','201002131249','201002131249',1),(138,'Home Mobile Phone','HuisGSM','Heim Handy','Maison GSM','201002131249','201002131256',1),(139,'Resultset','Resultaat','Ergebnismenge','ResultSet','201002131249','201002131257',1),(140,'Commands','Commando','Befehle','Commandes','201002131249','201002131249',1),(141,'Add','Toevoegen','Hinzufügen','Ajouter','201002131249','201002131249',1),(142,'Modify','Wijzigen','Ändern','Modifier','201002131249','201002131249',1),(143,'Copy','Kopiëren','Kopieren','Copier','201002131249','201002131249',1),(144,'Delete','Wissen','Löschen','Supprimer','201002131249','201002131249',1),(145,'Print','Afdrukken','Drucken','Imprimer','201002131249','201002131249',1),(146,'Select','Selecteer','Wählen Sie','Sélectionnez','201002131249','201002131249',1),(147,'Description','Beschrijving','Beschreibung','Description','201002131249','201002131249',1),(148,'Extension','Uitbreiding','Verlängerung','Extension','201002131249','201002131249',1),(149,'Remark','Opmerking','Bemerkung','Remarque','201002131249','201002131249',1),(150,'Last Modified','Laatst gewijzigd','Zuletzt geändert','Dernière mise à jour','201002131249','201002131249',1),(151,'Modified By','Gewijzigd door','Geändert von','Modifié par','201002131249','201002131249',1),(152,'US','US','US','US','201002131249','201002131307',1),(153,'NL','NL','NL','NL','201002131249','201002131249',1),(154,'DE','DE','DE','DE','201002131249','201002131249',1),(155,'FR','FR','FR','FR','201002131249','201002131249',1),(156,'Zipcode','Postcode','PLZ','Code postal','201002131249','201002131249',1),(157,'City','Stad','Stadt','Ville','201002131249','201002131249',1),(158,'Country','Land','Land','Pays','201002131249','201002131249',1),(159,'Name','Naam','Name','Nom','201002131249','201002131249',1),(160,'Street','Straat','Straße','Rue','201002131249','201002131257',1),(162,'Logged in as','Ingelogd als','Angemeldet als','Connecté en tant que','201002131249','201002131249',1),(163,'Settings','Instellingen','Einstellungen','Paramètres','201002131249','201002131249',1),(164,'Menu - Definition','Menu - Definitie','Menü - Definition','Menu - Définition','201002131249','201002131249',1),(165,'Cities - Administrate','Steden - Beheren','Städte - Verwalten','Villes - Administrer','201002131249','201002131249',1),(166,'Users - Administrate','Gebruikers - Beheren','Benutzer - Verwalten','Utilisateurs - Administrer','201002131249','201002131249',1),(167,'Icons - Library','Iconen - Bibliotheek','Icons - Bibliothek','Icônes - Bibliothèque','201002131249','201002131257',1),(168,'Dictionary','Woordenboek','Wörterbuch','Dictionnaire','201002131249','201002131249',1),(169,'Weather','Weer','Wetter','Temps','201002131249','201002131249',1),(170,'General','Algemeen','General','Général','201002131249','201002131249',1),(172,'Members - Administrate','Leden - Beheren','Mitglieder - Administration','Membres - Administrer','201002131249','201002131249',1),(173,'Your query results in more then 1000 items, continue ?','Uw zoekopdracht resulteert in meer dan 1000 artikelen, doorgaan?','Ihre Abfrage-Ergebnisse in mehr als 1000 Artikel, fortfahren?','Les résultats de votre requête dans plus de 1000 articles, continuer?','201002131250','201002131250',1),(174,'Yes','Ja','Ja','Oui','201002131250','201002131250',1),(175,'No','Nee','Nein','Non','201002131250','201002131250',1),(176,'Data','Data','Data','Data','201002131250','201002131250',1),(177,'By','Door','Von','Par','201002131250','201002131250',1),(178,'ID','ID','ID','ID','201002131250','201002131250',1),(179,'Created / Modified','Aangemaakt / Gewijzigd','Erstellt / Geändert','Créé / jour','201002131250','201002131250',1),(180,'Cancel','Annuleren','Abbrechen','Annuler','201002131250','201002131250',1),(181,'OK','OK','OK','OK','201002131250','201002131250',1),(182,'Street / Number','Straat / huisnummer','Straße / Hausnummer','Rue / Numéro','201002131251','201002131251',1),(183,'Zipcode / City','Postcode / Plaats','PLZ / Ort','Code postal / Ville','201002131251','201002131251',1),(184,'Website','Website','Website','Site','201002131251','201002131251',1),(185,'Birthday','Verjaardag','Geburtsdatum Tag','Jour de naissance','201002131251','201002131253',1),(186,'Browse','Bladeren','Navigieren','Parcourir','201002131251','201002131251',1),(187,'Clear','Wis','Klar','Clair','201002131251','201002131251',1),(188,'Personal','Persoonlijk','Personal','Personal','201002131251','201002131251',1),(189,'Repeat Password','Herhaal wachtwoord','Passwort wiederholen','Répéter Mot de passe','201002131251','201002131251',1),(190,'Home','Thuis','Heim','Maison','201002131251','201002131254',1),(191,'Telephone','Telefoon','Telefon','Téléphone','201002131251','201002131251',1),(192,'Mobile Phone','Mobiele Telefoon','Handy','Mobile Phone','201002131251','201002131251',1),(193,'Fax','Fax','Fax','Fax','201002131251','201002131251',1),(194,'Email','Email','E-Mail','Email','201002131251','201002151545',1),(195,'Work','Werk','Arbeit','Travailler','201002131251','201002131251',1),(196,'Send','Sturen','Senden','Envoyer','201002131251','201002131251',1),(197,'Server Name','Servernaam','Server Name','Nom du serveur','201002131251','201002131251',1),(198,'Server Port','Serverpoort','Server Port','Port du serveur','201002131251','201002131251',1),(199,'Encryption','Encryptie','Verschlüsselung','Cryptage','201002131251','201002131251',1),(200,'Server Protocol','Server Protocol','Server-Protokoll','Protocole du serveur','201002131251','201002131251',1),(201,'Receive','Ontvang','Empfangen','Recevoir','201002131251','201002131251',1),(202,'Communication','Communicatie','Mitteilung','Communication','201002131251','201002131251',1),(203,'Translate from internet','Vertalen van internet','Übersetzen von Internet','Traduire de l`internet','201002131251','201002131306',1),(204,'Weatherbug ID','WeatherBug ID','Weatherbug ID','WeatherBug ID','201002131407','201002131407',1),(205,'City Code','Stad Code','Stadt Code','Code de ville','201002131407','201002131435',1),(206,'Search','Zoeken','Suche','Recherche','201002131441','201002131441',1),(207,'Preview','Voorbeeld','Vorschau','Preview','201002131441','201002161840',1),(208,'Live Weather','Live Weer','Live Wetter','Météo Live','201002131442','201002151546',1),(209,'Weather Forecast','Weersvoorspelling','Wettervorhersage','Prévisions météorologiques','201002131442','201002131442',1),(210,'dew-point temperature:','dauwpunt temperatuur:','Taupunkttemperatur:','point de rosée:','201002131532','201002131532',1),(211,'Feels-like temperature:','Gevoels-temperatuur:','Feels-like Temperatur:','Se sent-comme la température:','201002131532','201002131609',1),(212,'Wind direction:','Windrichting:','Windrichtung:','Direction du vent:','201002131532','201002131532',1),(213,'Wind speed:','Windsnelheid:','Windgeschwindigkeit:','Vitesse du vent:','201002131532','201002131532',1),(214,'km/h','km/u','km/u','km/h','201002131532','201002131752',1),(215,'Humidity:','Vochtigheid:','Luftfeuchtigkeit:','Humidité:','201002131540','201002131540',1),(216,'Humidity (high):','Vochtigheid (hoog):','Luftfeuchtigkeit (hoch):','Humidité (élevé):','201002131540','201002131540',1),(217,'Humidity (low):','Vochtigheid (laag):','Luftfeuchtigkeit (niedrig):','Humidité (faible):','201002131540','201002131540',1),(218,'Pressure:','Druk:','Druck:','Pression:','201002131608','201002131608',1),(219,'Pressure (high):','Druk (hoog):','Druck (hoch):','(Haute pression):','201002131608','201002131608',1),(220,'Pressure (low):','Druk (laag):','Druck (niedrig):','Pression (faible):','201002131608','201002131610',1),(221,'Rain (this month):','Regen (deze maand):','Regen (in diesem Monat):','Pluie (ce mois-ci):','201002131608','201002132255',1),(222,'Rain (today):','Regen (vandaag):','Regen (heute):','Pluie (aujourd`hui):','201002131608','201002132255',1),(223,'Rain (this year):','Regen (dit jaar):','Regen (dieses Jahr):','Pluie (cette année):','201002131608','201002132255',1),(224,'Maximum:','Maximum:','Maximum:','Maximum:','201002131608','201002131608',1),(225,'Minimum:','Minimum:','Minimum:','Minimum:','201002131608','201002131608',1),(226,'Sunrise:','Zonsopgang:','Sonnenaufgang:','Lever du soleil:','201002131619','201002131619',1),(227,'Sunset:','Zonsondergang:','Sonnenuntergang:','Coucher du soleil:','201002131619','201002131619',1),(228,'Incorrect password !','Onjuist wachtwoord!','Falsches Passwort!','Mot de passe incorrect!','201002131702','201002131702',1),(229,'Wind gust direction:','Wind-vlagen richting:','Windböe Richtung:','Des rafales de vent de direction:','201002131751','201002131753',1),(230,'Wind gust speed:','Wind-vlagen snelheid:','Wind Windspitze:','Des rafales de vent de vitesse:','201002131751','201002131753',1),(232,'Average','Gemiddeld','Durchschnitt','Moyenne','201002131759','201002131759',1),(233,'Moon','Maan','Mond','Lune','201002131759','201002131759',1),(235,'Access Denied to given URL !','Toegang geweigerd tot bepaalde URL!','Zugang zu den angegebenen URL verweigert!','Accès refusé à l`URL donnée!','201002132040','201002132254',1),(236,'Sunday','Zondag','Sonntag','Dimanche','201002132221','201002132221',1),(237,'Monday','Maandag','Montag','Lundi','201002132221','201002132221',1),(238,'Tuesday','Dinsdag','Dienstag','Mardi','201002132221','201002132221',1),(239,'Wednesday','Woensdag','Mittwoch','Mercredi','201002132221','201002132221',1),(240,'Thursday','Donderdag','Donnerstag','Jeudi','201002132221','201002132221',1),(241,'Friday','Vrijdag','Freitag','Vendredi','201002132221','201002132221',1),(242,'Saturday','Zaterdag','Samstag','Samedi','201002132221','201002132221',1),(243,'High:','Hoog:','Hoch:','High:','201002132224','201002132225',1),(244,'Low:','Laag:','Niedrig:','Low:','201002132224','201002132225',1),(248,'Satellite images','Satellietbeelden','Satellitenbilder','Images satellite','201002141033','201002141033',1),(249,'Satellite','Satelliet','Satellite','Satellite','201002141041','201002141041',1),(250,'Image files','Afbeeldingsbestanden','Image-Dateien','Les fichiers d`image','201002141644','201002151547',1),(251,'Please select an image ...','Selecteer een afbeelding ...','Bitte wählen Sie ein Bild ...','S`il vous plaît sélectionnez une image ...','201002141644','201002151549',1),(252,'TV Guide','TV Gids','TV Guide','TV Guide','201002141647','201002141647',1),(253,'XML Grab Command','XML Grab Command','XML Grab Command','XML Grab Command','201002141925','201002141925',1),(254,'Info','Info','Info','Info','201002141925','201002141925',1),(255,'Grab','Grab','Grab','Grab','201002141925','201002141925',1),(256,'XML File Location','XML-bestand Locatie','XML-File Location','Emplacement du fichier XML','201002141925','201002141925',1),(258,'EPG - Valid from:','EPG - Geldig van:','EPG - gültig ab:','EPG - Valable à partir de:','201002142026','201002142026',1),(259,'EPG - Valid until:','EPG - Geldig tot:','EPG - Gültig bis:','EPG - Valide jusqu`au:','201002142026','201002151547',1),(260,'Identifier:','Identifier:','Identifier:','Identifier:','201002142026','201002142026',1),(261,'Summary:','Samenvatting:','Zusammenfassung:','Résumé:','201002142026','201002142026',1),(262,'Channels and','Kanalen en','Kanäle und','Chaînes et','201002151234','201002151234',1),(263,'Programs found !','Programmas gevonden!','Programme gefunden!','Programmes trouvés!','201002151234','201002151320',1),(264,'Downloading XML file ...','XML-bestand downloaden ...','XML-Datei herunter zu laden ...','Téléchargement de fichier XML ...','201002151306','201002151306',1),(265,'Parsing XML file ...','Verwerken XML-bestand ...','Parsen von XML-Datei ...','L`analyse du fichier XML ...','201002151307','201002151547',1),(270,'It can take a few minutes before the download and processing is completed, continue ?','Het kan een paar minuten duren voordat de download en de verwerking is voltooid, doorgaan?','Es kann einige Minuten dauern, bevor der Download und die Verarbeitung beendet ist, fahren Sie?','Il peut s`écouler quelques minutes avant le téléchargement et le traitement terminé, continuer?','201002151318','201002151548',1),(271,'News','Nieuws','News','Nouvelles','201002151520','201002151520',1),(272,'Series','Series','Serie','Série','201002151520','201002151520',1),(273,'Interests','Interesses','Interessen','Centres d`intérêt','201002151520','201002151548',1),(274,'Sport','Sport','Sport','Sport','201002151520','201002151520',1),(275,'Shows','Shows','Shows','Spectacles','201002151520','201002151520',1),(276,'Varia','Varia','Varia','Varia','201002151520','201002151520',1),(277,'Game Show','Spelshow','Game Show','Game Show','201002151520','201002151520',1),(278,'Current Affairs','Actualiteit','Current Affairs','Faits et événements','201002151520','201002151542',1),(279,'Documentary','Documentaire','Dokumentarfilm','Documentaire','201002151520','201002151520',1),(280,'Natural World','Natural World','Natural World','Natural World','201002151520','201002151520',1),(281,'Crime','Misdaad','Crime','Crime','201002151520','201002151542',1),(282,'Drama','Drama','Drama','Drame','201002151520','201002151520',1),(283,'Cookery','Kokkerellen','Cookery','Cookery','201002151520','201002151542',1),(284,'Winter Sports','Wintersport','Wintersport','Sports d`hiver','201002151520','201002151549',1),(285,'Reality TV','Reality TV','Reality TV','Reality TV','201002151520','201002151520',1),(286,'Football','Voetbal','Fußball','Football','201002151520','201002151520',1),(287,'Film','Film','Film','Film','201002151520','201002151520',1),(288,'Children','Kinderen','Kinder','Enfants','201002151520','201002151520',1),(289,'Music & Arts','Muziek & kunst','Musik & Kunst','Music & Arts','201002151520','201002151545',1),(290,'Religious','Religieus','Religious','Religieux','201002151520','201002151520',1),(291,'Comedy','Komedie','Comedy','Comédie','201002151520','201002151542',1),(292,'Business','Zakelijk','Geschäft','Entreprise','201002151520','201002151555',1),(293,'Cricket','Cricket','Cricket','Cricket','201002151520','201002151520',1),(294,'Movie','Film','Movie','Movie','201002151520','201002151520',1),(295,'Animation','Animatie','Animation','Animation','201002151520','201002151520',1),(296,'Drama Series','Dramaserie','Drama-Serie','Série dramatique','201002151520','201002151520',1),(297,'Entertainment','Entertainment','Entertainment','Divertissement','201002151520','201002151520',1),(298,'Magazine','Magazine','Magazine','Magazine','201002151520','201002151520',1),(299,'Jazz','Jazz','Jazz','Jazz','201002151520','201002151520',1),(300,'Classical Music','Klassieke Muziek','Klassische Musik','Musique classique','201002151520','201002151520',1),(301,'Pop and Rock','Pop en Rock','Pop-und Rock','Pop et Rock','201002151520','201002151520',1),(302,'Action','Actie','Action','Action','201002151520','201002151520',1),(303,'Education','Onderwijs','Bildung','Education','201002151520','201002151520',1),(304,'Science Fiction','Sciencefiction','Science Fiction','Science Fiction','201002151520','201002151520',1),(305,'Fantasy','Fantasie','Fantasy','Fantasy','201002151520','201002151543',1),(306,'Adult','Volwassen','Adult','Adulte','201002151520','201002151541',1),(307,'Horror','Horror','Horror','Horreur','201002151520','201002151520',1),(308,'Cinema','Bioscoop','Kino','Cinéma','201002151520','201002151541',1),(309,'Fashion','Mode','Mode','Mode','201002151520','201002151520',1),(310,'Architecture','Architectuur','Architektur','Architecture','201002151520','201002151520',1),(311,'Science','Wetenschap','Wissenschaft','Science','201002151520','201002151520',1),(312,'Athletics','Atletiek','Leichtathletik','Athlétisme','201002151520','201002151520',1),(313,'Health','Gezondheid','Gesundheit','Santé','201002151520','201002151520',1),(314,'Travel','Reizen','Reisen','Voyage','201002151520','201002151520',1),(315,'Consumer','Consument','Consumer','Consommateurs','201002151520','201002151520',1),(316,'Environment','Omgeving','Umgebung','Environnement','201002151520','201002151520',1),(317,'History','Geschiedenis','Geschichte','Histoire','201002151520','201002151520',1),(318,'Antiques','Antiek','Antiquitäten','Antiquités','201002151520','201002151520',1),(319,'Gardening','Tuinieren','Gardening','Jardinage','201002151520','201002151520',1),(320,'Motor Sports','Motorsport','Motor Sports','Sports automobiles','201002151520','201002151520',1),(321,'Art','Kunst','Kunst','Art','201002151520','201002151541',1),(322,'Ballet','Ballet','Ballett','Ballet','201002151520','201002151520',1),(323,'Opera','Opera','Opera','Opera','201002151520','201002151520',1),(324,'Dancing','Dansen','Dancing','Dancing','201002151520','201002151543',1),(325,'Leisure','Vrije tijd','Freizeit','Loisirs','201002151521','201002151546',1),(326,'Shopping','Winkelen','Shopping','Shopping','201002151521','201002151521',1),(327,'Film Shorts','Kortfilm','Film Shorts','Film Shorts','201002151521','201002151545',1),(328,'Equestrian','Paardensport','Pferdesport','Sports équestres','201002151521','201002151521',1),(329,'Civilisation','Beschaving','Civilisation','Civilisation','201002151521','201002151542',1),(330,'Stage Play','Toneelstuk','Sprechtheater','Pièce de théâtre','201002151521','201002151521',1),(331,'War','Oorlog','War','Guerre','201002151521','201002151521',1),(332,'Classic','Klassiek','Classic','Classic','201002151521','201002151542',1),(333,'Sitcoms','Sitcoms','Sitcoms','Sitcoms','201002151521','201002151521',1),(334,'Youth Culture','Jeugd Cultuur','Jugend Kultur','Youth Culture','201002151521','201002151521',1),(335,'Dance Music','Dans muziek','Dance Music','Dance Music','201002151522','201002151543',1),(336,'Talk Show','Praatprogramma','Talk Show','Talk Show','201002151522','201002151544',1),(337,'Martial Arts','Vechtsport','Martial Arts','Arts Martiaux','201002151522','201002151522',1),(338,'Golf','Golf','Golf','Golf','201002151522','201002151522',1),(339,'Processing Categories ...','Verwerking rubrieken ...','Processing Kategorien ...','Traitement de catégories ...','201002151523','201002151523',1),(340,'Processing SubCategories ...','Verwerking SubCategories ...','Processing SubCategories ...','Sous-catégories de traitement ...','201002151523','201002151523',1),(341,'Channels','Kanalen','Kanäle','Chaînes','201002151523','201002151523',1),(342,'Main Categories and','Hoofdcategorieën en','Hauptkategorien und','Principales catégories et','201002151523','201002151523',1),(343,'Programs processed !','Programmas verwerkt!','Programme bearbeitet!','Programmes traités!','201002151523','201002151553',1),(344,'Date','Datum','Datum','Date','201002151626','201002151626',1),(345,'TV Channels','TV-kanalen','TV-Kanäle','Chaînes TV','201002151927','201002151927',1),(346,'Program Categories','Programma Categorieën','Programm-Kategorien','Catégories de Programmes','201002151927','201002151927',1),(347,'Use','Gebruiken','Verwenden','Utiliser','201002152032','201002152032',1),(348,'Channel Name','Kanaal Naam','Channel Name','Channel Name','201002152032','201002152032',1),(350,'Program Sub-Categories','Programma Sub-Categorieën','Programm Sub-Kategorien','Sous-Catégories','201002152032','201002152032',1),(351,'Sorting Order','Volgorde','Sortierreihenfolge','Lu0026#39;ordre de tri','201002152034','201002152034',1),(352,'Program','Programma','Programm','Programme','201002152120','201002152120',1),(353,'Category','Categorie','Kategorie','Catégorie','201002152120','201002152120',1),(354,'Sub-Category','Subcategorie','Sub-Kategorie','Sous-catégorie','201002152120','201002152120',1),(355,'Summary','Samenvatting','Zusammenfassung','Sommaire','201002152120','201002152120',1),(356,'Channel ID','Kanaal ID','Sender ID','ID de canal','201002161152','201002161830',1),(357,'Category Name','Categorienaam','Kategorie Name','Nom de la catégorie','201002161514','201002161829',1),(358,'Back Color','Achtergrondkleur','Zurück Farbe','Couleur d`arrière','201002161515','201002161829',1),(359,'Fore Color','Voorgrondkleur','Textfarbe','Fore Color','201002161516','201002161831',1),(360,'Select Color','Selecteer kleur','Farbe auswählen','Sélectionner la couleur','201002161556','201002161830',1),(361,'Please select a foreground color ...','Selecteer een voorgrondkleur ...','Bitte wählen Sie eine Vordergrundfarbe ...','S`il vous plaît choisir une couleur de premier plan ...','201002161620','201002161831',1),(362,'Please select a background color ...','Kies een achtergrond kleur ...','Bitte wählen Sie eine Hintergrundfarbe ...','S`il vous plaît sélectionnez une couleur de fond ...','201002161620','201002161830',1),(363,'Program Name','Programmanaam','Programmname','Nom du programme','201002162120','201002162120',1),(364,'Begins at ...','Begint om ...','Beginnt am ...','Commence à ...','201002162120','201002162127',1),(365,'Ends at ...','Eindigt om ...','Endet am ...','Se termine à ...','201002162120','201002162128',1),(366,'Program Description','Programma Beschrijving','Programmbeschreibung','Description du programme','201002171814','201002171814',1),(367,'Channel','Kanaal','Channel','Channel','201002171815','201002171815',1),(368,'Results for search [','Resultaten voor zoeken [','Ergebnisse für die Suche [','Résultats pour la recherche [','201002171815','201002171815',1),(369,'In the period','In de periode','In der Zeit','Dans la période','201002171815','201002171815',1);
 /*!40000 ALTER TABLE `dictionary` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -724,7 +695,7 @@ CREATE TABLE `events` (
   `reruntype` varchar(16) DEFAULT NULL,
   `category` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -750,7 +721,7 @@ CREATE TABLE `events_actions` (
   `order` int(11) NOT NULL,
   `delay` int(11) NOT NULL,
   PRIMARY KEY (`event`,`order`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -775,7 +746,7 @@ CREATE TABLE `floors` (
   `name` varchar(32) DEFAULT NULL,
   `image` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`floor`)
-) ENGINE=MyISAM AUTO_INCREMENT=7 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -801,7 +772,7 @@ CREATE TABLE `gas_usage` (
   `stamp` datetime DEFAULT NULL,
   `consumption` bigint(20) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -826,7 +797,7 @@ CREATE TABLE `globalvars` (
   `value` text,
   `datatype` smallint(6) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=22 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=22 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -874,7 +845,7 @@ CREATE TABLE `graph_data` (
   `ds_id` int(11) NOT NULL,
   PRIMARY KEY (`id`),
   KEY `graph_id` (`graph_id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -917,7 +888,7 @@ CREATE TABLE `graphs` (
   `grid_type` varchar(32) NOT NULL,
   `groups` varchar(128) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=2 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -940,7 +911,7 @@ CREATE TABLE `groups` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=21 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=21 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -949,7 +920,7 @@ CREATE TABLE `groups` (
 
 LOCK TABLES `groups` WRITE;
 /*!40000 ALTER TABLE `groups` DISABLE KEYS */;
-INSERT INTO `groups` VALUES (1,'Outside'),(2,'Temperature'),(3,'Humidity'),(4,'Doors'),(5,'Windows'),(6,'All Lights'),(7,'All Units'),(8,'Energy'),(9,'Server'),(10,'Motion'),(12,'HVAC'),(14,'Proximity'),(15,'Climate'),(16,'Security'),(17,'Virtual'),(18,'Power'),(19,'Gas'),(20,'Water'),(0,'Network');
+INSERT INTO `groups` VALUES (0,'Network'),(1,'Outside'),(2,'Temperature'),(3,'Humidity'),(4,'Doors'),(5,'Windows'),(6,'All Lights'),(7,'All Units'),(8,'Energy'),(9,'Server'),(10,'Motion'),(12,'HVAC'),(14,'Proximity'),(15,'Climate'),(16,'Security'),(17,'Virtual'),(18,'Power'),(19,'Gas'),(20,'Water');
 /*!40000 ALTER TABLE `groups` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -966,7 +937,7 @@ CREATE TABLE `interfaces` (
   `type` varchar(512) DEFAULT NULL,
   `mode` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=52 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=53 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -975,7 +946,7 @@ CREATE TABLE `interfaces` (
 
 LOCK TABLES `interfaces` WRITE;
 /*!40000 ALTER TABLE `interfaces` DISABLE KEYS */;
-INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','X10 X10Security Oregon KAKU RFXCom HEUK ATI Digimax ARC AC HEEU','Read'),(2,'Xanura CTX35','X10','Read Write'),(3,'Midon TEMP08','1-Wire','Read Write'),(4,'HDDTemp Socket','HDDTemp','Read'),(5,'Ping Socket','Ping','Read'),(6,'UPS Socket','UPS','Read'),(7,'X10Cmd Interface','X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC Interface','DSC','Read Write'),(12,'RFXCom Transmitter','X10 ARC AC RFXCom X10Security HEEU HEUK Digimax Harrison Koppla Waveman Flamingo KAKU','Read Write'),(13,'KNX/EIB Interface','KNX/EIB','Read Write'),(14,'Digitemp','1-Wire','Read'),(15,'Z-Wave Controller','Z-Wave','Read Write'),(16,'PLCBUS Interface','PLCBUS','Read Write'),(17,'Virtual Interface','Virtual','Read Write'),(18,'SqueezeServer Interface','Squeeze','Read Write'),(19,'Current Cost Receiver','CurrentCost','Read'),(20,'EZcontrol T10 Interface','T10-Preset FS10 FS20 RS200 AB400 AB601 IT REV BS-QU MARMI OA-FM KO-FC RS862','Write'),(21,'LIRC Interface','LIRC','Read'),(22,'PwrCtrl Interface','PwrCtrl','Read Write'),(23,'Denon Interface','Denon','Read Write'),(24,'Onkyo Interface','Onkyo','Read Write'),(25,'SharpTV Interface','SharpTV','Read Write'),(26,'LGTV Interface','LGTV','Read Write'),(27,'iPort Interface','iPort','Read Write'),(29,'JeeLabs Interface','JeeLabs ARC KAKU','Read Write'),(30,'Velleman K8055','K8055','Read Write'),(31,'OWFS Interface','1-Wire','Read Write'),(32,'CUL Interface','FS20 EM1000 FHT S300 HMS','Read Write'),(33,'RFXCom xPL','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison RFXLanIO','Read Write'),(34,'Shell Interface','Shell','Read Write'),(35,'RFXCom Transceiver','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech','Read Write'),(36,'HomeMatic LAN Adapter','HomeMatic','Read Write'),(37,'OpenTherm Gateway','OpenTherm','Read Write'),(38,'SmartMeter Interface','NTA8130','Read'),(39,'Pioneer Interface','Pioneer','Read Write'),(40,'XBMC xPL Interface','media.basic media.mptrnsp media.mpmedia osd.basic','Read Write'),(41,'Meteohub Interface','Meteohub','Read'),(42,'ELV MAX! Interface','ELVMAX','Read Write'),(43,'YouLess Interface','YouLess','Read'),(44,'Mochad Interface','X10 X10Security','Read Write'),(45,'Omniksol Interface','Omniksol','Read'),(46,'Visonic Interface','Visonic','Read Write'),(47,'KMTronicUDP Interface','KMTronicUDP','Read Write'),(48,'DMXPlayer Interface','DMX','Read Write'),(49,'GenericIO Interface','GenericIO','Read Write'),(50,'MQTT Interface','MQTT','Read Write'),(51,'RaZBerry Z-Wave Interface','Z-Wave','Read Write');
+INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','X10 X10Security Oregon KAKU RFXCom HEUK ATI Digimax ARC AC HEEU','Read'),(2,'Xanura CTX35','X10','Read Write'),(3,'Midon TEMP08','1-Wire','Read Write'),(4,'HDDTemp Socket','HDDTemp','Read'),(5,'Ping Socket','Ping','Read'),(6,'UPS Socket','UPS','Read'),(7,'X10Cmd Interface','X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC Interface','DSC','Read Write'),(12,'RFXCom Transmitter','X10 ARC AC RFXCom X10Security HEEU HEUK Digimax Harrison Koppla Waveman Flamingo KAKU','Read Write'),(13,'KNX/EIB Interface','KNX/EIB','Read Write'),(14,'Digitemp','1-Wire','Read'),(15,'Z-Wave Controller','Z-Wave','Read Write'),(16,'PLCBUS Interface','PLCBUS','Read Write'),(17,'Virtual Interface','Virtual','Read Write'),(18,'SqueezeServer Interface','Squeeze','Read Write'),(19,'Current Cost Receiver','CurrentCost','Read'),(20,'EZcontrol T10 Interface','T10-Preset FS10 FS20 RS200 AB400 AB601 IT REV BS-QU MARMI OA-FM KO-FC RS862','Write'),(21,'LIRC Interface','LIRC','Read'),(22,'PwrCtrl Interface','PwrCtrl','Read Write'),(23,'Denon Interface','Denon','Read Write'),(24,'Onkyo Interface','Onkyo','Read Write'),(25,'SharpTV Interface','SharpTV','Read Write'),(26,'LGTV Interface','LGTV','Read Write'),(27,'iPort Interface','iPort','Read Write'),(29,'JeeLabs Interface','JeeLabs ARC KAKU','Read Write'),(30,'Velleman K8055','K8055','Read Write'),(31,'OWFS Interface','1-Wire','Read Write'),(32,'CUL Interface','FS20 EM1000 FHT S300 HMS','Read Write'),(33,'RFXCom xPL','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison RFXLanIO','Read Write'),(34,'Shell Interface','Shell','Read Write'),(35,'RFXCom Transceiver','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech','Read Write'),(36,'HomeMatic LAN Adapter','HomeMatic','Read Write'),(37,'OpenTherm Gateway','OpenTherm','Read Write'),(38,'SmartMeter Interface','NTA8130','Read'),(39,'Pioneer Interface','Pioneer','Read Write'),(40,'XBMC xPL Interface','media.basic media.mptrnsp media.mpmedia osd.basic','Read Write'),(41,'Meteohub Interface','Meteohub','Read'),(42,'ELV MAX! Interface','ELVMAX','Read Write'),(43,'YouLess Interface','YouLess','Read'),(44,'Mochad Interface','X10 X10Security','Read Write'),(45,'Omniksol Interface','Omniksol','Read'),(46,'Visonic Interface','Visonic','Read Write'),(47,'KMTronicUDP Interface','KMTronicUDP','Read Write'),(48,'DMXPlayer Interface','DMX','Read Write'),(49,'GenericIO Interface','GenericIO','Read Write'),(50,'MQTT Interface','MQTT','Read Write'),(51,'RaZBerry Z-Wave Interface','Z-Wave','Read Write'),(52,'Arduino Interface','Arduino','Read Write');
 /*!40000 ALTER TABLE `interfaces` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -990,7 +961,7 @@ CREATE TABLE `locations` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=18 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=18 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1015,7 +986,7 @@ CREATE TABLE `macros` (
   `name` varchar(64) DEFAULT NULL,
   `formula` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1041,7 +1012,7 @@ CREATE TABLE `markers` (
   `lat` double DEFAULT NULL,
   `lng` double DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1070,7 +1041,7 @@ CREATE TABLE `menu` (
   `icon` varchar(32) DEFAULT NULL,
   `enabled` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=26 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=27 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1079,7 +1050,7 @@ CREATE TABLE `menu` (
 
 LOCK TABLES `menu` WRITE;
 /*!40000 ALTER TABLE `menu` DISABLE KEYS */;
-INSERT INTO `menu` VALUES (1,'Home','FHome',1,1,'home.png',1),(2,'Control','FControl',1,2,'control.png',1),(3,'Floorplan','FFloorplans',1,6,'floorplan.png',1),(4,'Locations','FLocations',1,4,'locations.png',0),(5,'Climate','FClimate',1,5,'climate.png',1),(6,'Security','FSecurity',1,6,'security.png',1),(7,'HVAC','FHVAC',2,7,'hvac.png',1),(8,'Energy','FEnergy',1,8,'energy.png',1),(9,'Logfiles','FLogfiles',1,9,'logs.png',1),(10,'Phone','FPhone',1,1,'phone.png',1),(11,'Captures','FCaptures',2,2,'captures.png',1),(12,'Barcodes','FBarcodes',2,3,'stock.png',1),(13,'Camera','FCamera',2,4,'camera.png',1),(14,'Weather','FWeather',1,2,'weather.png',1),(15,'e-mail','FEmail',2,6,'email.png',0),(16,'News','FNews',2,7,'news.png',1),(17,'TV Guide','FTVGuide',2,2,'tvguide.png',1),(18,'Debug','FDebug',3,1,'system.png',1),(19,'Statistics','FServerStats',3,2,'serverstats.png',1),(20,'Events','FEvents',1,3,'events.png',1),(21,'Devices','FDevices',1,2,'devices.png',1),(22,'DSC Panel','FDSC',2,10,'security.png',1),(23,'Kitchen','Kitchen',4,1,'kitchen.png',1),(24,'Bathroom','Bathroom',4,2,'bathroom.png',1),(25,'Music','FMusic',2,1,'music.png',1),(0,'Network','FNetwork',2,1,'network.png',1);
+INSERT INTO `menu` VALUES (0,'Network','FNetwork',2,1,'network.png',1),(1,'Home','FHome',1,1,'home.png',1),(2,'Control','FControl',1,2,'control.png',1),(3,'Floorplan','FFloorplans',1,6,'floorplan.png',1),(4,'Locations','FLocations',1,4,'locations.png',0),(5,'Climate','FClimate',1,5,'climate.png',1),(6,'Security','FSecurity',1,6,'security.png',1),(7,'HVAC','FHVAC',2,7,'hvac.png',1),(8,'Energy','FEnergy',1,8,'energy.png',1),(9,'Logfiles','FLogfiles',1,9,'logs.png',1),(10,'Phone','FPhone',1,1,'phone.png',1),(11,'Captures','FCaptures',2,2,'captures.png',1),(12,'Barcodes','FBarcodes',2,3,'stock.png',1),(13,'Camera','FCamera',2,4,'camera.png',1),(14,'Weather','FWeather',1,2,'weather.png',1),(15,'e-mail','FEmail',2,6,'email.png',0),(16,'News','FNews',2,7,'news.png',1),(17,'TV Guide','FTVGuide',2,2,'tvguide.png',1),(18,'Debug','FDebug',3,1,'system.png',1),(19,'Statistics','FServerStats',3,2,'serverstats.png',1),(20,'Events','FEvents',1,3,'events.png',1),(21,'Devices','FDevices',1,2,'devices.png',1),(22,'DSC Panel','FDSC',2,10,'security.png',1),(23,'Kitchen','Kitchen',4,1,'kitchen.png',1),(24,'Bathroom','Bathroom',4,2,'bathroom.png',1),(25,'Music','FMusic',2,1,'music.png',1),(26,'Device values','FDeviceValues',1,10,'devices.png',1);
 /*!40000 ALTER TABLE `menu` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1094,7 +1065,7 @@ CREATE TABLE `menu_names` (
   `id` int(11) NOT NULL,
   `name` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1121,7 +1092,7 @@ CREATE TABLE `newsfeeds` (
   `description` text,
   `enabled` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1146,7 +1117,7 @@ CREATE TABLE `notify` (
   `keyword` varchar(64) DEFAULT NULL,
   `type` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=8 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=8 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1170,7 +1141,7 @@ CREATE TABLE `notifytypes` (
   `type` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`type`)
-) ENGINE=MyISAM AUTO_INCREMENT=9 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1196,7 +1167,7 @@ CREATE TABLE `power_exported` (
   `stamp` datetime DEFAULT NULL,
   `consumption` bigint(20) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1221,7 +1192,7 @@ CREATE TABLE `power_usage` (
   `stamp` datetime DEFAULT NULL,
   `consumption` bigint(20) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=7086 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=7086 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1245,7 +1216,7 @@ CREATE TABLE `remarks_fullmoon` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=7 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1269,7 +1240,7 @@ CREATE TABLE `remarks_humid` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=24 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=24 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1293,7 +1264,7 @@ CREATE TABLE `remarks_personal` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=45 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=45 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1317,7 +1288,7 @@ CREATE TABLE `remarks_plants` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=30 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1341,7 +1312,7 @@ CREATE TABLE `remarks_tags` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=1144 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=1144 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1365,7 +1336,7 @@ CREATE TABLE `remarks_tempbelow5` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=16 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1389,7 +1360,7 @@ CREATE TABLE `remarks_tempbelowmin5` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=17 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=17 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1421,7 +1392,7 @@ CREATE TABLE `scenes` (
   `location_id` int(11) DEFAULT NULL,
   `event_id` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1448,7 +1419,7 @@ CREATE TABLE `security` (
   `lcd_line1` varchar(32) DEFAULT NULL,
   `lcd_line2` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1459,6 +1430,34 @@ LOCK TABLES `security` WRITE;
 /*!40000 ALTER TABLE `security` DISABLE KEYS */;
 INSERT INTO `security` VALUES (0,1,0,0,'DSC Security','14/January/2010 15:50');
 /*!40000 ALTER TABLE `security` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `settings_arduino`
+--
+
+DROP TABLE IF EXISTS `settings_arduino`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_arduino` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `serialport` varchar(32) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
+  `polltime` int(11) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_arduino`
+--
+
+LOCK TABLES `settings_arduino` WRITE;
+/*!40000 ALTER TABLE `settings_arduino` DISABLE KEYS */;
+INSERT INTO `settings_arduino` VALUES (0,0,'/dev/ttyarduino','9600',10,0),(1,0,'/dev/ttyarduino','9600',10,0);
+/*!40000 ALTER TABLE `settings_arduino` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -1478,7 +1477,7 @@ CREATE TABLE `settings_asterisk` (
   `password` varchar(64) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1511,7 +1510,7 @@ CREATE TABLE `settings_astro` (
   `currency` varchar(6) DEFAULT NULL,
   `dst` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1539,7 +1538,7 @@ CREATE TABLE `settings_bluetooth` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1574,7 +1573,7 @@ CREATE TABLE `settings_bwiredmap` (
   `pushtime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1604,7 +1603,7 @@ CREATE TABLE `settings_callerid` (
   `autocreatecontacts` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1633,7 +1632,7 @@ CREATE TABLE `settings_ctx35` (
   `globalx10` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1665,7 +1664,7 @@ CREATE TABLE `settings_cul` (
   `fhtid` varchar(32) DEFAULT '0000',
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1692,7 +1691,7 @@ CREATE TABLE `settings_currentcost` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1722,7 +1721,7 @@ CREATE TABLE `settings_denon` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1751,7 +1750,7 @@ CREATE TABLE `settings_digitemp` (
   `readtime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1778,7 +1777,7 @@ CREATE TABLE `settings_dmxplayer` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1804,7 +1803,7 @@ CREATE TABLE `settings_domotica` (
   `serialport` varchar(128) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1833,7 +1832,7 @@ CREATE TABLE `settings_dsc` (
   `mastercode` varchar(16) DEFAULT '1234',
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1860,7 +1859,7 @@ CREATE TABLE `settings_eib` (
   `tcpport` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1887,7 +1886,7 @@ CREATE TABLE `settings_elvmax` (
   `tcpport` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1919,7 +1918,7 @@ CREATE TABLE `settings_email` (
   `password` varchar(64) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1945,7 +1944,7 @@ CREATE TABLE `settings_ezcontrol` (
   `udphost` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1971,7 +1970,7 @@ CREATE TABLE `settings_fritzbox` (
   `tcphost` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2003,7 +2002,7 @@ CREATE TABLE `settings_genericio` (
   `regex` varchar(128) DEFAULT NULL,
   `delimiter` varchar(128) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2031,7 +2030,7 @@ CREATE TABLE `settings_gmail` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2059,7 +2058,7 @@ CREATE TABLE `settings_gps` (
   `baudrate` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2088,7 +2087,7 @@ CREATE TABLE `settings_hddtemp` (
   `threshold` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2118,7 +2117,7 @@ CREATE TABLE `settings_homematic` (
   `model` int(11) DEFAULT NULL,
   `tcpport` int(11) NOT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2148,7 +2147,7 @@ CREATE TABLE `settings_iport` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2174,7 +2173,7 @@ CREATE TABLE `settings_irman` (
   `serialport` varchar(128) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2201,7 +2200,7 @@ CREATE TABLE `settings_irtrans` (
   `tcpport` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2228,7 +2227,7 @@ CREATE TABLE `settings_iviewer` (
   `password` varchar(64) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2255,7 +2254,7 @@ CREATE TABLE `settings_jeelabs` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2284,7 +2283,7 @@ CREATE TABLE `settings_jsonrpc` (
   `auth` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2313,7 +2312,7 @@ CREATE TABLE `settings_k8055` (
   `debouncetime2` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2340,7 +2339,7 @@ CREATE TABLE `settings_kmtronicudp` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2369,7 +2368,7 @@ CREATE TABLE `settings_ledmatrix` (
   `displayid` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2399,7 +2398,7 @@ CREATE TABLE `settings_lgtv` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2426,7 +2425,7 @@ CREATE TABLE `settings_lirc` (
   `tcpport` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2466,7 +2465,7 @@ CREATE TABLE `settings_main` (
   `autodevicecreate` tinyint(1) DEFAULT NULL,
   `logprefix` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2493,7 +2492,7 @@ CREATE TABLE `settings_meteohub` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2521,7 +2520,7 @@ CREATE TABLE `settings_mochad` (
   `globalX10` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2555,7 +2554,7 @@ CREATE TABLE `settings_mqtt` (
   `qos` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2582,7 +2581,7 @@ CREATE TABLE `settings_ncid` (
   `debug` tinyint(1) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2610,7 +2609,7 @@ CREATE TABLE `settings_nma` (
   `event` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2637,7 +2636,7 @@ CREATE TABLE `settings_omniksol` (
   `autosearch` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2667,7 +2666,7 @@ CREATE TABLE `settings_onkyo` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2702,7 +2701,7 @@ CREATE TABLE `settings_opentherm` (
   `relayport` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2737,7 +2736,7 @@ CREATE TABLE `settings_openzwave` (
   `updateneighbor` varchar(16) DEFAULT NULL,
   `enableupdateneighbor` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2765,7 +2764,7 @@ CREATE TABLE `settings_owfs` (
   `cached` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2793,7 +2792,7 @@ CREATE TABLE `settings_oww` (
   `servertype` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2826,7 +2825,7 @@ CREATE TABLE `settings_p2000` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2854,7 +2853,7 @@ CREATE TABLE `settings_pachube` (
   `pushtime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2880,7 +2879,7 @@ CREATE TABLE `settings_ping` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2910,7 +2909,7 @@ CREATE TABLE `settings_pioneer` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2942,7 +2941,7 @@ CREATE TABLE `settings_plcbus` (
   `ack` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2969,7 +2968,7 @@ CREATE TABLE `settings_plugwise` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2997,7 +2996,7 @@ CREATE TABLE `settings_prowl` (
   `event` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3025,7 +3024,7 @@ CREATE TABLE `settings_pushover` (
   `device` varchar(64) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3059,7 +3058,7 @@ CREATE TABLE `settings_pvoutput` (
   `tempdeviceid` int(11) NOT NULL,
   `tempdevicevalue` varchar(8) NOT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3087,7 +3086,7 @@ CREATE TABLE `settings_pwrctrl` (
   `userpw` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3117,7 +3116,7 @@ CREATE TABLE `settings_razberry` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3150,7 +3149,7 @@ CREATE TABLE `settings_rfxcomrx` (
   `relayport` int(11) DEFAULT NULL,
   `globalx10` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3184,7 +3183,7 @@ CREATE TABLE `settings_rfxcomtrx` (
   `globalx10` tinyint(1) DEFAULT NULL,
   `oldaddrfmt` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3222,7 +3221,7 @@ CREATE TABLE `settings_rfxcomtx` (
   `rfxmitter` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3251,7 +3250,7 @@ CREATE TABLE `settings_rfxcomxpl` (
   `globalx10` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3278,7 +3277,7 @@ CREATE TABLE `settings_rrdtool` (
   `debug` tinyint(1) DEFAULT NULL,
   `rra` varchar(256) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3304,7 +3303,7 @@ CREATE TABLE `settings_serverstats` (
   `servername` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3334,7 +3333,7 @@ CREATE TABLE `settings_sharptv` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3360,7 +3359,7 @@ CREATE TABLE `settings_shell` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3394,7 +3393,7 @@ CREATE TABLE `settings_smartmeter` (
   `requestline` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3420,7 +3419,7 @@ CREATE TABLE `settings_smartvisuserver` (
   `tcpport` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3451,7 +3450,7 @@ CREATE TABLE `settings_sms` (
   `contact` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3477,7 +3476,7 @@ CREATE TABLE `settings_sound` (
   `debug` tinyint(1) DEFAULT NULL,
   `volume` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3504,7 +3503,7 @@ CREATE TABLE `settings_squeezeserver` (
   `tcpport` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3530,7 +3529,7 @@ CREATE TABLE `settings_telnetserver` (
   `telnetport` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3557,7 +3556,7 @@ CREATE TABLE `settings_temp08` (
   `baudrate` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3587,7 +3586,7 @@ CREATE TABLE `settings_temperaturnu` (
   `deviceid` int(11) NOT NULL,
   `devicevalue` varchar(8) NOT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3613,7 +3612,7 @@ CREATE TABLE `settings_thermostat` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3640,7 +3639,7 @@ CREATE TABLE `settings_tvguide` (
   `xmlfile` text,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3668,7 +3667,7 @@ CREATE TABLE `settings_twitter` (
   `sendtimestamp` tinyint(1) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3696,7 +3695,7 @@ CREATE TABLE `settings_ups` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3729,7 +3728,7 @@ CREATE TABLE `settings_videoserver` (
   `channel4` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3758,7 +3757,7 @@ CREATE TABLE `settings_visca` (
   `debug` tinyint(1) DEFAULT NULL,
   `device` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3786,7 +3785,7 @@ CREATE TABLE `settings_visonic` (
   `mastercode` varchar(16) DEFAULT '1234',
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3815,7 +3814,7 @@ CREATE TABLE `settings_voicetext` (
   `voicesfemale` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3844,7 +3843,7 @@ CREATE TABLE `settings_weatherbug` (
   `countryname` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3872,7 +3871,7 @@ CREATE TABLE `settings_weatherug` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3898,7 +3897,7 @@ CREATE TABLE `settings_weeder` (
   `serialport` varchar(128) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3927,7 +3926,7 @@ CREATE TABLE `settings_x10cmd` (
   `type` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3954,7 +3953,7 @@ CREATE TABLE `settings_xbmcxpl` (
   `txaddress` varchar(64) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -3982,7 +3981,7 @@ CREATE TABLE `settings_xmlrpc` (
   `debug` tinyint(1) DEFAULT NULL,
   `broadcastudp` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4008,7 +4007,7 @@ CREATE TABLE `settings_xpl` (
   `heartbeat` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4034,7 +4033,7 @@ CREATE TABLE `settings_youless` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4065,7 +4064,7 @@ CREATE TABLE `stock` (
   PRIMARY KEY (`stockid`),
   UNIQUE KEY `eanid` (`ean`),
   KEY `nameid` (`name`)
-) ENGINE=MyISAM AUTO_INCREMENT=14 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=14 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4092,7 +4091,7 @@ CREATE TABLE `thermostat_constant` (
   `description` text,
   `color` int(11) NOT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4127,7 +4126,7 @@ CREATE TABLE `thermostat_heating` (
   `secondary` tinyint(1) DEFAULT NULL,
   `description` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4151,7 +4150,7 @@ CREATE TABLE `thermostat_scenarii` (
   `name` varchar(64) DEFAULT NULL,
   `description` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4176,7 +4175,7 @@ CREATE TABLE `thermostat_schedule` (
   `heating` bigint(20) unsigned NOT NULL,
   `description` text,
   PRIMARY KEY (`scenario`,`heating`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4203,7 +4202,7 @@ CREATE TABLE `thermostat_schedule_entry` (
   `constant` bigint(20) NOT NULL,
   `secondary` tinyint(1) NOT NULL,
   PRIMARY KEY (`scenario`,`heating`,`day`,`time`,`secondary`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4230,7 +4229,7 @@ CREATE TABLE `trafficfeeds` (
   `enabled` tinyint(1) DEFAULT NULL,
   `type` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4260,7 +4259,7 @@ CREATE TABLE `triggers` (
   `param4` text,
   `param5` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4292,7 +4291,7 @@ CREATE TABLE `tv_categories` (
   `FK_Users` int(11) NOT NULL,
   `IsUpdated` tinyint(4) NOT NULL,
   PRIMARY KEY (`RecID`)
-) ENGINE=MyISAM AUTO_INCREMENT=131 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=131 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4324,7 +4323,7 @@ CREATE TABLE `tv_channels` (
   `IsUsed` int(11) NOT NULL,
   `ChannelOrder` char(4) NOT NULL,
   PRIMARY KEY (`RecID`)
-) ENGINE=MyISAM AUTO_INCREMENT=403 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=403 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4353,7 +4352,7 @@ CREATE TABLE `tv_programs` (
   `SubCategoryName` varchar(50) NOT NULL,
   `CreationDate` char(12) NOT NULL,
   `FK_Users` int(11) NOT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4381,7 +4380,7 @@ CREATE TABLE `tv_subcategories` (
   `FK_Users` int(11) NOT NULL,
   `IsUpdated` tinyint(4) NOT NULL,
   PRIMARY KEY (`RecID`)
-) ENGINE=MyISAM AUTO_INCREMENT=38 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=38 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4410,7 +4409,7 @@ CREATE TABLE `users` (
   `lastlogin` varchar(32) DEFAULT NULL,
   `emailaddress` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=5 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4434,7 +4433,7 @@ CREATE TABLE `version` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `db` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=58 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=59 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4443,7 +4442,7 @@ CREATE TABLE `version` (
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187'),(23,'0.1.188'),(24,'0.1.189'),(25,'0.1.190'),(26,'0.1.191'),(27,'0.1.192'),(28,'0.1.193'),(29,'0.1.194'),(30,'0.1.195'),(31,'0.1.196'),(32,'0.1.197'),(33,'0.1.198'),(34,'0.1.199'),(35,'0.1.200'),(36,'0.1.201'),(37,'0.1.202'),(38,'0.1.203'),(39,'0.1.204'),(40,'0.1.205'),(41,'0.1.206'),(42,'0.1.207'),(43,'0.1.208'),(44,'0.1.209'),(45,'1.0.000'),(46,'1.0.001'),(47,'1.0.002'),(48,'1.0.003'),(49,'1.0.004'),(50,'1.0.005'),(51,'1.0.006'),(52,'1.0.007'),(53,'1.0.008'),(54,'1.0.009'),(55,'1.0.010'),(56,'1.0.011'),(57,'1.0.012');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187'),(23,'0.1.188'),(24,'0.1.189'),(25,'0.1.190'),(26,'0.1.191'),(27,'0.1.192'),(28,'0.1.193'),(29,'0.1.194'),(30,'0.1.195'),(31,'0.1.196'),(32,'0.1.197'),(33,'0.1.198'),(34,'0.1.199'),(35,'0.1.200'),(36,'0.1.201'),(37,'0.1.202'),(38,'0.1.203'),(39,'0.1.204'),(40,'0.1.205'),(41,'0.1.206'),(42,'0.1.207'),(43,'0.1.208'),(44,'0.1.209'),(45,'1.0.000'),(46,'1.0.001'),(47,'1.0.002'),(48,'1.0.003'),(49,'1.0.004'),(50,'1.0.005'),(51,'1.0.006'),(52,'1.0.007'),(53,'1.0.008'),(54,'1.0.009'),(55,'1.0.010'),(56,'1.0.011'),(57,'1.0.012'),(58,'1.0.013');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -4460,7 +4459,7 @@ CREATE TABLE `water_usage` (
   `stamp` datetime DEFAULT NULL,
   `consumption` bigint(20) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4504,7 +4503,7 @@ CREATE TABLE `weather` (
   `country` varchar(32) DEFAULT NULL,
   `uv` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=2 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4532,7 +4531,7 @@ CREATE TABLE `weatherfeeds` (
   `enabled` tinyint(1) DEFAULT NULL,
   `type` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4554,4 +4553,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2013-11-20  9:16:20
+-- Dump completed on 2013-12-15 20:15:11
