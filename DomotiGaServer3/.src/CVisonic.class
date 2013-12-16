@@ -52,6 +52,7 @@ Public hVisonic As New SerialPort
 ' command buffer
 Private bHeaderFound As Boolean = False
 Private sRecBuf As New Byte[]
+Private tLast0DChar As Date
 
 Const bPLTimeOut As Integer = 60000
 
@@ -300,6 +301,35 @@ End
 
 Private Sub ProcessReceivedChar(bTemp As Byte)
 
+  Dim iLength As Integer = 0
+  Dim sStr As String
+  Dim bData As Byte
+
+  ' Check if the prevous character isn't long ago
+  If bHeaderFound Then
+    If DateDiff(tLast0DChar, Now, gb.Second) >= 3 Then
+
+      If $bVisonicDebug Then
+        sStr = ""
+        For Each bData In sRecBuf
+          If sStr == "" Then
+            sStr &= Hex$(bData, 2)
+          Else
+            sStr &= " " & Hex$(bData, 2)
+          Endif
+        Next
+
+        Main.WriteDebugLog(LogLabel & "< " & sStr & " (TIMEOUT ERROR, " & DateDiff(tLast0DChar, Now, gb.Second) & " seconds)")
+
+        ' reset for next data
+        sRecBuf.Clear()
+        bHeaderFound = False
+      Endif
+    Endif
+  Else
+    tLast0DChar = Now()
+  Endif
+
   ' We detected a preamble, set the HeaderFound to True. It doesn't matter if we find more 0x0D in the data, because it is already set to True anyway
   If bTemp = &h0D Then bHeaderFound = True
 
@@ -309,9 +339,49 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   ' We detected a postamble and a preamble has been found
   If (bTemp = &h0A) And (bHeaderFound) Then
 
+    If sRecBuf.Length >= 4 Then
+      Select sRecBuf[1]
+        ' All A0-AF have a length of 15 bytes (including pre-and-post amble)
+        Case &HA0, &HA1, &HA2, &HA3, &HA4, &HA5, &HA6, &HA7, &HA8, &HA9, &HAA, &HAB, &HAC, &HAD, &HAE, &HAF
+          iLength = 15
+        ' B0 has a dynamic length, the length is on position 4, also add 8 for the full length
+        Case &HB0
+          If sRecBuf.Length >= 7 Then
+            iLength = sRecBuf[4] + 8
+          Endif  
+      End Select
+    Endif
+
     ' Check the Crc, if it doesn't match - the 0x0A isn't the postamble!
     If CheckCRC(sRecBuf) Then
       ProcessReceivedPacket(sRecbuf)
+    Else
+      If iLength > 0 Then
+        ' If length match, we got a CRC error
+        If sRecBuf.Length >= iLength Then
+
+          If $bVisonicDebug Then
+            sStr = ""
+            For Each bData In sRecBuf
+              If sStr == "" Then
+                sStr &= Hex$(bData, 2)
+              Else
+                sStr &= " " & Hex$(bData, 2)
+              Endif
+            Next
+
+            Main.WriteDebugLog(LogLabel & "< " & sStr & " (CRC ERROR)" & IIf(sRecBuf.Length > iLength," (INVALID LENGTH)", ""))
+
+            ' reset for next data
+            sRecBuf.Clear()
+            bHeaderFound = False
+
+            ' Just send an ACK anyway
+            SendPMACK()
+
+          Endif
+        Endif
+      Endif
     Endif
   Endif
 
@@ -435,6 +505,10 @@ End
 Public Sub SendPMInitPowerLink()
 
   Dim MSGV_INITPOWERLINK As Byte[] = [&HAB, &H06, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &H43]
+
+  ' reset for next data
+  sRecBuf.Clear()
+  bHeaderFound = False
 
   SendCommand(MSGV_INITPOWERLINK)
   If $bVisonicDebug Then Main.WriteDebugLog(LogLabel & "(Re)Init PowerLink")
