@@ -62,6 +62,16 @@ Private Const Type_Conn_HTTP As Integer = 0 ' Only HTTP connections
 Private Const Type_Conn_Socket As Integer = 1 ' Only real sockets
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' iType constants, used by BuildFilterFields & FilterFields
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Const Type_Data_Device As Integer = 1
+Private Const Type_Data_DeviceValue As Integer = 6
+Private Const Type_Data_Event As Integer = 2
+Private Const Type_Data_Action As Integer = 3
+Private Const Type_Data_Scene As Integer = 4
+Private Const Type_Data_Location As Integer = 5
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory Sub for EACH Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
@@ -462,7 +472,6 @@ End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Do filtering of fields - trying to keep it generic as possible
-' iType: 1=Device, 2=Event, 3=Action, 4=Scene, 5=Location
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub FilterFields(iType As Integer, aFields As String[], rResult As Result, cMap As Collection, cValue As Collection) As Boolean
 
@@ -513,6 +522,8 @@ Private Sub FilterFields(iType As Integer, aFields As String[], rResult As Resul
       Case "lastseen" 'last seen
         Try vAttrValue = Replace$(Str$(Format(rResult!lastseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
         If Error Then vAttrValue = "Never"
+      Case "icon" 'status icon - only valid for devices table - NOT set, this happens during device values
+        vAttrValue = ""
     End Select
 
     If TypeOf(vAttrValue) = gb.String Or If TypeOf(vAttrValue) = gb.Null Then
@@ -550,7 +561,7 @@ Private Sub BuildFilterFields(iType As Integer, rResult As Result, cMap As Colle
       If hsField = mField Then
         GetField.Add(cMap.Key)
 
-        If iType = 3 Then ' Devices - Also add valueX if we found rawvalueX
+        If iType = Type_Data_DeviceValue Then ' Devices - Also add valueX if we found rawvalueX
           If InStr(cMap.Key, "rawvalue") = 1 Then
             GetField.Add("value" & Mid(cMap.Key, 9))
           Endif
@@ -564,7 +575,11 @@ Private Sub BuildFilterFields(iType As Integer, rResult As Result, cMap As Colle
     If Not bFound Then GetField.Add(hsField)
   Next
 
-  If iType = 2 Then ' For Events add the action list
+  If iType = Type_Data_Device Then ' For devices add the icon
+    GetField.Add("icon")
+  Endif
+
+  If iType = Type_Data_Action Then ' For Events add the action list
     GetField.Add("actionlist")
   Endif
 
@@ -928,6 +943,7 @@ Private Sub Call_Device_List(cData As Collection)
   MapField.Add("module", "devicetype_id")
   MapField.Add("interface", "interface_id")
   MapField.Add("poll", "disablepoll")
+  MapField.Add("NA", "icon")
   
   MapFieldValues.Add("value", "rawvalue")
   MapFieldValues.Add("NA", "value")
@@ -993,14 +1009,14 @@ Private Sub Call_Device_List(cData As Collection)
   ' If we didn't get a field list, use the defaults
   If GetField.Count = 0 Then
     If InStr(sList, "ext") Then
-      GetField = ["device_id", "name", "lastseen", "enabled", "hide", "dimable", "switchable", "batterystatus", "location_id", "locationname", "floorplan_id", "floorplanname", "floorplanimage", "x", "y", "devicetype_id", "devicetypename", "interface_id", "interfacename", "groups"]
+      GetField = ["device_id", "name", "icon", "lastseen", "enabled", "hide", "dimable", "switchable", "batterystatus", "location_id", "locationname", "floorplan_id", "floorplanname", "floorplanimage", "x", "y", "devicetype_id", "devicetypename", "interface_id", "interfacename", "groups"]
     Else
-      GetField = ["device_id", "name", "lastseen", "enabled", "hide", "dimable", "switchable", "batterystatus", "location_id", "locationname"]
+      GetField = ["device_id", "name", "icon", "lastseen", "enabled", "hide", "dimable", "switchable", "batterystatus", "location_id", "locationname"]
     Endif
   Else
     ' If get "ALL", then just return all fields
     If GetField.Count = 1 And If GetField.Exist("ALL") Then
-      BuildFilterFields(1, rResult, MapField, GetField)
+      BuildFilterFields(Type_Data_Device, rResult, MapField, GetField)
     Endif
   Endif
   
@@ -1025,7 +1041,7 @@ Private Sub Call_Device_List(cData As Collection)
     Endif
     
     ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(1, GetField, rResult, MapField, cValue) Then
+    If Not FilterFields(Type_Data_Device, GetField, rResult, MapField, cValue) Then
       Return
     Endif
     
@@ -1034,25 +1050,36 @@ Private Sub Call_Device_List(cData As Collection)
     rResultValues = Devices.GetValues(["device_id": rResult!id])
     For Each rResultValues
       cValueValue = New Collection
-      BuildFilterFields(3, rResultValues, MapFieldValues, GetFieldValues)
-      FilterFields(3, GetFieldValues, rResultValues, MapFieldValues, cValueValue) 
+      BuildFilterFields(Type_Data_DeviceValue, rResultValues, MapFieldValues, GetFieldValues)
+      FilterFields(Type_Data_DeviceValue, GetFieldValues, rResultValues, MapFieldValues, cValueValue) 
       aValueValue.Add(cValueValue)
+
+      ' Overrule the icon value if we have valuenum 1
+      If rResultValues!valuenum = 1 Then
+        If Not IsNull(rResult!onicon) Or Not IsNull(rResult!officon) Then
+          If UCase$(rResultValues!value) = "ON" Or UCase$(rResultValues!value) = "OPEN" Or UCase$(rResultValues!value) = "MOTION" Then
+            Try cValue["icon"] = JSONToEmptyString(rResult!onicon)
+          Else
+            Try cValue["icon"] = JSONToEmptyString(rResult!officon)
+          Endif
+        Endif
+      Endif
+
     Next
+
     cValue.Add(aValueValue, "values")
-    
     aValue.Add(cValue)
-    
   Next
-  
+
   hJSONRPC.SetReply(0, aValue)
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Method=device.get
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Call_Device_Get(cData As Collection)
-  
+
   Dim cValue As New Collection
   Dim cValueValue As New Collection
   Dim aValueValue As New Collection[]
@@ -1062,7 +1089,7 @@ Private Sub Call_Device_Get(cData As Collection)
   Dim rResultValues As Result
   Dim MapField As New Collection
   Dim MapFieldValues As New Collection
-  
+
   ' Mapping of attribute names from SQL to JSON. Hopefully to be removed in the future
   MapField.Add("id", "device_id")
   MapField.Add("location", "location_id")
@@ -1070,24 +1097,24 @@ Private Sub Call_Device_Get(cData As Collection)
   MapField.Add("module", "devicetype_id")
   MapField.Add("interface", "interface_id")
   MapField.Add("poll", "disablepoll")
-  
-  
+  MapField.Add("NA", "icon")
+
   MapFieldValues.Add("value", "rawvalue")
   MapFieldValues.Add("NA", "value")
   
   If cData = Null Then
-    WriteDebugLogError("params 'deviceid' is missing")
+    WriteDebugLogError("params 'device_id' is missing")
     hJSONRPC.SetReply(-32602, Null)
     Return
   Endif
-  
+
   ' The deviceid has to be an integer and value a string
   If Not JSONCheckNumber(cData["device_id"]) Then
-    WriteDebugLogError("params 'deviceid' is missing or isn't numeric")
+    WriteDebugLogError("params 'device_id' is missing or isn't numeric")
     hJSONRPC.SetReply(-32602, Null)
     Return
   Endif
-  
+
   ' Detect if the "fields" parameter is supplied, it has to be an array of strings
   If cData["fields"] <> Null And If TypeOf(cData["fields"]) = gb.Object Then
     Try GetField = cData["fields"]
@@ -1097,7 +1124,7 @@ Private Sub Call_Device_Get(cData As Collection)
       Return
     Endif
   Endif
-  
+
   ' Retrieve the information from the database, we will filter out in the next steps
   rResult = Devices.GetDeviceList("all+ext")
   
@@ -1106,39 +1133,52 @@ Private Sub Call_Device_Get(cData As Collection)
     hJSONRPC.SetReply(0, cValue)
     Return
   Endif
-  
+
   If GetField.Count = 0 Then
-    BuildFilterFields(1, rResult, MapField, GetField)
+    BuildFilterFields(Type_Data_Device, rResult, MapField, GetField)
   Else
     If GetField.Count = 1 And If GetField.Exist("ALL") Then
-      BuildFilterFields(1, rResult, MapField, GetField)
+      BuildFilterFields(Type_Data_Device, rResult, MapField, GetField)
     Endif
   Endif
-  
+
   For Each rResult
     If cData["device_id"] = rResult!id Then
       ' Filter out the fields - if get get a False, an error happened
-      If Not FilterFields(1, GetField, rResult, MapField, cValue) Then
+      If Not FilterFields(Type_Data_Device, GetField, rResult, MapField, cValue) Then
         Return
       Endif
       Break
     Endif
-    
+
   Next
-  
+
   ' Add device values
   aValueValue = New Collection[]
   rResultValues = Devices.GetValues(["device_id": cData["device_id"]])
   For Each rResultValues
     cValueValue = New Collection
-    BuildFilterFields(3, rResultValues, MapFieldValues, GetFieldValues)
-    FilterFields(3, GetFieldValues, rResultValues, MapFieldValues, cValueValue) 
+    BuildFilterFields(Type_Data_DeviceValue, rResultValues, MapFieldValues, GetFieldValues)
+    FilterFields(Type_Data_DeviceValue, GetFieldValues, rResultValues, MapFieldValues, cValueValue) 
+
+    ' Overrule the icon value if we have valuenum 1
+    If rResultValues!valuenum = 1 Then
+      If Not IsNull(rResult!onicon) Or Not IsNull(rResult!officon) Then
+        If UCase$(rResultValues!value) = "ON" Or UCase$(rResultValues!value) = "OPEN" Or UCase$(rResultValues!value) = "MOTION" Then
+          Try cValue["icon"] = JSONToEmptyString(rResult!onicon)
+        Else
+          Try cValue["icon"] = JSONToEmptyString(rResult!officon)
+        Endif
+      Endif
+    Endif
+
     aValueValue.Add(cValueValue)
   Next
+
   cValue.Add(aValueValue, "values")
-  
+
   hJSONRPC.SetReply(0, cValue)
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1168,7 +1208,7 @@ Private Sub Call_Location_List(cData As Collection)
     cValue = New Collection
 
     ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(5, GetField, rResult, MapField, cValue) Then
+    If Not FilterFields(Type_Data_Location, GetField, rResult, MapField, cValue) Then
       Return
     Endif
 
@@ -1201,7 +1241,7 @@ Private Sub Call_Plugin_List()
     cValue["name"] = JSONToEmptyString(cPl.Name)
     cValue["instance"] = cPl.Instance
     cValue["enabled"] = cPl.Settings["enabled"]
-    
+
     If cPl.Interface Then
       Try cValue["running"] = cPl.Interface.IsRunning
       If Error Then cValue["running"] = False
@@ -1209,7 +1249,7 @@ Private Sub Call_Plugin_List()
       Try cValue["error"] = cPl.Interface.ErrorText
       If Error Then cValue["error"] = "UNKNOWN"
     Endif
-    
+
     aValue.Add(cValue)
   Next
   
@@ -1391,15 +1431,15 @@ Private Sub Call_Event_List(cData As Collection)
   Endif
   
   If GetField.Count = 0 Then
-    BuildFilterFields(2, rResult, MapField, GetField)
+    BuildFilterFields(Type_Data_Event, rResult, MapField, GetField)
   Endif
   
- For Each rResult
+  For Each rResult
     
     cValue = New Collection
     
     ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(2, GetField, rResult, MapField, cValue) Then
+    If Not FilterFields(Type_Data_Event, GetField, rResult, MapField, cValue) Then
       Return
     Endif
     
@@ -1470,7 +1510,7 @@ Private Sub Call_Action_List(cData As Collection)
   Endif
   
   If GetField.Count = 0 Then
-    BuildFilterFields(3, rResult, MapField, GetField)
+    BuildFilterFields(Type_Data_Action, rResult, MapField, GetField)
   Endif
   
   For Each rResult
@@ -1478,7 +1518,7 @@ Private Sub Call_Action_List(cData As Collection)
     cValue = New Collection
     
     ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(3, GetField, rResult, MapField, cValue) Then
+    If Not FilterFields(Type_Data_Action, GetField, rResult, MapField, cValue) Then
       Return
     Endif
     
@@ -1528,7 +1568,7 @@ Private Sub Call_Scene_List(cData As Collection)
   Endif
   
   If GetField.Count = 0 Then
-    BuildFilterFields(4, rResult, MapField, GetField)
+    BuildFilterFields(Type_Data_Scene, rResult, MapField, GetField)
   Endif
   
   For Each rResult
@@ -1536,7 +1576,7 @@ Private Sub Call_Scene_List(cData As Collection)
     cValue = New Collection
     
     ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(4, GetField, rResult, MapField, cValue) Then
+    If Not FilterFields(Type_Data_Scene, GetField, rResult, MapField, cValue) Then
       Return
     Endif
     
