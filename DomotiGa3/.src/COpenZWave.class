@@ -122,6 +122,8 @@ Private Extern DomoZWave_SetNodeLocation(home As Integer, node As Integer, nodeL
 Private Extern DomoZWave_GetNodeLibraryVersion(home As Integer, node As Integer) As String
 Private Extern DomoZWave_GetNodeProtocolVersion(home As Integer, node As Integer) As String
 Private Extern DomoZWave_GetNodeApplicationVersion(home As Integer, node As Integer) As String
+Private Extern DomoZWave_GetNodeLastSeen(home As Integer, node As Integer) As Integer
+Private Extern DomoZWave_GetNodeStatus(home As Integer, node As Integer) As String
 
 ' Request or update node state
 Private Extern DomoZWave_RequestNodeState(home As Integer, node As Integer) As Boolean
@@ -213,6 +215,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   Dim bLibDebug As Boolean
   Dim iJsonRpcPort As Integer
   Dim hOpenZwaveBase As Object
+  Dim sVersion As String
 
   KeyName = cPl.KeyName
   Instance = cPl.Instance
@@ -262,9 +265,20 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Endif
 
     ' Check if the library matches the required version
-    If sLibDomoZwave <> Version() Then
-      'Message.Error(("The OpenZWave wrapper version doesn't match the required version\n\nRequired by DomotiGa: " & hZWave.sLibDomoZwave & "\nOpenZWave wrapper: " & hZWave.Version() & "\n\nPlease recompile as described on page:\nhttp://www.domotiga.nl/projects/domotiga/wiki/OpenZWave"))
-      Main.WriteLog(LogLabel & "ERROR: interface is disabled, because of a version mismatch")
+    sVersion = Version()
+    If sLibDomoZwave <> sVersion Then
+      Select sVersion
+        Case ""
+          Main.Message_Error(("The OpenZWave wrapper library looks to be invalid\n\nPlease recompile as described on page:\nhttp://www.domotiga.nl/projects/domotiga/wiki/Z-Wave_OpenZWave"))
+          Main.WriteLog(LogLabel & "ERROR: interface is disabled, because of a version mismatch")
+        Case "-1"
+          Main.Message_Error(("The OpenZWave wrapper library cannot be loaded\n\nPlease check page:\nhttp://www.domotiga.nl/projects/domotiga/wiki/Z-Wave_OpenZWave"))
+          Main.WriteLog(LogLabel & "ERROR: interface is disabled, because of missing \"libdomozwave.so\" library")
+        Default
+          Main.Message_Error(("The OpenZWave wrapper version doesn't match the required version\n\nRequired by DomotiGa: " & sLibDomoZwave & "\nOpenZWave wrapper: " & sVersion & "\n\nPlease recompile as described on page:\nhttp://www.domotiga.nl/projects/domotiga/wiki/Z-Wave_OpenZWave"))
+          Main.WriteLog(LogLabel & "ERROR: interface is disabled, because of a version mismatch")
+      End Select
+
       Return
     Endif
 
@@ -299,18 +313,26 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
-  ' Remove the SerialPort from the openzwave library
-  DomoZWave_RemoveSerialPort($sSerPort)
+  ' Try to stop timer first
+  Try tSerialConnected.Stop
 
+  ' Try to remove the SerialPort from the openzwave library
+  Try DomoZWave_RemoveSerialPort($sSerPort)
+
+  ' Stop the OpenZWave JSON-RPC server instance
+  StopJSONRPC()
+
+  ' Substract the instance from the current list. It can become negative
   Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] = Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] - 1
 
-  ' If the instance list is empty, destroy the OpenZWave library
+  ' Don't call destroy if we have a negative count, this normally points to an invalid openzwave version
   If Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] = 0 Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Destroyed open-zwave wrapper.")
-    ' e.g. remove watche with a Destroy
-    DomoZWave_Destroy()
+    Try DomoZWave_Destroy()
+  Endif
 
-    StopJSONRPC()
+  ' If we are the last instance, report the destroying in the debug mode
+  If Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] <= 0 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Destroyed open-zwave wrapper.")
   Endif
 
 End
@@ -1064,6 +1086,30 @@ Public Sub GetNodeApplicationVersion(iNodeId As Integer) As String
 
 End
 
+Public Sub GetNodeLastSeen(iNodeId As Integer) As String
+
+  Dim iLastSeen As Integer
+  Dim d As Date
+
+  If iControllerId = iNodeId Then
+    Return ("N/A")
+  Endif
+
+  iLastSeen = DomoZWave_GetNodeLastSeen(iHomeId, iNodeId)
+  If iLastSeen >= 1 Then
+    Return DateAdd(CDate("1/1/1970"), gb.Second, iLastSeen) 
+  Else
+    Return ("Never")
+  Endif
+
+End
+
+Public Sub GetNodeStatus(iNodeId As Integer) As String
+
+  Return DomoZWave_GetNodeStatus(iHomeId, iNodeId)
+
+End
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' get value from node
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1221,13 +1267,23 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Retrieves the OpenZWave library version. If directly calling
 ' the DomoZWave variant, it can cause a signal 11
+' "" = Unknown error
+' "-1" = Can't find the dynamic library
+' Other = Valid version retrieved
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Version() As String
 
   ' First we try to call the function. This will fail if the library doesn't exist or is invalid
   Try DomoZwave_Version()
   If Error Then
-    Return ""
+    Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+
+    If InStr(Error.Text, "Cannot find dynamic library") >= 1 Then
+      Return "-1"
+    Else
+      Return ""
+    Endif
+
   Endif
 
   Return DomoZWave_Version()
@@ -1697,6 +1753,7 @@ Private Sub Call_OpenZWave_SetValue(cData As Collection)
   Dim iValueId As Integer
   Dim iDeviceId As Integer
   Dim sAddress As String
+  Dim sZWaveNode As String
 
   If Not JSONCheckHomeId(cData["homeid"]) Then Return
 
@@ -1706,12 +1763,15 @@ Private Sub Call_OpenZWave_SetValue(cData As Collection)
   Try iInstanceId = CInt(cData["instanceid"])
   Try iValueId = CInt(cData["valueid"])
 
-  If ZWaveNetwork.Exist("node=" & iNodeId & ":" & iInstanceId) Then
-    cNode = ZWaveNetwork["node=" & iNodeId & ":" & iInstanceId]
-    If iValueId = 1 Then cNode.Value1 = cData["value"]
-    If iValueId = 2 Then cNode.Value2 = cData["value"]
-    If iValueId = 3 Then cNode.Value3 = cData["value"]
-    If iValueId = 4 Then cNode.Value4 = cData["value"]
+  If iInstanceId = 1 Then
+    sZWaveNode = iNodeId
+  Else
+    sZWaveNode = iNodeId & ":" & iInstanceId
+  Endif
+
+  If ZWaveNetwork.Exist("node=" & sZWaveNode) Then
+    cNode = ZWaveNetwork["node=" & sZWaveNode]
+    cNode.Values[iValueId] = cData["value"]
   Endif
 
   If iInstanceId = 1 Then
