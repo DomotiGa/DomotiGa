@@ -214,12 +214,17 @@ ALTER TABLE `version` CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INC
 ALTER TABLE `water_usage` CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE `weather` CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE `weatherfeeds` CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
-ALTER TABLE `events_actions` CHANGE COLUMN `event` `event` INT(11) NOT NULL;
-ALTER TABLE `floors`  CHANGE COLUMN `floor` `floor` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
-ALTER TABLE `thermostat_heating` CHANGE COLUMN `sensor` `sensor` INT(11) NOT NULL;
-ALTER TABLE `thermostat_heating` CHANGE COLUMN `device` `device` INT(11) DEFAULT NULL;
-ALTER TABLE `thermostat_heating` CHANGE COLUMN `regulator` `regulator` INT(11) DEFAULT NULL;
-ALTER TABLE `thermostat_schedule_entry` CHANGE COLUMN `constant` `constant` INT(11) NOT NULL;
+ALTER TABLE `events_actions` CHANGE COLUMN `event` `event` INT(11) UNSIGNED NOT NULL;
+ALTER TABLE `events_actions` CHANGE COLUMN `action` `action` INT(11) UNSIGNED NOT NULL;
+ALTER TABLE `floors` CHANGE COLUMN `floor` `floor` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
+ALTER TABLE `thermostat_heating` CHANGE COLUMN `sensor` `sensor` INT(11) UNSIGNED NOT NULL;
+ALTER TABLE `thermostat_heating` CHANGE COLUMN `device` `device` INT(11) UNSIGNED DEFAULT NULL;
+ALTER TABLE `thermostat_heating` CHANGE COLUMN `regulator` `regulator` INT(11) UNSIGNED DEFAULT NULL;
+ALTER TABLE `thermostat_schedule_entry` CHANGE COLUMN `constant` `constant` INT(11) UNSIGNED NOT NULL;
+ALTER TABLE `notifytypes` CHANGE COLUMN `type` `type` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
+ALTER TABLE `stock` CHANGE COLUMN `stockid` `stockid` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
+ALTER TABLE `graph_data` CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
+ALTER TABLE `graph_data` CHANGE COLUMN `graph_id` `graph_id` INT(11) UNSIGNED NOT NULL;
 
 --
 -- Modify contacts table
@@ -228,6 +233,11 @@ ALTER TABLE contacts MODIFY name varchar(64);
 ALTER TABLE contacts MODIFY cidphone varchar(64);
 ALTER TABLE contacts MODIFY cidmobile varchar(64);
 
+--
+-- Fix inconsistences between domotiga.sql and domotiga-empty.sql
+--
+ALTER TABLE devices MODIFY name varchar(64);
+ALTER TABLE devicetypes MODIFY name varchar(64);
 
 --
 -- Finally update to 1.0.014
