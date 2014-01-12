@@ -214,6 +214,12 @@ ALTER TABLE `version` CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INC
 ALTER TABLE `water_usage` CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE `weather` CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE `weatherfeeds` CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
+ALTER TABLE `events_actions` CHANGE COLUMN `event` `event` INT(11) NOT NULL;
+ALTER TABLE `floors`  CHANGE COLUMN `floor` `floor` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
+ALTER TABLE `thermostat_heating` CHANGE COLUMN `sensor` `sensor` INT(11) NOT NULL;
+ALTER TABLE `thermostat_heating` CHANGE COLUMN `device` `device` INT(11) DEFAULT NULL;
+ALTER TABLE `thermostat_heating` CHANGE COLUMN `regulator` `regulator` INT(11) DEFAULT NULL;
+ALTER TABLE `thermostat_schedule_entry` CHANGE COLUMN `constant` `constant` INT(11) NOT NULL;
 
 --
 -- Modify contacts table
