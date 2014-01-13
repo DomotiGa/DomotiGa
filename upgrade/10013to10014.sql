@@ -240,6 +240,12 @@ ALTER TABLE devices MODIFY name varchar(64);
 ALTER TABLE devicetypes MODIFY name varchar(64);
 
 --
+-- Add client name for mqtt
+--
+ALTER TABLE settings_mqtt ADD clientname varchar(23);
+UPDATE settings_mqtt SET clientname = 'domotiga';
+
+--
 -- Finally update to 1.0.014
 --
 LOCK TABLES version WRITE;
