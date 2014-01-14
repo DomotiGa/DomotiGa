@@ -22,10 +22,12 @@
 //-----------------------------------------------------------------------------
 
 //-----------------------------------------------------------------------------
-// Define and get version numbers of DomoZWave and the open-zwave (vers.c)
+// Define and get version numbers of DomoZWave and the open-zwave
 //-----------------------------------------------------------------------------
-char domozwave_vers[] = "DomoZWave version r1143";
-#include <vers.c>
+char domozwave_vers[] = "DomoZWave version 2.00";
+#include <vers.c> // OpenZWave 1.0.r705 and earlier
+#include <vers.cpp> // OpenZWave 1.0.r706 and later
+
 //-----------------------------------------------------------------------------
 
 // system
@@ -37,9 +39,11 @@ char domozwave_vers[] = "DomoZWave version r1143";
 #include <sys/time.h>
 #include <map>
 
-// xmlrpc
-#include <xmlrpc-c/base.h>
-#include <xmlrpc-c/client.h>
+// json-rpc
+#include <json/json.h>
+
+// curl
+#include <curl/curl.h>
 
 // open-zwave
 #include "Options.h"
@@ -85,13 +89,13 @@ string logfile_prefix;
 string logfile_name;
 ofstream logfile;
 
-// Define serialport string, we require the serialport if we want to stop the
-// Open Z-Wave library properly
+// Define serialport string, we require the serialport if we want to stop the Open Z-Wave library properly
 list<string> serialPortName;
 
-xmlrpc_env env;
-xmlrpc_client* clientP;
-char url[35];
+// 
+int32 jsonrpcid = 0;
+
+// Enable/Disable DomoZWave debugging
 bool debugging;
 
 static pthread_mutex_t g_criticalSection;
@@ -120,6 +124,7 @@ typedef struct
 
 typedef struct
 {
+	string		m_serialPort;
 	uint32		m_homeId;
 	uint8		m_controllerId;
 	uint32		m_controllerAllQueried;
@@ -130,6 +135,7 @@ typedef struct
 	time_t		m_userCodeEnrollTime;
 	time_t		m_lastWriteXML;
 	bool		m_running;
+	char		m_jsonrpcurl[255];
 } m_structCtrl;
 
 static list<m_structCtrl*> g_allControllers;
@@ -366,28 +372,12 @@ void WriteLog
 ///////////////////////////////////////////////////////////////////////////////
 
 //-----------------------------------------------------------------------------
-// <fault_occured>
-//
-//-----------------------------------------------------------------------------
-
-bool fault_occurred( const char* funct, xmlrpc_env* env )
-{
-	if ( env->fault_occurred )
-	{
-		WriteLog( LogLevel_Error, true, "ERROR: In call \"%s\"", funct );
-		WriteLog( LogLevel_Error, false, "ERROR: XML-RPC Fault: %s (%d)", env->fault_string, env->fault_code ); 
-		return true;
-	}
-	return false; 
-}
-
-//-----------------------------------------------------------------------------
 // <RPC_ValueRemoved>
 // This is called if a Value is removed, normally happens when the controller
 // shuts down
 //-----------------------------------------------------------------------------
 
-void RPC_ValueRemoved( int homeID, int nodeID, ValueID valueID )
+void RPC_ValueRemoved( uint32 homeID, int nodeID, ValueID valueID )
 {
 	int id = valueID.GetCommandClassId();
 	int genre = valueID.GetGenre();
@@ -408,7 +398,7 @@ void RPC_ValueRemoved( int homeID, int nodeID, ValueID valueID )
 // If it was from a known command class we'll report that value back to DomotiGa.
 //-----------------------------------------------------------------------------
 
-void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
+void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 {
 	int id = valueID.GetCommandClassId();
 	int genre = valueID.GetGenre();
@@ -688,7 +678,6 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 					strcpy( dev_value, "On" );
 				}
 			}
-
 			break;
 		}
 		case COMMAND_CLASS_SENSOR_MULTILEVEL:
@@ -798,14 +787,13 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 		{
 
 			// All possible labels (sorted in priority):
-			// Basic, Switch, Level, Sensor, Power, Energy, Temperature, Luminance, Relative Humidity, Alarm Level, Flood
+			// Basic, Switch, Level, Sensor, Power, Energy, Temperature, Luminance, Relative Humidity, Alarm Level
 
 			// NOTE: Basic+Switch+Level are normally same the for a switch/dimmer
 
 			// Known and supported combinations:
 			// Switch + Power + Energy + Alarm Level (e.g. GreenWave PowerNode 1)
 			// Sensor + Alarm Level (e.g. Everspring SP103) 
-			// Alarm Level (e.g. Everspring ST814) 
 			// Sensor + Temperature + Luminance + Humidity (e.g. Aeon 4in1)
 			// Sensor + Temperature + Alarm Level? (e.g. Digital Home System DHS-ZW-SNMT-01)
 
@@ -844,7 +832,6 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 				if ( nodeInfo->instanceLabel[instanceID].find("Relative Humidity") != string::npos ) { str_tmp.append("Relative Humidity|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("|Luminance|") != string::npos ) { str_tmp.append("Luminance|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("Alarm Level") != string::npos ) { str_tmp.append("Alarm Level|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("Flood") != string::npos ) { str_tmp.append("Flood|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("Heating 1") != string::npos ) { str_tmp.append("Heating 1|"); }
 
 				// Replace the previous string with the newly generated
@@ -937,28 +924,21 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 
 		WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
 
-		// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
-		xmlrpc_env_init( &env );
-		xmlrpc_value* resultP = NULL;
-		xmlrpc_client_call2f( &env, clientP, url, "zwave.setvalue", &resultP, "(iiiis)", homeID, nodeID, instanceID, value_no, dev_value );
+		json_object *jparams = json_object_new_object();
+		json_object *jhomeid = json_object_new_int( homeID );
+		json_object *jnodeid = json_object_new_int( nodeID );
+		json_object *jinstanceid = json_object_new_int( instanceID );
+		json_object *jvalueid = json_object_new_int( value_no );
+		json_object *jvalue = json_object_new_string( dev_value );
 
-		// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
-		if ( ! fault_occurred ( "zwave.setvalue", &env ) )
-		{
-			xmlrpc_bool bvalue;
-			
-			xmlrpc_read_bool( &env, resultP, &bvalue );
+		json_object_object_add( jparams, "homeid", jhomeid );
+		json_object_object_add( jparams, "nodeid", jnodeid );
+		json_object_object_add( jparams, "instanceid", jinstanceid );
+		json_object_object_add( jparams, "valueid", jvalueid );
+		json_object_object_add( jparams, "value", jvalue );
 
-			if ( ! bvalue )
-			{
-				WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.setvalue\" returned FALSE" );
-			}
-		}
+		cURL_Post_JSON( homeID, "openzwave.setvalue", jparams );
 
-		if ( resultP )
-		{
-			xmlrpc_DECREF( resultP );
-		}
 	} else {
 		WriteLog( LogLevel_Debug, false, "Value=%s", dev_value );
 		WriteLog( LogLevel_Debug, false, "Note=Value not send, CommandClassId & label combination isn't supported by DomotiGa (this is not an issue)" );
@@ -1016,7 +996,7 @@ void RPC_ValueChanged( int homeID, int nodeID, ValueID valueID, bool add )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_NodeAdded( int homeID, int nodeID )
+void RPC_NodeAdded( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "NodeAdd: HomeId=0x%x Node=%d", homeID, nodeID );
 }
@@ -1026,37 +1006,22 @@ void RPC_NodeAdded( int homeID, int nodeID )
 // Node is removed from the Z-Wave network. Is only done if the open-zwave wrapper is running.
 //-----------------------------------------------------------------------------
 
-void RPC_NodeRemoved( int homeID, int nodeID )
+void RPC_NodeRemoved( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "NodeRemoved: HomeId=0x%x Node=%d", homeID, nodeID );
 
 	// Retrieve current controller information, we only should remove when controller is initialized
 	m_structCtrl* ctrl = GetControllerInfo( homeID );
 
-	if ( ctrl->m_running == true )
+	if (( ctrl != NULL ) && ( ctrl->m_running == true ))
 	{
-		// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
-		xmlrpc_env_init( &env );
-		xmlrpc_value* resultP = NULL;
-	 	xmlrpc_client_call2f(&env, clientP, url, "zwave.removenode", &resultP, "(i)", nodeID);
+		json_object *jparams = json_object_new_object();
+		json_object *jhomeid = json_object_new_int( homeID );
+		json_object *jnodeid = json_object_new_int( nodeID );
+		json_object_object_add( jparams, "homeid", jhomeid );
+		json_object_object_add( jparams, "nodeid", jnodeid );
 
-		// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
-		if ( ! fault_occurred ( "zwave.removenode", &env ) )
-		{
-			xmlrpc_bool bvalue;
-
-			xmlrpc_read_bool( &env, resultP, &bvalue );
-
-			if ( ! bvalue )
-			{
-				WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.removenode\" returned FALSE" );
-			}
-		}
-
-		if ( resultP )
-		{
-			xmlrpc_DECREF( resultP );
-		}
+		cURL_Post_JSON( homeID, "openzwave.removenode", jparams );
 	}
 
 }
@@ -1066,7 +1031,7 @@ void RPC_NodeRemoved( int homeID, int nodeID )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_NodeNew( int homeID, int nodeID )
+void RPC_NodeNew( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "NodeNew: HomeId=0x%x Node=%d", homeID, nodeID );
 }
@@ -1076,17 +1041,17 @@ void RPC_NodeNew( int homeID, int nodeID )
 // We got results to a Protocol Info query, send them over to domotiga.
 //-----------------------------------------------------------------------------
 
-void RPC_NodeProtocolInfo( int homeID, int nodeID )
+void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
 {
-	xmlrpc_int32 basic = Manager::Get()->GetNodeBasic( homeID, nodeID );
-	xmlrpc_int32 generic = Manager::Get()->GetNodeGeneric( homeID, nodeID );
-	xmlrpc_int32 specific = Manager::Get()->GetNodeSpecific( homeID, nodeID );
-	xmlrpc_bool listening = Manager::Get()->IsNodeListeningDevice( homeID, nodeID );
-	xmlrpc_bool frequentlistening = Manager::Get()->IsNodeFrequentListeningDevice( homeID, nodeID );
-	xmlrpc_bool beaming = Manager::Get()->IsNodeBeamingDevice( homeID, nodeID );
-	xmlrpc_bool routing = Manager::Get()->IsNodeRoutingDevice( homeID, nodeID );
-	xmlrpc_bool security = Manager::Get()->IsNodeSecurityDevice( homeID, nodeID );
-	xmlrpc_int32 maxbaudrate = Manager::Get()->GetNodeMaxBaudRate( homeID, nodeID );
+	int32 basic = Manager::Get()->GetNodeBasic( homeID, nodeID );
+	int32 generic = Manager::Get()->GetNodeGeneric( homeID, nodeID );
+	int32 specific = Manager::Get()->GetNodeSpecific( homeID, nodeID );
+	bool listening = Manager::Get()->IsNodeListeningDevice( homeID, nodeID );
+	bool frequentlistening = Manager::Get()->IsNodeFrequentListeningDevice( homeID, nodeID );
+	bool beaming = Manager::Get()->IsNodeBeamingDevice( homeID, nodeID );
+	bool routing = Manager::Get()->IsNodeRoutingDevice( homeID, nodeID );
+	bool security = Manager::Get()->IsNodeSecurityDevice( homeID, nodeID );
+	int32 maxbaudrate = Manager::Get()->GetNodeMaxBaudRate( homeID, nodeID );
 	const char* nodetype = Manager::Get()->GetNodeType( homeID, nodeID).c_str();
 	const char* name = Manager::Get()->GetNodeName( homeID, nodeID).c_str();
 	const char* location = Manager::Get()->GetNodeLocation( homeID, nodeID).c_str();
@@ -1123,11 +1088,6 @@ void RPC_NodeProtocolInfo( int homeID, int nodeID )
 		}
 	}
 
-	// Following parameters are kept for backwards compatibility
-	xmlrpc_bool sleeping = !listening;
-	xmlrpc_int32 capabilities = 0; // Caps is broken into Version, BaudRate, listening, routing
-	xmlrpc_int32 isecurity = 0;
-
 	WriteLog( LogLevel_Debug, true, "NodeProtocolInfo: HomeId=0x%x Node=%d", homeID, nodeID );
 	WriteLog( LogLevel_Debug, false, "Basic=%d", basic );
 	WriteLog( LogLevel_Debug, false, "Generic=%d", generic );
@@ -1146,28 +1106,35 @@ void RPC_NodeProtocolInfo( int homeID, int nodeID )
 	WriteLog( LogLevel_Debug, false, "Name=%s", name );
 	WriteLog( LogLevel_Debug, false, "Location=%s", location );
 
-	// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
-	xmlrpc_env_init( &env );
-	xmlrpc_value* resultP = NULL;
- 	xmlrpc_client_call2f(&env, clientP, url, "zwave.createnode", &resultP, "(iiiiiib)", nodeID, basic, generic, specific, capabilities, isecurity, sleeping );
+	json_object *jparams = json_object_new_object();
+	json_object *jhomeid = json_object_new_int( homeID );
+	json_object *jnodeid = json_object_new_int( nodeID );
+	json_object *jbasic = json_object_new_int( basic );
+	json_object *jgeneric = json_object_new_int( generic );
+	json_object *jspecific = json_object_new_int( specific );
+	json_object *jlistening = json_object_new_boolean( listening );
+	json_object *jfrequentlistening = json_object_new_boolean( frequentlistening );
+	json_object *jbeaming = json_object_new_boolean( beaming );
+	json_object *jrouting = json_object_new_boolean( routing );
+	json_object *jsecurity = json_object_new_boolean( security );
+	json_object *jmaxbaudrate = json_object_new_int( maxbaudrate );
+	json_object *jversion = json_object_new_int( version );
 
-	// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
-	if ( ! fault_occurred ( "zwave.createnode", &env ) )
-	{
-		xmlrpc_bool bvalue;
+	json_object_object_add( jparams, "homeid", jhomeid );
+	json_object_object_add( jparams, "nodeid", jnodeid );
+	json_object_object_add( jparams, "basic", jbasic );
+	json_object_object_add( jparams, "generic", jgeneric );
+	json_object_object_add( jparams, "specific", jspecific );
+	json_object_object_add( jparams, "listening", jlistening );
+	json_object_object_add( jparams, "frequentlistening", jfrequentlistening );
+	json_object_object_add( jparams, "beaming", jbeaming );
+	json_object_object_add( jparams, "routing", jrouting );
+	json_object_object_add( jparams, "security", jsecurity );
+	json_object_object_add( jparams, "maxbaudrate", jmaxbaudrate );
+	json_object_object_add( jparams, "version", jversion );
 
-		xmlrpc_read_bool( &env, resultP, &bvalue );
+	cURL_Post_JSON( homeID, "openzwave.addnode", jparams );
 
-		if ( ! bvalue )
-		{
-			WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.createnode\" returned FALSE" );
-		}
-	}
-
-	if ( resultP )
-	{
-		xmlrpc_DECREF( resultP );
-	}
 }
 
 //-----------------------------------------------------------------------------
@@ -1175,7 +1142,7 @@ void RPC_NodeProtocolInfo( int homeID, int nodeID )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_Group( int homeID, int nodeID )
+void RPC_Group( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "GroupEvent: HomeId=0x%x Node=%d", homeID, nodeID );
 }
@@ -1185,8 +1152,9 @@ void RPC_Group( int homeID, int nodeID )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_NodeEvent( int homeID, int nodeID, ValueID valueID, int value )
+void RPC_NodeEvent( uint32 homeID, int nodeID, ValueID valueID, int value )
 {
+	int id = valueID.GetCommandClassId();
 	int instanceID = valueID.GetInstance();
 	int value_no = 1;
 	char dev_value[1024];
@@ -1197,6 +1165,7 @@ void RPC_NodeEvent( int homeID, int nodeID, ValueID valueID, int value )
 	}
 
 	WriteLog( LogLevel_Debug, true, "NodeEvent: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName( id ) );
 	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
 	WriteLog( LogLevel_Debug, false, "Type=Byte (raw value=%d)", value );
 	snprintf( dev_value, 1024, "%d", value );
@@ -1211,27 +1180,75 @@ void RPC_NodeEvent( int homeID, int nodeID, ValueID valueID, int value )
 
 	WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
 
-	// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
-	xmlrpc_env_init( &env );
-	xmlrpc_value* resultP = NULL;
-	xmlrpc_client_call2f( &env, clientP, url, "zwave.setvalue", &resultP, "(iiiis)", homeID, nodeID, instanceID, value_no, dev_value );
+	json_object *jparams = json_object_new_object();
+	json_object *jhomeid = json_object_new_int( homeID );
+	json_object *jnodeid = json_object_new_int( nodeID );
+	json_object *jinstanceid = json_object_new_int( instanceID );
+	json_object *jvalueid = json_object_new_int( value_no );
+	json_object *jvalue = json_object_new_string( dev_value );
 
-	if ( ! fault_occurred ( "zwave.setvalue", &env ) )
-	{
-		xmlrpc_bool bvalue;
+	json_object_object_add( jparams, "homeid", jhomeid );
+	json_object_object_add( jparams, "nodeid", jnodeid );
+	json_object_object_add( jparams, "instanceid", jinstanceid );
+	json_object_object_add( jparams, "valueid", jvalueid );
+	json_object_object_add( jparams, "value", jvalue );
 
-		xmlrpc_read_bool( &env, resultP, &bvalue );
+	cURL_Post_JSON( homeID, "openzwave.setvalue", jparams );
 
-		if ( ! bvalue )
-		{
-			WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.setvalue\" returned FALSE" );
-		}
+}
+
+//-----------------------------------------------------------------------------
+// <RPC_NodeScene>
+//
+//-----------------------------------------------------------------------------
+
+void RPC_NodeScene( uint32 homeID, int nodeID, ValueID valueID, int value )
+{
+	int id = valueID.GetCommandClassId();
+	int instanceID = valueID.GetInstance();
+	int value_no = 1;
+	char dev_value[1024];
+
+	// Instance can never be zero, we need to be backwards compatible
+	if ( instanceID == 0 ) {
+		instanceID = 1;
 	}
 
-	if ( resultP )
+	WriteLog( LogLevel_Debug, true, "NodeScene: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName( id ) );
+	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
+	WriteLog( LogLevel_Debug, false, "Type=Byte (raw value=%d)", value );
+	snprintf( dev_value, 1024, "%d", value );
+
+	if ( strcmp( dev_value, "255" ) == 0 )
 	{
-		xmlrpc_DECREF( resultP );
+		strcpy( dev_value, "On" );
 	}
+	else { 
+		strcpy( dev_value, "Off" );
+	}
+
+	WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
+
+	// Only send it if it isn't a scene action command class
+	if ( id != COMMAND_CLASS_SCENE_ACTIVATION ) { 
+		json_object *jparams = json_object_new_object();
+		json_object *jhomeid = json_object_new_int( homeID );
+		json_object *jnodeid = json_object_new_int( nodeID );
+		json_object *jinstanceid = json_object_new_int( instanceID );
+		json_object *jvalueid = json_object_new_int( value_no );
+		json_object *jvalue = json_object_new_string( dev_value );
+
+		json_object_object_add( jparams, "homeid", jhomeid );
+		json_object_object_add( jparams, "nodeid", jnodeid );
+		json_object_object_add( jparams, "instanceid", jinstanceid );
+		json_object_object_add( jparams, "valueid", jvalueid );
+		json_object_object_add( jparams, "value", jvalue );
+
+		cURL_Post_JSON( homeID, "openzwave.setvalue", jparams );
+	} else {
+	}
+
 }
 
 //-----------------------------------------------------------------------------
@@ -1239,7 +1256,7 @@ void RPC_NodeEvent( int homeID, int nodeID, ValueID valueID, int value )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_PollingEnabled( int homeID, int nodeID )
+void RPC_PollingEnabled( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "PollingEnabled: HomeId=0x%x Node=%d", homeID, nodeID );
 }
@@ -1249,7 +1266,7 @@ void RPC_PollingEnabled( int homeID, int nodeID )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_PollingDisabled( int homeID, int nodeID )
+void RPC_PollingDisabled( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "PollingDisabled: HomeId=0x%x Node=%d", homeID, nodeID );
 }
@@ -1259,7 +1276,7 @@ void RPC_PollingDisabled( int homeID, int nodeID )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_NodeNaming( int homeID, int nodeID )
+void RPC_NodeNaming( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "NodeNaming: HomeId=0x%x Node=%d", homeID, nodeID );
 	WriteLog( LogLevel_Debug, false, "ManufacturerId=%s", Manager::Get()->GetNodeManufacturerId( homeID, nodeID ).c_str() );
@@ -1273,22 +1290,20 @@ void RPC_NodeNaming( int homeID, int nodeID )
 // The driver is ready, add it to our internal controller list
 //-----------------------------------------------------------------------------
 
-void RPC_DriverReady( int homeID, int nodeID )
+void RPC_DriverReady( uint32 homeID, int nodeID )
 {
-	//home = homeID;
-	//controllerid = nodeID;
+	// Retrieve the serialport name of this homeid
+	string controllerPath = Manager::Get()->GetControllerPath( homeID );
 
-	m_structCtrl* ctrl = new m_structCtrl();
-
-	ctrl->m_homeId = homeID;
-	ctrl->m_controllerId = nodeID;
-	ctrl->m_controllerAllQueried = 0;
-	ctrl->m_controllerBusy = false;
-	ctrl->m_nodeId = 0;
-	ctrl->m_lastWriteXML = 0;
-	ctrl->m_running = true;
-
-	g_allControllers.push_back( ctrl );
+	for ( list<m_structCtrl*>::iterator it = g_allControllers.begin(); it != g_allControllers.end(); ++it )
+	{
+		m_structCtrl* ctrl = *it;
+		if ( ctrl->m_serialPort == controllerPath )
+		{
+			ctrl->m_homeId = homeID;
+			ctrl->m_controllerId = nodeID;
+		}
+	}
 
 	WriteLog( LogLevel_Debug, true, "DriverReady: HomeId=0x%x Node=%d", homeID, nodeID );
 
@@ -1311,54 +1326,18 @@ void RPC_DriverReady( int homeID, int nodeID )
 		}
 	}
 
-	string controllerPath = Manager::Get()->GetControllerPath( homeID ); 
 	WriteLog( LogLevel_Debug, false, "ControllerPath=%s", controllerPath.c_str() );
 
-	// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
-	xmlrpc_env_init( &env );
-	xmlrpc_value* resultP = NULL;
- 	xmlrpc_client_call2f( &env, clientP, url, "zwave.setids", &resultP, "(ii)", homeID, nodeID );
+	json_object *jparams = json_object_new_object();
+	json_object *jhomeid = json_object_new_int( homeID );
+	json_object *jcontrollerid = json_object_new_int( nodeID );
+	json_object *jcontrollerpath = json_object_new_string( controllerPath.c_str() );
+	json_object_object_add( jparams, "homeid", jhomeid );
+	json_object_object_add( jparams, "controllerid", jcontrollerid );
+	json_object_object_add( jparams, "serialport", jcontrollerpath );
 
-	// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
-	if ( ! fault_occurred ( "zwave.setids", &env ) )
-	{
-		xmlrpc_bool bvalue;
+	cURL_Post_JSON( homeID, "openzwave.homeid", jparams );
 
-		xmlrpc_read_bool( &env, resultP, &bvalue );
-
-		if ( ! bvalue )
-		{
-			WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.setids\" returned FALSE" );
-		}
-	}
-
-	if ( resultP )
-	{
-		xmlrpc_DECREF( resultP );
-	}
-
-	// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
-	xmlrpc_env_init( &env );
-	resultP = NULL;
- 	xmlrpc_client_call2f( &env, clientP, url, "zwave.removenodes", &resultP, "()" );
-
-	// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
-	if ( ! fault_occurred ( "zwave.removenodes", &env ) )
-	{
-		xmlrpc_bool bvalue;
-
-		xmlrpc_read_bool( &env, resultP, &bvalue );
-
-		if ( ! bvalue )
-		{
-			WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.removenodes\" returned FALSE" );
-		}
-	}
-
-	if ( resultP )
-	{
-		xmlrpc_DECREF( resultP );
-	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1385,8 +1364,8 @@ void OnNotification
 				// Add the new value to our list
 				nodeInfo->m_values.push_back( data->GetValueID() );
 			}
-			//RPC_ValueAdded( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), data->GetByte() );
-			RPC_ValueChanged( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), true );
+			//RPC_ValueAdded( data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), data->GetByte() );
+			RPC_ValueChanged( data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), true );
 
 			break;
 		}
@@ -1405,17 +1384,17 @@ void OnNotification
 				}
 			}
 
-			RPC_ValueRemoved( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID() );
+			RPC_ValueRemoved( data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID() );
 			break;
 		}
 		case Notification::Type_NodeNaming:
 		{
-			RPC_NodeNaming( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			RPC_NodeNaming( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_ValueChanged:
 		{
-			RPC_ValueChanged( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), false );
+			RPC_ValueChanged( data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), false );
 
 			// Update LastSeen and DeviceState
 			if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
@@ -1425,7 +1404,7 @@ void OnNotification
 			}
 
 			// Check if zwcfg*xml has been written 3600+ sec, then flush to disk
-			m_structCtrl* ctrl = GetControllerInfo( (int)data->GetHomeId() );
+			m_structCtrl* ctrl = GetControllerInfo( data->GetHomeId() );
 			if ( ctrl->m_lastWriteXML > 0 )
 			{
 				double seconds;
@@ -1433,8 +1412,8 @@ void OnNotification
 
 				if ( seconds > 3600 )
 				{
-					Manager::Get()->WriteConfig( (int)data->GetHomeId() );
-					WriteLog( LogLevel_Debug, true, "DomoZWave_WriteConfig: HomeId=0x%x (%.f seconds)", (int)data->GetHomeId(), seconds );
+					Manager::Get()->WriteConfig( data->GetHomeId() );
+					WriteLog( LogLevel_Debug, true, "DomoZWave_WriteConfig: HomeId=0x%x (%.f seconds)", data->GetHomeId(), seconds );
 					ctrl->m_lastWriteXML = time( NULL );
 				}
 			}	
@@ -1443,24 +1422,36 @@ void OnNotification
 		}
 		case Notification::Type_Group:
 		{
-			RPC_Group( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			RPC_Group( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_NodeNew:
 		{
-			RPC_NodeNew( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			RPC_NodeNew( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_NodeAdded:
 		{
+			m_structCtrl* ctrl = GetControllerInfo( data->GetHomeId() );
+
 			NodeInfo* nodeInfo = new NodeInfo();
 			nodeInfo->m_homeId = data->GetHomeId();
 			nodeInfo->m_nodeId = data->GetNodeId();
-			nodeInfo->m_DeviceState = DZType_Unknown;
 			nodeInfo->m_LastSeen = 0;
+
+			// The controller will always be alive
+			if ( ctrl->m_controllerId == data->GetNodeId() )
+			{ 
+				nodeInfo->m_DeviceState = DZType_Alive;
+			}
+			else
+			{
+				nodeInfo->m_DeviceState = DZType_Unknown;
+			}
+
 			g_nodes.push_back( nodeInfo );
 			
-			RPC_NodeAdded( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			RPC_NodeAdded( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_NodeRemoved:
@@ -1478,18 +1469,20 @@ void OnNotification
 				}
 			}
 
-			RPC_NodeRemoved( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			pthread_mutex_unlock( &g_criticalSection );
+
+			RPC_NodeRemoved( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_NodeProtocolInfo:
 		{
-			RPC_NodeProtocolInfo( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			RPC_NodeProtocolInfo( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_NodeEvent:
 		{
 			// Event caused by basic set or hail
-			RPC_NodeEvent( (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), (int)data->GetEvent() );
+			RPC_NodeEvent( data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), (int)data->GetEvent() );
 
 			// Update LastSeen and DeviceState
 			if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
@@ -1501,60 +1494,44 @@ void OnNotification
 		}
 		case Notification::Type_PollingEnabled:
 		{
-			RPC_PollingEnabled( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			RPC_PollingEnabled( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_PollingDisabled:
 		{
-			RPC_PollingDisabled( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			RPC_PollingDisabled( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_DriverReady:
 		{
-			RPC_DriverReady( (int)data->GetHomeId(), (int)data->GetNodeId() );
+			RPC_DriverReady( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_AllNodesQueried:
 		case Notification::Type_AwakeNodesQueried:
 		case Notification::Type_AllNodesQueriedSomeDead:
 		{
-			m_structCtrl* ctrl = GetControllerInfo( (int)data->GetHomeId() );
+			m_structCtrl* ctrl = GetControllerInfo( data->GetHomeId() );
 
-			if ( data->GetType() == Notification::Type_AllNodesQueried ) WriteLog( LogLevel_Debug, true, "AllNodesQueried: HomeId=0x%x", (int)data->GetHomeId() );
-			if ( data->GetType() == Notification::Type_AwakeNodesQueried ) WriteLog( LogLevel_Debug, true, "AwakeNodesQueried: HomeId=0x%x", (int)data->GetHomeId() );
-			if ( data->GetType() == Notification::Type_AllNodesQueriedSomeDead ) WriteLog( LogLevel_Debug, true, "AllNodesQueriedSomeDead: HomeId=0x%x", (int)data->GetHomeId() );
+			if ( data->GetType() == Notification::Type_AllNodesQueried ) WriteLog( LogLevel_Debug, true, "AllNodesQueried: HomeId=0x%x", data->GetHomeId() );
+			if ( data->GetType() == Notification::Type_AwakeNodesQueried ) WriteLog( LogLevel_Debug, true, "AwakeNodesQueried: HomeId=0x%x", data->GetHomeId() );
+			if ( data->GetType() == Notification::Type_AllNodesQueriedSomeDead ) WriteLog( LogLevel_Debug, true, "AllNodesQueriedSomeDead: HomeId=0x%x", data->GetHomeId() );
 
 			if ( ctrl->m_controllerAllQueried == 0 )
 			{ 
 				// Write zwcfg*xml file
-				Manager::Get()->WriteConfig( (int)data->GetHomeId() );
+				Manager::Get()->WriteConfig( data->GetHomeId() );
 
 				// The zwcfg*xml is written, save the current time
 				ctrl->m_lastWriteXML = time( NULL );
 
-				// Re-initialize the env, else after the FIRST error, the DomoZWave is dead in the water
-				xmlrpc_env_init( &env );
-				xmlrpc_value* resultP = NULL;
 				pthread_mutex_unlock( &g_criticalSection );
- 				xmlrpc_client_call2f( &env, clientP, url, "zwave.allqueried", &resultP, "()" );
 
-				// Check if we didn't receive an error, then check if we get TRUE back (FALSE isn't good ;-))
-				if ( ! fault_occurred ( "zwave.allqueried", &env ) )
-				{
-					xmlrpc_bool bvalue;
+				json_object *jparams = json_object_new_object();
+				json_object *jhomeid = json_object_new_int( data->GetHomeId() );
+				json_object_object_add( jparams, "homeid", jhomeid );
 
-					xmlrpc_read_bool( &env, resultP, &bvalue );
-
-					if ( ! bvalue )
-					{
-						WriteLog( LogLevel_Error, true, "ERROR: In call \"zwave.allqueried\" returned FALSE" );
-					}
-				}
-
-				if ( resultP )
-				{
-					xmlrpc_DECREF( resultP );
-				}
+				cURL_Post_JSON( data->GetHomeId(), "openzwave.allqueried", jparams );
 			}
 			else
 			{
@@ -1570,25 +1547,25 @@ void OnNotification
 		}
 		case Notification::Type_CreateButton:
 		{
-			WriteLog( LogLevel_Debug, true, "CreateButton: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, true, "CreateButton: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 			WriteLog( LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId() );
 			break;
 		}	
 		case Notification::Type_DeleteButton:
 		{
-			WriteLog( LogLevel_Debug, true, "DeleteButton: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, true, "DeleteButton: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 			WriteLog( LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId() );
 			break;
 		}	
 		case Notification::Type_ButtonOn:
 		{
-			WriteLog( LogLevel_Debug, true, "ButtonOn: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, true, "ButtonOn: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 			WriteLog( LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId() );
 			break;
 		}	
 		case Notification::Type_ButtonOff:
 		{
-			WriteLog( LogLevel_Debug, true, "ButtonOff: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, true, "ButtonOff: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 			WriteLog( LogLevel_Debug, false, "ButtonId=%d", (int)data->GetButtonId() );
 			break;
 		}	
@@ -1606,7 +1583,7 @@ void OnNotification
 		}
 		case Notification::Type_EssentialNodeQueriesComplete:
 		{
-			WriteLog( LogLevel_Debug, true, "EssentialNodeQueriesComplete: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, true, "EssentialNodeQueriesComplete: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 
 			// We require the configuration parameters when the device is essentially queried
 			// This still need to be optimized, because we do it with every startup now
@@ -1615,17 +1592,24 @@ void OnNotification
 		}
 		case Notification::Type_NodeQueriesComplete:
 		{
-			WriteLog( LogLevel_Debug, true, "NodeQueriesComplete: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, true, "NodeQueriesComplete: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_ValueRefreshed:
 		{
-			WriteLog( LogLevel_Debug, true, "ValueRefreshed: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			WriteLog( LogLevel_Debug, true, "ValueRefreshed: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
 		case Notification::Type_SceneEvent:
 		{
-			WriteLog( LogLevel_Debug, true, "SceneEvent: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+			RPC_NodeScene( data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), (int)data->GetEvent() );
+
+			// Update LastSeen and DeviceState
+			if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
+			{
+			        nodeInfo->m_LastSeen = time( NULL );
+			        nodeInfo->m_DeviceState = DZType_Alive;
+			}
 			break;
 		}
 		case Notification::Type_Notification:
@@ -1634,7 +1618,7 @@ void OnNotification
 			{
 				case Notification::Code_MsgComplete:
 				{
-					WriteLog( LogLevel_Debug, true, "MsgComplete: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					WriteLog( LogLevel_Debug, true, "MsgComplete: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 
 					// Update LastSeen and DeviceState
 					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
@@ -1646,17 +1630,17 @@ void OnNotification
 				}
 				case Notification::Code_Timeout:
 				{
-					WriteLog( LogLevel_Debug, true, "Code_Timeout: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					WriteLog( LogLevel_Debug, true, "Code_Timeout: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 					break;
 				}
 				case Notification::Code_NoOperation:
 				{
-					WriteLog( LogLevel_Debug, true, "Code_NoOperation: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					WriteLog( LogLevel_Debug, true, "Code_NoOperation: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 					break;
 				}
 				case Notification::Code_Awake:
 				{
-					WriteLog( LogLevel_Debug, true, "Code_Awake: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					WriteLog( LogLevel_Debug, true, "Code_Awake: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 
 					// Update LastSeen and DeviceState
 					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
@@ -1668,17 +1652,29 @@ void OnNotification
 				}
 				case Notification::Code_Sleep:
 				{
-					WriteLog( LogLevel_Debug, true, "Code_Sleep: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					WriteLog( LogLevel_Debug, true, "Code_Sleep: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
+
+					// Update DeviceState
+					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
+					{
+						nodeInfo->m_DeviceState = DZType_Sleep;
+					}
 					break;
 				}
 				case Notification::Code_Dead:
 				{
-					WriteLog( LogLevel_Debug, true, "Code_Dead: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					WriteLog( LogLevel_Debug, true, "Code_Dead: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
+
+					// Update DeviceState
+					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
+					{
+						nodeInfo->m_DeviceState = DZType_Dead;
+					}
 					break;
 				}
 				case Notification::Code_Alive:
 				{
-					WriteLog( LogLevel_Debug, true, "Code_Alive: HomeId=0x%x Node=%d", (int)data->GetHomeId(), (int)data->GetNodeId() );
+					WriteLog( LogLevel_Debug, true, "Code_Alive: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
 
 					// Update LastSeen and DeviceState
 					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
@@ -1690,7 +1686,7 @@ void OnNotification
 				}
 				default:
 				{
-					WriteLog( LogLevel_Debug, true, "Notification: HomeId=0x%x Node=%d, Unknown: %d", (int)data->GetHomeId(), (int)data->GetNodeId(), data->GetNotification() );
+					WriteLog( LogLevel_Debug, true, "Notification: HomeId=0x%x Node=%d, Unknown: %d", data->GetHomeId(), (int)data->GetNodeId(), data->GetNotification() );
 					break;
 				}
 			}
@@ -1917,6 +1913,159 @@ void OnControllerUpdate( Driver::ControllerState cs, Driver::ControllerError err
 	}
 }
 
+//-----------------------------------------------------------------------------
+//
+//-----------------------------------------------------------------------------
+
+static size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp)
+{
+((std::string*)userp)->append((char*)contents, size * nmemb);
+return size * nmemb;
+}
+
+//-----------------------------------------------------------------------------
+// <cURL_Post_JSON>
+// Call CURL to post the JSON-RPC to DomotiGa
+//-----------------------------------------------------------------------------
+
+void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
+{
+	// Increment the id and check we didn't reach our max
+	if ( jsonrpcid > 0xFFFF ) jsonrpcid = 0;
+	jsonrpcid++;
+
+	// Construct JSON-RPC request
+	json_object *jrequest = json_object_new_object();
+
+	json_object *jjsonrpc = json_object_new_string( "2.0" );
+	json_object *jmethod = json_object_new_string( method );
+
+	json_object_object_add( jrequest, "jsonrpc", jjsonrpc );
+	json_object_object_add( jrequest, "method", jmethod );
+	if ( jparams != NULL )
+	{
+		json_object_object_add( jrequest, "params", jparams );
+	}
+
+	// Add id, because cURL doesn't like "no-response"
+	json_object *jid = json_object_new_int( jsonrpcid );
+	json_object_object_add( jrequest, "id", jid );
+
+	WriteLog( LogLevel_Debug, true, "JSON-RPC: HomeId=0x%x Method=%s", homeID, method );
+	WriteLog( LogLevel_Debug, false, "Data=%s", json_object_to_json_string( jrequest ) );
+
+	CURL *curl;
+	CURLcode res;
+	curl_slist *httpheader = NULL;
+	string readBuffer;
+
+	// Initialize cURL
+	curl_global_init( CURL_GLOBAL_ALL );
+
+	// Get a cURL handle
+	curl = curl_easy_init( );
+	if( curl )
+	{
+		m_structCtrl* ctrl = GetControllerInfo( homeID );
+		curl_easy_setopt( curl, CURLOPT_URL, ctrl->m_jsonrpcurl );
+
+      		httpheader = curl_slist_append( httpheader, "Content-Type: application/json" );
+      		res = curl_easy_setopt( curl, CURLOPT_HTTPHEADER, httpheader );
+      		res = curl_easy_setopt( curl, CURLOPT_CONNECTTIMEOUT, 3 );
+      		res = curl_easy_setopt( curl, CURLOPT_TIMEOUT, 3 );
+
+		//CURLOPT_USERNAME
+		//CURLOPT_PASSWORD
+		//CURLOPT_HTTPAUTH
+
+		// Set the http headers - set content-type and remove 100-continue header
+		curl_easy_setopt( curl, CURLOPT_POSTFIELDS, json_object_to_json_string( jrequest ) );
+
+		//
+		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+
+		// Perform the request, rest will get the return code
+		res = curl_easy_perform( curl );
+
+		// Check for errors
+		if( res != CURLE_OK )
+		{
+			WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned cURL msg \"%s\"", method, curl_easy_strerror(res) );
+		}
+		else
+		{
+			// Check if the buffer is empty, then it is an invalid one anyway
+			if ( readBuffer == "" ) {
+				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a response", method );
+
+				// Clean-up cURL
+				curl_easy_cleanup( curl );
+				return;
+			}
+
+			// Decode JSON-RPC response
+			json_object *jrobj = json_tokener_parse( readBuffer.c_str() );
+			json_object *jrjsonrpc = json_object_object_get( jrobj, "jsonrpc" );
+			json_object *jrerror = json_object_object_get( jrobj, "error" );
+			json_object *jrresult = json_object_object_get( jrobj, "result" );
+			json_object *jrid = json_object_object_get( jrobj, "id" );
+
+			// Test for jsonrpc=2.0
+			if (( json_object_get_type( jrjsonrpc ) != json_type_string ) || ( strcmp( json_object_get_string( jrjsonrpc ), "2.0" ) != 0 ))
+			{
+				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a valid \"jsonrpc\" version. Data=%s", method, readBuffer.c_str() );
+
+				// Clean-up cURL
+				curl_easy_cleanup( curl );
+				return;
+			}
+
+			// Test for id
+			if (( json_object_get_type( jrid ) == json_type_int ) && ( json_object_get_int( jrid ) == jsonrpcid ))
+			{
+				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a valid \"id\". Data=%s", method, readBuffer.c_str() );
+
+				// Clean-up cURL
+				curl_easy_cleanup( curl );
+				return;
+			}
+
+			// Check if we got a result
+			if ( json_object_get_type( jrresult ) == json_type_boolean )
+			{
+					if ( json_object_get_boolean( jrresult ) == true ) 
+					{
+						WriteLog( LogLevel_Debug, false, "JSON-RPC call \"%s\" successful" );
+					}
+					else
+					{
+						WriteLog( LogLevel_Error, true, "JSON-RPC call \"%s\" failed" );
+					}
+			}
+			else
+			{
+				if ( json_object_get_type( jrerror ) == json_type_object )
+				{
+					WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned error. Data=%s", method, readBuffer.c_str() );
+				}
+				else
+				{
+					WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned invalid data. Data=%s", method, readBuffer.c_str() );
+				}
+			}
+		}
+ 
+		// Clean-up cURL
+		curl_easy_cleanup( curl );
+	}
+	else
+	{
+		// Always clean-up the cURL enviroment
+		curl_global_cleanup();
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // C style bindings are required since we call these functions from gambas.
 ///////////////////////////////////////////////////////////////////////////////
@@ -1956,15 +2105,12 @@ bool DomoZWave_HomeIdPresent( uint32 home, const char* _param )
 // configdir = ~/domotiga/wrappers/domozwave/open-zwave/config (default)
 // zwdir = ~/domotiga/wrappers/domozwave (default)
 // logname = ~/domotiga/logs/domozwave- or ~/domotiga/logs/server-domozwave- (default)
-// rpcPort = 9009 (default)
-// enableLog = True/False
-// enableOZWLog = True/False
-// polltime = <integer> in milliseconds
+// url = The URL to post the JSON-RPC to
 //
 // NOTE: You need to call DomoZWave_AddSerialPort to complete the initialization
 //-----------------------------------------------------------------------------
 
-void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logname, int rpcPort, bool enableLog, bool enableOZWLog, int polltime )
+void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logname, bool enableInitLog )
 {
 	// Get a timestamp for Year and Month
 	struct timeval tv;
@@ -1989,7 +2135,7 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	InitVars( );
 
 	// Store debugging option, this only is valid for the wrapper. The open-zwave has its own configuration
-	debugging = enableLog;
+	debugging = enableInitLog;
 
 	// Open the logfile, required for errors and debug
 	logfile.open( logfile_name.c_str(), ios::app );
@@ -1999,8 +2145,19 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	}
 
 	WriteLog( LogLevel_Debug, true, "DomoZWave_Init: Initializing Open-ZWave Wrapper" );
-	WriteLog( LogLevel_Debug, false, "%s", domozwave_vers );
-	WriteLog( LogLevel_Debug, false, "%s", ozw_vers );
+
+	// Check if we got an UNKNOWN version, than follow the NEW version convention
+	if ( strcmp(ozw_vers, "OpenZWave version UNKNOWN") == 0 )
+	{
+		// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
+		char ozw_vers2[100];
+		snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d", ozw_vers_major, ozw_vers_minor, ozw_vers_revision );
+		WriteLog( LogLevel_Debug, false, "%s", ozw_vers2 );
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "%s", ozw_vers );
+	}
 
 	pthread_mutexattr_t mutexattr;
 
@@ -2009,20 +2166,11 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	pthread_mutex_init( &g_criticalSection, &mutexattr );
 	pthread_mutexattr_destroy( &mutexattr );
 
-	sprintf( url, "http://localhost:%d", rpcPort ); 
-
 	Options::Create( configdir, zwdir, "" );
 	Options::Get()->AddOptionBool( "AppendLogFile", false );
 	Options::Get()->AddOptionBool( "ConsoleOutput", false );
 
-	if ( enableOZWLog )
-	{
-		Options::Get()->AddOptionInt( "SaveLogLevel", LogLevel_Detail );
-	  	Options::Get()->AddOptionInt( "QueueLogLevel", LogLevel_Debug );
-	   	Options::Get()->AddOptionInt( "DumpTriggerLevel", LogLevel_Error );
-	}
-
-	Options::Get()->AddOptionInt( "PollInterval", polltime );
+	Options::Get()->AddOptionInt( "PollInterval", 0 );
 	Options::Get()->AddOptionBool( "IntervalBetweenPolls", true );
 	Options::Get()->AddOptionBool( "SuppressValueRefresh", false );
 	Options::Get()->AddOptionBool( "PerformReturnRoutes", false );
@@ -2030,35 +2178,100 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	Options::Get()->Lock();
 
 	Manager::Create();
-	Log::SetLoggingState( debugging );
+
+	// Enable OZW_Log.txt - if applicable
+	DomoZWave_Log( enableInitLog );
 
 	Manager::Get()->AddWatcher( OnNotification, NULL );
 
- 	// Initialize our error-handling environment.
- 	xmlrpc_env_init( &env );
- 	xmlrpc_client_setup_global_const( &env );
- 	xmlrpc_client_create( &env, XMLRPC_CLIENT_NO_FLAGS, "DomoZWaveClient", "1.0", NULL, 0, &clientP );
-	if ( fault_occurred( "xml_create", &env ) )
-	{
-		return;
-	}
+// TODO create json something?
+
 }
 
+//-----------------------------------------------------------------------------
+// <DomoZWave_Log>
+//-----------------------------------------------------------------------------
+
+void DomoZWave_Log( bool logging )
+{
+
+	if ( logging )
+	{
+		Log::SetLoggingState( LogLevel_Detail, LogLevel_Debug, LogLevel_Error );
+	}
+	else
+	{
+		Log::SetLoggingState( LogLevel_None, LogLevel_None, LogLevel_None );
+	}
+
+}
 
 //-----------------------------------------------------------------------------
 // <DomoZWave_AddSerialPort>
 //-----------------------------------------------------------------------------
 
-void DomoZWave_AddSerialPort( const char* serialPort )
+void DomoZWave_AddSerialPort( const char* serialPort, const char* jsonrpcurl, bool logging )
 {
 	string Name;
 
-	Manager::Get()->AddDriver( serialPort );
 	// Store the serialPort used
 	Name = serialPort; 
 
-	serialPortName.push_back( Name );
+	// Create and store new controller information
+	m_structCtrl* ctrl = new m_structCtrl();
+
+	ctrl->m_serialPort = Name;
+	ctrl->m_homeId = 0;
+	ctrl->m_controllerId = 0;
+	ctrl->m_controllerAllQueried = 0;
+	ctrl->m_controllerBusy = false;
+	ctrl->m_nodeId = 0;
+	ctrl->m_lastWriteXML = 0;
+	ctrl->m_running = true;
+
+	// Store the url
+	sprintf( ctrl->m_jsonrpcurl, "%s", jsonrpcurl );
+	WriteLog( LogLevel_Debug, false, "JSON-RPC URL=%s", ctrl->m_jsonrpcurl );
+
+	g_allControllers.push_back( ctrl );
+
+	Manager::Get()->AddDriver( serialPort );
+
 }
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_RemoveSerialPort>
+//-----------------------------------------------------------------------------
+
+void DomoZWave_RemoveSerialPort( const char* serialPort )
+{
+	m_structCtrl* ctrl;
+	string Name;
+
+	// Store the serialPort used
+	Name = serialPort; 
+
+	// Loop through available controllers and set running to false
+	// Otherwise the zwave.removenode can fail/hang
+	for ( list<m_structCtrl*>::iterator it = g_allControllers.begin(); it != g_allControllers.end(); ++it )
+	{
+		ctrl = *it;
+		if ( ctrl->m_serialPort == Name )
+		{
+			ctrl->m_running = false;
+		}
+	}
+
+        pthread_mutex_lock( &g_criticalSection );
+	Manager::Get()->RemoveDriver( serialPort );
+        pthread_mutex_unlock( &g_criticalSection );
+
+	// Remove the ctrl from the list, it is removed now
+	if ( ctrl != NULL ) {
+		g_allControllers.remove ( ctrl );
+	}
+}
+
 
 //-----------------------------------------------------------------------------
 // <DomoZWave_Destroy>
@@ -2086,7 +2299,6 @@ void DomoZWave_Destroy( )
 
 	Manager::Get()->RemoveWatcher( OnNotification, NULL );
 
-	//cout << OZW_datetime << "Destroyed xmlrpc" << endl;
 	Manager::Get()->Destroy();
 	//cout << OZW_datetime << "Destroyed manager" << endl;
 	Options::Get()->Destroy();
@@ -2096,11 +2308,6 @@ void DomoZWave_Destroy( )
 	pthread_mutex_destroy( &g_criticalSection );
 
 	serialPortName.clear();
-
-	// Clean up our error-handling environment. 
-	xmlrpc_env_clean( &env );
-
-	xmlrpc_client_destroy( clientP );
 
 	WriteLog( LogLevel_Debug, true, "DomoZWave_Destroy: Destroyed Open-ZWave Wrapper" );
 
@@ -2131,7 +2338,21 @@ const char* DomoZWave_Version( )
 
 const char* DomoZWave_OZWVersion( )
 {
-	return ozw_vers;
+	// Check if we got an UNKNOWN version, than follow the NEW version convention
+	if ( strcmp(ozw_vers, "OpenZWave version UNKNOWN") == 0 )
+	{
+		// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
+		char ozw_vers2[100];
+		snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d", ozw_vers_major, ozw_vers_minor, ozw_vers_revision );
+
+		char* ozw_vers2_return = &ozw_vers2[0];
+		return ozw_vers2_return;
+	}
+	else
+	{
+		return ozw_vers;
+	}
+
 }
 
 //-----------------------------------------------------------------------------
@@ -2607,6 +2828,94 @@ const char* DomoZWave_GetNodeApplicationVersion( uint32 home, int32 node )
 	{
 		return "";
 	}
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeLastSeen>
+// Returns the last seen date/time of the node as unix timestamp
+//-----------------------------------------------------------------------------
+
+uint32 DomoZWave_GetNodeLastSeen( uint32 home, int32 node )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeLastSeen" ) == false ) return 0;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeLastSeen: HomeId=0x%x Node=%d", home, node );
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		if ( nodeInfo->m_LastSeen == 0 )
+		{
+			WriteLog( LogLevel_Debug, false, "LastSeen=Never" );
+		}
+		else
+		{
+			char buf[20];
+			strftime( buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", localtime(&nodeInfo->m_LastSeen) );
+			WriteLog( LogLevel_Debug, false, "LastSeen=%d (%s)", nodeInfo->m_LastSeen, buf);
+		}
+
+		return nodeInfo->m_LastSeen;
+	}
+
+	return 0;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetNodeStatus>
+// Returns the status of the node, e.g. alive, dead, sleep, etc
+//-----------------------------------------------------------------------------
+
+const char* DomoZWave_GetNodeStatus( uint32 home, int32 node )
+{
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeStatus" ) == false ) return "";
+
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		string status;
+
+		switch ( nodeInfo->m_DeviceState )
+	        {
+			case DZType_Alive:
+			{
+				status = "Alive";
+				break;
+			}
+			case DZType_Dead:
+			{
+				status = "Dead";
+				break;
+			}
+			case DZType_Sleep:
+			{
+				status = "Sleep";
+				break;
+			}
+			case DZType_Awake:
+			{
+				status = "Awake";
+				break;
+			}
+			case DZType_Timeout:
+			{
+				status = "Timeout";
+				break;
+			}
+			case DZType_Unknown:
+			{
+				status = "Unknown";
+				break;
+			}
+			default:
+			{
+				status = "Other";
+				break;
+			}
+		}
+
+		WriteLog( LogLevel_Debug, false, "Status=%s", status.c_str() );
+		return status.c_str();
+	}
+
+	return "";
 }
 
 //-----------------------------------------------------------------------------

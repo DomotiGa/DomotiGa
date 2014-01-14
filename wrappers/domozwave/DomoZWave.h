@@ -135,9 +135,15 @@
 extern "C" {
 
 // Initialize and destroy the wrapper
-void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logname, int rpcPort, bool enableLog, bool enableOZWLog, int polltime );
-void DomoZWave_AddSerialPort( const char* serialPort );
+void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logname, bool enableInitLog );
 void DomoZWave_Destroy( );
+
+//
+void DomoZWave_Log( bool logging );
+
+//
+void DomoZWave_AddSerialPort( const char* serialPort, const char* jsonrpcurl, bool logging );
+void DomoZWave_RemoveSerialPort( const char* serialPort );
 
 // Write zwcfg*xml, normally this happens automatically when the open-wave initialized or exits
 void DomoZWave_WriteConfig( uint32 home );
@@ -170,6 +176,8 @@ void DomoZWave_SetNodeLocation( uint32 home, int32 node, const char* nodeLocatio
 const char* DomoZWave_GetNodeLibraryVersion( uint32 home, int32 node );
 const char* DomoZWave_GetNodeProtocolVersion( uint32 home, int32 node );
 const char* DomoZWave_GetNodeApplicationVersion( uint32 home, int32 node );
+uint32 DomoZWave_GetNodeLastSeen( uint32 home, int32 node );
+const char* DomoZWave_GetNodeStatus( uint32 home, int32 node);
 
 // Request or update node state
 bool DomoZWave_RequestNodeState( uint32 home, int32 node );
@@ -255,5 +263,7 @@ const char* DomoZWave_GenericTypeName( int generictype );
 //-----------------------------------------------------------------------------
 // Thermostate and Scenes are not supported (yet)
 //-----------------------------------------------------------------------------
+
+void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams );
 
 }
