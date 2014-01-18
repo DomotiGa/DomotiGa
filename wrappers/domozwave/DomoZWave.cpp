@@ -1602,7 +1602,8 @@ void OnNotification
 		}
 		case Notification::Type_SceneEvent:
 		{
-			RPC_NodeScene( data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), (int)data->GetEvent() );
+			//RPC_NodeScene( data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), (int)data->GetEvent() );
+			RPC_NodeScene( data->GetHomeId(), (int)data->GetNodeId(), data->GetValueID(), 0 );
 
 			// Update LastSeen and DeviceState
 			if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
