@@ -1,0 +1,202 @@
+' Gambas class file
+
+' Gambas Class file
+
+' Description:
+' CHDDTemp.class
+' Support for HDDTemp harddisk temperature monitoring.
+
+' Development Status:
+' Working.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "HDDTemp"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "HDDTemp"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[HDDTemp] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $iPollTime As Integer
+Private $iThreshold As Integer
+Private $bDebug As Boolean
+
+Public tHDDTemp As Timer
+Public hHDDTemp As Socket
+Private dTimeHighTemp As Date
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+  
+  KeyName = cPl.KeyName
+  Instance = 1 ' Module can only have 1 instance 
+  
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $iPollTime = cPl.Settings["polltime"]
+  $iThreshold = cPl.Settings["threshold"]
+  $bDebug = cPl.Settings["debug"]
+
+  ' Initialize 
+  Run()
+
+  IsRunning = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tHDDTemp.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Run()
+
+  dTimeHighTemp = Date(1970, 1, 1, 0, 0, 0)
+  ' start poll timer for HDDTemp
+  tHDDTemp = New Timer As "tHDDTemp"
+  tHDDTemp.Delay = $iPollTime * 1000 ' multiply for seconds
+  tHDDTemp.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tHDDTemp_Timer()
+
+  CheckHDDTemp()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open socket and connect to hddtemp daemon
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckHDDTemp()
+
+  hHDDTemp = New Socket As "hHDDTemp"
+  hHDDTemp.Connect($sTCPHost, $iTCPPort)
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' print debug info
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hHDDTemp_Ready()
+
+  If $bDebug Then Main.WriteLog(LogLabel & "Connected to socket " & $sTCPHost & ":" & $iTCPPort)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read and parse response string from daemon
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hHDDTemp_Read()
+
+  Dim sDisks, sFields As String[]
+  Dim sBuffer, sDisk, sField, sTemp, sDevice As String
+  Dim iCount, iDeviceId As Integer
+
+  ' read string and close the connection
+  sBuffer = Read #hHDDTemp, Lof(hHDDTemp)
+  Try Close #hHDDTemp
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Got string: " & sBuffer)
+
+  ' first change string so disks can be separated
+  sBuffer = "|" & sBuffer & "|"
+  sBuffer = Replace$(sBuffer, "||", "!")
+  sDisks = Split(sBuffer, "!")
+
+  ' iterate over each disk
+  For Each sDisk In sDisks
+    sFields = Split(sDisk, "|")
+    iCount = 0
+    For Each sField In sFields
+      If iCount = 0 Then sDevice = sField
+      If iCount = 2 Then
+        If sField <> "NA" Then
+          Try sTemp = CFloat(sField)
+          If Error Then Continue
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Device '" & sDevice & "' has a temperature of " & sTemp & "°C")
+          ' find device in database
+          iDeviceId = Devices.Find(Instance, sDevice, Devices.FindInterface("HDDTemp Socket"), "HDDTEMP")
+          If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, sTemp, Devices.ValueType_Temperature)
+          ' send warning message per e-mail if threshold is reached
+          ' limit the amount of emails to one per 30 minutes
+          If (CFloat(sTemp) > $iThreshold) And (DateDiff(dTimeHighTemp, Now(), gb.Minute) > 30) Then
+            MailWarning(("The temperature of disk '") & sDevice & ("' is '") & sTemp & ("'°C/°F, so it's above the threshold of '") & $iThreshold & "'°C/°F!")
+            dTimeHighTemp = Now()
+          Endif
+          If (CFloat(sTemp) < ($iThreshold - 0.5)) And (DateDiff(dTimeHighTemp, Now(), gb.Minute) < 100) Then
+            ' mail OK temp for now
+            MailWarning(("The temperature of disk '") & sDevice & ("' is '") & sTemp & ("'°C/°F, so it's normal, below the threshold of '") & $iThreshold & "'°C/°F!")
+            dTimeHighTemp = Date(1970, 1, 1, 0, 0, 0)
+          Endif
+        Else
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Device '" & sDevice & "' doesn't support temp measurement!")
+        Endif
+      Endif
+      Inc iCount
+    Next
+  Next
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' catch errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hHDDTemp_Error()
+
+  Log.Plugin_TCP_Error(LogLabel, $sTCPHost, Last.Status)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' generate e-mail when temp is above threshold
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub MailWarning(sMessage As String)
+
+  Mail.SendMail(Application.Name & ": HDDTemp", sMessage, Main.sEmailToAddress)
+
+End

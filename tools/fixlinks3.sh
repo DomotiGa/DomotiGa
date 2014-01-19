@@ -92,7 +92,7 @@ ln -s ../../DomotiGa3/.src/DMXPlayer.module
 ln -s ../../DomotiGa3/.src/Energy.module
 ln -s ../../DomotiGa3/.src/EventLoop.module
 ln -s ../../DomotiGa3/.src/Events.module
-ln -s ../../DomotiGa3/.src/HDDTemp.module
+ln -s ../../DomotiGa3/.src/CHDDTemp.class
 ln -s ../../DomotiGa3/.src/Log.module
 ln -s ../../DomotiGa3/.src/Shell.module
 ln -s ../../DomotiGa3/.src/Mail.module

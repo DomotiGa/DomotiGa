@@ -92,7 +92,7 @@ cp ../../DomotiGa3/.src/DNS.module .
 cp ../../DomotiGa3/.src/Energy.module .
 cp ../../DomotiGa3/.src/EventLoop.module .
 cp ../../DomotiGa3/.src/Events.module .
-cp ../../DomotiGa3/.src/HDDTemp.module .
+cp ../../DomotiGa3/.src/CHDDTemp.class .
 cp ../../DomotiGa3/.src/Shell.module .
 cp ../../DomotiGa3/.src/Log.module .
 cp ../../DomotiGa3/.src/Mail.module .
