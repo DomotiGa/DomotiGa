@@ -1,0 +1,256 @@
+' Gambas Class file
+
+' Description:
+' CBluetooth.class
+' Support for Bluetooth proximity, see if a user is around by checking his bluetooth device(s).
+
+' Development Status:
+' Works.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Bluetooth"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "Bluetooth"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[Bluetooth] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sDevice As String
+Private $iThreshold As Integer
+Private $iPollTime As Integer
+Private $bDebug As Boolean
+
+Private hBluetooth As Process
+Public tBluetooth As Timer
+Private cOutput As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = 1 ' Module can only have 1 instance
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sDevice = cPl.Settings["device"]
+  $iThreshold = cPl.Settings["threshold"]
+  $iPollTime = cPl.Settings["polltime"]
+  $bDebug = cPl.Settings["debug"]
+
+  ' Check if bluetooth binary exists
+  If CheckBinary() Then
+
+    ' Initialize timer
+    Run()
+  Else
+
+    ' Disable bluetooth
+    cPl.Settings["enabled"] = False
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tBluetooth.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Check for binary
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function CheckBinary() As Boolean
+
+  If Main.ProgramExist("hcitool") Then
+    Return True
+  Else
+    Main.WriteLog(LogLabel & "ERROR: command 'hcitool' not found, did you install it?")
+    Return False
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer for polling
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Run()
+
+  ' start poll timer for bluetooth
+  tBluetooth = New Timer As "tBluetooth"
+  tBluetooth.Delay = $iPollTime * 1000 ' multiply for seconds
+  tBluetooth.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start one of two scan types depending on Threshold setting
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tBluetooth_Timer()
+
+  If $iThreshold = 255 Then
+    ScanBluetooth()
+  Else
+    CheckBluetooth()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' scan for BT devices, don't calculate RSSI
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckBluetooth()
+
+  Dim rResult As Result
+  Dim iDeviceId, iRSSI As Integer
+  Dim sRSSI, sProx As String
+
+  ' get all enabled devices of type blutooth
+  rResult = Devices.FindDevicesForInterface(Devices.FindInterface("Bluetooth Dongle"))
+  If rResult.Available Then
+    If rResult.Count >= 1 Then
+      ' check each device
+      For Each rResult
+        iDeviceId = rResult!id
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking device named '" & rResult!name & "' with address '" & rResult!address & "'.")
+        ' check device for signal strenght
+        sRSSI = GetRSSI(rResult!address)
+        If $bDebug Then Main.WriteDebugLog(LogLabel & Replace(sRSSI, gb.NewLine, ""))
+        If TypeOf(Val(sRSSI)) = gb.Integer Then
+          iRSSI = TypeOf(Val(sRSSI)) = gb.Integer
+          sProx = IIf(iRSSI > $iThreshold, "Near", "Far")
+          If iDeviceId Then
+            Devices.ValueUpdateExt(iDeviceId, 1, sProx)
+            Devices.ValueUpdateExt(iDeviceId, 2, Val(sRSSI))
+          Endif
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Got RSSI value " & iRSSI)
+        Else
+          If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, "Away")
+        Endif
+      Next
+    Else
+      Main.WriteLog(LogLabel & "No Bluetooth device(s) found in device table!")
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' scan bluetooth network
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function ScanBluetooth() As String
+
+  Dim rResult As Result
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Starting device scan.")
+
+  rResult = Devices.FindDevicesForInterface(Devices.FindInterface("Bluetooth Dongle"))
+  If rResult.Available Then
+    If rResult.Count >= 1 Then
+      ' check each device
+      For Each rResult
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking '" & rResult!name & "' with address '" & rResult!address & "'.")
+        BluetoothName(rResult!id, rResult!address)
+      Next
+    Else
+      Main.WriteLog(LogLabel & "No Bluetooth devices found in device table!")
+    Endif
+  Endif
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: when trying to run 'hcitool': " & Error.Text & ".")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' try to get name of the bluetooth Device with mac address
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub BluetoothName(iId As Integer, sAddress As String)
+
+  hBluetooth = Exec ["hcitool", "-i", $sDevice, "name", sAddress] For Read As "Bluetooth"
+  hBluetooth.Tag = iId
+  cOutput.Add("", iId)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read hcitool output and store it in collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Bluetooth_Read()
+
+  Dim sBuffer As String
+  Dim iId As Integer
+
+  sBuffer = Read #Last, -256
+  iId = Last.Tag
+  If cOutput.Exist(iId) Then cOutput[iId] &= sBuffer
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get id and if output string len >=1 found, if 0 not in reach
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Bluetooth_Kill()
+
+  Dim iDeviceId As Integer
+  Dim sOutput, sStatus As String
+
+  iDeviceId = Last.Tag
+
+  If iDeviceId Then
+    ' retrieve output
+    sOutput = cOutput[iDeviceId]
+    cOutput.Remove(iDeviceId)
+
+    If Len(sOutput) Then
+      sStatus = ("Home")
+    Else
+      sStatus = ("Away")
+    Endif
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Device with id '" & iDeviceId & "' is '" & sStatus & "'.")
+    Devices.ValueUpdateExt(iDeviceId, 1, sStatus)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return BT field strenght info for sAddress
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function GetRSSI(sAddress As String) As String
+
+  Dim sStrength As String
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "'hcitool rssi " & sAddress & "'")
+  Exec ["hcitool", "rssi", sAddress] To sStrength
+  Return Replace$(sStrength, "RSSI return value: ", "")
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: when trying to run 'hcitool': " & Error.Text & ".")
+
+End

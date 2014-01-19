@@ -14,7 +14,7 @@ rm *.module
 cp Main.module.back Main.module
 cp ../../DomotiGa3/.src/Astro.module .
 cp ../../DomotiGa3/.src/AVControl.module .
-cp ../../DomotiGa3/.src/Bluetooth.module .
+cp ../../DomotiGa3/.src/CBluetooth.class .
 cp ../../DomotiGa3/.src/Bwired.module .
 cp ../../DomotiGa3/.src/CallerID.module .
 cp ../../DomotiGa3/.src/CAsterisk.class .
