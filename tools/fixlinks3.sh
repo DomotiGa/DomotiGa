@@ -14,10 +14,10 @@ rm *.module
 cp Main.module.back Main.module
 ln -s ../../DomotiGa3/.src/Astro.module
 ln -s ../../DomotiGa3/.src/AVControl.module
-ln -s ../../DomotiGa3/.src/CBluetooth.class
 ln -s ../../DomotiGa3/.src/Bwired.module
 ln -s ../../DomotiGa3/.src/CallerID.module
 ln -s ../../DomotiGa3/.src/CAsterisk.class
+ln -s ../../DomotiGa3/.src/CBluetooth.class
 ln -s ../../DomotiGa3/.src/CCUL.class
 ln -s ../../DomotiGa3/.src/CCTX35.class
 ln -s ../../DomotiGa3/.src/CCurrentCost.class
@@ -32,6 +32,7 @@ ln -s ../../DomotiGa3/.src/CFritzBox.class
 ln -s ../../DomotiGa3/.src/CGMail.class
 ln -s ../../DomotiGa3/.src/CGPS.class
 ln -s ../../DomotiGa3/.src/CGenericIO.class
+ln -s ../../DomotiGa3/.src/CHDDTemp.class
 ln -s ../../DomotiGa3/.src/CHomeMatic.class
 ln -s ../../DomotiGa3/.src/CIPort.class
 ln -s ../../DomotiGa3/.src/CIRMan.class
@@ -48,7 +49,7 @@ ln -s ../../DomotiGa3/.src/CMeteohub.class
 ln -s ../../DomotiGa3/.src/CNcid.class
 ln -s ../../DomotiGa3/.src/CLGTV.class
 ln -s ../../DomotiGa3/.src/CLIRC.class
-ln -s ../../DomotiGa3/.src/CTemp08.class
+ln -s ../../DomotiGa3/.src/CNMA.class
 ln -s ../../DomotiGa3/.src/COpenTherm.class
 ln -s ../../DomotiGa3/.src/COpenZWave.class
 ln -s ../../DomotiGa3/.src/COpenZWaveEntry.class
@@ -59,6 +60,8 @@ ln -s ../../DomotiGa3/.src/CPLCBUS.class
 ln -s ../../DomotiGa3/.src/CPluginEntry.class
 ln -s ../../DomotiGa3/.src/CPlugwise.class
 ln -s ../../DomotiGa3/.src/CPioneer.class
+ln -s ../../DomotiGa3/.src/CPushover.class
+ln -s ../../DomotiGa3/.src/CProwl.class
 ln -s ../../DomotiGa3/.src/CPwrCtrl.class
 ln -s ../../DomotiGa3/.src/CRaZberry.class
 ln -s ../../DomotiGa3/.src/CRFXComRX.class
@@ -70,6 +73,7 @@ ln -s ../../DomotiGa3/.src/CSMS.class
 ln -s ../../DomotiGa3/.src/CSmartMeter.class
 ln -s ../../DomotiGa3/.src/CSmartVISUServer.class
 ln -s ../../DomotiGa3/.src/CSqueezeServer.class
+ln -s ../../DomotiGa3/.src/CTemp08.class
 ln -s ../../DomotiGa3/.src/CTimerDelay.class
 ln -s ../../DomotiGa3/.src/CTimerOnOff.class
 ln -s ../../DomotiGa3/.src/CUPS.class
@@ -84,7 +88,6 @@ ln -s ../../DomotiGa3/.src/CxPL.class
 ln -s ../../DomotiGa3/.src/CxPLMsg.class
 ln -s ../../DomotiGa3/.src/CVisonic.class
 ln -s ../../DomotiGa3/.src/CYouLess.class
-ln -s ../../DomotiGa3/.src/CZWave.class
 ln -s ../../DomotiGa3/.src/Calendar.module
 ln -s ../../DomotiGa3/.src/Devices.module
 ln -s ../../DomotiGa3/.src/DNS.module
@@ -92,17 +95,13 @@ ln -s ../../DomotiGa3/.src/DMXPlayer.module
 ln -s ../../DomotiGa3/.src/Energy.module
 ln -s ../../DomotiGa3/.src/EventLoop.module
 ln -s ../../DomotiGa3/.src/Events.module
-ln -s ../../DomotiGa3/.src/CHDDTemp.class
 ln -s ../../DomotiGa3/.src/Log.module
 ln -s ../../DomotiGa3/.src/Shell.module
 ln -s ../../DomotiGa3/.src/Mail.module
-ln -s ../../DomotiGa3/.src/NMA.module
 ln -s ../../DomotiGa3/.src/P2000.module
 ln -s ../../DomotiGa3/.src/Pachube.module
 ln -s ../../DomotiGa3/.src/Ping.module
 ln -s ../../DomotiGa3/.src/Plugin.module
-ln -s ../../DomotiGa3/.src/Pushover.module
-ln -s ../../DomotiGa3/.src/Prowl.module
 ln -s ../../DomotiGa3/.src/PVoutput.module
 ln -s ../../DomotiGa3/.src/RRDTool.module
 ln -s ../../DomotiGa3/.src/Scenes.module

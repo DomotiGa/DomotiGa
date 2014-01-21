@@ -1,0 +1,360 @@
+' Gambas class file
+
+' Description:
+' CNMA.class
+' Contains code for sending NMA messages
+
+' Development Status:
+' Works.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "NMA"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "NMA"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Alexander Kuiper"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[NMA] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $bDebug As Boolean
+Private $sApiKey As String
+Private $sApplication As String
+Private $sEvent As String
+
+Public hNMAMessage As HttpClient
+Public cNMAData As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+  
+  KeyName = cPl.KeyName
+  Instance = 1 ' Module can only have 1 instance 
+  
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $bDebug = cPl.Settings["debug"]
+  $sApiKey = cPl.Settings["apikey"]
+  $sApplication = cPl.Settings["application"]
+  $sEvent = cPl.Settings["event"]
+
+  ' Initialize 
+  IsRunning = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse NMA XML Response
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ParseNMAXML(sXML As String) As String[]
+
+  Dim XmlR As New XmlReader
+  Dim bNMA As Boolean
+  Dim sOk, sCode, sRemaining, sResetDate, sErrorMessage, sPrevTag As String
+  Dim aResponse As New String[5]
+
+  ' aResponse[0] = success, error or unknown
+  ' aResponse[1] = code
+  ' aResponse[2] = remaining
+  ' aResponse[3] = resetdate
+  ' aResponse[4] = errormessage
+
+  XmlR = New XmlReader
+  Try XmlR.FromString(sXML)
+  If Error Then
+    aResponse[0] = "error"
+    aResponse[4] = "Cannot parse XML"
+    Return aResponse
+  Else
+    ' First Node.Name = nma
+    ' Second Node.Name = success or error
+
+    Do While Not XmlR.Eof
+
+      XmlR.Read()
+      If XmlR.Node.Name = "nma" Then bNMA = True
+      If bNMA Then
+        If XmlR.Node.Name = "success" Or XmlR.Node.Name = "error" Then sOk = XmlR.Node.Name
+      Endif
+
+      If sPrevTag = "error" And XmlR.Node.Name = "#text" Then sErrorMessage = XmlR.Node.Value
+      sPrevTag = XmlR.Node.Name
+
+      If XmlR.Node.Type = XmlReaderNodeType.Element Then
+        If sOk Then
+          If XmlR.Node.Attributes.count > 0 Then
+            For Each XmlR.Node.Attributes
+              If XmlR.Node.Name = "code" Then sCode = XmlR.Node.Value
+              If XmlR.Node.Name = "remaining" Then sRemaining = XmlR.Node.Value
+              If XmlR.Node.Name = "resetdate" Then sResetDate = XmlR.Node.Value
+            Next
+          Endif
+        Endif
+      Endif
+    Loop
+  Endif
+
+  If sOk Then
+    aResponse[0] = sOk
+  Else
+    aResponse[0] = "unknown"
+  Endif
+  aResponse[1] = sCode
+  aResponse[2] = sRemaining
+  aResponse[3] = sResetDate
+  aResponse[4] = sErrorMessage
+  Return aResponse
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Validate NMA ApiKey
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ValidateNMAApiKey(sApiKey As String, bDebug As Boolean) As String
+
+  Dim hNMAValidate As HttpClient
+  Dim sUrl As String = "https://www.notifymyandroid.com/publicapi/verify?"
+  Dim sBuffer As String
+  Dim aResponse As String[]
+
+  sUrl &= "apikey=" & URL.Encode(sApiKey)
+
+  hNMAValidate = New HttpClient As "hNMAValidate"
+  hNMAValidate.URL = sUrl
+  hNMAValidate.TimeOut = 8
+  hNMAValidate.Async = False
+  hNMAValidate.Get
+
+  If hNMAValidate.Status < 0 Then
+    ' Faillure fetching data or apikey is invalid
+    If bDebug Then Main.WriteDebugLog(LogLabel & "Error validating API key=" & sApiKey & ", Code=" & hNMAValidate.Status & ", HttpCode=" & hNMAValidate.Code)
+    Return "Failed, Code=" & hNMAValidate.Status & ", HTTP=" & hNMAValidate.code
+  Else
+    ' success or error - read the data
+    If Lof(hNMAValidate) Then sBuffer = Read #hNMAValidate, Lof(hNMAValidate)
+
+    aResponse = ParseNMAXML(sBuffer)
+    Select Case aResponse[0]
+      Case "success"
+        If bDebug Then Main.WriteDebugLog(LogLabel & "Successfully validated API key=" & sApiKey & ", Code=" & aResponse[1] & ", Remaining=" & aResponse[2] & ", ResetDate=" & aResponse[3])
+        Return ""
+      Case "error"
+        If aResponse[1] = "" Then aResponse[1] = hNMAValidate.Code
+        If bDebug Then Main.WriteDebugLog(LogLabel & "Failed to validated API key= " & sApiKey & ", Code=" & aResponse[1] & ", ErrorMessage=" & aResponse[4])
+        Return "Code=" & aResponse[1] & ", Msg=" & aResponse[4]
+        Return False
+      Default
+        If bDebug Then Main.WriteDebugLog(LogLabel & "Unknown error validating API key=" & sApiKey & ", HttpCode=" & hNMAValidate.Code & ", XML=" & sBuffer)
+        Return "Unknown XML, HTTP=" & hNMAValidate.Code
+    End Select
+
+  Endif
+
+  Return ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Post the NMA Test message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PostNMATest(sApiKey As String, sApplication As String, sEvent As String, sDescription As String, bDebug As Boolean) As String
+
+  Dim hNMAMessageTest As HttpClient
+  Dim sUrl As String = "https://www.notifymyandroid.com/publicapi/notify?"
+  Dim sBuffer As String
+  Dim aResponse As String[]
+
+  If sApiKey = "" Then
+    Return "ERROR: No NMA API Key supplied"
+  Endif
+  If sApplication = "" Then
+    Return "ERROR: No NMA application name supplied"
+  Endif
+  If sEvent = "" Then
+    Return "ERROR: No NMA event name supplied"
+  Endif
+
+  sUrl &= "apikey=" & URL.Encode(sApiKey) & "&" & "application=" & URL.Encode(sApplication) & "&" & "event=" & URL.Encode(sEvent) & "&" & "description=" & URL.Encode(sDescription)
+
+  hNMAMessageTest = New HttpClient As "hNMAMessage"
+  hNMAMessageTest.URL = sUrl
+  hNMAMessageTest.TimeOut = 8
+  hNMAMessageTest.Async = False
+  hNMAMessageTest.Post("", "")
+
+  If hNMAMessageTest.Status < 0 Then
+    ' Faillure fetching data or apikey is invalid
+    If bDebug Then Main.WriteDebugLog(LogLabel & "Error sending NMA message. API key=" & sApiKey & ", Code=" & hNMAMessageTest.Status & ", HttpCode=" & hNMAMessageTest.Code)
+    Return "Failed, Code=" & hNMAMessageTest.Status & ", HTTP=" & hNMAMessageTest.Code
+  Else
+    ' success or error - read the data
+    If Lof(hNMAMessageTest) Then sBuffer = Read #hNMAMessageTest, Lof(hNMAMessageTest)
+
+    aResponse = ParseNMAXML(sBuffer)
+    Select Case aResponse[0]
+      Case "success"
+        If bDebug Then Main.WriteDebugLog(LogLabel & "Successfully send message. API key=" & sApiKey & ", Code=" & aResponse[1] & ", Remaining=" & aResponse[2] & ", ResetDate=" & aResponse[3])
+        Return ""
+      Case "error"
+        If aResponse[1] = "" Then aResponse[1] = hNMAMessageTest.Code
+        If bDebug Then Main.WriteDebugLog(LogLabel & "Failed to send message. API key= " & sApiKey & ", Code=" & aResponse[1] & ", ErrorMessage=" & aResponse[4])
+        Return "Code=" & aResponse[1] & ", Msg=" & aResponse[4]
+      Default
+        If bDebug Then Main.WriteDebugLog(LogLabel & "Unknown error sending message. API key=" & sApiKey & ", HttpCode=" & hNMAMessageTest.Code & ", XML=" & sBuffer)
+        Return "Unknown XML, HTTP=" & hNMAMessageTest.Code
+    End Select
+
+  Endif
+
+  Return ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Post the NMA message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PostNMA(sApplication As String, sEvent As String, sDescription As String) As Boolean
+
+  Dim sUrl As String = "https://www.notifymyandroid.com/publicapi/notify?"
+  Dim Bucle As Byte
+
+  If Not $bEnabled Then
+    Main.WriteDebugLog(LogLabel & PluginFriendlyName & " is disabled")
+    Return False
+  Endif
+
+  ' Find free tag, between 1 and 99. Normally we should never go over 1 thread
+  For Bucle = 1 To 100
+    If Bucle = 100 Then Break
+
+    If Not cNMAData.Exist(Bucle) Then Break
+  Next
+
+  If Bucle = 100 Then
+    Main.WriteLog(LogLabel & "ERROR: Notify My Android Message Queue full")
+    Return False
+  Endif
+
+  If sApplication = "" Then sApplication = $sApplication
+  If sEvent = "" Then sEvent = $sEvent
+  sUrl &= "apikey=" & URL.Encode($sApiKey) & "&" & "application=" & URL.Encode(sApplication) & "&" & "event=" & URL.Encode(sEvent) & "&" & "description=" & URL.Encode(sDescription)
+
+  hNMAMessage = New HttpClient As "hNMAMessage"
+  hNMAMessage.URL = sUrl
+  hNMAMessage.TimeOut = 8
+  hNMAMessage.Async = True
+  hNMAMessage.Tag = Bucle
+  hNMAMessage.Post("", "")
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Posting NMA message (#" & Bucle & ") " & sUrl)
+  cNMAData.Add("", Bucle)
+
+  Return True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read the data send by NMA, this can be called multiple times
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hNMAMessage_Read()
+
+  Dim sData, sBuffer As String
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If Lof(Last) Then sBuffer = Read #Last, Lof(Last)
+  If cNMAData[Last.Tag] Then
+    sData = cNMAData[Last.Tag] & sBuffer
+  Else
+    sData = sBuffer
+  Endif
+
+  cNMAData[Last.Tag] = sData
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' End of the NMA response found, parse it
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hNMAMessage_Finished()
+
+  Dim aResponse As New String[5]
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If Last.Status < 0 Then
+    ' Faillure fetching data or apikey is invalid
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error sending NMA message (#" & Last.Tag & "). API key=" & $sApiKey & ", Code=" & Last.Status & ", HTTP=" & Last.Code)
+  Else
+    ' success or error - read the data
+    aResponse = ParseNMAXML(cNMAData[Last.Tag])
+    Select Case aResponse[0]
+      Case "success"
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Successfully send message (#" & Last.Tag & "). API key=" & $sApiKey & ", Code=" & aResponse[1] & ", Remaining=" & aResponse[2] & ", ResetDate=" & aResponse[3])
+      Case "error"
+        If aResponse[1] = "" Then aResponse[1] = Last.Code
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Failed to send message (#" & Last.Tag & "). API key=" & $sApiKey & ", Code=" & aResponse[1] & ", ErrorMessage=" & aResponse[4])
+      Default
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown error sending message (#" & Last.Tag & "). API key=" & $sApiKey & ", HttpCode=" & Last.Code & ", XML=" & cNMAData[Last.Tag])
+    End Select
+
+  Endif
+
+Finally
+
+  cNMAData.Remove(Last.Tag)
+  Last.Close
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " when sending NMA message")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Error Raised for the NMA message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hNMAMessage_Error()
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Error sending NMA message: " & Last.Status)
+
+  Try cNMAData.Remove(Last.Tag)
+  Try Last.Close
+
+End
+
