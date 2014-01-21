@@ -61,6 +61,7 @@ cp ../../DomotiGa3/.src/CPLCBUS.class .
 cp ../../DomotiGa3/.src/CPluginEntry.class .
 cp ../../DomotiGa3/.src/CPlugwise.class .
 cp ../../DomotiGa3/.src/CPioneer.class .
+cp ../../DomotiGa3/.src/CPing.class .
 cp ../../DomotiGa3/.src/CPushover.class .
 cp ../../DomotiGa3/.src/CProwl.class .
 cp ../../DomotiGa3/.src/CPwrCtrl.class .
@@ -77,6 +78,7 @@ cp ../../DomotiGa3/.src/CSqueezeServer.class .
 cp ../../DomotiGa3/.src/CTemp08.class .
 cp ../../DomotiGa3/.src/CTimerDelay.class .
 cp ../../DomotiGa3/.src/CTimerOnOff.class .
+cp ../../DomotiGa3/.src/CTwitter.class .
 cp ../../DomotiGa3/.src/CUPS.class .
 cp ../../DomotiGa3/.src/CVISCA.class .
 cp ../../DomotiGa3/.src/CTelnetServer.class .
@@ -100,7 +102,6 @@ cp ../../DomotiGa3/.src/Log.module .
 cp ../../DomotiGa3/.src/Mail.module .
 cp ../../DomotiGa3/.src/P2000.module .
 cp ../../DomotiGa3/.src/Pachube.module .
-cp ../../DomotiGa3/.src/Ping.module .
 cp ../../DomotiGa3/.src/Plugin.module .
 cp ../../DomotiGa3/.src/PVoutput.module .
 cp ../../DomotiGa3/.src/RRDTool.module .
@@ -110,7 +111,6 @@ cp ../../DomotiGa3/.src/Sounds.module .
 cp ../../DomotiGa3/.src/TemperaturNu.module .
 cp ../../DomotiGa3/.src/TVGuide.module .
 cp ../../DomotiGa3/.src/Thermostat.module .
-cp ../../DomotiGa3/.src/Twitter.module .
 cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
 cp ../../DomotiGa3/.src/WeatherUG.module .
