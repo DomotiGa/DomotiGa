@@ -2023,7 +2023,7 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 			}
 
 			// Test for id
-			if (( json_object_get_type( jrid ) == json_type_int ) && ( json_object_get_int( jrid ) == jsonrpcid ))
+			if (( json_object_get_type( jrid ) != json_type_int ) || ( json_object_get_int( jrid ) != jsonrpcid ))
 			{
 				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a valid \"id\". Data=%s", method, readBuffer.c_str() );
 
@@ -2037,11 +2037,11 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 			{
 					if ( json_object_get_boolean( jrresult ) == true ) 
 					{
-						WriteLog( LogLevel_Debug, false, "JSON-RPC call \"%s\" successful" );
+						WriteLog( LogLevel_Debug, false, "JSON-RPC call successful" );
 					}
 					else
 					{
-						WriteLog( LogLevel_Error, true, "JSON-RPC call \"%s\" failed" );
+						WriteLog( LogLevel_Error, true, "JSON-RPC call failed" );
 					}
 			}
 			else
