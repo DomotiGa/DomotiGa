@@ -14,11 +14,11 @@ rm *.module
 cp Main.module.back Main.module
 ln -s ../../DomotiGa3/.src/Astro.module
 ln -s ../../DomotiGa3/.src/AVControl.module
-ln -s ../../DomotiGa3/.src/Bwired.module
 ln -s ../../DomotiGa3/.src/CallerID.module
 ln -s ../../DomotiGa3/.src/CAsterisk.class
 ln -s ../../DomotiGa3/.src/CBluetooth.class
 ln -s ../../DomotiGa3/.src/CCUL.class
+ln -s ../../DomotiGa3/.src/CBwiredMap.class
 ln -s ../../DomotiGa3/.src/CCTX35.class
 ln -s ../../DomotiGa3/.src/CCurrentCost.class
 ln -s ../../DomotiGa3/.src/CDenon.class
@@ -56,6 +56,7 @@ ln -s ../../DomotiGa3/.src/COpenZWaveEntry.class
 ln -s ../../DomotiGa3/.src/COnkyo.class
 ln -s ../../DomotiGa3/.src/COWFS.class
 ln -s ../../DomotiGa3/.src/COWW.class
+ln -s ../../DomotiGa3/.src/CPachube.class
 ln -s ../../DomotiGa3/.src/CPLCBUS.class
 ln -s ../../DomotiGa3/.src/CPluginEntry.class
 ln -s ../../DomotiGa3/.src/CPlugwise.class
@@ -63,6 +64,7 @@ ln -s ../../DomotiGa3/.src/CPing.class
 ln -s ../../DomotiGa3/.src/CPioneer.class
 ln -s ../../DomotiGa3/.src/CPushover.class
 ln -s ../../DomotiGa3/.src/CProwl.class
+ln -s ../../DomotiGa3/.src/CPVoutput.class
 ln -s ../../DomotiGa3/.src/CPwrCtrl.class
 ln -s ../../DomotiGa3/.src/CRaZberry.class
 ln -s ../../DomotiGa3/.src/CRFXComRX.class
@@ -101,9 +103,7 @@ ln -s ../../DomotiGa3/.src/Log.module
 ln -s ../../DomotiGa3/.src/Shell.module
 ln -s ../../DomotiGa3/.src/Mail.module
 ln -s ../../DomotiGa3/.src/P2000.module
-ln -s ../../DomotiGa3/.src/Pachube.module
 ln -s ../../DomotiGa3/.src/Plugin.module
-ln -s ../../DomotiGa3/.src/PVoutput.module
 ln -s ../../DomotiGa3/.src/RRDTool.module
 ln -s ../../DomotiGa3/.src/Scenes.module
 ln -s ../../DomotiGa3/.src/ServerStats.module
