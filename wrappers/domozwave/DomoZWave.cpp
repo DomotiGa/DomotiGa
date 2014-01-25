@@ -699,9 +699,10 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 		case COMMAND_CLASS_THERMOSTAT_SETPOINT:
 		{
+			// The heating temperature is stored in value2, because value1 is used to set the SETPOINT
 			if ( label == "Heating 1" )
 			{
-				value_no = 1;
+				value_no = 2;
 			}
 
 			break;
@@ -796,6 +797,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 			// Sensor + Alarm Level (e.g. Everspring SP103) 
 			// Sensor + Temperature + Luminance + Humidity (e.g. Aeon 4in1)
 			// Sensor + Temperature + Alarm Level? (e.g. Digital Home System DHS-ZW-SNMT-01)
+			// SetPoint + Heating 1 (e.g. Danfoss)
 
 			// Following code concats the label to the string, also adds a "|" delimiter
 			// After it is added, we need re-sort the string to make it useable in ValueChanged
@@ -832,7 +834,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 				if ( nodeInfo->instanceLabel[instanceID].find("Relative Humidity") != string::npos ) { str_tmp.append("Relative Humidity|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("|Luminance|") != string::npos ) { str_tmp.append("Luminance|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("Alarm Level") != string::npos ) { str_tmp.append("Alarm Level|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("Heating 1") != string::npos ) { str_tmp.append("Heating 1|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("Heating 1") != string::npos ) { str_tmp.append("SetPoint|Heating 1|"); }
 
 				// Replace the previous string with the newly generated
 				nodeInfo->instanceLabel[instanceID] = str_tmp;
@@ -930,12 +932,16 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		json_object *jinstanceid = json_object_new_int( instanceID );
 		json_object *jvalueid = json_object_new_int( value_no );
 		json_object *jvalue = json_object_new_string( dev_value );
+		json_object *jlabel = json_object_new_string( label.c_str() );
+		json_object *junit = json_object_new_string( unit.c_str() );
 
 		json_object_object_add( jparams, "homeid", jhomeid );
 		json_object_object_add( jparams, "nodeid", jnodeid );
 		json_object_object_add( jparams, "instanceid", jinstanceid );
 		json_object_object_add( jparams, "valueid", jvalueid );
 		json_object_object_add( jparams, "value", jvalue );
+		json_object_object_add( jparams, "label", jlabel );
+		json_object_object_add( jparams, "unit", junit );
 
 		cURL_Post_JSON( homeID, "openzwave.setvalue", jparams );
 

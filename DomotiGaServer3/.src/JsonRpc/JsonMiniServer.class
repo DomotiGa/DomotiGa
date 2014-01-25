@@ -27,7 +27,7 @@ Private Const InvalidParams As Integer = -32602
 Private Const InternalError As Integer = -32603
 
 '***************************************************************************
-Private Http As ServerSocket
+Private JsonRpcSocket As ServerSocket
 Private SockColl As Collection
 Private $bDebug As Boolean
 Private hReply As Variant
@@ -126,7 +126,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 '
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub JsonSend(hS As Socket, vJsonData As Variant, Optional bGzip As Boolean = False)
+Private Sub JsonSend(sType As String, hS As Socket, vJsonData As Variant, Optional bGzip As Boolean = False)
 
   Dim sJsonData As String
   Dim sGzipData As String
@@ -167,28 +167,32 @@ Private Sub JsonSend(hS As Socket, vJsonData As Variant, Optional bGzip As Boole
     Endif
   Endif
 
-  hS.Begin
-  hS.EndOfLine = gb.Windows
-  Print #hS, "HTTP/1.1 200 OK"
-  Print #hS, "Connection: close"
-  If bGzip Then
-    Print #hS, "Content-Length: " & Len(sGzipData)
-  Else
-    Print #hS, "Content-Length: " & Len(sJsonData)
-  Endif
-  Print #hS, "Content-Type: application/json"
-  If bGzip Then Print #hS, "Content-Encoding: gzip"
-  Print #hS, "Server: Gambas RPC Server"
-  Print #hS, ""
+  If sType = "HTTP" Or If sType = "HTTPURL" Then
+    hS.Begin
+    hS.EndOfLine = gb.Windows
+    Print #hS, "HTTP/1.1 200 OK"
+    Print #hS, "Connection: close"
+    If bGzip Then
+      Print #hS, "Content-Length: " & Len(sGzipData)
+    Else
+      Print #hS, "Content-Length: " & Len(sJsonData)
+    Endif
+    Print #hS, "Content-Type: application/json"
+    If bGzip Then Print #hS, "Content-Encoding: gzip"
+    Print #hS, "Server: Gambas RPC Server"
+    Print #hS, ""
 
-  ' Writes compress data when possible
-  If bGzip Then
-    Write #hS, sGzipData, Len(sGzipData)
-  Else
+    ' Writes compress data when possible
+    If bGzip Then
+      Write #hS, sGzipData, Len(sGzipData)
+    Else
+      Write #hS, sJsonData, Len(sJsonData)
+    Endif
+
+    Try hS.Send
+  Else If sType = "RAW" Then
     Write #hS, sJsonData, Len(sJsonData)
   Endif
-
-  Try hS.Send
 
 Catch
   ' Catch any errors with a closed stream
@@ -233,9 +237,9 @@ Private Sub ValidateRawJson(sJson As String) As Boolean
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Process JSON-RPC request. The sType can be "HTTP", "HTTPURL" or "RAW"
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ProcessQuery(hS As Socket, Buf As String, Optional bGzip As Boolean = False)
+Private Sub ProcessQuery(sType As String, hS As Socket, Buf As String, Optional bGzip As Boolean = False)
 
   Dim sJsonData As String
   Dim vTestData As Variant
@@ -249,7 +253,13 @@ Private Sub ProcessQuery(hS As Socket, Buf As String, Optional bGzip As Boolean 
   Dim vId As Variant
 
   ' Get the Json data from the HTTP request
-  Try sJsonData = Mid(Buf, InStr(Buf, Chr(13) & Chr(10) & Chr(13) & Chr(10)) + 4)
+  If sType = "HTTP" Then
+    Try sJsonData = Mid(Buf, InStr(Buf, Chr(13) & Chr(10) & Chr(13) & Chr(10)) + 4)
+  Else
+    sJsonData = Buf
+  Endif
+
+  ' Remove all NewLine and Carriage Return
   sJsonData = Replace(sJsonData, Chr(13), "")
   sJsonData = Replace(sJsonData, Chr(10), "")
 
@@ -261,13 +271,13 @@ Private Sub ProcessQuery(hS As Socket, Buf As String, Optional bGzip As Boolean 
   ' Try to decode the string
   Try vTestData = JSON.Decode(sJsonData)
   If Error Then
-    JsonSend(hS, JsonError(ParseError))
+    JsonSend(sType, hS, JsonError(ParseError))
     Return
   Endif
 
   Try Entry = vTestData[0]
   If Error Then
-    JsonSend(hS, JsonError(ParseError))
+    JsonSend(sType, hS, JsonError(ParseError))
     Return
   Endif
 
@@ -331,20 +341,20 @@ Private Sub ProcessQuery(hS As Socket, Buf As String, Optional bGzip As Boolean 
 
   If vOutput.Count >= 1 Then
     If JsonBatch Then
-      JsonSend(hS, vOutput, bGzip)
+      JsonSend(sType, hS, vOutput, bGzip)
     Else
-      JsonSend(hS, vOutput[0], bGzip)
+      JsonSend(sType, hS, vOutput[0], bGzip)
     Endif
   Endif
 
 Catch
   Print Error.Text
-  JsonSend(hS, JsonError(InternalError))
+  JsonSend(sType, hS, JsonError(InternalError))
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Read data from the Socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Socket_Read()
 
@@ -370,13 +380,26 @@ Public Sub Socket_Read()
 
       Try Read #hS, Buf, Lof(hS)
       cCol["buffer"] &= Buf
-      If Left(cCol["buffer"], 5) <> "POST " Then
+
+      ' Reject a HTTP GET request properly
+      If Left(cCol["buffer"], 4) = "GET " Then
         hError(hS, "405 Method Not Allowed")
         RemoveSocket(hS)
         Return
+      Endif
+
+      ' First check if we have a HTTP POST or RAW (needs to start with "{")
+      If Left(cCol["buffer"], 5) = "POST " Then
+        cCol["protocol"] = ""
+      Else If Left(cCol["buffer"], 1) = "{" Then
+        cCol["protocol"] = "RAW"
+      Else
+        RemoveSocket(hS)
+        Return
       End If
+
     Else
-      ' We expect at LEAST something like "POST /"
+      ' We expect at LEAST something like "POST /" or "{"
       RemoveSocket(hS)
       Return
     End If
@@ -389,14 +412,15 @@ Public Sub Socket_Read()
     Return
   End If
 
-  If cCol["protocol"] = - 1 Then
+  ' If it isn't "RAW", check the HTTP version
+  If cCol["protocol"] = "" Then
     If InStr(cCol["buffer"], Chr(13)) > 0 Then
       Buf = Trim(Left(cCol["buffer"], InStr(cCol["buffer"], Chr(13)) - 1))
       Buf = Right(Buf, 8)
       If Buf = "HTTP/1.1" Then
-        cCol["protocol"] = 1
+        cCol["protocol"] = "HTTP/1.1"
       Else If Buf = "HTTP/1.0" Then
-        cCol["protocol"] = 0
+        cCol["protocol"] = "HTTP/1.0"
       Else
         hError(hS, "505 HTTP Version Not Supported")
         RemoveSocket(hS)
@@ -410,150 +434,175 @@ Public Sub Socket_Read()
         Return
       End If
     End If
+  Else
+    If Len(cCol["buffer"]) > 65535 Then
+      RemoveSocket(hS)
+      Return
+    Endif
   End If
 
-  ' It is possible the HTTP headers are send in separate TCP packets, we will wait a maximum of 1000msec
-  For cCount = cWait To 199 Step 1
-    If hS = Null Then Return
-    If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) Then Break
-    Wait 0.005
-  Next
+  ' Handle HTTP requests
+  If Left(cCol["protocol"], 4) = "HTTP" Then
+    ' It is possible the HTTP headers are send in separate TCP packets, we will wait a maximum of 1000msec
+    For cCount = cWait To 199 Step 1
+      If hS = Null Then Return
+      If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) Then Break
+      Wait 0.005
+    Next
 
-  If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) Then
-    If cCol["type"] = 0 Then
-      Buf = Left(cCol["buffer"], InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)))
+    If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) Then
+      If cCol["type"] = 0 Then
+        Buf = Left(cCol["buffer"], InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)))
 
-      ' Check for "Accept-Encoding" header, the format can be "gzip" or "gzip, deflate"
-      If InStr(UCase(Buf), "ACCEPT-ENCODING:") > 0 Then
-        sCad = Mid(Buf, InStr(UCase(Buf), "ACCEPT-ENCODING:") + 16)
-        sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
-        If InStr(UCase(sCad), "GZIP") Then
+        ' Check for "Accept-Encoding" header, the format can be "gzip" or "gzip, deflate"
+        If InStr(UCase(Buf), "ACCEPT-ENCODING:") > 0 Then
+          sCad = Mid(Buf, InStr(UCase(Buf), "ACCEPT-ENCODING:") + 16)
+          sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
+
           ' The client support gzip
-          cCol["gzip"] = True
+          If InStr(UCase(sCad), "GZIP") Then cCol["gzip"] = True
         Endif
-      Endif
 
-      If InStr(UCase(Buf), "CONTENT-TYPE:") > 0 Then
-        sCad = Mid(Buf, InStr(UCase(Buf), "CONTENT-TYPE:") + 13)
-        sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
-        If (LCase(sCad) <> "application/json") And (LCase(sCad) <> "application/json-rpc") Then
+        If InStr(UCase(Buf), "CONTENT-TYPE:") > 0 Then
+          sCad = Mid(Buf, InStr(UCase(Buf), "CONTENT-TYPE:") + 13)
+          sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
+          If (LCase(sCad) <> "application/json") And (LCase(sCad) <> "application/json-rpc") Then
+            hError(hS, "415 Unsupported Media Type")
+            RemoveSocket(hS)
+            Return
+          Else
+            cCol["type"] = 1
+          Endif
+        Else
           hError(hS, "415 Unsupported Media Type")
           RemoveSocket(hS)
           Return
-        Else
-          cCol["type"] = 1
-        End If
-      Else
-        hError(hS, "415 Unsupported Media Type")
-        RemoveSocket(hS)
-        Return
-      End If
-
-      If InStr(UCase(Buf), "CONTENT-LENGTH:") > 0 Then
-        sCad = Mid(Buf, InStr(UCase(Buf), "CONTENT-LENGTH:") + 15)
-        sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
-        Try cCol["length"] = CInt(sCad)
-        If Error Then
-          hError(hS, "411 Length Required")
-          RemoveSocket(hS)
-          Return
-        End If
-
-        If cCol["length"] < 0 Then
-          hError(hS, "400 Bad Request")
-          RemoveSocket(hS)
-          Return
         Endif
-      Else
-        cCol["length"] = -1
-      End If
 
-      ' We should check if the request is in the URL
-      If cCol["length"] = 0 Or If cCol["length"] = -1 Then
-        ' First get the first line, this is the URL and remove the HTTP/1.x
-        sCad = Trim(Left(cCol["buffer"], InStr(cCol["buffer"], Chr(13)) - 9))
-        If InStr(sCad, "?request=") Then
-          sCad = Mid(sCad, InStr(sCad, "?request=") + 9)
-          Try sCad = URL.Decode(sCad)
+        If InStr(UCase(Buf), "CONTENT-LENGTH:") > 0 Then
+          sCad = Mid(Buf, InStr(UCase(Buf), "CONTENT-LENGTH:") + 15)
+          sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
+          Try cCol["length"] = CInt(sCad)
           If Error Then
-            hError(hS, "400 Bad Request")
+            hError(hS, "411 Length Required")
             RemoveSocket(hS)
             Return
           Endif
 
-          ' We seem to have a valid request, append mandatory characters and process it
-          ProcessQuery(hS, Chr(13) & Chr(10) & Chr(13) & Chr(10) & sCad, cCol["gzip"])
-          RemoveSocket(hS)
-          Return
+          If cCol["length"] < 0 Then
+            hError(hS, "400 Bad Request")
+            RemoveSocket(hS)
+            Return
+          Endif
+        Else
+          cCol["length"] = -1
         Endif
 
-        If cCol["length"] = -1 Then
-          hError(hS, "411 Length Required")
+        ' We should check if the request is in the URL
+        If cCol["length"] = 0 Or If cCol["length"] = -1 Then
+          ' First get the first line, this is the URL and remove the HTTP/1.x
+          sCad = Trim(Left(cCol["buffer"], InStr(cCol["buffer"], Chr(13)) - 9))
+          If InStr(sCad, "?request=") Then
+            sCad = Mid(sCad, InStr(sCad, "?request=") + 9)
+            Try sCad = URL.Decode(sCad)
+            If Error Then
+              hError(hS, "400 Bad Request")
+              RemoveSocket(hS)
+              Return
+            Endif
+
+            ' We seem to have a valid request, append mandatory characters and process it
+            ProcessQuery("HTTPURL", hS, sCad, cCol["gzip"])
+            RemoveSocket(hS)
+            Return
+          Endif
+
+          If cCol["length"] = -1 Then
+            hError(hS, "411 Length Required")
+            RemoveSocket(hS)
+            Return
+          Endif
+        Endif
+
+      Endif
+    Endif
+
+    If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) Then
+
+      If cCol["length"] = -1 Or cCol["type"] <> 1 Then
+        hError(hS, "406 Not Acceptable")
+        RemoveSocket(hS)
+        Return
+      Endif
+
+      For cCount = cWait To 200 Step 1
+        If hS = Null Then Return
+        cLen = Len(cCol["buffer"]) - InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) - 3
+        If cLen >= cCol["length"] Then Break
+        Wait 0.005
+      Next
+
+      ' Content-Length and data size doesn't match
+      If cLen <> cCol["length"] Then
+        hError(hS, "413 Request Entity Too Large")
+        RemoveSocket(hS)
+      Endif
+
+      If cLen = cCol["length"] Then 
+        ProcessQuery("HTTP", hS, cCol["buffer"], cCol["gzip"])
+        RemoveSocket(hS)
+        Return
+      Else
+
+        If Len(cCol["buffer"]) > 65535 Then
+          hError(hS, "413 Request Entity Too Large")
+          RemoveSocket(hS)
+          Return
+        Else
+          ' If size doesn't match - we give an internal error
+          hError(hS, "500 Internal Server Error")
           RemoveSocket(hS)
           Return
         Endif
       Endif
 
-    Endif
-  Endif
-
-  If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) Then
-
-    If cCol["length"] = -1 Or cCol["type"] <> 1 Then
-      hError(hS, "406 Not Acceptable")
-      RemoveSocket(hS)
-      Return
-    End If
-
-    For cCount = cWait To 200 Step 1
-      If hS = Null Then Return
-      cLen = Len(cCol["buffer"]) - InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) - 3
-      If cLen >= cCol["length"] Then Break
-      Wait 0.005
-    Next
-
-    ' Content-Length and data size doesn't match
-    If cLen <> cCol["length"] Then
-      hError(hS, "413 Request Entity Too Large")
-      RemoveSocket(hS)
-    End If
-
-    If cLen = cCol["length"] Then 
-      ProcessQuery(hS, cCol["buffer"], cCol["gzip"])
-      RemoveSocket(hS)
-      Return
     Else
-
       If Len(cCol["buffer"]) > 65535 Then
         hError(hS, "413 Request Entity Too Large")
         RemoveSocket(hS)
         Return
-      Else
-        ' If size doesn't match - we give an internal error
-        hError(hS, "500 Internal Server Error")
-        RemoveSocket(hS)
-        Return
       Endif
-      
+    Endif
+
+    ' Always give a response. We wait long enough for the information = 1000msec
+    hError(hS, "408 Request Timeout")
+    RemoveSocket(hS)
+
+  Else If Left(cCol["protocol"], 3) = "RAW" Then
+
+    ' It is possible the request is send in separate TCP packets, we will wait a maximum of 1000msec
+    For cCount = cWait To 201 Step 1
+      If hS = Null Then Return
+      If ValidateRawJson(cCol["buffer"]) Then Break
+      Wait 0.005
+    Next
+
+    ' If <= 200 then we have received a valid JSON request, else we just drop the connection without a message
+    If cWait <= 200 Then
+      ProcessQuery("RAW", hS, cCol["buffer"], False)
+      cCol["buffer"] = ""
+    Else
+      RemoveSocket(hS)
     Endif
 
   Else
-    If Len(cCol["buffer"]) > 65535 Then
-      hError(hS, "413 Request Entity Too Large")
-      RemoveSocket(hS)
-      Return
-    Endif
+    RemoveSocket(hS)
   Endif
-
-  ' Always give a response
-  ' We wait long enough for the information = 1000msec
-  hError(hS, "408 Request Timeout")
-  RemoveSocket(hS)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Close and remove Socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub RemoveSocket(hS As Socket)
 
@@ -570,8 +619,13 @@ Private Sub RemoveSocket(hS As Socket)
 
 End
 
-
-Public Sub Http_Connection(RemoteHost As String)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Register a connection in our Socket list
+' We accept 2 type of connections:
+' - JSON-RPC over HTTP
+' - JSON-RPC over RAW TCP
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JsonRpcSocket_Connection(RemoteHost As String)
 
   Dim SockCollEntry As New Collection
   Dim iId As Integer
@@ -580,7 +634,7 @@ Public Sub Http_Connection(RemoteHost As String)
   ' If a whitelist exist, reject all other IP address
   If IPWhiteList.Count >= 1 Then
     If Not IPWhiteList.Exist(RemoteHost) Then
-      hS = Http.Accept()
+      hS = JsonRpcSocket.Accept()
       Try Close #hS
       Return
     Endif
@@ -592,8 +646,8 @@ Public Sub Http_Connection(RemoteHost As String)
   Loop Until Not SockColl.Exist(iId)
 
   SockCollEntry.Add("", "buffer")
-  SockCollEntry.Add(Http.Accept(), "socket")
-  SockCollEntry.Add(-1, "protocol")
+  SockCollEntry.Add(JsonRpcSocket.Accept(), "socket")
+  SockCollEntry.Add("", "protocol")
   SockCollEntry.Add(-1, "length")
   SockCollEntry.Add(0, "type")
   SockCollEntry.Add(False, "gzip")
@@ -611,18 +665,18 @@ Public Sub Close()
     RemoveSocket(cCol["socket"])
   Next
 
-  Try Http.Close()
-  Http = Null
+  Try JsonRpcSocket.Close()
+  JsonRpcSocket = Null
 
 End
 
 
 Public Sub Listen(Port As Integer, MaxConn As Integer, bDebug As Boolean, Optional WhiteList As String = "")
 
-  If Not Http Then
-    Http = New ServerSocket As "Http"
+  If Not JsonRpcSocket Then
+    JsonRpcSocket = New ServerSocket As "JsonRpcSocket"
   Else
-    If Http.Status <> 0 Then Http.Close()
+    If JsonRpcSocket.Status <> 0 Then JsonRpcSocket.Close()
   End If
 
   ' Store debug flag
@@ -631,20 +685,20 @@ Public Sub Listen(Port As Integer, MaxConn As Integer, bDebug As Boolean, Option
   ' Split and store the IP whitelist
   IPWhiteList = Split(WhiteList, ";")
 
-  Try Http.Port = Port
+  Try JsonRpcSocket.Port = Port
   If Error Then
     Error.Raise("Invalid TCP port")
     Return
   End If
 
   If MaxConn > 0 Then
-    Try Http.Listen(MaxConn)
+    Try JsonRpcSocket.Listen(MaxConn)
   Else
-    Try Http.Listen()
+    Try JsonRpcSocket.Listen()
   End If
 
   If Error Then Error.Raise("Unable to listen at TCP port " & Port)
-  If Http.Status < 0 Then Error.Raise("Unable to listen at TCP port " & Port)
+  If JsonRpcSocket.Status < 0 Then Error.Raise("Unable to listen at TCP port " & Port)
 
 End
 
