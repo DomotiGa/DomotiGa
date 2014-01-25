@@ -102,7 +102,7 @@ ln -s ../../DomotiGa3/.src/Events.module
 ln -s ../../DomotiGa3/.src/Log.module
 ln -s ../../DomotiGa3/.src/Shell.module
 ln -s ../../DomotiGa3/.src/Mail.module
-ln -s ../../DomotiGa3/.src/P2000.module
+ln -s ../../DomotiGa3/.src/CP2000.class
 ln -s ../../DomotiGa3/.src/Plugin.module
 ln -s ../../DomotiGa3/.src/RRDTool.module
 ln -s ../../DomotiGa3/.src/Scenes.module

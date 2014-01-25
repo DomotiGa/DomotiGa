@@ -102,7 +102,7 @@ cp ../../DomotiGa3/.src/Events.module .
 cp ../../DomotiGa3/.src/Shell.module .
 cp ../../DomotiGa3/.src/Log.module .
 cp ../../DomotiGa3/.src/Mail.module .
-cp ../../DomotiGa3/.src/P2000.module .
+cp ../../DomotiGa3/.src/CP2000.class .
 cp ../../DomotiGa3/.src/Plugin.module .
 cp ../../DomotiGa3/.src/RRDTool.module .
 cp ../../DomotiGa3/.src/Scenes.module .
