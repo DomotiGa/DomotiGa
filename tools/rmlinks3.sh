@@ -57,6 +57,7 @@ cp ../../DomotiGa3/.src/COpenZWaveEntry.class .
 cp ../../DomotiGa3/.src/COnkyo.class .
 cp ../../DomotiGa3/.src/COWFS.class .
 cp ../../DomotiGa3/.src/COWW.class .
+cp ../../DomotiGa3/.src/CP2000.class .
 cp ../../DomotiGa3/.src/CPachube.class .
 cp ../../DomotiGa3/.src/CPLCBUS.class .
 cp ../../DomotiGa3/.src/CPluginEntry.class .
@@ -77,13 +78,11 @@ cp ../../DomotiGa3/.src/CSMS.class .
 cp ../../DomotiGa3/.src/CSmartMeter.class .
 cp ../../DomotiGa3/.src/CSmartVISUServer.class .
 cp ../../DomotiGa3/.src/CSqueezeServer.class .
+cp ../../DomotiGa3/.src/CTelnetServer.class .
 cp ../../DomotiGa3/.src/CTemp08.class .
-cp ../../DomotiGa3/.src/CTimerDelay.class .
-cp ../../DomotiGa3/.src/CTimerOnOff.class .
 cp ../../DomotiGa3/.src/CTwitter.class .
 cp ../../DomotiGa3/.src/CUPS.class .
 cp ../../DomotiGa3/.src/CVISCA.class .
-cp ../../DomotiGa3/.src/CTelnetServer.class .
 cp ../../DomotiGa3/.src/CWeeder.class .
 cp ../../DomotiGa3/.src/CWebSocket.class .
 cp ../../DomotiGa3/.src/CX10Cmd.class .
@@ -102,7 +101,6 @@ cp ../../DomotiGa3/.src/Events.module .
 cp ../../DomotiGa3/.src/Shell.module .
 cp ../../DomotiGa3/.src/Log.module .
 cp ../../DomotiGa3/.src/Mail.module .
-cp ../../DomotiGa3/.src/CP2000.class .
 cp ../../DomotiGa3/.src/Plugin.module .
 cp ../../DomotiGa3/.src/RRDTool.module .
 cp ../../DomotiGa3/.src/Scenes.module .
@@ -118,4 +116,6 @@ cp ../../DomotiGa3/.src/JsonRpc/JsonMiniServer.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcClient.class ./JsonRpc/.
+cp ../../DomotiGa3/.src/Timers/CTimerDelay.class ./Timers/.
+cp ../../DomotiGa3/.src/Timers/CTimerOnOff.class ./Timers/.
 

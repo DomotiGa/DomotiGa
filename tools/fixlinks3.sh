@@ -56,6 +56,7 @@ ln -s ../../DomotiGa3/.src/COpenZWaveEntry.class
 ln -s ../../DomotiGa3/.src/COnkyo.class
 ln -s ../../DomotiGa3/.src/COWFS.class
 ln -s ../../DomotiGa3/.src/COWW.class
+ln -s ../../DomotiGa3/.src/CP2000.class
 ln -s ../../DomotiGa3/.src/CPachube.class
 ln -s ../../DomotiGa3/.src/CPLCBUS.class
 ln -s ../../DomotiGa3/.src/CPluginEntry.class
@@ -76,13 +77,11 @@ ln -s ../../DomotiGa3/.src/CSMS.class
 ln -s ../../DomotiGa3/.src/CSmartMeter.class
 ln -s ../../DomotiGa3/.src/CSmartVISUServer.class
 ln -s ../../DomotiGa3/.src/CSqueezeServer.class
+ln -s ../../DomotiGa3/.src/CTelnetServer.class
 ln -s ../../DomotiGa3/.src/CTemp08.class
-ln -s ../../DomotiGa3/.src/CTimerDelay.class
-ln -s ../../DomotiGa3/.src/CTimerOnOff.class
 ln -s ../../DomotiGa3/.src/CTwitter.class
 ln -s ../../DomotiGa3/.src/CUPS.class
 ln -s ../../DomotiGa3/.src/CVISCA.class
-ln -s ../../DomotiGa3/.src/CTelnetServer.class
 ln -s ../../DomotiGa3/.src/CWeeder.class
 ln -s ../../DomotiGa3/.src/CWebSocket.class
 ln -s ../../DomotiGa3/.src/CX10Cmd.class
@@ -102,7 +101,6 @@ ln -s ../../DomotiGa3/.src/Events.module
 ln -s ../../DomotiGa3/.src/Log.module
 ln -s ../../DomotiGa3/.src/Shell.module
 ln -s ../../DomotiGa3/.src/Mail.module
-ln -s ../../DomotiGa3/.src/CP2000.class
 ln -s ../../DomotiGa3/.src/Plugin.module
 ln -s ../../DomotiGa3/.src/RRDTool.module
 ln -s ../../DomotiGa3/.src/Scenes.module
@@ -117,4 +115,6 @@ ln -s ../../DomotiGa3/.src/WeatherUG.module
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonMiniServer.class
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class
+ln -s ../../DomotiGa3/.src/Timers/CTimerDelay.class
+ln -s ../../DomotiGa3/.src/Timers/CTimerOnOff.class
 
