@@ -23,10 +23,10 @@ Property Async As Boolean
 Property Id As Integer
 Property User As String
 Property Password As String
-Property Reply As Variant
-Property Status As String
-Property Protocol As Integer ' 0=HTTP, 1=RAW TCP
 Property TimeOut As Integer
+Property Protocol As Integer ' 0=HTTP, 1=RAW TCP
+Property Reply As Variant ' Holds the response if Async=False
+Property ErrorMsg As String ' Holds the error message if Async=False
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Private variables
@@ -39,11 +39,11 @@ Private $bAsync As Boolean
 Private $iId As Integer
 Private $sUser As String
 Private $sPassword As String
-Private $vReply As Variant
-Private $sStatus As String
-Private sBuffer As String
 Private $iProtocol As Integer = 0
 Private $iTimeOut As Integer = 5
+Private $vReply As Variant
+Private $sErrorMsg As String
+Private sBuffer As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Events to be raised
@@ -186,41 +186,18 @@ Public Function Call(cParams As Collection) As Boolean
 
       ' Status needs to be positive
       If hHttpClient.Status < 0 Then
-        $sStatus = Log.CURL_Error_To_Text(hHttpClient.Status)
+        $sErrorMsg = Log.CURL_Error_To_Text(hHttpClient.Status)
         Return False
       Endif
 
       ' We only accept HTTP 200
       If hHttpClient.Code <> 200 Then
-        $sStatus = Log.HTTP_Error_To_Text(hHttpClient.Code) & " Not Supported"
+        $sErrorMsg = Log.HTTP_Error_To_Text(hHttpClient.Code) & " Not Supported"
         Return False
       Endif
 
       ' Async = False, so we read the data
       Try Read #hHttpClient, sJsonData, Lof(hHttpClient)
-
-      If Not sJsonData Then Return False
-
-      ' Replace "" with Chr(1), Gambas can't handle empty strings
-      sJsonData = Replace(sJsonData, " \"\"", " \"\\u0001\"")
-      sJsonData = Replace(sJsonData, "[\"\"", "[\"\\u0001\"")
-
-      ' Try to decode JSON
-      Try cJsonData = JSON.Decode(sJsonData)
-      If Error Then Return False
-
-      ' Valid JSON data, check if it is JSON-RPC
-      If cJsonData["jsonrpc"] <> "2.0" Then Return False
-
-      ' Check if the id is the same
-      If cJsonData["id"] <> $iId Then Return False
-
-      ' Check for an error
-      If cJsonData.Exist("error") Then Return False
-
-      ' No error - we got valid data
-      $vReply = cJsonData["result"]
-      Return True
 
     Else
       ' If Async, always return True
@@ -293,35 +270,51 @@ Public Function Call(cParams As Collection) As Boolean
       ' Close socket
       Try Close #hRawClient
 
-      If Not sJsonData Then Return False
-
-      ' Replace "" with Chr(1), Gambas can't handle empty strings
-      sJsonData = Replace(sJsonData, " \"\"", " \"\\u0001\"")
-      sJsonData = Replace(sJsonData, "[\"\"", "[\"\\u0001\"")
-
-      ' Try to decode JSON
-      Try cJsonData = JSON.Decode(sJsonData)
-      If Error Then Return False
-
-      ' Valid JSON data, check if it is JSON-RPC
-      If cJsonData["jsonrpc"] <> "2.0" Then Return False
-
-      ' Check if the id is the same
-      If cJsonData["id"] <> $iId Then Return False
-
-      ' Check for an error
-      If cJsonData.Exist("error") Then Return False
-
-      ' No error - we got valid data
-      $vReply = cJsonData["result"]
-      Return True
-
     Else
       ' If Async, always return True
       Return True
     Endif
 
   Endif
+
+  ' We got some JSON data, no process it
+  If Not sJsonData Then
+    $sErrorMsg = "No data received"
+    Return False
+  Endif
+
+  ' Replace "" with Chr(1), Gambas can't handle empty strings
+  sJsonData = Replace(sJsonData, " \"\"", " \"\\u0001\"")
+  sJsonData = Replace(sJsonData, "[\"\"", "[\"\\u0001\"")
+
+  ' Try to decode JSON
+  Try cJsonData = JSON.Decode(sJsonData)
+  If Error Then
+    $sErrorMsg = "Error while decoding JSON"
+    Return False
+  Endif
+
+  ' Valid JSON data, check if it is JSON-RPC
+  If cJsonData["jsonrpc"] <> "2.0" Then
+    $sErrorMsg = "Request doesn't have a jsonrpc=2.0 header"
+    Return False
+  Endif
+
+  ' Check if the id is the same
+  If cJsonData["id"] <> $iId Then
+    $sErrorMsg = "Wrong or invalid JSON-RPC id is returned"
+    Return False
+  Endif
+
+  ' Check for an error
+  If cJsonData.Exist("error") Then
+    $sErrorMsg = "JSON Response: " & cJsonData["error"]
+    Return False
+  Endif
+
+  ' No error - we got valid data
+  $vReply = cJsonData["result"]
+  Return True
 
 End
 
@@ -379,7 +372,10 @@ Public Sub hHttpClient_Finished()
 
   sJsonData = sBuffer
 
-  If Not sJsonData Then Return
+  If Not sJsonData Then
+    Raise BadReply("No data received")
+    Return
+  Endif
 
   ' Get id from the tag field. 0=Method, 1=id
   aStr = Scan(hHttpClient.Tag, "*|*")
@@ -519,15 +515,15 @@ Function Reply_Write(vReply As Variant)
 
 End
 
-Function Status_Read() As String
+Function ErrorMsg_Read() As String
 
-  Return $sStatus
+  Return $sErrorMsg
 
 End
 
-Function Status_Write(sStatus As String)
+Function ErrorMsg_Write(sErrorMsg As String)
 
-  $sStatus = sStatus
+  $sErrorMsg = sErrorMsg
 
 End
 
