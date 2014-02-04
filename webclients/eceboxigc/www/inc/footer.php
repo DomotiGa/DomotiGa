@@ -1,1 +1,0 @@
-Credits and Copyright © <?php echo date("Y"); ?> by <a href="http://www.ece.fr/" >ECEBoxIGC</a> <a href="mailto:contact.eceboxigc@gmail.com">[e-mail]</a> and <a href="http://www.domotiga.nl/" >DomotiGa</a> <a href="mailto:support@domotiga.nl">[e-mail]</a>
