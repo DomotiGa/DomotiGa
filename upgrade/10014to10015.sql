@@ -33,7 +33,7 @@ UNLOCK TABLES;
 --
 -- Add Velbus interface
 --
-INSERT INTO interfaces VALUES (52,'Velbus Interface','Velbus','Read Write');
+INSERT INTO interfaces VALUES (53,'Velbus Interface','Velbus','Read Write');
 
 --
 -- Add Velbus devicetypes
