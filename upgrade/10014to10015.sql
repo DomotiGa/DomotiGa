@@ -82,6 +82,56 @@ INSERT INTO devicetypes VALUES (334,'VMB4RY','Velbus - 4 channel relay module','
 (338,'VMBDME','Velbus - Dimmer module','Velbus','14',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 
 --
+-- New devicetypes for RFXtrx plugin
+--
+INSERT INTO devicetypes VALUES (340,'Alecto SA-30','Smoke Detector','SA30','C9F300','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (341,'Byron SX Doorbell','Doorbell','ByronSX','00F4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (342,'Byron SX PIR','PIR','ByronSX','00F4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (343,'Byron SX Door/Window','Door/Window Sensor','ByronSX','00F4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (344,'Energenie ENER010','Quad Power Socket','Energenie','A01','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+
+INSERT INTO devicetypes VALUES (345,'Livolo Touch Dimmer','Dimmer Module','Livolo','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (346,'Livolo Touch Switch 1Gang','Appliance Module 1Gang','Livolo','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (347,'Livolo Touch Switch 3Gang','Appliance Module 3Gang','Livolo','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (348,'RGB Module','Applicance Module','TRC02','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (349,'MDRemote LED Dimmer','Dimmer Module','MDREMOTE','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (350,'Conrad RSL Dimmer','Dimmer Module','RSL','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (351,'Conrad RSL Appl Module','Applicance Module','RSL','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (352,'Conrad RSL Switch','Switch Module','RSL','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (353,'RUBiCSON/IW008T/TX95','Temp/Hygro Sensor','Rubicson','th10 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (354,'EW109','Temp/Hygro Sensor','Rubicson','th11 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (355,'Siemens SF01 Fan','Fan','SF01','0x001234','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+
+UPDATE interfaces SET type = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01' WHERE id=35;
+
+UPDATE interfaces SET type = 'X10 X10Security Oregon KAKU RFXCom HEUK ATI Digimax ARC AC HEEU X10SecDW X10SecMotion X10SecRemote' WHERE id=1;
+UPDATE interfaces SET type = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison RFXLanIO X10SecDW X10SecMotion X10SecRemote' WHERE id=33;
+
+--
+-- Split X10Security up into different types for RFXTrx transmit
+--
+UPDATE devicetypes SET type = 'X10SecDW' WHERE id=1;
+UPDATE devicetypes SET type = 'X10SecDW' WHERE id=67;
+UPDATE devicetypes SET type = 'X10SecDW' WHERE id=68;
+UPDATE devicetypes SET type = 'X10SecDW' WHERE id=105;
+
+UPDATE devicetypes SET type = 'X10SecMotion' WHERE id=69;
+UPDATE devicetypes SET type = 'X10SecMotion' WHERE id=111;
+UPDATE devicetypes SET type = 'X10SecMotion' WHERE id=176;
+UPDATE devicetypes SET type = 'X10SecMotion' WHERE id=179;
+
+UPDATE devicetypes SET type = 'X10SecRemote' WHERE id=70;
+UPDATE devicetypes SET type = 'X10SecRemote' WHERE id=71;
+UPDATE devicetypes SET type = 'X10SecRemote' WHERE id=103;
+UPDATE devicetypes SET type = 'X10SecRemote' WHERE id=104;
+UPDATE devicetypes SET type = 'X10SecRemote' WHERE id=178;
+UPDATE devicetypes SET type = 'X10SecRemote' WHERE id=220;
+
+UPDATE devicetypes SET type = 'KD101' WHERE id=174;
+UPDATE devicetypes SET name = 'Chacon Avidsen NEXA Flamingo' WHERE id=174;
+UPDATE devicetypes SET description = 'Smoke Detector' WHERE id=293;
+
+--
 -- Add Viera devicetype
 --
 INSERT INTO `devicetypes` VALUES (339,'Viera','Viera TV Plugin','Viera','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
