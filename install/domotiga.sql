@@ -3725,7 +3725,7 @@ CREATE TABLE `settings_velbus` (
   `relayenabled` tinyint(1) DEFAULT NULL,
   `relayport` int(11) DEFAULT NULL,
   `debug` tinyint(1) DEFAULT NULL,
-  `boudrate` varchar(32) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 
