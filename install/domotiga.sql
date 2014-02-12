@@ -3628,6 +3628,34 @@ INSERT INTO `settings_thermostat` VALUES (0,0,120,0),(1,0,120,0);
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_toon`
+-- 
+
+DROP TABLE IF EXISTS `settings_toon`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_toon` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `polltime` int(11) DEFAULT NULL,
+  `user` varchar(64) DEFAULT NULL,
+  `password` varchar(64) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_toon`
+--
+
+LOCK TABLES `settings_toon` WRITE;
+/*!40000 ALTER TABLE `settings_toon` DISABLE KEYS */; 
+INSERT INTO `settings_toon` VALUES (0,0,300,'toonlogin','toonpassword',0),(1,0,300,'toonlogin','toonpassword',0);
+/*!40000 ALTER TABLE `settings_toon` ENABLE KEYS */; 
+UNLOCK TABLES;
+
+--
 -- Table structure for table `settings_tvguide`
 --
 
