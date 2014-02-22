@@ -12,95 +12,888 @@
 ' Read file called COPYING for license details.
 
 '***************************************************************************
-Export
+Private Const ParseError As Integer = -32700
+Private Const InvalidRequest As Integer = -32600
+Private Const MethodNotFound As Integer = -32601
+Private Const InvalidParams As Integer = -32602
+Private Const InternalError As Integer = -32603
 
-Private Methods As Object[]
-Private JsonMiniSrv As JsonMiniServer
-Private CurrIndex As Integer
+'***************************************************************************
+Private $bListening As Boolean
+Private $IPWhiteList As New String[]
+Private $Methods As New Object[]
+Private $SockColl As New Collection
+Private JsonRpcSocket As ServerSocket
+Private $bDebug As Boolean
+Private $hReply As Variant
+Private $iReply As Integer
+Private $bSubDeviceUpdate As Boolean
+Private $bSubLogUpdate As Boolean
 
-Property Read Count As Integer
 Property Read Listening As Boolean
 
+' JSON-RPC is correctly received, method exist
+' Call the subroutine to process it on application level
 Event RemoteCall(Method As String, Params As Collection)
 
-Function Count_Read() As Integer
+' Notify application the subscribe method is active or inactive
+Event SubscribeMethod(sMethod As String, bEnabled As Boolean)
 
-  Return Methods.Count()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when the class is created and "system.listMethods" is configured
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub _New()
 
-End
+  Dim Rpc As JsonRpcFunction
 
-Function Listening_Read() As Boolean
-
-  If JsonMiniSrv Then Return True
-  Return False
-
-End
-
-Public Sub Unregister(methodName As String)
-
-  Dim Bucle As Integer
-
-  If CurrIndex <> -1 Then
-    Error.Raise("Unable to Unregister a function in a RemoteCall event")
-    Return
-  Endif
-
-  For Bucle = 0 To Methods.Count - 1
-
-    If Methods[Bucle].MethodName = MethodName Then
-      Methods[Bucle] = Null
-      Methods.Remove(Bucle)
-      Return
-    Endif
-
-  Next
+  Rpc = New JsonRpcFunction("system.listMethods")
+  $Methods.Add(Rpc)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when the class is destroyed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub _Free()
+
+  Stop()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Register a JSON-RPC method
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Register(remoteFunction As JsonRpcFunction)
 
   Dim Bucle As Integer
-
-  If remoteFunction.MethodName = "system.listMethods" Then
-    Error.Raise("system.listMethods is a reserved keyword")
-    Return
-  Endif
-
-  If remoteFunction.MethodName = "system.methodHelp" Then
-    Error.Raise("system.methodHelp is a reserved keyword")
-    Return
-  Endif
 
   If remoteFunction = Null Then
     Error.Raise("Null function")
     Return
   Endif
 
-  For Bucle = 0 To Methods.Count - 1
+  If Not remoteFunction.MethodName Then
+    Error.Raise("function methodname is empty")
+    Return
+  Endif
 
-    If Methods[Bucle] = remoteFunction Then
+  If remoteFunction.MethodName = "system.listMethods" Then
+    Error.Raise("system.listMethods is a reserved keyword")
+    Return
+  Endif
+
+  ' Don't allow methodNames with "rpc."
+  If InStr(remoteFunction.methodName, "rpc.") = 1 Then
+    Error.Raise("Function methodname not allowed")
+    Return
+  Endif
+
+  For Bucle = 0 To $Methods.Count - 1
+
+    If $Methods[Bucle] = remoteFunction Then
       Error.Raise("Function already registered")
       Return
     Endif
 
-    If Methods[Bucle].methodName = remoteFunction.methodName Then
+    If $Methods[Bucle].methodName = remoteFunction.methodName Then
       Error.Raise("Function already registered")
       Return
     Endif
 
   Next
 
-  ' Don't allow methodNames with "rpc."
-  If InStr(remoteFunction.methodName, "rpc.") = 1 Then 
-    Error.Raise("Function not allowed")
-    Return
-  Endif
-
-  Methods.Add(remoteFunction)
+  $Methods.Add(remoteFunction)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Unregister a JSON-RPC method
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Unregister(methodName As String)
+
+  Dim Bucle As Integer
+
+  For Bucle = 0 To $Methods.Count - 1
+
+    If $Methods[Bucle].MethodName = MethodName Then
+      $Methods[Bucle] = Null
+      $Methods.Remove(Bucle)
+      Return
+    Endif
+
+  Next
+
+  ' Raise an error if the method doesn't exist
+  Error.Raise("Function methodname not registered")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Check if the Method is a registered one
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CheckMethod(sMethod As String) As Boolean
+
+  Dim Bucle As Integer
+
+  For Bucle = 0 To $Methods.Count - 1
+    If $Methods[Bucle].methodName = sMethod Then
+      Return True
+    Endif
+  Next
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' System Call to return the registered method list
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub System_ListMethods()
+
+  Dim MethodList As New String[]
+  Dim Bucle As Integer
+
+  For Bucle = 0 To $Methods.Count - 1
+    MethodList.Add($Methods[Bucle].MethodName)
+  Next
+
+  SetReply(0, MethodList)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Function Listening_Read() As Boolean
+
+  Return $bListening
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Send HTTP error, something wrong in the packet
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub hError(hS As Socket, hErr As String)
+
+  hS.Begin
+  hS.EndOfLine = gb.Windows
+  Print #hS, "HTTP/1.1 " & hErr
+  Print #hS, "Server: Gambas JSON-RPC Server"
+  Print #hS, "Connection: close"
+  Print #hS, ""
+
+  Try hS.Send
+
+Catch
+  ' Catch any errors with a closed stream
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Create a Json Collection with a specific error message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub JsonError(iError As Integer, Optional vId As Variant = Null) As Collection
+
+  Dim cJsonData As New Collection
+  Dim cError As New Collection
+
+  ' Fill the error fields first
+  cError["code"] = iError
+  Select Case iError
+    Case ParseError
+      cError["message"] = "Parse error"
+    Case InvalidRequest
+      cError["message"] = "Invalid Request"
+    Case MethodNotFound
+      cError["message"] = "Method not found"
+    Case InvalidParams
+      cError["message"] = "Invalid params"
+    Case InternalError
+      cError["message"] = "Internal error"
+    Default
+      cError["message"] = "Unknown error"
+  End Select
+
+  ' Build up the collection
+  ' NOTE: "id": null is NOT supported by Gambas, but required
+  ' The "id": "null" will be replaced by "id": null later
+  cJsonData["jsonrpc"] = "2.0"
+  cJsonData["error"] = cError
+  If vId = Null Then
+    cJsonData["id"] = "null"
+  Else
+    cJsonData["id"] = vId
+  Endif
+
+  Return cJsonData
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub JsonToRpc(cJsonResponse As Variant, vId As Variant) As Collection
+
+  Dim cJsonData As New Collection
+
+  ' Build up the collection
+  ' NOTE: "id": null is NOT supported by Gambas
+  cJsonData["jsonrpc"] = "2.0"
+  cJsonData["result"] = cJsonResponse
+  cJsonData["id"] = vId
+
+  Return cJsonData
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Code & Data set by the CJSONRPC
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SetReply(iCode As Integer, vData As Variant)
+
+  $iReply = iCode
+  $hReply = vData
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Write the JSON data to the socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub JsonSend(sType As String, hS As Socket, vJsonData As Variant, Optional sCrossOrigin As String = "", Optional bGzip As Boolean = False)
+
+  Dim sJsonData As String
+  Dim sGzipData As String
+  Dim cCz As New Compress
+
+  Try sJsonData = JSON.Encode(vJsonData)
+  If Error Then
+    ' JSON data is invalid, thrown an internal error
+    sJsonData = JSON.Encode(JsonError(InternalError))
+  Endif
+
+  ' Replace the "id": "null", because Gambas doesn't support it
+  sJsonData = Replace(sJsonData, "\"id\": \"null\"", "\"id\": null")
+
+  ' Replace the "\u00x0", because Gambas doesn't support empty strings
+  ' As workaround we fill the string with Chr(1). DomotiGa should never
+  ' use that value
+  sJsonData = Replace(sJsonData, " \"\\u00x0\"", " \"\"")
+  sJsonData = Replace(sJsonData, "[\"\\u00x0\"", "[\"\"")
+  sJsonData = Replace(sJsonData, " \"\\u0001\"", " \"\"")
+  sJsonData = Replace(sJsonData, "[\"\\u0001\"", "[\"\"")
+
+  ' TODO: Reply with same content-type as the request. "Accept: audio/*; q=0.2, audio/basic"
+  ' If no Accept header field is present, then it is assumed that the client accepts all media types.
+  ' If an Accept header field is present, and if the server cannot send a response which is acceptable according to
+  ' the combined Accept field value, then the server SHOULD send a 406 (not acceptable) response.
+  ' TODO: Reject accept-content types which aren't e.g. application/json
+
+  If sType = "HTTP" Or If sType = "HTTPURL" Then
+
+    ' If we *send* send a compressed stream, try to compress
+    If bGzip Then
+      cCz.Type = "zlib"
+      Try sGzipData = cCz.String(sJsonData)
+      If Not Error Then
+        If Len(sGzipData) >= Len(sJsonData) Then
+          ' Most likely the string/data is to small
+          bGzip = False
+        Endif
+      Else
+        ' don't do anything
+        bGzip = False
+      Endif
+    Endif
+
+    hS.Begin
+    hS.EndOfLine = gb.Windows
+    Print #hS, "HTTP/1.1 200 OK"
+    Print #hS, "Connection: close"
+    If bGzip Then
+      Print #hS, "Content-Length: " & Len(sGzipData)
+    Else
+      Print #hS, "Content-Length: " & Len(sJsonData)
+    Endif
+    Print #hS, "Content-Type: application/json"
+    If bGzip Then Print #hS, "Content-Encoding: gzip"
+    If sCrossOrigin Then Print #hS, "Access-Control-Allow-Origin: " & sCrossOrigin
+    Print #hS, "Server: Gambas RPC Server"
+    Print #hS, ""
+
+    ' Writes compress data when possible
+    If bGzip Then
+      Write #hS, sGzipData, Len(sGzipData)
+    Else
+      Write #hS, sJsonData, Len(sJsonData)
+    Endif
+
+    Try hS.Send
+  Else If sType = "RAW" Then
+    Try Write #hS, sJsonData, Len(sJsonData)
+  Endif
+
+Catch
+  ' Catch any errors with a closed stream
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Validate/Check the RAW TCP data for a JSON string
+' We count the { and } to "known" if it is one
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ValidateRawJson(sJson As String) As Boolean
+
+  Dim iCount As Integer
+  Dim iLeft, iRight As Integer
+  Dim sLast, sCurrent As String
+  Dim bStr As Boolean
+
+  For iCount = 1 To Len(sJson) + 1
+    sCurrent = Mid(sJson, iCount, 1)
+    If sCurrent = "\"" Then
+      If sLast <> "\\" Then bStr = Not bStr
+    Else
+      If Not bStr Then
+        If sCurrent = "{" Then Inc iLeft
+        If sCurrent = "}" Then Inc iRight
+      Endif
+    Endif
+
+    sLast = sCurrent
+  Next
+
+  ' If no { or }, then it is an invalid string
+  If iLeft = 0 Then Return False
+
+  ' If they are equal count, return true
+  If iLeft = iRight Then
+    Return True
+  Else
+    Return False
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Process JSON-RPC request. The sType can be "HTTP", "HTTPURL" or "RAW"
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessQuery(sType As String, hS As Socket, Buf As String, Optional sCrossOrigin As String = "", Optional bGzip As Boolean = False)
+
+  Dim sJsonData As String
+  Dim vTestData As Variant
+  Dim vJsonData As New Variant[]
+  Dim Entry As Variant
+  Dim vOutput As New Variant[]
+  Dim sJSONVersion As String
+  Dim sMethod As String
+  Dim bMethod As Boolean
+  Dim JsonBatch As Boolean
+  Dim vId As Variant
+  Dim cCol As Collection
+
+  ' Get the Json data from the HTTP request
+  If sType = "HTTP" Then
+    Try sJsonData = Mid(Buf, InStr(Buf, Chr(13) & Chr(10) & Chr(13) & Chr(10)) + 4)
+  Else
+    sJsonData = Buf
+  Endif
+
+  ' Remove all NewLine and Carriage Return
+  sJsonData = Replace(sJsonData, Chr(13), "")
+  sJsonData = Replace(sJsonData, Chr(10), "")
+
+  ' Replace the "", because Gambas doesn't support empty strings
+  ' Also we need do it only when we have a space or [ in front of it
+  sJsonData = Replace(sJsonData, " \"\"", " \"\\u0001\"")
+  sJsonData = Replace(sJsonData, "[\"\"", "[\"\\u0001\"")
+
+  ' Try to decode the string
+  Try vTestData = JSON.Decode(sJsonData)
+  If Error Then
+    JsonSend(sType, hS, JsonError(ParseError))
+    Return
+  Endif
+
+  Try Entry = vTestData[0]
+  If Error Then
+    JsonSend(sType, hS, JsonError(ParseError))
+    Return
+  Endif
+
+  ' No array, just 1 call
+  If Entry = Null Then
+    JsonBatch = False
+    vJsonData.Add(vTestData)
+  Else
+    JsonBatch = True
+    vJsonData = vTestData
+  Endif
+
+  For Each Entry In vJsonData
+
+    Try sJSONVersion = Entry["jsonrpc"]
+    ' Check if we got a method name
+
+    If sJSONVersion = "2.0" Then
+      ' Check if we got a method name
+      Try sMethod = Entry["method"]
+      If Error Then
+        vOutput.Add(JsonError(InvalidRequest))
+      Else
+        If TypeOf(Entry["method"]) = gb.String Then
+          Try vId = Entry["id"]
+
+          If Not CheckMethod(sMethod) Then
+            vOutput.Add(JsonError(MethodNotFound, vId))
+          Else
+            $hReply = Null
+            $iReply = 0 
+
+            If sMethod = "system.listMethods" Then
+              System_ListMethods()
+            Else If sMethod = "system.methodHelp" Then
+              'System_methodHelp(hPar[0])
+            Else
+              ' Just pass all the data for testing
+              Raise RemoteCall(sMethod, Entry["params"])
+            Endif
+
+            ' For subscribe methods we need to store additional info in Socket list - only works for RAW
+            If sType = "RAW" Then
+              If sMethod = "subscribe.logupdate" Or If sMethod = "subscribe.deviceupdate" Then
+
+                ' Find socket first
+                For Each cCol In $SockColl
+                  If hS = cCol["socket"] Then
+
+                    If sMethod = "subscribe.logupdate" Then
+                      cCol["subscribe.logupdate"] = "TODO"
+                      $bSubLogUpdate = True
+                    Endif
+
+                    If sMethod = "subscribe.deviceupdate" Then
+                      cCol["subscribe.deviceupdate"] = "TODO"
+                      $bSubDeviceUpdate = True
+                    Endif
+
+                    ' Publish information towards the CJSONRPC
+                    Raise SubscribeMethod(sMethod, True)
+
+                    Break
+                  Endif
+                Next
+
+              Endif
+            Endif
+
+            ' If id=Null then it is most likely a Json-Rpc notification, we shouldn't respond to it
+            If vId <> Null Then
+
+              ' The response from JSON-RPC handle can't be empty!
+              If $hReply = Null Then
+                If $iReply <> 0 Then
+                  vOutput.Add(JsonError($iReply, vId))
+                Else
+                  vOutput.Add(JsonError(InternalError, vId))
+                Endif
+              Else
+                vOutput.Add(JsonToRpc($hReply, vId))
+              Endif
+            Endif
+          Endif
+        Else
+          vOutput.Add(JsonError(InvalidRequest))
+        Endif
+      Endif
+    Else
+      vOutput.Add(JsonError(InvalidRequest))
+    Endif
+
+  Next
+
+  If vOutput.Count >= 1 Then
+    If JsonBatch Then
+      JsonSend(sType, hS, vOutput, sCrossOrigin, bGzip)
+    Else
+      JsonSend(sType, hS, vOutput[0], sCrossOrigin, bGzip)
+    Endif
+  Endif
+
+Catch
+  Print Error.Text
+  JsonSend(sType, hS, JsonError(InternalError))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read data from the Socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Socket_Read()
+
+  Dim Buf As String
+  Dim sCad As String
+  Dim hS As Socket
+  Dim cCount As Integer
+  Dim cLen As Integer
+  Dim cWait As Integer = 1
+  Dim cCol As Collection
+
+  For Each cCol In $SockColl
+    If cCol["socket"] = Last Then
+      hS = Last
+      Break
+    Endif
+  Next
+
+  If hS = Null Then Return
+
+  If cCol["buffer"] = "" Then
+    If Lof(hS) >= 5 Then
+
+      Try Read #hS, Buf, Lof(hS)
+      cCol["buffer"] &= Buf
+
+      ' Reject a HTTP GET request properly
+      If Left(cCol["buffer"], 4) = "GET " Then
+        hError(hS, "405 Method Not Allowed")
+        RemoveSocket(hS)
+        Return
+      Endif
+
+      ' First check if we have a HTTP POST or RAW (needs to start with "{")
+      If Left(cCol["buffer"], 5) = "POST " Then
+        cCol["protocol"] = ""
+      Else If Left(cCol["buffer"], 1) = "{" Then
+        cCol["protocol"] = "RAW"
+      Else
+        RemoveSocket(hS)
+        Return
+      Endif
+
+    Else
+      ' We expect at LEAST something like "POST /" or "{"
+      RemoveSocket(hS)
+      Return
+    Endif
+  Else
+    Try Read #hS, Buf, Lof(hS)
+    cCol["buffer"] &= Buf
+
+    ' Don't continue, because this is the second (or more) iteration to read the data
+    ' The first iteration will handle the complete request
+    Return
+  Endif
+
+  ' If it isn't "RAW", check the HTTP version
+  If cCol["protocol"] = "" Then
+    If InStr(cCol["buffer"], Chr(13)) > 0 Then
+      Buf = Trim(Left(cCol["buffer"], InStr(cCol["buffer"], Chr(13)) - 1))
+      Buf = Right(Buf, 8)
+      If Buf = "HTTP/1.1" Then
+        cCol["protocol"] = "HTTP/1.1"
+      Else If Buf = "HTTP/1.0" Then
+        cCol["protocol"] = "HTTP/1.0"
+      Else
+        hError(hS, "505 HTTP Version Not Supported")
+        RemoveSocket(hS)
+        Return
+      Endif
+
+    Else
+      If Len(cCol["buffer"]) > 65535 Then
+        hError(hS, "413 Request Entity Too Large")
+        RemoveSocket(hS)
+        Return
+      Endif
+    Endif
+  Else
+    If Len(cCol["buffer"]) > 65535 Then
+      RemoveSocket(hS)
+      Return
+    Endif
+  Endif
+
+  ' Handle HTTP requests
+  If Left(cCol["protocol"], 4) = "HTTP" Then
+    ' It is possible the HTTP headers are send in separate TCP packets, we will wait a maximum of 1000msec
+    For cCount = cWait To 199 Step 1
+      If hS = Null Then Return
+      If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) Then Break
+      Wait 0.005
+    Next
+
+    If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) Then
+      If cCol["type"] = 0 Then
+        Buf = Left(cCol["buffer"], InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)))
+
+        ' Check for "Accept-Encoding" header, the format can be "gzip" or "gzip, deflate"
+        If InStr(UCase(Buf), "ACCEPT-ENCODING:") > 0 Then
+          sCad = Mid(Buf, InStr(UCase(Buf), "ACCEPT-ENCODING:") + 16)
+          sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
+
+          ' The client support gzip
+          If InStr(UCase(sCad), "GZIP") Then cCol["gzip"] = True
+        Endif
+
+        If InStr(UCase(Buf), "CONTENT-TYPE:") > 0 Then
+          sCad = Mid(Buf, InStr(UCase(Buf), "CONTENT-TYPE:") + 13)
+          sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
+          If (LCase(sCad) <> "application/json") And (LCase(sCad) <> "application/json-rpc") Then
+            hError(hS, "415 Unsupported Media Type")
+            RemoveSocket(hS)
+            Return
+          Else
+            cCol["type"] = 1
+          Endif
+        Else
+          hError(hS, "415 Unsupported Media Type")
+          RemoveSocket(hS)
+          Return
+        Endif
+
+        If InStr(UCase(Buf), "CONTENT-LENGTH:") > 0 Then
+          sCad = Mid(Buf, InStr(UCase(Buf), "CONTENT-LENGTH:") + 15)
+          sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
+          Try cCol["length"] = CInt(sCad)
+          If Error Then
+            hError(hS, "411 Length Required")
+            RemoveSocket(hS)
+            Return
+          Endif
+
+          If cCol["length"] < 0 Then
+            hError(hS, "400 Bad Request")
+            RemoveSocket(hS)
+            Return
+          Endif
+        Else
+          cCol["length"] = -1
+        Endif
+
+        ' Support for cross-origin, we just reply with the required header
+        If InStr(UCase(Buf), Chr(10) & "ORIGIN:") > 0 Then
+          sCad = Mid(Buf, InStr(UCase(Buf), Chr(10) & "ORIGIN:") + 9)
+          sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
+          cCol["cross-origin"] = sCad
+        Endif
+
+        ' We should check if the request is in the URL
+        If cCol["length"] = 0 Or If cCol["length"] = -1 Then
+          ' First get the first line, this is the URL and remove the HTTP/1.x
+          sCad = Trim(Left(cCol["buffer"], InStr(cCol["buffer"], Chr(13)) - 9))
+          If InStr(sCad, "?request=") Then
+            sCad = Mid(sCad, InStr(sCad, "?request=") + 9)
+            Try sCad = URL.Decode(sCad)
+            If Error Then
+              hError(hS, "400 Bad Request")
+              RemoveSocket(hS)
+              Return
+            Endif
+
+            ' We seem to have a valid request, append mandatory characters and process it
+            ProcessQuery("HTTPURL", hS, sCad, cCol["cross-origin"], cCol["gzip"])
+            RemoveSocket(hS)
+            Return
+          Endif
+
+          If cCol["length"] = -1 Then
+            hError(hS, "411 Length Required")
+            RemoveSocket(hS)
+            Return
+          Endif
+        Endif
+
+        ' Check for "Expect: 100-continue" option & HTTP/1.1
+        If cCol["protocol"] = 1 And InStr(UCase(Buf), "EXPECT: 100-CONTINUE") > 0 Then
+          ' Do a special check if no body is received - only then reply
+          If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) + 3 = Len(cCol["buffer"]) Then
+            hS.Begin
+            hS.EndOfLine = gb.Windows
+            Print #hS, "HTTP/1.1 100 Continue"
+            Print #hS, ""
+            Try hS.Send
+          Endif
+        Endif
+
+      Endif
+    Endif
+
+    If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) Then
+
+      If cCol["length"] = -1 Or cCol["type"] <> 1 Then
+        hError(hS, "406 Not Acceptable")
+        RemoveSocket(hS)
+        Return
+      Endif
+
+      For cCount = cWait To 200 Step 1
+        If hS = Null Then Return
+        cLen = Len(cCol["buffer"]) - InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) - 3
+        If cLen >= cCol["length"] Then Break
+        Wait 0.005
+      Next
+
+      ' First check the maximum size of 64k
+      If Len(cCol["buffer"]) > 65535 Then
+        hError(hS, "413 Request Entity Too Large")
+        RemoveSocket(hS)
+        Return
+      Else
+        ' We accept size or larger size, due to a bug in OpenRemote
+        If cLen >= cCol["length"] Then 
+          ProcessQuery("HTTP", hS, cCol["buffer"], cCol["cross-origin"], cCol["gzip"])
+          RemoveSocket(hS)
+          Return
+        Else
+          ' If size doesn't match - we give an internal error
+          hError(hS, "500 Internal Server Error")
+          RemoveSocket(hS)
+          Return
+        Endif
+
+      Endif
+
+    Else
+      If Len(cCol["buffer"]) > 65535 Then
+        hError(hS, "413 Request Entity Too Large")
+        RemoveSocket(hS)
+        Return
+      Endif
+    Endif
+
+    ' Always give a response. We wait long enough for the information = 1000msec
+    hError(hS, "408 Request Timeout")
+    RemoveSocket(hS)
+
+  Else If Left(cCol["protocol"], 3) = "RAW" Then
+
+    ' It is possible the request is send in separate TCP packets, we will wait a maximum of 1000msec
+    For cCount = cWait To 201 Step 1
+      If hS = Null Then Return
+      If ValidateRawJson(cCol["buffer"]) Then Break
+      Wait 0.005
+    Next
+
+    ' If <= 200 then we have received a valid JSON request, else we just drop the connection without a message
+    If cWait <= 200 Then
+      ProcessQuery("RAW", hS, cCol["buffer"], "", False)
+      cCol["buffer"] = ""
+    Else
+      RemoveSocket(hS)
+    Endif
+
+  Else
+    RemoveSocket(hS)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Remove a suddenly socket from the list
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Socket_Closed()
+
+  RemoveSocket(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Close and remove Socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub RemoveSocket(hS As Socket)
+
+  Dim cCol As Collection
+  Dim bDeviceUpdate As Boolean = False
+  Dim bLogUpdate As Boolean = False
+
+  For Each cCol In $SockColl
+    If hS = cCol["socket"] Then
+      Try Close #hS
+      $SockColl.Remove(cCol["id"])
+      Continue
+    Endif
+
+    If cCol["subscribe.logupdate"] Then bLogUpdate = True
+    If cCol["subscribe.deviceupdate"] Then bDeviceUpdate = True
+  Next
+
+  ' Update the LogUpdate value in CJSONRPC
+  If bLogUpdate <> $bSubLogUpdate Then
+    Raise SubscribeMethod("subscribe.logupdate", bLogUpdate)
+    $bSubLogUpdate = bLogUpdate
+  Endif
+
+  ' Update the DeviceUpdate value in CJSONRPC
+  If bDeviceUpdate <> $bSubDeviceUpdate Then
+    Raise SubscribeMethod("subscribe.deviceupdate", bDeviceUpdate)
+    $bSubDeviceUpdate = bDeviceUpdate
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Register a connection in our Socket list
+' We accept 2 type of connections:
+' - JSON-RPC over HTTP (include URL)
+' - JSON-RPC over RAW TCP
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JsonRpcSocket_Connection(RemoteHost As String)
+
+  Dim SockCollEntry As New Collection
+  Dim iId As Integer
+  Dim hS As Socket
+
+  ' If a whitelist exist, reject all other IP address
+  If $IPWhiteList.Count >= 1 Then
+    If Not $IPWhiteList.Exist(RemoteHost) Then
+      hS = JsonRpcSocket.Accept()
+      Try Close #hS
+      Return
+    Endif
+  Endif
+
+  Randomize
+  Do
+    iId = Int(Rnd(1, 32768))
+  Loop Until Not $SockColl.Exist(iId)
+
+  SockCollEntry.Add("", "buffer")
+  SockCollEntry.Add(JsonRpcSocket.Accept(), "socket")
+  SockCollEntry.Add("", "protocol")
+  SockCollEntry.Add(-1, "length")
+  SockCollEntry.Add(0, "type")
+  SockCollEntry.Add(False, "gzip")
+  SockCollEntry.Add(CStr(iId), "id")
+
+  $SockColl.Add(SockCollEntry, CStr(iId))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Stop the JsonRpcServer, close all connections
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Stop()
+
+  Dim cCol As Collection
+
+  For Each cCol In $SockColl
+    RemoveSocket(cCol["socket"])
+  Next
+
+  Try JsonRpcSocket.Close()
+  JsonRpcSocket = Null
+
+  Raise SubscribeMethod("subscribe.logupdate", False)
+  Raise SubscribeMethod("subscribe.deviceupdate", False)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Start the JsonRpcServer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Listen(Port As Integer, MaxConn As Integer, bDebug As Boolean, Optional WhiteList As String = "")
+
+  $bListening = False
 
   If Port < 1 Or Port > 65535 Then
     Error.Raise("Invalid port number")
@@ -112,94 +905,101 @@ Public Sub Listen(Port As Integer, MaxConn As Integer, bDebug As Boolean, Option
     Return
   Endif
 
-  If JsonMiniSrv Then JsonMiniSrv = Null
-  JsonMiniSrv = New JsonMiniServer As "JsonMiniSrv"
-  Try JsonMiniSrv.Listen(Port, MaxConn, bDebug, WhiteList)
-  If Error Then
-    JsonMiniSrv = Null
-    Error.Raise("Unable to listen at TCP port " & Port)
-  Endif
-
-End
-
-Public Sub Stop()
-
-  If JsonMiniSrv Then
-    JsonMiniSrv.Close()
-    JsonMiniSrv = Null
-  Endif
-
-End
-
-Public Sub SetReply(iCode As Integer, vData As Variant)
-
-  If CurrIndex = -1 Then
-    Error.Raise("No remote function available")
-    Return
-  End If
-
-  JsonMiniSrv.SetReply(iCode, vData)
-
-End
-
-Public Sub JsonMiniSrv_ProcessData(cData As Collection)
-
-  Dim sMethod As String
-  Dim cParams As New Collection
-
-  sMethod = cData["method"]
-  cParams = cData["params"]
-
-  If sMethod = "system.listMethods" Then
-    System_ListMethods()
-  Else If sMethod = "system.methodHelp" Then
-    'System_methodHelp(hPar[0])
+  If Not JsonRpcSocket Then
+    JsonRpcSocket = New ServerSocket As "JsonRpcSocket"
   Else
-    ' Just pass all the data for testing
-    Raise RemoteCall(sMethod, cParams)
-  End If
+    If JsonRpcSocket.Status <> 0 Then JsonRpcSocket.Close()
+  Endif
 
-  CurrIndex = -1
+  ' Store debug flag
+  $bDebug = bDebug
+
+  ' Split and store the IP whitelist
+  $IPWhiteList = Split(WhiteList, ";")
+
+  Try JsonRpcSocket.Port = Port
+  If Error Then
+    Error.Raise("Invalid TCP port")
+    Return
+  Endif
+
+  If MaxConn > 0 Then
+    Try JsonRpcSocket.Listen(MaxConn)
+  Else
+    Try JsonRpcSocket.Listen()
+  Endif
+
+  If Error Then
+    Error.Raise("Unable to listen at TCP port " & Port)
+    Return
+  Endif
+
+  If JsonRpcSocket.Status < 0 Then
+    Error.Raise("Unable to listen at TCP port " & Port)
+    Return
+  Endif
+
+  $bListening = True
+
 End
 
-Public Sub JsonMiniSrv_CheckMethod(sMethod As String)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Publish logupdates via JSON-RPC, the session need to subscribe first
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub LogUpdate(cData As Collection)
 
-  Dim Bucle As Integer
+  Dim cCol As Collection
+  Dim cJsonData As New Collection
 
-  For Bucle = 0 To Methods.Count - 1
-    If Methods[Bucle].methodName = sMethod Then
-      CurrIndex = bucle
-      Return
-    End If
+  ' Go through the open socket list
+  For Each cCol In $SockColl
+
+    ' Search for RAW and subscribed for log information
+    If cCol["protocol"] = "RAW" And If cCol["subscribe.logupdate"] Then
+
+      ' Build the JSON-RPC format if not yet done
+      If cJsonData.Count = 0 Then
+        cJsonData["jsonrpc"] = "2.0"
+        cJsonData["method"] = "subscribe.logupdate"
+        cJsonData["params"] = cData
+        ' NEVER add id - this is a notification only
+      Endif
+
+      ' Write it to the socket
+      JsonSend("RAW", cCol["socket"], cJsonData)
+    Endif
+
   Next
 
-  ' No Method found, Stop Event (=false)
-  Stop Event
-  Return
-
 End
 
-Public Sub _New()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Publish deviceupdates via JSON-RPC, the session need to subscribe first
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DeviceUpdate(cData As Collection)
 
-  Dim Rpc As JsonRpcFunction
+  Dim cCol As Collection
+  Dim cJsonData As New Collection
 
-  CurrIndex = - 1
-  Methods = New Object[]
+  ' Go through the open socket list
+  For Each cCol In $SockColl
 
-  Rpc = New JsonRpcFunction("system.listMethods")
-  Methods.Add(Rpc)
+  ' Search for RAW and subscribed for log information
+    If cCol["protocol"] = "RAW" And If cCol["subscribe.logupdate"] Then
 
-  End
+      ' Build the JSON-RPC format if not yet done
+      If cJsonData.Count = 0 Then
+        cJsonData["jsonrpc"] = "2.0"
+        cJsonData["method"] = "subscribe.deviceupdate"
+        cJsonData["params"] = cData
+        ' NEVER add id - this is a notification only
+      Endif
 
-Private Sub System_ListMethods()
+      ' Write it to the socket
+      JsonSend("RAW", cCol["socket"], cJsonData)
+    Endif
 
-  Dim MethodList As New String[]
-  Dim Bucle As Integer
-
-  For Bucle = 0 To Methods.Count - 1
-    MethodList.Add(Methods[Bucle].MethodName)
   Next
 
-  SetReply(0, MethodList)
-
 End
+

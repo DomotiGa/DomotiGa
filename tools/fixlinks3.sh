@@ -89,6 +89,8 @@ ln -s ../../DomotiGa3/.src/CXMLRPC.class
 ln -s ../../DomotiGa3/.src/CXBMCxPL.class
 ln -s ../../DomotiGa3/.src/CxPL.class
 ln -s ../../DomotiGa3/.src/CxPLMsg.class
+ln -s ../../DomotiGa3/.src/CVelbus.class
+ln -s ../../DomotiGa3/.src/CViera.class
 ln -s ../../DomotiGa3/.src/CVisonic.class
 ln -s ../../DomotiGa3/.src/CYouLess.class
 ln -s ../../DomotiGa3/.src/Calendar.module
@@ -112,7 +114,6 @@ ln -s ../../DomotiGa3/.src/Thermostat.module
 ln -s ../../DomotiGa3/.src/VideoServer.module
 ln -s ../../DomotiGa3/.src/VoiceText.module
 ln -s ../../DomotiGa3/.src/WeatherUG.module
-ln -s ../../DomotiGa3/.src/JsonRpc/JsonMiniServer.class
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class
 ln -s ../../DomotiGa3/.src/Timers/CTimerDelay.class
