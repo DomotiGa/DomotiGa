@@ -135,8 +135,6 @@ UPDATE devicetypes SET description = 'Smoke Detector' WHERE id=293;
 -- Add Viera devicetype
 --
 INSERT INTO `devicetypes` VALUES (339,'Viera','Viera TV Plugin','Viera','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
-/*!40000 ALTER TABLE `devicetypes` ENABLE KEYS */;
-UNLOCK TABLES;
 
 --
 -- Table structure for table `settings_toon`
@@ -165,6 +163,76 @@ LOCK TABLES `settings_toon` WRITE;
 INSERT INTO `settings_toon` VALUES (0,0,300,'toonlogin','toonpassword',0),(1,0,300,'toonlogin','toonpassword',0);
 /*!40000 ALTER TABLE `settings_toon` ENABLE KEYS */;
 UNLOCK TABLES;
+
+--
+-- Add Toon interface
+--
+LOCK TABLES `interfaces` WRITE;
+/*!40000 ALTER TABLE `interfaces` DISABLE KEYS */;
+INSERT INTO `interfaces` VALUES (55,'Toon Interface', 'Toon','Read Write');
+/*!40000 ALTER TABLE `interfaces` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Add Toon devicetypes
+--
+
+INSERT INTO `devicetypes` VALUES (356,'Toon Thermostat','Thermostat Status','Toon','Thermostat','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (357,'Toon Power Usage','Power Usage','Toon','PowerUsage','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (358,'Toon Power Produced','Power Produced','Toon','PowerProdced','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (359,'Toon Gas Usage','Gas Usage','Toon','GasUsage','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (360,'Toon Schedule','Schedule Status','Toon','Schedule','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+
+--
+-- Add Jerome Ethernet interface
+--
+LOCK TABLES `interfaces` WRITE;
+/*!40000 ALTER TABLE `interfaces` DISABLE KEYS */;
+INSERT INTO `interfaces` VALUES (56,'Jerome Ethernet Module', 'KernelChip','Read Write');
+/*!40000 ALTER TABLE `interfaces` ENABLE KEYS */;
+UNLOCK TABLES;
+
+INSERT INTO `devicetypes` VALUES (361,'Ethernet IO Port Input','IO Port Input','KernelChip','I1-22','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (362,'Ethernet IO Port Output','IO Port Output','KernelChip','O1-22','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (363,'Ethernet Counter Port','Pulse Counter Port','KernelChip','INT1-4','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (364,'Ethernet ADC Port','Analog Port','KernelChip','ADC1-4','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (365,'Ethernet PWM Port','PWM Port','KernelChip','PWM','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+
+--
+-- Table structure for table `settings_jerome`
+--
+
+DROP TABLE IF EXISTS `settings_jerome`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_jerome` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) DEFAULT NULL,
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `username` varchar(64) DEFAULT NULL,
+  `password` varchar(64) DEFAULT NULL,
+  `polltime` int(11) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_jerome`
+--
+
+LOCK TABLES `settings_jerome` WRITE;
+/*!40000 ALTER TABLE `settings_jerome` DISABLE KEYS */;
+INSERT INTO `settings_jerome` VALUES (0,0,'192.168.100.5',2424,'username','password',60,0),(1,0,'192.168.100.5',2424,'username','password',60,0);
+/*!40000 ALTER TABLE `settings_jerome` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Add extra fields to device_values
+--
+ALTER TABLE device_values ADD COLUMN `description` varchar(32) DEFAULT NULL AFTER `lastseen`;
+ALTER TABLE device_values ADD COLUMN `type` int(11) DEFAULT 0 AFTER `description`;
 
 --
 -- Finally update to 1.0.015

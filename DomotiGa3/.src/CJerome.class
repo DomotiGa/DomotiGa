@@ -1,0 +1,344 @@
+' Gambas class file
+
+' Description:
+' CJerome.class
+' Provide support for Jerome KernelChip interface.
+
+' Development Status:
+' Just started developing this one.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Jerome"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "KernelChip Jerome"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Andrey Osokin"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[Jerome] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sUsername As String
+Private $sPassword As String
+Private $iPollTime As Integer
+Private $bJeromeDebug As Boolean
+
+Public tJerome As Timer
+Public hJerome As Socket
+Public sBuffer As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ") 
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sUsername = cPl.Settings["username"]
+  $sPassword = cPl.Settings["password"]
+  $iPollTime = cPl.Settings["polltime"]
+  $bJeromeDebug = cPl.Settings["debug"]
+
+  ' Connect/Initialize connection
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+Private Function Run()
+
+  If $iPollTime Then ' only start if value >0
+    ' define poll timer
+    tJerome = New Timer As "tJerome"
+    tJerome.Delay = $iPollTime * 1000 ' multiply for seconds
+    tJerome.Start
+  Endif
+  Main.WriteLog(LogLabel & PluginFriendlyName & " initializing.")
+
+  ' all ok
+  IsRunning = True
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " FAILED to initialize")
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tJerome_Timer()
+
+  CheckJerome()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open socket and connect to Jerome
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckJerome()
+
+  hJerome = New Socket As "Jerome"
+  hJerome.Host = $sTCPHost
+  hJerome.Port = $iTCPPort
+  hJerome.Connect()
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & ERROR.Text & " at " & ERROR.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' print debug info
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Jerome_Ready()
+
+  Dim sCmd As String = "$KE"
+  Dim sPasswd, sPacket As String
+
+  If hJerome.Status = Net.Connected Then
+    sPasswd = "$KE,PSW,SET," & $sPassword & Chr(13) & Chr(10)
+    sPacket = sCmd & Chr(13) & Chr(10)
+    Write #hJerome, sPacket, Len(sPacket)
+    Write #hJerome, sPasswd, Len(sPasswd)
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Sent command '" & sCmd & "' to '" & $sTCPHost & ":" & $iTCPPort & "'")
+  Endif
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & ERROR.Text & " at " & ERROR.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read and parse response string from daemon
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Jerome_Read()
+
+  Dim sData As String
+
+  If Last.Status <> Net.Connected Then Return
+  sData = Read #hJerome, 1
+  sBuffer &= Replace(sData, Chr(10), "")
+
+ Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & ERROR.Text & " at " & ERROR.Where)
+
+End
+
+Public Sub Jerome_Finish()
+
+  If sBuffer = "#OK" & Chr(13) Then
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Received '" & sBuffer & "'")
+    sBuffer = Null
+  Else If sBuffer = "#ERR" Then
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "ERROR '" & sBuffer & "'")
+    sBuffer = Null
+  Else
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "-" & sBuffer)
+    ' parse sBuffer
+    ParseData(sBuffer)
+  Endif
+
+End
+
+Private Sub ParseData(sData As String)
+
+  Dim sEvents, sBuffers As String[]
+  Dim sValue, sLine, sDirection, sCycle, sBuffer, iCount As String
+  Dim iDeviceId As Integer
+
+  sBuffers = Split(sData, Chr(13))
+
+  For Each sBuffer In sBuffers
+    If sBuffer Then
+      sEvents = Split(sBuffer, ",")
+      If sEvents[0] = "#EVT" Then
+        sDirection = sEvents[1]
+        sLine = sEvents[3]
+        sValue = sEvents[4]
+        sValue = Replace$(sValue, Chr(13), "")
+        ' find device in database
+        iDeviceId = Devices.Find(Instance, sLine, Devices.FindInterface("Jerome Ethernet Module"), "KernelChip")
+        If iDeviceId Then
+          Select sLine
+            Case "1"
+              ' find value3 from device_value in database
+              iCount = Devices.GetValueForDevice(iDeviceId, 3)
+              If Not iCount Then iCount = 0
+              If sValue = 1 Then Inc iCount
+              SendPacket("$KE,IMPL,1")
+              SendPacket("$KE,IO,GET,1")
+            Case "2"
+              ' find value3 from device_value in database
+              iCount = Devices.GetValueForDevice(iDeviceId, 3)
+              If Not iCount Then iCount = 0
+              If sValue = 1 Then Inc iCount
+              SendPacket("$KE,IMPL,2")
+              SendPacket("$KE,IO,GET,2")
+            Case "3"
+              ' find value3 from device_value in database
+              iCount = Devices.GetValueForDevice(iDeviceId, 3)
+              If Not iCount Then iCount = 0
+              If sValue = 1 Then Inc iCount
+              SendPacket("$KE,IMPL,3")
+              SendPacket("$KE,IO,GET,3")
+            Case "4"
+              ' find value3 from device_value in database
+              iCount = Devices.GetValueForDevice(iDeviceId, 3)
+              If Not iCount Then iCount = 0
+              If sValue = 1 Then Inc iCount
+              SendPacket("$KE,IMPL,4")
+              SendPacket("$KE,IO,GET,4")
+          End Select 
+          Devices.ValueUpdateExt(iDeviceId, 1, sValue)
+          'Devices.ValueUpdateExt(iDeviceId, 2, sDirection)
+          Devices.ValueUpdateExt(iDeviceId, 3, iCount)
+        Endif
+      Endif 'If #EVT
+
+      If sEvents[0] = "#INT" Then
+        'sEvents[1]=LineNumber, [2]=, [3]=SysTime, [4]=, [5]=Cycle, [6]=Value
+        sLine = sEvents[1]
+        sCycle = sEvents[5]
+        sValue = sEvents[6]
+        If sCycle = 0 Then sCycle = 1
+        sValue = sValue * sCycle
+        ' find device in database
+        iDeviceId = Devices.Find(Instance, sLine, Devices.FindInterface("Jerome Ethernet Module"), "KernelChip")
+        If iDeviceId Then
+          Devices.ValueUpdateExt(iDeviceId, 4, sValue)
+        Endif
+        'Main.WriteDebugLog(LogLabel & "INT=" & sEvents[6] & "*" & sEvents[5])
+      Endif 'If #INT
+
+      If sEvents[0] = "#IO" Then
+        'sEvents[1]=LineNumber, [2]=LineValue
+        sLine = sEvents[1]
+        ' Replace sLine  0X to X; 01 to 1
+        If (sLine <> 10) Or (sLine <> 20) Then sLine = Replace$(sLine, "0", "")
+        sValue = sEvents[2]
+        Select sValue
+            Case "0"
+              sValue = "Out"
+            Case "1"
+              sValue = "In"
+        End Select
+        iDeviceId = Devices.Find(Instance, sLine, Devices.FindInterface("Jerome Ethernet Module"), "KernelChip")
+        If iDeviceId Then
+          Devices.ValueUpdateExt(iDeviceId, 2, sValue)
+        Endif
+      Endif 'If #IO
+
+    Endif 'If sEv
+  Next
+  sBuffer = Null
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send packet to module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendPacket(sCmd As String)
+
+  Dim sPacket As String = sCmd & Chr(13) & Chr(10)
+
+  If hJerome.Status = Net.Connected Then
+    Write #hJerome, sPacket, Len(sPacket)
+    'If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Sent command '" & sCmd & "' to '" & $sTCPHost & ":" & $iTCPPort & "'")
+  Endif
+  ErrorText = ""
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' called from devices module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' catch errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Jerome_Error()
+
+  Log.Plugin_TCP_Error(LogLabel, $sTCPHost, Last.Status)
+  IsRunning = False
+
+End
+
+Public Sub Jerome_Closed()
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " Connection Closed by foreign host.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' close socket Jerome
+  Try Close hJerome
+  ' try to stop timer
+  Try tJerome.Stop
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " closed.")
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
