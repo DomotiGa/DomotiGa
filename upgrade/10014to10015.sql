@@ -59,7 +59,9 @@ UNLOCK TABLES;
 --
 -- Add Velbus interface
 --
+LOCK TABLES `interfaces` WRITE;
 INSERT INTO interfaces VALUES (53,'Velbus Interface','Velbus','Read Write');
+UNLOCK TABLES;
 
 --
 -- Add Viera interface
@@ -101,6 +103,7 @@ INSERT INTO devicetypes VALUES (352,'Conrad RSL Switch','Switch Module','RSL','0
 INSERT INTO devicetypes VALUES (353,'RUBiCSON/IW008T/TX95','Temp/Hygro Sensor','Rubicson','th10 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO devicetypes VALUES (354,'EW109','Temp/Hygro Sensor','Rubicson','th11 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO devicetypes VALUES (355,'Siemens SF01 Fan','Fan','SF01','0x001234','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+UNLOCK TABLES;
 
 UPDATE interfaces SET type = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01' WHERE id=35;
 
