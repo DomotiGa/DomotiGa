@@ -40,6 +40,7 @@ cp ../../DomotiGa3/.src/CIRMan.class .
 cp ../../DomotiGa3/.src/CIRTrans.class .
 cp ../../DomotiGa3/.src/CIViewer.class .
 cp ../../DomotiGa3/.src/CJeeLabs.class .
+cp ../../DomotiGa3/.src/CJerome.class .
 cp ../../DomotiGa3/.src/CJSONRPC.class .
 cp ../../DomotiGa3/.src/CK8055.class .
 cp ../../DomotiGa3/.src/CKMTronicUDP.class .
@@ -80,6 +81,7 @@ cp ../../DomotiGa3/.src/CSmartVISUServer.class .
 cp ../../DomotiGa3/.src/CSqueezeServer.class .
 cp ../../DomotiGa3/.src/CTelnetServer.class .
 cp ../../DomotiGa3/.src/CTemp08.class .
+cp ../../DomotiGa3/.src/CToon.class .
 cp ../../DomotiGa3/.src/CTwitter.class .
 cp ../../DomotiGa3/.src/CUPS.class .
 cp ../../DomotiGa3/.src/CVISCA.class .
