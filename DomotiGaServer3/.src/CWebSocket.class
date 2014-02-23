@@ -43,18 +43,27 @@ End
 
 Public Sub Socket_Read()
 
-  Dim data As String
+  Dim sData As String
+  Dim cData As Collection
 
-  Read #Last, data, Lof(Last)
+  Read #Last, sData, Lof(Last)
 
-  If Handeled
+  ' Socket is opened and handshake is done
+  If Handeled Then
     If $hibil10 Then
-      Raise Read(hybi10Decode(data)["payload"])
+      cData = hybi10Decode(sData)
+      Raise Read(cData["payload"])
+
+      While cData["payloadnext"]
+        cData = hybi10Decode(cData["payloadnext"])
+        Raise Read(cData["payload"])
+      Wend
+
     Else
-      Raise Read(Trim(Mid(data, 2, Len(data) - 2)))
+      Raise Read(Trim(Mid(sData, 2, Len(sData) - 2)))
     Endif
   Else
-    ResponseHeaders(data)
+    ResponseHeaders(sData)
   Endif
 
 End
@@ -296,16 +305,17 @@ Public Function hybi10Decode(sData As String) As Collection
   Dim sPayloadLength As String
   Dim sMask As String
   Dim sunmaskedPayload As String
-  Dim cdecodedData As New Collection
+  Dim cDecodedData As New Collection
   Dim iPayLoadOffset As Integer
-  Dim idataLength As Integer
+  Dim iDataLength As Integer
   'estimate frame type:
   'dim $firstByteBinary = sprintf( '%08b', ord($data[0]));
   '$secondByteBinary = sprintf( '%08b', ord($data[1]));
   Dim icode As Integer = Val("&X" & Mid(Bin(Asc(Mid(sData, 1, 1)), 8), 5, 4))
   Dim bisMasked As Boolean = Left(Bin(Asc(Mid(sData, 2, 1)), 8)) = "1"
-  Dim ipayloadLength As Integer = Asc(Mid(sdata, 2, 1)) And 127
+  Dim iPayLoadLength As Integer = Asc(Mid(sdata, 2, 1)) And 127
   Dim i, j As Integer
+
   'Close connection If unmasked frame Is Received:
   If bisMasked = False Then
     '$this - > close(1002); '<= == == == == == == == a modifier
@@ -314,45 +324,66 @@ Public Function hybi10Decode(sData As String) As Collection
   Select Case icode
       'text frame:
     Case 1
-      cdecodedData["type"] = "text"
+      cDecodedData["type"] = "text"
       'connection Close frame:
     Case 8
-      cdecodedData["type"] = "close"
+      cDecodedData["type"] = "close"
       'ping frame:
     Case 9
-      cdecodedData["type"] = "ping"
+      cDecodedData["type"] = "ping"
       'pong frame:
     Case 10
-      cdecodedData["type"] = "pong"
+      cDecodedData["type"] = "pong"
     Case Else
       'Close connection on unknown opcode:
       '$this - > close(1003);  <================================= a modifier
   End Select
 
-  If ipayloadLength = 126 Then
-    smask = Mid(sdata, 5, 4)
-    ipayloadOffset = 8
+  If iPayLoadLength = 126 Then
+    sMask = Mid(sdata, 5, 4)
+    iPayLoadOffset = 8
+
+    ' Length is in byte 3 and 4
+    iDataLength = Asc(Mid(sData, 3, 1)) * 256 + Asc(Mid(sData, 4, 1))
   Else
-    If ipayloadLength = 127 Then
-      smask = Mid(sdata, 11, 4)
-      ipayloadOffset = 14
+    If iPayLoadLength = 127 Then
+      sMask = Mid(sData, 11, 4)
+      iPayLoadOffset = 14
+
+      ' Length is in byte 3, 4, 5, 6, 7, 8, 9 and 10 - 64-bit unsigned integer
+      iDataLength = 0
+      For i = 0 To 7
+        iDataLength += CLong(Asc(Mid(sData, 10 - i, 1))) * (i * 256)
+      Next
     Else
-      smask = Mid(sdata, 3, 4)
-      ipayloadOffset = 6
+      sMask = Mid(sData, 3, 4)
+      iPayLoadOffset = 6
     Endif
+
+    iDataLength = iPayLoadLength
   Endif
-  idataLength = Len(sdata)
+
+  ' Reset DataLength if the packet is smaller, else DomotiGa will give an error
+  If (iDataLength + iPayLoadOffset) > Len(sData) Then
+    iDataLength = Len(sData) - iPayLoadOffset
+  Endif
 
   If bisMasked = True Then
-    For i = ipayloadOffset + 1 To idataLength
-      j = i - (ipayloadOffset + 1)
-      sunmaskedPayload &= Chr(Asc(Mid(sdata, i, 1)) Xor Asc(Mid(smask, (j % 4) + 1, 1)))
+    For i = (iPayLoadOffset + 1) To (iDataLength + iPayLoadOffset)
+      j = i - (iPayLoadOffset + 1)
+      sUnmaskedPayload &= Chr(Asc(Mid(sData, i, 1)) Xor Asc(Mid(sMask, (j % 4) + 1, 1)))
     Next
-    cdecodedData["payload"] = sunmaskedPayload
+
+    If Len(sData) > (iDataLength + iPayLoadOffset) Then
+      cDecodedData["payloadnext"] = Mid(sData, iDataLength + iPayLoadOffset + 1)
+    Endif
+
+    cDecodedData["payload"] = sUnmaskedPayload
   Else
     ipayloadOffset -= 4
-    cdecodedData["payload"] = Mid(sdata, ipayloadOffset + 1)
+    cDecodedData["payload"] = Mid(sdata, iPayLoadOffset + 1)
   Endif
+
   Return cdecodedData
 
 End

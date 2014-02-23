@@ -90,6 +90,8 @@ cp ../../DomotiGa3/.src/CXMLRPC.class .
 cp ../../DomotiGa3/.src/CXBMCxPL.class .
 cp ../../DomotiGa3/.src/CxPL.class .
 cp ../../DomotiGa3/.src/CxPLMsg.class .
+cp ../../DomotiGa3/.src/CVelbus.class .
+cp ../../DomotiGa3/.src/CViera.class .
 cp ../../DomotiGa3/.src/CVisonic.class .
 cp ../../DomotiGa3/.src/CYouLess.class .
 cp ../../DomotiGa3/.src/Calendar.module .
@@ -112,7 +114,6 @@ cp ../../DomotiGa3/.src/Thermostat.module .
 cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
 cp ../../DomotiGa3/.src/WeatherUG.module .
-cp ../../DomotiGa3/.src/JsonRpc/JsonMiniServer.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcClient.class ./JsonRpc/.
