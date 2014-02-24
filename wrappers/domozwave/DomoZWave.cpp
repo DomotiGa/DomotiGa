@@ -914,6 +914,13 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 							}
 						}
 
+						// Capture Heating 1"
+						if ( label == "Heating 1" )
+						{
+							value_no = 2;
+							break;
+						}
+
 						next = "";
 					}
 				}
@@ -3129,6 +3136,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 	int int_value;
 	uint8 uint8_value;
 	uint16 uint16_value;
+	float float_value;
 	bool response;
 	bool cmdfound = false;
 
@@ -3174,6 +3182,16 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 
 						break;
 					}
+					case COMMAND_CLASS_THERMOSTAT_SETPOINT:
+					{
+						// Currently we only support Heating 1
+						if ( label == "Heating 1" )
+						{
+							break;
+						}
+
+						continue;
+					}
 					default:
 					{
 						continue;
@@ -3211,6 +3229,13 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 						response = Manager::Get()->SetValue( *it, value );
 						cmdfound = true;
 	       				}
+					else if ( ValueID::ValueType_Decimal == (*it).GetType() )
+					{
+						// We don't get a float, so divide by 1000 to get the right value
+						float_value = (float)value / 1000;
+						response = Manager::Get()->SetValue( *it, float_value );
+						cmdfound = true;
+					}
       					else
 					{
 						WriteLog(LogLevel_Debug, false, "Return=false (unknown ValueType)");
@@ -3220,7 +3245,13 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 					WriteLog( LogLevel_Debug, false, "CommandClassId=%d", id );
 					WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id) );
 					WriteLog( LogLevel_Debug, false, "Instance=%d", instance );
-					WriteLog( LogLevel_Debug, false, "Value=%d", value );
+					if ( ValueID::ValueType_Decimal == (*it).GetType() ) {
+						WriteLog( LogLevel_Debug, false, "Value=%f (decimal)", float_value );
+					}
+					else
+					{
+						WriteLog( LogLevel_Debug, false, "Value=%d", value );
+					}
 					WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
 				}
 			}
