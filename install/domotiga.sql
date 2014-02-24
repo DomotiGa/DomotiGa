@@ -3668,11 +3668,11 @@ DROP TABLE IF EXISTS `settings_toon`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_toon` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
-  `polltime` int(11) DEFAULT NULL,
+  `enabled` tinyint(1) DEFAULT '0',
+  `polltime` int(11) DEFAULT '0',
   `user` varchar(64) DEFAULT NULL,
   `password` varchar(64) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3809,14 +3809,14 @@ UNLOCK TABLES;
 DROP TABLE IF EXISTS `settings_velbus`;
 CREATE TABLE `settings_velbus` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) DEFAULT '0',
   `serialport` varchar(32) DEFAULT NULL,
   `tcphost` varchar(32) DEFAULT NULL,
-  `tcpport` int(11) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT '0',
   `type` varchar(32) DEFAULT NULL,
-  `relayenabled` tinyint(1) DEFAULT NULL,
-  `relayport` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `relayenabled` tinyint(1) DEFAULT '0',
+  `relayport` int(11) DEFAULT '0',
+  `debug` tinyint(1) DEFAULT '0',
   `baudrate` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -3836,11 +3836,11 @@ DROP TABLE IF EXISTS `settings_viera`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_viera` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
-  `tcpport` int(11) DEFAULT NULL,
-  `refresh` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT '0',
+  `refresh` int(11) DEFAULT '0',
+  `debug` tinyint(1) DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
