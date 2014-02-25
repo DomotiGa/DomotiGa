@@ -3153,7 +3153,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 			int inst = (*it).GetInstance();
 			string label = Manager::Get()->GetValueLabel( (*it) );
 
-			if ( id == COMMAND_CLASS_SWITCH_MULTILEVEL || id == COMMAND_CLASS_SWITCH_BINARY )
+			if ( id == COMMAND_CLASS_SWITCH_MULTILEVEL || id == COMMAND_CLASS_SWITCH_BINARY || id == COMMAND_CLASS_THERMOSTAT_SETPOINT )
 			{
 
 				switch ( id )
