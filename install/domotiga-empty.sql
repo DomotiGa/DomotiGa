@@ -308,7 +308,7 @@ DROP TABLE IF EXISTS `device_values`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `device_values` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
-  `deviceid` int(11) unsigned NOT NULL,
+  `device_id` int(11) unsigned NOT NULL,
   `valuenum` int(11) unsigned NOT NULL,
   `value` text,
   `correction` text,

@@ -6,6 +6,11 @@ ALTER TABLE device_values ENGINE=MyISAM;
 ALTER TABLE device_values_log ENGINE=MyISAM;
 
 --
+-- Change deviceid to device_id
+--
+ALTER TABLE device_values CHANGE COLUMN `deviceid` `device_id` INT(11) UNSIGNED NOT NULL;
+
+--
 -- Initialize columns with as NOT NULL
 --
 ALTER TABLE `actions` CHANGE COLUMN `type` `type` INT(11) NOT NULL DEFAULT '0';
