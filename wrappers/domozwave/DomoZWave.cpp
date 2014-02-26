@@ -834,7 +834,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 				if ( nodeInfo->instanceLabel[instanceID].find("Relative Humidity") != string::npos ) { str_tmp.append("Relative Humidity|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("|Luminance|") != string::npos ) { str_tmp.append("Luminance|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("Alarm Level") != string::npos ) { str_tmp.append("Alarm Level|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("Heating 1") != string::npos ) { str_tmp.append("SetPoint|Heating 1|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("Heating 1") != string::npos ) { str_tmp.append("Heating 1|"); }
 
 				// Replace the previous string with the newly generated
 				nodeInfo->instanceLabel[instanceID] = str_tmp;
@@ -844,7 +844,15 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 			{
 				nodeInfo->instanceLabel[instanceID] = "";
 				nodeInfo->instanceLabel[instanceID].append("|");
-				nodeInfo->instanceLabel[instanceID].append(label);
+
+				// The Heating 1 is special, we need to append the SetPoint. Then the temperature will go into value2
+				if ( label == "Heating 1" ) {
+					nodeInfo->instanceLabel[instanceID].append("SetPoint|Heating 1");
+				}
+				else
+				{
+					nodeInfo->instanceLabel[instanceID].append(label);
+				}
 				nodeInfo->instanceLabel[instanceID].append("|");
 			}
 		} 
