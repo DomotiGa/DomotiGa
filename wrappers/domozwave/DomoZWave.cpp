@@ -2191,7 +2191,6 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	Options::Create( configdir, zwdir, "" );
 	Options::Get()->AddOptionBool( "AppendLogFile", false );
 	Options::Get()->AddOptionBool( "ConsoleOutput", false );
-	Options::Get()->AddOptionBool( "EnableSIS", false );
 
 	Options::Get()->AddOptionInt( "PollInterval", 0 );
 	Options::Get()->AddOptionBool( "IntervalBetweenPolls", true );
