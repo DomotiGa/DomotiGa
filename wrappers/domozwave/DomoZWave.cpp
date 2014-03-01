@@ -2230,17 +2230,32 @@ void DomoZWave_Log( bool logging )
 
 //-----------------------------------------------------------------------------
 // <DomoZWave_AddSerialPort>
+// Add the serialport from the open-zwave library, it can have multiple serialports connected
 //-----------------------------------------------------------------------------
 
 void DomoZWave_AddSerialPort( const char* serialPort, const char* jsonrpcurl, bool logging )
 {
+	m_structCtrl* ctrl;
 	string Name;
 
 	// Store the serialPort used
 	Name = serialPort; 
 
+	// Loop through available controllers and check it doesn't exist
+	// Do NOT add if it already exist
+	for ( list<m_structCtrl*>::iterator it = g_allControllers.begin(); it != g_allControllers.end(); ++it )
+	{
+		ctrl = *it;
+		if ( ctrl->m_serialPort == Name )
+		{
+			// It exists, write log and exit
+			WriteLog( LogLevel_Error, true, "SerialPort=%s already exist in SerialPort list", serialPort );
+			return;
+		}
+	}
+
 	// Create and store new controller information
-	m_structCtrl* ctrl = new m_structCtrl();
+	ctrl = new m_structCtrl();
 
 	ctrl->m_serialPort = Name;
 	ctrl->m_homeId = 0;
@@ -2253,6 +2268,7 @@ void DomoZWave_AddSerialPort( const char* serialPort, const char* jsonrpcurl, bo
 
 	// Store the url
 	sprintf( ctrl->m_jsonrpcurl, "%s", jsonrpcurl );
+	WriteLog( LogLevel_Debug, false, "SerialPort=%s (Add)", serialPort );
 	WriteLog( LogLevel_Debug, false, "JSON-RPC URL=%s", ctrl->m_jsonrpcurl );
 
 	g_allControllers.push_back( ctrl );
@@ -2263,6 +2279,7 @@ void DomoZWave_AddSerialPort( const char* serialPort, const char* jsonrpcurl, bo
 
 //-----------------------------------------------------------------------------
 // <DomoZWave_RemoveSerialPort>
+// Remove the serialport from the open-zwave library
 //-----------------------------------------------------------------------------
 
 void DomoZWave_RemoveSerialPort( const char* serialPort )
@@ -2280,13 +2297,16 @@ void DomoZWave_RemoveSerialPort( const char* serialPort )
 		ctrl = *it;
 		if ( ctrl->m_serialPort == Name )
 		{
+			WriteLog( LogLevel_Debug, true, "SerialPort=%s (Remove)", serialPort );
+
 			ctrl->m_running = false;
+
+			// Only removedriver it is existed
+			pthread_mutex_lock( &g_criticalSection );
+			Manager::Get()->RemoveDriver( serialPort );
+			pthread_mutex_unlock( &g_criticalSection );
 		}
 	}
-
-        pthread_mutex_lock( &g_criticalSection );
-	Manager::Get()->RemoveDriver( serialPort );
-        pthread_mutex_unlock( &g_criticalSection );
 
 	// Remove the ctrl from the list, it is removed now
 	if ( ctrl != NULL ) {
