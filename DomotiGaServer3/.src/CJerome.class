@@ -67,7 +67,43 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bJeromeDebug = cPl.Settings["debug"]
 
   ' Connect/Initialize connection
-  Run()
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Connect(Optional bFirstStart As Boolean = True) As Boolean
+
+  ' try to close the connection
+  Try hJerome.Close
+
+  ' get a new one
+  hJerome = New Socket As "Jerome"
+  hJerome.EndOfLine = gb.Windows
+  hJerome.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+Public Sub Jerome_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
@@ -77,28 +113,6 @@ End
 Public Sub StopPlugin()
 
   Try Disconnect()
-
-End
-
-Private Function Run()
-
-  If $iPollTime Then ' only start if value >0
-    ' define poll timer
-    tJerome = New Timer As "tJerome"
-    tJerome.Delay = $iPollTime * 1000 ' multiply for seconds
-    tJerome.Start
-  Endif
-  Main.WriteLog(LogLabel & PluginFriendlyName & " initializing.")
-
-  ' all ok
-  IsRunning = True
-
-Catch
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " FAILED to initialize")
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  IsRunning = False
-  ErrorText = Error.Text
-  ErrorWhere = Error.Where
 
 End
 
@@ -116,13 +130,16 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub CheckJerome()
 
-  hJerome = New Socket As "Jerome"
-  hJerome.Host = $sTCPHost
-  hJerome.Port = $iTCPPort
-  hJerome.Connect()
+  Dim sCmd As String = "$KE,INF"
+
+  If hJerome.Status = Net.Connected Then
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Send test poll cmd '" & sCmd & "' to '" & $sTCPHost & ":" & $iTCPPort & "'")
+    SendPacket(sCmd)
+
+  Endif
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & ERROR.Text & " at " & ERROR.Where)
+ Main.WriteLog(LogLabel & "ERROR: " & ERROR.Text & " at " & ERROR.Where)
 
 End
 
@@ -132,14 +149,24 @@ End
 Public Sub Jerome_Ready()
 
   Dim sCmd As String = "$KE"
-  Dim sPasswd, sPacket As String
+  Dim sPasswd As String = "$KE,PSW,SET," & $sPassword
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  If $iPollTime Then ' only start if value >0
+    ' define poll timer
+    tJerome = New Timer As "tJerome"
+    tJerome.Delay = $iPollTime * 1000 ' multiply for seconds
+    tJerome.Start
+    Main.WriteLog(LogLabel & PluginFriendlyName & " poll timer started.")
+  Endif
 
   If hJerome.Status = Net.Connected Then
-    sPasswd = "$KE,PSW,SET," & $sPassword & Chr(13) & Chr(10)
-    sPacket = sCmd & Chr(13) & Chr(10)
-    Write #hJerome, sPacket, Len(sPacket)
-    Write #hJerome, sPasswd, Len(sPasswd)
-    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Sent command '" & sCmd & "' to '" & $sTCPHost & ":" & $iTCPPort & "'")
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Send init cmd to '" & $sTCPHost & ":" & $iTCPPort & "'")
+    SendPacket(sCmd)
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Send password cmd to '" & $sTCPHost & ":" & $iTCPPort & "'")
+    SendPacket(sPasswd)
   Endif
 
 Catch ' some errors
@@ -156,119 +183,92 @@ Public Sub Jerome_Read()
 
   If Last.Status <> Net.Connected Then Return
   sData = Read #hJerome, 1
-  sBuffer &= Replace(sData, Chr(10), "")
+
+  If sData = Chr(10) Then ' buffer until linefeed then parse
+    If Len(sBuffer) > 1 Then ParseLine(Replace(sBuffer, Chr(13), ""))
+    sBuffer = Null
+  Else
+    sBuffer &= sData
+  Endif
 
  Catch ' some errors
   Main.WriteLog(LogLabel & "ERROR: " & ERROR.Text & " at " & ERROR.Where)
 
 End
 
-Public Sub Jerome_Finish()
+Private Sub ParseLine(sData As String)
 
-  If sBuffer = "#OK" & Chr(13) Then
-    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Received '" & sBuffer & "'")
-    sBuffer = Null
-  Else If sBuffer = "#ERR" Then
-    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "ERROR '" & sBuffer & "'")
-    sBuffer = Null
-  Else
-    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "-" & sBuffer)
-    ' parse sBuffer
-    ParseData(sBuffer)
-  Endif
+  Dim aData As String[]
+  Dim sValue, sLine, sDirection, sCycle, sDevType As String
+  Dim iDeviceId, iCount As Integer
 
-End
+  If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & " < " & sData)
 
-Private Sub ParseData(sData As String)
+  aData = Split(sData, ",")
+  If aData.Count >= 2 Then
+    If aData[0] = "#EVT" Then ' trigger event
+      ' #EVT,IN,29188,12,0
+      ' aData[1]=Direction, [2]=Event, [3]=Line, [4]=Value
+      sDirection = aData[1]
+      sLine = aData[3]
+      sValue = aData[4]
+      sDevType = IIf(sDirection == "IN", "Input", "Output")
 
-  Dim sEvents, sBuffers As String[]
-  Dim sValue, sLine, sDirection, sCycle, sBuffer, iCount As String
-  Dim iDeviceId As Integer
-
-  sBuffers = Split(sData, Chr(13))
-
-  For Each sBuffer In sBuffers
-    If sBuffer Then
-      sEvents = Split(sBuffer, ",")
-      If sEvents[0] = "#EVT" Then
-        sDirection = sEvents[1]
-        sLine = sEvents[3]
-        sValue = sEvents[4]
-        sValue = Replace$(sValue, Chr(13), "")
-        ' find device in database
-        iDeviceId = Devices.Find(Instance, sLine, Devices.FindInterface("Jerome Ethernet Module"), "KernelChip")
-        If iDeviceId Then
-          Select sLine
-            Case "1"
-              ' find value3 from device_value in database
-              iCount = Devices.GetValueForDevice(iDeviceId, 3)
-              If Not iCount Then iCount = 0
-              If sValue = 1 Then Inc iCount
-              SendPacket("$KE,IMPL,1")
-              SendPacket("$KE,IO,GET,1")
-            Case "2"
-              ' find value3 from device_value in database
-              iCount = Devices.GetValueForDevice(iDeviceId, 3)
-              If Not iCount Then iCount = 0
-              If sValue = 1 Then Inc iCount
-              SendPacket("$KE,IMPL,2")
-              SendPacket("$KE,IO,GET,2")
-            Case "3"
-              ' find value3 from device_value in database
-              iCount = Devices.GetValueForDevice(iDeviceId, 3)
-              If Not iCount Then iCount = 0
-              If sValue = 1 Then Inc iCount
-              SendPacket("$KE,IMPL,3")
-              SendPacket("$KE,IO,GET,3")
-            Case "4"
-              ' find value3 from device_value in database
-              iCount = Devices.GetValueForDevice(iDeviceId, 3)
-              If Not iCount Then iCount = 0
-              If sValue = 1 Then Inc iCount
-              SendPacket("$KE,IMPL,4")
-              SendPacket("$KE,IO,GET,4")
-          End Select 
-          Devices.ValueUpdateExt(iDeviceId, 1, sValue)
-          'Devices.ValueUpdateExt(iDeviceId, 2, sDirection)
-          Devices.ValueUpdateExt(iDeviceId, 3, iCount)
-        Endif
-      Endif 'If #EVT
-
-      If sEvents[0] = "#INT" Then
-        'sEvents[1]=LineNumber, [2]=, [3]=SysTime, [4]=, [5]=Cycle, [6]=Value
-        sLine = sEvents[1]
-        sCycle = sEvents[5]
-        sValue = sEvents[6]
-        If sCycle = 0 Then sCycle = 1
-        sValue = sValue * sCycle
-        ' find device in database
-        iDeviceId = Devices.Find(Instance, sLine, Devices.FindInterface("Jerome Ethernet Module"), "KernelChip")
-        If iDeviceId Then
-          Devices.ValueUpdateExt(iDeviceId, 4, sValue)
-        Endif
-        'Main.WriteDebugLog(LogLabel & "INT=" & sEvents[6] & "*" & sEvents[5])
-      Endif 'If #INT
-
-      If sEvents[0] = "#IO" Then
-        'sEvents[1]=LineNumber, [2]=LineValue
-        sLine = sEvents[1]
-        ' Replace sLine  0X to X; 01 to 1
-        If (sLine <> 10) Or (sLine <> 20) Then sLine = Replace$(sLine, "0", "")
-        sValue = sEvents[2]
-        Select sValue
-            Case "0"
-              sValue = "Out"
-            Case "1"
-              sValue = "In"
+      'find device In database
+      iDeviceId = Devices.Find(Instance, "IO" & sLine, Devices.FindInterface("Jerome Ethernet Module"), IIf(Val(sLine) > 4, "Jerome IO " & sDevType, "Jerome Pulse Counter"))
+      If iDeviceId Then
+        Select sLine
+          Case "1", "2", "3", "4" ' pulse counter line
+            ' get value2 from device_value in database
+            iCount = Devices.GetValueForDevice(iDeviceId, 2)
+            If Not iCount Then iCount = 0
+            If sValue = 1 Then Inc iCount
+            SendPacket("$KE,IMPL," & sLine)
+            ' SendPacket("$KE,IO,GET," & sLine)
+            Devices.ValueUpdateExt(iDeviceId, 1, IIf(sValue = 0, "Off", "On"))
+            Devices.ValueUpdateExt(iDeviceId, 2, iCount)
+          Case Else ' input/output line
+            Devices.ValueUpdateExt(iDeviceId, 1, IIf(sValue = 0, "Off", "On"))
         End Select
-        iDeviceId = Devices.Find(Instance, sLine, Devices.FindInterface("Jerome Ethernet Module"), "KernelChip")
-        If iDeviceId Then
-          Devices.ValueUpdateExt(iDeviceId, 2, sValue)
-        Endif
-      Endif 'If #IO
+      Endif
+    Endif ' end #EVT
 
-    Endif 'If sEv
-  Next
+    If aData[0] = "#INT" Then
+      ' #INT,4,T,29488,I,0,313
+      ' aData[1]=LineNumber, [2]=, [3]=SysTime, [4]=, [5]=Cycle, [6]=Value
+      sLine = aData[1]
+      sCycle = aData[5]
+      sValue = aData[6]
+      If sCycle = 0 Then sCycle = 1
+      sValue = sValue * sCycle
+      ' find device in database
+      iDeviceId = Devices.Find(Instance, sLine, Devices.FindInterface("Jerome Ethernet Module"), "Jerome Pulse Counter")
+      If iDeviceId Then
+        Devices.ValueUpdateExt(iDeviceId, 4, sValue)
+      Endif
+      'Main.WriteDebugLog(LogLabel & "INT=" & aData[6] & "*" & aData[5])
+    Endif ' end #INT
+
+    If aData[0] = "#IO" Then
+      ' #IO,01,1
+      ' aData[1]=LineNumber, [2]=LineValue
+      sLine = aData[1]
+      ' convert sLine 0X to X; 01 to 1
+      If (Left(sLine, 1) = "0") Then sLine = Right(sLine, 1)
+      sValue = aData[2]
+      Select sValue
+          Case "0"
+            sValue = "Off"
+          Case "1"
+            sValue = "On"
+      End Select
+      iDeviceId = Devices.Find(Instance, sLine, Devices.FindInterface("Jerome Ethernet Module"), "Jerome IO Input")
+      If iDeviceId Then
+        Devices.ValueUpdateExt(iDeviceId, 2, sValue)
+      Endif
+    Endif ' end #IO
+
+  Endif
   sBuffer = Null
 
 Catch ' some errors
@@ -279,13 +279,11 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send packet to module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SendPacket(sCmd As String)
-
-  Dim sPacket As String = sCmd & Chr(13) & Chr(10)
+Public Sub SendPacket(sPacket As String)
 
   If hJerome.Status = Net.Connected Then
-    Write #hJerome, sPacket, Len(sPacket)
-    'If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Sent command '" & sCmd & "' to '" & $sTCPHost & ":" & $iTCPPort & "'")
+    Print #hJerome, sPacket
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & " > " & sPacket)
   Endif
   ErrorText = ""
 
@@ -298,6 +296,25 @@ End
 ' called from devices module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim iLine As Integer
+
+  ' check address
+  iLine = Replace(sAddress, "IO", "")
+  If iLine > 0 And If iLine < 23 Then
+
+    Select Case sCmd
+      Case "OFF"
+        'SendPacket(?)
+      Case "ON"
+        'SendPacket(?)
+      Case Else
+        Main.WriteDebugLog(LogLabel & "Unknown Jerome command '" & sCmd & "' given!")
+        Return
+    End Select
+  Else
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Invalid address specified '" & sAddress & "'!")
+  Endif
 
 End
 
@@ -322,10 +339,10 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Disconnect() As Boolean
 
-  ' close socket Jerome
-  Try Close hJerome
   ' try to stop timer
   Try tJerome.Stop
+  ' close socket Jerome
+  Try Close hJerome
 
   Main.WriteLog(LogLabel & PluginFriendlyName & " closed.")
 
