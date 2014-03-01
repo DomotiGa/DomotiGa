@@ -430,8 +430,8 @@ INSERT INTO `interfaces` VALUES (56,'Jerome Ethernet Module', 'KernelChip','Read
 /*!40000 ALTER TABLE `interfaces` ENABLE KEYS */;
 UNLOCK TABLES;
 
-INSERT INTO `devicetypes` VALUES (361,'Ethernet IO Port Input','IO Port Input','KernelChip','I1-22','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
-INSERT INTO `devicetypes` VALUES (362,'Ethernet IO Port Output','IO Port Output','KernelChip','O1-22','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (361,'Ethernet IO Port Input','IO Port Input','KernelChip','IO1-22','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (362,'Ethernet IO Port Output','IO Port Output','KernelChip','IO1-22','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (363,'Ethernet Counter Port','Pulse Counter Port','KernelChip','INT1-4','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (364,'Ethernet ADC Port','Analog Port','KernelChip','ADC1-4','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (365,'Ethernet PWM Port','PWM Port','KernelChip','PWM','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
