@@ -24,7 +24,7 @@ So you have for example:
 
 Inside you will find this:
 
-README               - you are reading it now
+readme.md            - you are reading it now
 CHANGELOG            - notes about changes between versions
 COPYING              - the GPL license
 AUTHORS              - the author(s)
@@ -46,8 +46,8 @@ TODO                 - things to do
 <dir> wrappers       - 3rd party library wrappers
 <dir> webclients     - web and smartphone clients
 
-Domotiga3.gambas      - a precompiled executable for client/standalone
-DomotigaServer3.gambas- a precompiled executable for server
+DomotiGa3.gambas      - a precompiled executable for client/standalone
+DomotiGaServer3.gambas- a precompiled executable for server
 domotiga.conf.default        - default config file for client/standalone
 server-domotiga.conf.default - default config file for server
 (rest of the settings are stored inside the database)
@@ -92,11 +92,11 @@ Right click on desktop and create laucher or goto menu editor
 
 New item
 Name: DomotiGa
-Command: /home/<youruser>/domotiga/Domotiga3.gambas
+Command: /home/<youruser>/domotiga/DomotiGa3.gambas
 Icon: /home/<youruser>/domotiga/icons/logo.png
 
 If you want to change/look at the source code, start the Gambas's IDE
-by clicking the icon, or by typing gambas2 inside a terminal window.
+by clicking the icon, or by typing gambas3 inside a terminal window.
 
 Then select open project and browse to ~/domotiga/DomotiGa3
 

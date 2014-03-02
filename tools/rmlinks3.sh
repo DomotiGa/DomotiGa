@@ -40,6 +40,7 @@ cp ../../DomotiGa3/.src/CIRMan.class .
 cp ../../DomotiGa3/.src/CIRTrans.class .
 cp ../../DomotiGa3/.src/CIViewer.class .
 cp ../../DomotiGa3/.src/CJeeLabs.class .
+cp ../../DomotiGa3/.src/CJerome.class .
 cp ../../DomotiGa3/.src/CJSONRPC.class .
 cp ../../DomotiGa3/.src/CK8055.class .
 cp ../../DomotiGa3/.src/CKMTronicUDP.class .
@@ -80,6 +81,7 @@ cp ../../DomotiGa3/.src/CSmartVISUServer.class .
 cp ../../DomotiGa3/.src/CSqueezeServer.class .
 cp ../../DomotiGa3/.src/CTelnetServer.class .
 cp ../../DomotiGa3/.src/CTemp08.class .
+cp ../../DomotiGa3/.src/CToon.class .
 cp ../../DomotiGa3/.src/CTwitter.class .
 cp ../../DomotiGa3/.src/CUPS.class .
 cp ../../DomotiGa3/.src/CVISCA.class .
@@ -90,6 +92,8 @@ cp ../../DomotiGa3/.src/CXMLRPC.class .
 cp ../../DomotiGa3/.src/CXBMCxPL.class .
 cp ../../DomotiGa3/.src/CxPL.class .
 cp ../../DomotiGa3/.src/CxPLMsg.class .
+cp ../../DomotiGa3/.src/CVelbus.class .
+cp ../../DomotiGa3/.src/CViera.class .
 cp ../../DomotiGa3/.src/CVisonic.class .
 cp ../../DomotiGa3/.src/CYouLess.class .
 cp ../../DomotiGa3/.src/Calendar.module .
@@ -112,7 +116,6 @@ cp ../../DomotiGa3/.src/Thermostat.module .
 cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
 cp ../../DomotiGa3/.src/WeatherUG.module .
-cp ../../DomotiGa3/.src/JsonRpc/JsonMiniServer.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcClient.class ./JsonRpc/.

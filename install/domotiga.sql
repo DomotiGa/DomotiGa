@@ -1,8 +1,8 @@
--- MySQL dump 10.13  Distrib 5.5.34, for debian-linux-gnu (x86_64)
+-- MySQL dump 10.13  Distrib 5.5.35, for debian-linux-gnu (x86_64)
 --
 -- Host: localhost    Database: domotiga
 -- ------------------------------------------------------
--- Server version	5.5.34-0ubuntu0.12.04.1
+-- Server version       5.5.35-1ubuntu1
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -30,7 +30,7 @@ DROP TABLE IF EXISTS `actions`;
 CREATE TABLE `actions` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(64) DEFAULT NULL,
-  `type` int(11) DEFAULT NULL,
+  `type` int(11) NOT NULL DEFAULT '0',
   `description` text,
   `param1` text,
   `param2` text,
@@ -283,12 +283,12 @@ CREATE TABLE `contacts` (
   `cidphone` varchar(64) DEFAULT NULL,
   `cidmobile` varchar(64) DEFAULT NULL,
   `birthday` datetime DEFAULT NULL,
-  `holidaycard` tinyint(1) DEFAULT NULL,
+  `holidaycard` tinyint(1) NOT NULL DEFAULT '0',
   `comments` text,
   `firstname` varchar(32) DEFAULT NULL,
   `surname` varchar(32) DEFAULT NULL,
   `callnr` int(11) DEFAULT '0',
-  `type` int(11) DEFAULT NULL,
+  `type` int(11) NOT NULL DEFAULT '0',
   `firstseen` datetime DEFAULT NULL,
   `lastseen` datetime DEFAULT NULL,
   PRIMARY KEY (`id`)
@@ -301,7 +301,7 @@ CREATE TABLE `contacts` (
 
 LOCK TABLES `contacts` WRITE;
 /*!40000 ALTER TABLE `contacts` DISABLE KEYS */;
-INSERT INTO `contacts` VALUES (1,'Ron Klinkien','','1234AB','Sliedrecht','The Netherlands','0123401234','','cyberjunkynl@gmail.com','Author','','1966-09-15 00:00:00',1,'I have to Donate some to this guy!',NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `contacts` VALUES (1,'Ron Klinkien','','1234AB','Sliedrecht','The Netherlands','0123401234','','cyberjunkynl@gmail.com','Author','','1966-09-15 00:00:00',1,'I have to Donate some to this guy!',NULL,NULL,NULL,0,NULL,NULL);
 /*!40000 ALTER TABLE `contacts` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -314,22 +314,24 @@ DROP TABLE IF EXISTS `device_values`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `device_values` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
-  `deviceid` int(11) unsigned NOT NULL,
+  `device_id` int(11) unsigned NOT NULL,
   `valuenum` int(11) unsigned NOT NULL,
   `value` text,
   `correction` text,
   `units` varchar(32) DEFAULT NULL,
-  `log` tinyint(1) DEFAULT '0',
-  `logdisplay` tinyint(1) DEFAULT '0',
-  `logspeak` tinyint(1) DEFAULT '0',
-  `rrd` tinyint(1) DEFAULT '0',
-  `graph` tinyint(1) DEFAULT '0',
+  `log` tinyint(1) NOT NULL DEFAULT '0',
+  `logdisplay` tinyint(1) NOT NULL DEFAULT '0',
+  `logspeak` tinyint(1) NOT NULL DEFAULT '0',
+  `rrd` tinyint(1) NOT NULL DEFAULT '0',
+  `graph` tinyint(1) NOT NULL DEFAULT '0',
   `valuerrddsname` varchar(32) DEFAULT NULL,
   `valuerrdtype` varchar(32) DEFAULT NULL,
   `lastchanged` datetime DEFAULT NULL,
   `lastseen` datetime DEFAULT NULL,
+  `description` varchar(32) DEFAULT NULL,
+  `type` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=125 DEFAULT CHARSET=utf8;
+) ENGINE=MyISAM AUTO_INCREMENT=172 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -338,7 +340,7 @@ CREATE TABLE `device_values` (
 
 LOCK TABLES `device_values` WRITE;
 /*!40000 ALTER TABLE `device_values` DISABLE KEYS */;
-INSERT INTO `device_values` VALUES (1,1,1,'On',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 18:00:00','2008-12-14 18:00:00'),(2,2,1,'4497256',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:53:01','2008-12-14 21:53:01'),(3,3,1,'Off',NULL,'',1,NULL,NULL,0,NULL,'','',NULL,'2008-10-16 20:04:51'),(4,4,1,'Off',NULL,'',-1,0,0,0,0,'','',NULL,'2008-10-16 20:04:52'),(5,5,1,'2',NULL,'Level',-1,NULL,NULL,0,NULL,'','','2008-11-16 22:14:36','2008-12-14 21:57:32'),(6,6,1,'18.6',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:56','2008-12-14 21:57:56'),(7,9,1,'16.2',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:44','2008-12-14 21:57:44'),(8,10,1,'6.8',NULL,'°C',0,NULL,NULL,-1,NULL,'temp','GAUGE','2008-12-14 21:57:36','2008-12-14 21:57:36'),(9,11,1,'22.3',NULL,'°C',0,NULL,NULL,-1,NULL,'temp','GAUGE','2008-12-13 14:29:23','2008-12-13 14:29:23'),(10,12,1,'',NULL,'',0,NULL,NULL,0,NULL,'','',NULL,'0000-00-00 00:00:00'),(11,13,1,'36',NULL,'°C',1,NULL,NULL,1,NULL,'temp','GAUGE','2008-12-14 21:20:55','2008-12-14 22:03:13'),(12,16,1,'Sleeping',NULL,'',1,NULL,NULL,0,NULL,'','',NULL,'2010-11-04 13:42:30'),(13,17,1,'Online',NULL,'',1,NULL,NULL,0,NULL,'','','2008-11-13 14:55:17','2008-11-13 14:55:17'),(14,18,1,'No Motion',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-14 20:33:59','2008-12-14 20:34:00'),(15,19,1,'22.81',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-14 21:54:45','2008-12-14 21:57:45'),(16,20,1,'',NULL,'mm',0,NULL,NULL,0,NULL,'','',NULL,'0000-00-00 00:00:00'),(17,21,1,'Idle',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-24 15:55:22','2008-11-24 15:55:22'),(18,22,1,'Open',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 19:44:48'),(19,23,1,'Closed',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 20:28:23'),(20,24,1,'Dark',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-14 16:32:00','2008-12-14 16:32:00'),(21,25,1,'22.81',NULL,'°C',0,NULL,NULL,1,NULL,'temp','GAUGE','2008-12-14 21:57:46','2008-12-14 21:57:46'),(22,27,1,'No Motion',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-13 16:49:03','2008-12-13 16:49:03'),(23,28,1,'Dark',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-13 16:48:08','2008-12-13 16:48:09'),(24,29,1,'.',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-11-15 16:20:20'),(25,30,1,'3',NULL,'Speed',0,NULL,NULL,0,NULL,'','','2008-11-19 20:02:02','2008-12-02 16:27:30'),(26,34,1,'-22.1',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-03 22:49:37','2008-12-03 22:49:37'),(27,35,1,'16.4',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-04 15:32:25','2008-12-04 15:32:25'),(28,36,1,'Off',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57'),(29,37,1,'On',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57'),(30,38,1,'',NULL,'',0,0,0,0,0,'','',NULL,NULL),(32,1,2,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 18:00:00','2008-12-14 18:00:00'),(33,2,2,'0',NULL,'Watt',0,NULL,NULL,-1,NULL,'watt','GAUGE','2008-12-14 21:53:01','2008-12-14 21:53:01'),(34,3,2,'',NULL,'',1,NULL,NULL,0,NULL,'','',NULL,'2008-10-16 20:04:51'),(35,4,2,'',NULL,'',-1,0,0,0,0,'','',NULL,'2008-10-16 20:04:52'),(36,5,2,'Low',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-16 22:14:36','2008-12-14 21:57:32'),(37,6,2,'36',NULL,'%',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:56','2008-12-14 21:57:56'),(38,9,2,'50',NULL,'%',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:44','2008-12-14 21:57:44'),(39,10,2,'70',NULL,'%',0,NULL,NULL,-1,NULL,'humid','GAUGE','2008-12-14 21:57:36','2008-12-14 21:57:36'),(40,11,2,'51',NULL,'%',0,NULL,NULL,-1,NULL,'humid','GAUGE','2008-12-13 14:29:23','2008-12-13 14:29:23'),(41,12,2,'',NULL,'',0,NULL,NULL,0,NULL,'','',NULL,'0000-00-00 00:00:00'),(42,13,2,'',NULL,'',1,NULL,NULL,1,NULL,'','','2008-12-14 21:20:55','2008-12-14 22:03:13'),(43,16,2,'',NULL,'',1,NULL,NULL,0,NULL,'','',NULL,'2010-11-04 13:42:30'),(44,17,2,'224.9',NULL,'Volt',1,NULL,NULL,0,NULL,'','','2008-11-13 14:55:17','2008-11-13 14:55:17'),(45,18,2,'',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-14 20:33:59','2008-12-14 20:34:00'),(46,19,2,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-14 21:54:45','2008-12-14 21:57:45'),(47,20,2,'',NULL,'',0,NULL,NULL,0,NULL,'','',NULL,'0000-00-00 00:00:00'),(48,21,2,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-24 15:55:22','2008-11-24 15:55:22'),(49,22,2,'Secure',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 19:44:48'),(50,23,2,'Secure',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 20:28:23'),(51,24,2,'',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-14 16:32:00','2008-12-14 16:32:00'),(52,25,2,'',NULL,'',0,NULL,NULL,1,NULL,'','','2008-12-14 21:57:46','2008-12-14 21:57:46'),(53,27,2,'',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-13 16:49:03','2008-12-13 16:49:03'),(54,28,2,'',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-13 16:48:08','2008-12-13 16:48:09'),(55,29,2,'Away',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-11-15 16:20:20'),(56,30,2,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-11-19 20:02:02','2008-12-02 16:27:30'),(57,34,2,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-03 22:49:37','2008-12-03 22:49:37'),(58,35,2,'55',NULL,'%',0,NULL,NULL,0,NULL,'','','2008-12-04 15:32:25','2008-12-04 15:32:25'),(59,36,2,'0',NULL,'',-1,NULL,NULL,0,NULL,'Watt','GAUGE','2008-12-14 21:46:57','2008-12-14 21:46:57'),(60,37,2,'44.139',NULL,'W',0,NULL,NULL,-1,NULL,'Watt','GAUGE','2008-12-14 21:46:57','2008-12-14 21:46:57'),(61,38,2,'',NULL,'',0,0,0,0,0,'','',NULL,NULL),(63,1,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 18:00:00','2008-12-14 18:00:00'),(64,2,3,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:53:01','2008-12-14 21:53:01'),(65,3,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,NULL,'2008-10-16 20:04:51'),(66,4,3,'',NULL,'',-1,0,0,0,0,'','',NULL,'2008-10-16 20:04:52'),(67,5,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-16 22:14:36','2008-12-14 21:57:32'),(68,6,3,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:56','2008-12-14 21:57:56'),(69,9,3,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:44','2008-12-14 21:57:44'),(70,10,3,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:57:36','2008-12-14 21:57:36'),(71,11,3,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-13 14:29:23','2008-12-13 14:29:23'),(72,12,3,'',NULL,'',0,NULL,NULL,0,NULL,'','',NULL,'0000-00-00 00:00:00'),(73,13,3,NULL,NULL,NULL,1,NULL,NULL,1,NULL,NULL,NULL,'2008-12-14 21:20:55','2008-12-14 22:03:13'),(74,16,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,NULL,'2010-11-04 13:42:30'),(75,17,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-11-13 14:55:17','2008-11-13 14:55:17'),(76,18,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 20:33:59','2008-12-14 20:34:00'),(77,19,3,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 21:54:45','2008-12-14 21:57:45'),(78,20,3,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,NULL,'0000-00-00 00:00:00'),(79,21,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-24 15:55:22','2008-11-24 15:55:22'),(80,22,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 19:44:48'),(81,23,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 20:28:23'),(82,24,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 16:32:00','2008-12-14 16:32:00'),(83,25,3,NULL,NULL,NULL,0,NULL,NULL,1,NULL,NULL,NULL,'2008-12-14 21:57:46','2008-12-14 21:57:46'),(84,27,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-13 16:49:03','2008-12-13 16:49:03'),(85,28,3,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-13 16:48:08','2008-12-13 16:48:09'),(86,29,3,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-11-15 16:20:20'),(87,30,3,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-11-19 20:02:02','2008-12-02 16:27:30'),(88,34,3,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-12-03 22:49:37','2008-12-03 22:49:37'),(89,35,3,'Normal',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-04 15:32:25','2008-12-04 15:32:25'),(90,36,3,'0',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57'),(91,37,3,'0.044',NULL,'kWh',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57'),(92,38,3,'',NULL,'',0,0,0,0,0,'','',NULL,NULL),(94,1,4,NULL,NULL,NULL,-1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 18:00:00','2008-12-14 18:00:00'),(95,2,4,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:53:01','2008-12-14 21:53:01'),(96,3,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,NULL,'2008-10-16 20:04:51'),(97,4,4,'',NULL,'',-1,0,0,0,0,'','',NULL,'2008-10-16 20:04:52'),(98,5,4,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-16 22:14:36','2008-12-14 21:57:32'),(99,6,4,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:56','2008-12-14 21:57:56'),(100,9,4,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:44','2008-12-14 21:57:44'),(101,10,4,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:57:36','2008-12-14 21:57:36'),(102,11,4,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-13 14:29:23','2008-12-13 14:29:23'),(103,12,4,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,NULL,'0000-00-00 00:00:00'),(104,13,4,NULL,NULL,NULL,1,NULL,NULL,1,NULL,NULL,NULL,'2008-12-14 21:20:55','2008-12-14 22:03:13'),(105,16,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,NULL,'2010-11-04 13:42:30'),(106,17,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-11-13 14:55:17','2008-11-13 14:55:17'),(107,18,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 20:33:59','2008-12-14 20:34:00'),(108,19,4,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 21:54:45','2008-12-14 21:57:45'),(109,20,4,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,NULL,'0000-00-00 00:00:00'),(110,21,4,'',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-24 15:55:22','2008-11-24 15:55:22'),(111,22,4,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 19:44:48'),(112,23,4,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 20:28:23'),(113,24,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 16:32:00','2008-12-14 16:32:00'),(114,25,4,NULL,NULL,NULL,0,NULL,NULL,1,NULL,NULL,NULL,'2008-12-14 21:57:46','2008-12-14 21:57:46'),(115,27,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-13 16:49:03','2008-12-13 16:49:03'),(116,28,4,NULL,NULL,NULL,1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-13 16:48:08','2008-12-13 16:48:09'),(117,29,4,'',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-11-15 16:20:20'),(118,30,4,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-11-19 20:02:02','2008-12-02 16:27:30'),(119,34,4,NULL,NULL,NULL,0,NULL,NULL,0,NULL,NULL,NULL,'2008-12-03 22:49:37','2008-12-03 22:49:37'),(120,35,4,'',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-04 15:32:25','2008-12-04 15:32:25'),(121,36,4,NULL,NULL,NULL,-1,NULL,NULL,0,NULL,NULL,NULL,'2008-12-14 21:46:57','2008-12-14 21:46:57'),(122,37,4,'',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57'),(123,38,4,'',NULL,'',0,0,0,0,0,'','',NULL,NULL);
+INSERT INTO `device_values` VALUES (1,1,1,'On',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 18:00:00','2008-12-14 18:00:00',NULL,0),(2,2,1,'4497256',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:53:01','2008-12-14 21:53:01',NULL,0),(3,3,1,'Off',NULL,'',1,NULL,NULL,0,NULL,'','',NULL,'2008-10-16 20:04:51',NULL,0),(4,4,1,'Off',NULL,'',-1,0,0,0,0,'','',NULL,'2008-10-16 20:04:52',NULL,0),(5,5,1,'2',NULL,'Level',-1,NULL,NULL,0,NULL,'','','2008-11-16 22:14:36','2008-12-14 21:57:32',NULL,0),(6,6,1,'18.6',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:56','2008-12-14 21:57:56',NULL,0),(7,9,1,'16.2',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:44','2008-12-14 21:57:44',NULL,0),(8,10,1,'6.8',NULL,'°C',0,NULL,NULL,-1,NULL,'temp','GAUGE','2008-12-14 21:57:36','2008-12-14 21:57:36',NULL,0),(9,11,1,'22.3',NULL,'°C',0,NULL,NULL,-1,NULL,'temp','GAUGE','2008-12-13 14:29:23','2008-12-13 14:29:23',NULL,0),(11,13,1,'36',NULL,'°C',1,NULL,NULL,1,NULL,'temp','GAUGE','2008-12-14 21:20:55','2008-12-14 22:03:13',NULL,0),(12,16,1,'Sleeping',NULL,'',1,NULL,NULL,0,NULL,'','',NULL,'2010-11-04 13:42:30',NULL,0),(13,17,1,'Online',NULL,'',1,NULL,NULL,0,NULL,'','','2008-11-13 14:55:17','2008-11-13 14:55:17',NULL,0),(14,18,1,'No Motion',NULL,NULL,-1,0,0,0,0,'',NULL,'2008-12-14 20:33:59','2008-12-14 20:34:00',NULL,0),(15,19,1,'22.81',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-14 21:54:45','2008-12-14 21:57:45',NULL,0),(17,21,1,'Idle',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-24 15:55:22','2008-11-24 15:55:22',NULL,0),(18,22,1,'Open',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 19:44:48',NULL,0),(19,23,1,'Closed',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 20:28:23',NULL,0),(20,24,1,'Dark',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-14 16:32:00','2008-12-14 16:32:00',NULL,0),(21,25,1,'22.82',NULL,'°C',0,0,0,-1,0,'temp','GAUGE','2008-12-14 21:57:46','2008-12-14 21:57:46',NULL,0),(22,27,1,'No Motion',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-13 16:49:03','2008-12-13 16:49:03',NULL,0),(23,28,1,'Dark',NULL,'',1,NULL,NULL,0,NULL,'','','2008-12-13 16:48:08','2008-12-13 16:48:09',NULL,0),(24,29,1,'.',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-11-15 16:20:20',NULL,0),(25,30,1,'3',NULL,'Speed',0,NULL,NULL,0,NULL,'','','2008-11-19 20:02:02','2008-12-02 16:27:30',NULL,0),(26,34,1,'-22.1',NULL,'°C',0,NULL,NULL,0,NULL,'','','2008-12-03 22:49:37','2008-12-03 22:49:37',NULL,0),(27,35,1,'16.4',NULL,'°C',0,0,0,0,0,'',NULL,'2008-12-04 15:32:25','2008-12-04 15:32:25',NULL,0),(28,36,1,'Off',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57',NULL,0),(29,37,1,'On',NULL,'',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57',NULL,0),(33,2,2,'0',NULL,'Watt',0,NULL,NULL,-1,NULL,'watt','GAUGE','2008-12-14 21:53:01','2014-02-22 15:45:00',NULL,0),(36,5,2,'Low',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-11-16 22:14:36','2008-12-14 21:57:32',NULL,0),(37,6,2,'36',NULL,'%',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:56','2008-12-14 21:57:56',NULL,0),(38,9,2,'50',NULL,'%',0,NULL,NULL,0,NULL,'','','2008-12-14 21:57:44','2008-12-14 21:57:44',NULL,0),(39,10,2,'71',NULL,'%',0,0,0,-1,0,'humid','GAUGE','2008-12-14 21:57:36','2008-12-14 21:57:36',NULL,0),(40,11,2,'51',NULL,'%',0,NULL,NULL,-1,NULL,'humid','GAUGE','2008-12-13 14:29:23','2008-12-13 14:29:23',NULL,0),(44,17,2,'224.9',NULL,'Volt',1,NULL,NULL,0,NULL,'','','2008-11-13 14:55:17','2008-11-13 14:55:17',NULL,0),(49,22,2,'Secure',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 19:44:48',NULL,0),(50,23,2,'Secure',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-12-14 20:28:23',NULL,0),(55,29,2,'Away',NULL,'',-1,NULL,NULL,0,NULL,'','',NULL,'2008-11-15 16:20:20',NULL,0),(58,35,2,'56',NULL,'%',0,0,0,0,0,'',NULL,'2008-12-04 15:32:25','2008-12-04 15:32:25',NULL,0),(59,36,2,'0',NULL,'',-1,NULL,NULL,0,NULL,'Watt','GAUGE','2008-12-14 21:46:57','2008-12-14 21:46:57',NULL,0),(60,37,2,'44.138',NULL,'W',0,0,0,-1,0,'watt','GAUGE','2008-12-14 21:46:57','2008-12-14 21:46:57',NULL,0),(89,35,3,'Normal',NULL,'',0,NULL,NULL,0,NULL,'','','2008-12-04 15:32:25','2008-12-04 15:32:25',NULL,0),(90,36,3,'0',NULL,'',-1,NULL,NULL,0,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57',NULL,0),(91,37,3,'0.044',NULL,'kWh',0,NULL,NULL,-1,NULL,'','','2008-12-14 21:46:57','2008-12-14 21:46:57',NULL,0),(125,39,1,'18.00',NULL,'°C',0,0,0,0,0,'',NULL,'2014-02-23 13:12:52','2014-02-23 13:12:52',NULL,0),(126,39,2,'19.66',NULL,'°C',0,0,0,0,0,'',NULL,'2014-02-23 13:12:52','2014-02-23 13:12:52',NULL,0),(127,39,3,'Idle',NULL,NULL,0,0,0,0,0,NULL,NULL,'2014-02-21 21:50:40','2014-02-23 13:12:52',NULL,0),(128,39,4,'0',NULL,'%',0,0,0,0,0,'',NULL,'2014-02-21 21:50:40','2014-02-23 13:12:52',NULL,0),(144,42,3,'694680',NULL,NULL,0,0,0,0,0,NULL,NULL,'2014-02-22 19:18:23','2014-02-22 19:18:23',NULL,0),(133,39,5,'Comfort',NULL,NULL,0,0,0,0,0,NULL,NULL,'2014-02-18 10:44:06','2014-02-23 13:12:52',NULL,0),(137,42,2,'5.97',NULL,NULL,0,0,0,0,0,NULL,NULL,'2014-02-22 19:18:23','2014-02-22 19:18:23',NULL,0),(136,42,1,'2705.00',NULL,'m3',0,0,0,0,0,'',NULL,'2014-02-22 19:18:23','2014-02-22 19:18:23',NULL,0),(134,41,1,'0.00',NULL,'Watt',0,0,0,0,0,'',NULL,'2014-02-18 11:25:17','2014-02-22 19:18:23',NULL,0),(135,41,2,'0.00',NULL,'€',0,0,0,0,0,'',NULL,'2014-02-18 11:25:17','2014-02-22 19:18:23',NULL,0),(140,43,1,'780.00',NULL,'Watt',0,0,0,0,0,'',NULL,'2014-02-22 19:18:23','2014-02-22 19:18:23',NULL,0),(141,43,2,'4.12',NULL,'€',0,0,0,0,0,'',NULL,'2014-02-22 19:18:23','2014-02-22 19:18:23',NULL,0),(142,43,3,'1202583',NULL,NULL,0,0,0,0,0,'',NULL,'2014-02-22 19:18:23','2014-02-22 19:18:23',NULL,0),(143,43,4,'1451091',NULL,NULL,0,0,0,0,0,'',NULL,'2014-02-22 09:22:03','2014-02-22 19:18:23',NULL,0),(145,42,4,'1632',NULL,NULL,0,0,0,0,0,NULL,NULL,'2014-02-18 11:43:07','2014-02-18 11:43:07',NULL,0),(157,46,4,'21.00',NULL,'°C',0,0,0,0,0,'',NULL,'2014-02-21 21:54:59','2014-02-22 19:18:23',NULL,0),(156,46,3,'18.00',NULL,'°C',0,0,0,0,0,'',NULL,'2014-02-21 21:54:59','2014-02-22 19:18:23',NULL,0),(155,46,2,'15.00',NULL,'°C',0,0,0,0,0,'',NULL,'2014-02-21 21:54:59','2014-02-22 19:18:23',NULL,0),(154,46,1,'15.00',NULL,'°C',0,0,0,0,0,'',NULL,'2014-02-21 21:54:59','2014-02-22 19:18:23',NULL,0);
 /*!40000 ALTER TABLE `device_values` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -402,38 +404,38 @@ DROP TABLE IF EXISTS `devices`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `devices` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
-  `instance` int(11) DEFAULT '1',
+  `instance` int(11) NOT NULL DEFAULT '1',
   `name` varchar(64) DEFAULT NULL,
   `address` varchar(64) DEFAULT NULL,
-  `module` int(11) DEFAULT NULL,
-  `location` int(11) DEFAULT NULL,
+  `module` int(11) NOT NULL DEFAULT '0',
+  `location` int(11) NOT NULL DEFAULT '0',
   `onicon` varchar(32) DEFAULT NULL,
   `officon` varchar(32) DEFAULT NULL,
   `dimicon` varchar(32) DEFAULT NULL,
-  `interface` int(11) DEFAULT NULL,
+  `interface` int(11) NOT NULL DEFAULT '0',
   `firstseen` datetime DEFAULT NULL,
   `lastseen` datetime DEFAULT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
-  `hide` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `hide` tinyint(1) NOT NULL DEFAULT '0',
   `groups` varchar(128) DEFAULT NULL,
   `batterystatus` varchar(32) DEFAULT NULL,
-  `tampered` tinyint(1) DEFAULT NULL,
+  `tampered` tinyint(1) NOT NULL DEFAULT '0',
   `comments` text,
-  `switchable` tinyint(1) DEFAULT NULL,
-  `dimable` tinyint(1) DEFAULT NULL,
-  `extcode` tinyint(1) DEFAULT NULL,
-  `x` int(11) DEFAULT NULL,
-  `y` int(11) DEFAULT NULL,
-  `floorplan` int(11) DEFAULT NULL,
+  `switchable` tinyint(1) NOT NULL DEFAULT '0',
+  `dimable` tinyint(1) NOT NULL DEFAULT '0',
+  `extcode` tinyint(1) NOT NULL DEFAULT '0',
+  `x` int(11) NOT NULL DEFAULT '0',
+  `y` int(11) NOT NULL DEFAULT '0',
+  `floorplan` int(11) NOT NULL DEFAULT '0',
   `lastchanged` datetime DEFAULT NULL,
-  `repeatstate` tinyint(1) DEFAULT NULL,
-  `repeatperiod` int(11) DEFAULT NULL,
-  `reset` tinyint(1) DEFAULT NULL,
-  `resetperiod` int(11) DEFAULT NULL,
+  `repeatstate` tinyint(1) NOT NULL DEFAULT '0',
+  `repeatperiod` int(11) NOT NULL DEFAULT '0',
+  `reset` tinyint(1) NOT NULL DEFAULT '0',
+  `resetperiod` int(11) NOT NULL DEFAULT '0',
   `resetvalue` text,
-  `poll` tinyint(1) DEFAULT NULL,
+  `poll` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=39 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=51 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -442,7 +444,7 @@ CREATE TABLE `devices` (
 
 LOCK TABLES `devices` WRITE;
 /*!40000 ALTER TABLE `devices` DISABLE KEYS */;
-INSERT INTO `devices` VALUES (1,1,'Porch Light','O02',10,6,'light-on.png','light-off.png',NULL,2,'2008-09-06 13:56:53','2008-12-14 18:00:00',-1,0,'|All Lights|Outside|','',NULL,'',-1,0,NULL,72,121,2,'2008-12-14 18:00:00',NULL,NULL,NULL,NULL,NULL,NULL),(2,1,'Power Usage','RFXMETER[512]M',9,13,'energy.png','energy.png','',1,'2008-08-31 22:39:31','2008-12-14 21:53:01',-1,0,'|Energy|','',NULL,'Measures power usage.',0,0,0,0,0,1,'2008-12-14 21:53:01',NULL,NULL,NULL,NULL,NULL,NULL),(3,1,'Laundryroom Light','E04',2,11,'light-on.png','light-off.png',NULL,2,'2008-08-26 23:12:16','2008-10-16 20:04:51',1,0,'|All Lights|','',NULL,'None',1,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(4,1,'Kitchen Light','E05',2,7,'light-on.png','light-off.png','',2,'2008-08-26 22:20:11','2008-10-16 20:04:52',-1,0,'|All Lights|','',NULL,'None',0,-1,0,259,182,3,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(5,1,'UV Sensor','UV1[256]',8,8,'sun.png','sun.png','',1,'2008-08-27 00:19:48','2008-12-14 21:57:32',-1,0,'|Outside|','low',NULL,' Battery replaced at 2008-11-11 20:45:52 ',0,0,0,0,0,1,'2008-11-16 22:14:36',NULL,NULL,NULL,NULL,NULL,NULL),(6,1,'Livingroom Sensor','TH1[256]',7,2,'temp.gif','temp.gif','',1,'2008-07-31 13:35:50','2008-12-14 21:57:56',-1,0,'|Climate|Humidity|Temperature|','',NULL,'',0,0,0,217,194,2,'2008-12-14 21:57:56',NULL,NULL,NULL,NULL,NULL,NULL),(9,1,'Bathroom Sensor','TH1[257]',7,3,'temp.gif','temp.gif','',1,'2008-07-31 13:36:06','2008-12-14 21:57:44',-1,0,'|Climate|Humidity|Temperature|','',NULL,'',0,0,0,0,0,1,'2008-12-14 21:57:44',NULL,NULL,NULL,NULL,NULL,NULL),(10,1,'Fridge Sensor','TH1[258]',7,7,'temp.gif','temp.gif','',1,'2008-09-10 10:47:29','2008-12-14 21:57:36',-1,0,'|Climate|Humidity|Temperature|','',NULL,'',0,0,0,0,0,1,'2008-12-14 21:57:36',NULL,NULL,NULL,NULL,NULL,NULL),(11,1,'Outside Sensor','TH1[259]',7,8,'temp.gif','temp.gif','',1,'2008-09-09 16:00:58','2008-12-13 14:29:23',-1,0,'|Climate|Humidity|Outside|Temperature|','',NULL,'',0,0,0,0,0,1,'2008-12-13 14:29:23',NULL,NULL,NULL,NULL,NULL,NULL),(12,1,'Doorbell','D02',6,6,'button.gif','button.gif',NULL,2,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,'|Doors|','',NULL,'http://www.waakzaamwonen.nl/catalog/pdf/sax35.pdf',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(13,1,'Harddrive /dev/sda','/dev/sda',11,10,'hd.png','hd.png',NULL,4,'2008-09-06 14:01:08','2008-12-14 22:03:13',1,0,'|Server|','',NULL,'',0,0,NULL,122,125,6,'2008-12-14 21:20:55',NULL,NULL,NULL,NULL,NULL,NULL),(16,1,'Rakker','192.168.100.4',13,2,'aibo.gif','aibo.gif',NULL,5,'2008-09-06 14:01:07','2010-11-04 13:42:30',1,0,'|','',NULL,'',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(17,1,'SmartUPS','smartups1000',14,10,'ups.gif','ups.gif',NULL,6,'2008-09-07 19:55:53','2008-11-13 14:55:17',1,0,'|Server|','',NULL,'',0,0,NULL,0,0,1,'2008-11-13 14:55:17',NULL,NULL,NULL,NULL,NULL,NULL),(18,1,'Kitchen Motion Sensor','M01',4,7,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-23 23:34:19','2008-12-14 20:34:00',1,0,'|Motion|Security|','',NULL,'',0,0,NULL,115,62,2,'2008-12-14 20:33:59',NULL,NULL,NULL,NULL,NULL,NULL),(19,1,'Serverroom Temp','4D0000004FC78A26',15,10,'temp.gif','temp.gif',NULL,3,'2008-08-26 14:37:29','2008-12-14 21:57:45',1,0,'|Server|','',NULL,'',0,0,NULL,0,0,1,'2008-12-14 21:54:45',NULL,NULL,NULL,NULL,NULL,NULL),(20,1,'Rainfall Sensor','',16,8,'rain.png','rain.png',NULL,3,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,'|Outside|','',NULL,'',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(21,1,'Smoke Detector','DWS[C0CF54]S',17,5,'smoke.png','smoke.png','',1,'2008-11-24 15:55:22','2008-11-24 15:55:22',-1,0,'|','',NULL,'',0,0,0,0,0,1,'2008-11-24 15:55:22',NULL,NULL,NULL,NULL,NULL,NULL),(22,1,'Mailbox Sensor','DWS[323D34]S',1,6,'mail-on.png','mail-off.png','',1,'2008-09-03 20:27:09','2008-12-14 19:44:48',-1,0,'|','',NULL,'',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(23,1,'Front Door Sensor','DWS[D2DDD4]S',1,6,'door-open.png','door-closed.png','',1,'2008-09-03 20:11:50','2008-12-14 20:28:23',-1,0,'|Doors|Security|','',NULL,'',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(24,1,'Kitchen Light Sensor','M02',5,7,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-26 19:47:49','2008-12-14 16:32:00',1,0,'|Motion|','',NULL,'',0,0,NULL,229,94,2,'2008-12-14 16:32:00',NULL,NULL,NULL,NULL,NULL,NULL),(25,1,'Hot Water','150008013A024910',15,17,'temp.gif','temp.gif',NULL,3,'2008-09-08 16:02:43','2008-12-14 21:57:46',1,0,'|HVAC|','',NULL,'',0,0,NULL,0,0,1,'2008-12-14 21:57:46',NULL,NULL,NULL,NULL,NULL,NULL),(27,1,'Toilet Motion Sensor','M03',4,4,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:37:49','2008-12-13 16:49:03',1,0,'|Motion|Security|','',NULL,'',0,0,NULL,0,0,1,'2008-12-13 16:49:03',NULL,NULL,NULL,NULL,NULL,NULL),(28,1,'Toilet Light Sensor','M04',5,4,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:40:57','2008-12-13 16:48:09',1,0,'|','',NULL,'',0,0,NULL,0,0,1,'2008-12-13 16:48:08',NULL,NULL,NULL,NULL,NULL,NULL),(29,1,'My Phone','00:12:D1:A8:B6:10',18,16,'bt.png','bt.png',NULL,8,'0000-00-00 00:00:00','2008-11-15 16:20:20',-1,0,'|Proximity|','',NULL,'',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(30,1,'House Ventilation','A',19,7,'fan-on.gif','fan-off.gif',NULL,9,'2008-11-19 20:00:58','2008-12-02 16:27:30',0,0,'|HVAC|','',NULL,'',0,0,NULL,0,0,1,'2008-11-19 20:02:02',NULL,NULL,NULL,NULL,NULL,NULL),(34,1,'Temp Sensor','08',12,7,'temp.gif','temp.gif',NULL,1,'2008-12-03 22:49:37','2008-12-03 22:49:37',0,0,'|','',NULL,'',0,0,NULL,0,0,1,'2008-12-03 22:49:37',NULL,NULL,NULL,NULL,NULL,NULL),(35,1,'Hygro Sensor','TH2[256]',26,1,'','','',1,'2008-12-03 23:29:33','2008-12-04 15:32:25',-1,0,'|Climate|','',NULL,'',0,0,0,0,0,1,'2008-12-04 15:32:25',NULL,NULL,NULL,NULL,NULL,NULL),(36,1,'Close-in Boiler','000D6F00001C8F22',27,7,'light-on.png','light-off.png',NULL,10,'2008-12-10 16:56:35','2008-12-14 21:46:57',-1,0,'|All Lights|','',NULL,'',-1,0,NULL,0,0,1,'2008-12-14 21:46:57',NULL,NULL,NULL,NULL,NULL,NULL),(37,1,'DomotiGa Server','000D6F000023710F',28,10,'light-on.png','light-off.png',NULL,10,'2008-12-12 17:09:58','2008-12-14 21:46:57',-1,0,'|Server|','',NULL,'',0,0,NULL,0,0,1,'2008-12-14 21:46:57',NULL,NULL,NULL,NULL,NULL,NULL),(38,1,'Test FS20','1212',120,1,'','','',32,NULL,NULL,0,0,'|','',NULL,'',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devices` VALUES (1,1,'Porch Light','O02',10,6,'light-on.png','light-off.png',NULL,2,'2008-09-06 13:56:53','2008-12-14 18:00:00',-1,0,'|All Lights|Outside|','',NULL,'',-1,0,NULL,72,121,2,'2008-12-14 18:00:00',NULL,NULL,NULL,NULL,NULL,NULL),(2,1,'Power Usage','RFXMETER[512]M',9,13,'energy.png','energy.png','',1,'2008-08-31 22:39:31','2014-02-22 15:45:00',-1,0,'|Energy|','',NULL,'Measures power usage.',0,0,0,0,0,1,'2008-12-14 21:53:01',NULL,NULL,NULL,NULL,NULL,NULL),(3,1,'Laundryroom Light','E04',2,11,'light-on.png','light-off.png',NULL,2,'2008-08-26 23:12:16','2008-10-16 20:04:51',-1,0,'|All Lights|',NULL,NULL,'None',-1,0,0,0,0,0,NULL,0,0,0,0,NULL,0),(4,1,'Kitchen Light','E05',2,7,'light-on.png','light-off.png',NULL,2,'2008-08-26 22:20:11','2008-10-16 20:04:52',-1,0,'|All Lights|',NULL,NULL,'None',0,-1,0,259,182,3,NULL,0,0,0,0,NULL,0),(5,1,'UV Sensor','UV1[256]',8,8,'sun.png','sun.png','',1,'2008-08-27 00:19:48','2008-12-14 21:57:32',-1,0,'|Outside|','low',NULL,' Battery replaced at 2008-11-11 20:45:52 ',0,0,0,0,0,1,'2008-11-16 22:14:36',NULL,NULL,NULL,NULL,NULL,NULL),(6,1,'Livingroom Sensor','TH1[256]',7,2,'temp.gif','temp.gif','',1,'2008-07-31 13:35:50','2008-12-14 21:57:56',-1,0,'|Climate|Humidity|Temperature|','',NULL,'',0,0,0,217,194,2,'2008-12-14 21:57:56',NULL,NULL,NULL,NULL,NULL,NULL),(9,1,'Bathroom Sensor','TH1[257]',7,3,'temp.gif','temp.gif','',1,'2008-07-31 13:36:06','2008-12-14 21:57:44',-1,0,'|Climate|Humidity|Temperature|','',NULL,'',0,0,0,0,0,1,'2008-12-14 21:57:44',NULL,NULL,NULL,NULL,NULL,NULL),(10,1,'Fridge Sensor','TH1[258]',7,7,'temp.gif','temp.gif','',1,'2008-09-10 10:47:29','2008-12-14 21:57:36',-1,0,'|Climate|Humidity|Temperature|','',NULL,'',0,0,0,0,0,1,'2008-12-14 21:57:36',NULL,NULL,NULL,NULL,NULL,NULL),(11,1,'Outside Sensor','TH1[259]',7,8,'temp.gif','temp.gif','',1,'2008-09-09 16:00:58','2008-12-13 14:29:23',-1,0,'|Climate|Humidity|Outside|Temperature|','',NULL,'',0,0,0,0,0,1,'2008-12-13 14:29:23',NULL,NULL,NULL,NULL,NULL,NULL),(12,1,'Doorbell','D02',6,6,'button.gif','button.gif',NULL,2,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,'|Doors|','',NULL,'http://www.waakzaamwonen.nl/catalog/pdf/sax35.pdf',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(13,1,'Harddrive /dev/sda','/dev/sda',11,10,'hd.png','hd.png',NULL,4,'2008-09-06 14:01:08','2008-12-14 22:03:13',1,0,'|Server|','',NULL,'',0,0,NULL,122,125,6,'2008-12-14 21:20:55',NULL,NULL,NULL,NULL,NULL,NULL),(16,1,'Rakker','192.168.100.4',13,2,'aibo.gif','aibo.gif',NULL,5,'2008-09-06 14:01:07','2010-11-04 13:42:30',1,0,'|','',NULL,'',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(17,1,'SmartUPS','smartups1000',14,10,'ups.gif','ups.gif',NULL,6,'2008-09-07 19:55:53','2008-11-13 14:55:17',1,0,'|Server|','',NULL,'',0,0,NULL,0,0,1,'2008-11-13 14:55:17',NULL,NULL,NULL,NULL,NULL,NULL),(18,1,'Kitchen Motion Sensor','M01',4,7,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-23 23:34:19','2008-12-14 20:34:00',1,0,'|Motion|Security|','',NULL,'',0,0,NULL,115,62,2,'2008-12-14 20:33:59',NULL,NULL,NULL,NULL,NULL,NULL),(19,1,'Serverroom Temp','4D0000004FC78A26',15,10,'temp.gif','temp.gif',NULL,3,'2008-08-26 14:37:29','2008-12-14 21:57:45',1,0,'|Server|','',NULL,'',0,0,NULL,0,0,1,'2008-12-14 21:54:45',NULL,NULL,NULL,NULL,NULL,NULL),(20,1,'Rainfall Sensor','',16,8,'rain.png','rain.png',NULL,3,'0000-00-00 00:00:00','0000-00-00 00:00:00',0,0,'|Outside|','',NULL,'',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(21,1,'Smoke Detector','DWS[C0CF54]S',17,5,'smoke.png','smoke.png','',1,'2008-11-24 15:55:22','2008-11-24 15:55:22',-1,0,'|','',NULL,'',0,0,0,0,0,1,'2008-11-24 15:55:22',NULL,NULL,NULL,NULL,NULL,NULL),(22,1,'Mailbox Sensor','DWS[323D34]S',1,6,'mail-on.png','mail-off.png','',1,'2008-09-03 20:27:09','2008-12-14 19:44:48',-1,0,'|','',NULL,'',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(23,1,'Front Door Sensor','DWS[D2DDD4]S',1,6,'door-open.png','door-closed.png','',1,'2008-09-03 20:11:50','2008-12-14 20:28:23',-1,0,'|Doors|Security|','',NULL,'',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(24,1,'Kitchen Light Sensor','M02',5,7,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-26 19:47:49','2008-12-14 16:32:00',1,0,'|Motion|','',NULL,'',0,0,NULL,229,94,2,'2008-12-14 16:32:00',NULL,NULL,NULL,NULL,NULL,NULL),(25,1,'Hot Water','150008013A024910',15,17,'temp.gif','temp.gif',NULL,3,'2008-09-08 16:02:43','2008-12-14 21:57:46',1,0,'|HVAC|','',NULL,'',0,0,NULL,0,0,1,'2008-12-14 21:57:46',NULL,NULL,NULL,NULL,NULL,NULL),(27,1,'Toilet Motion Sensor','M03',4,4,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:37:49','2008-12-13 16:49:03',-1,0,'|Motion|Security|',NULL,NULL,NULL,0,0,0,0,0,0,'2008-12-13 16:49:03',0,0,0,0,NULL,0),(28,1,'Toilet Light Sensor','M04',5,4,'motion-on.gif','motion-off.gif',NULL,1,'2008-08-29 19:40:57','2008-12-13 16:48:09',1,0,'|','',NULL,'',0,0,NULL,0,0,1,'2008-12-13 16:48:08',NULL,NULL,NULL,NULL,NULL,NULL),(29,1,'My Phone','00:12:D1:A8:B6:10',18,16,'bt.png','bt.png',NULL,8,'0000-00-00 00:00:00','2008-11-15 16:20:20',-1,0,'|Proximity|','',NULL,'',0,0,NULL,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(30,1,'House Ventilation','A',19,7,'fan-on.gif','fan-off.gif',NULL,9,'2008-11-19 20:00:58','2008-12-02 16:27:30',0,0,'|HVAC|','',NULL,'',0,0,NULL,0,0,1,'2008-11-19 20:02:02',NULL,NULL,NULL,NULL,NULL,NULL),(34,1,'Temp Sensor','08',12,7,'temp.gif','temp.gif',NULL,1,'2008-12-03 22:49:37','2008-12-03 22:49:37',0,0,'|','',NULL,'',0,0,NULL,0,0,1,'2008-12-03 22:49:37',NULL,NULL,NULL,NULL,NULL,NULL),(35,1,'Hygro Sensor','TH2[256]',26,1,'','','',1,'2008-12-03 23:29:33','2008-12-04 15:32:25',-1,0,'|Climate|','',NULL,'',0,0,0,0,0,1,'2008-12-04 15:32:25',NULL,NULL,NULL,NULL,NULL,NULL),(36,1,'Close-in Boiler','000D6F00001C8F22',27,7,'light-on.png','light-off.png',NULL,10,'2008-12-10 16:56:35','2008-12-14 21:46:57',-1,0,'|All Lights|','',NULL,'',-1,0,NULL,0,0,1,'2008-12-14 21:46:57',NULL,NULL,NULL,NULL,NULL,NULL),(37,1,'DomotiGa Server','000D6F000023710F',28,10,'light-on.png','light-off.png',NULL,10,'2008-12-12 17:09:58','2008-12-14 21:46:57',-1,0,'|Server|',NULL,NULL,NULL,0,0,0,0,0,0,'2008-12-14 21:46:57',0,0,0,0,NULL,0),(38,1,'Test FS20','1212',120,1,'','','',32,NULL,NULL,0,0,'|','',NULL,'',0,0,0,0,0,1,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(39,1,'Toon Thermostat device #1','Thermostat',356,0,'new.png','new.png','new.png',55,'2014-02-15 16:22:57','2014-02-23 13:12:52',-1,0,'|',NULL,NULL,NULL,0,0,0,NULL,NULL,0,'2014-02-23 13:12:52',0,0,0,0,NULL,0),(42,1,'Toon Gas Usage device #1','GasUsage',359,0,'new.png','new.png','new.png',55,'2014-02-18 11:17:31','2014-02-22 19:18:23',-1,0,'|',NULL,NULL,NULL,0,0,0,NULL,NULL,0,'2014-02-22 19:18:23',0,0,0,0,NULL,0),(41,1,'Toon Power Produced device #1','PowerProduced',358,0,'new.png','new.png','new.png',55,'2014-02-18 11:10:58','2014-02-22 19:18:23',-1,0,'|',NULL,NULL,NULL,0,0,0,NULL,NULL,0,'2014-02-18 11:25:17',0,0,0,0,NULL,0),(43,1,'Toon Power Usage device #1','PowerUsage',357,0,'new.png','new.png','new.png',55,'2014-02-18 11:17:31','2014-02-22 19:18:23',-1,0,'|',NULL,NULL,NULL,0,0,0,NULL,NULL,0,'2014-02-22 19:18:23',0,0,0,0,NULL,0),(46,1,'Toon Schedule device #1','Schedule',360,0,'new.png','new.png','new.png',55,'2014-02-21 20:43:48','2014-02-22 19:18:23',-1,0,'|',NULL,NULL,NULL,0,0,0,NULL,NULL,0,'2014-02-21 21:54:59',0,0,0,0,NULL,0);
 /*!40000 ALTER TABLE `devices` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -493,7 +495,7 @@ CREATE TABLE `devices_camera` (
   `viscaaddress` int(11) DEFAULT NULL,
   `username` varchar(64) DEFAULT NULL,
   `passwd` varchar(64) DEFAULT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=15 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -608,7 +610,7 @@ CREATE TABLE `devicetypes` (
 
 LOCK TABLES `devicetypes` WRITE;
 /*!40000 ALTER TABLE `devicetypes` DISABLE KEYS */;
-INSERT INTO `devicetypes` VALUES (1,'Marmitek DS90','Door/Window Sensor','X10Security','DWS[256]S or \'dws 0xb62bc6\'','motion-on.gif','motion-off.gif','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(2,'Marmitek LW10G','Lamp Module','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(3,'Marmitek LD11','Dimmer Module','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(4,'Marmitek MS13E M','Motion Sensor','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(5,'Marmitek MS13E L','Light Sensor','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(6,'Xanura SAX35','I/O Actor','X10','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(7,'Oregon THGR238N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(8,'Oregon UV138','UV Light Sensor','Oregon','UV1[256] or \'uv1 0xf600\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(9,'RFXPwr Power','Power Usage Sensor','RFXCom','RFXMETER[256]M or \'rfxmeter 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(10,'Marmitek TM13','Wireless Transceiver','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(11,'HDDTemp Item','Temp Monitor','HDDTemp','/dev/sda',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(12,'Oregon THR128','Temp Sensor','Oregon','TEMP1[256] or \'temp1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(13,'Sony AIBO','Status AIBO','Ping','192.168.1.10',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(14,'APC SmartUPS1000','SmartUPS','UPS','smartups1000',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(15,'Dallas DS18S20','Temp Sensor','1-Wire','1049023A01080011',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(16,'Dallas Rain Gauge','Rain Gauge','1-Wire','1D3AB905000000DB',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(17,'Marmitek SD90','Smoke Detector','X10Security','DWS[256]S or \'dws 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(18,'Bluetooth Device','Phone','Bluetooth','00:1C:22:39:9D:31',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(19,'ITHO ECO Fan','Central Ventilation','Weeder','A',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(20,'RFXPulse Gas','Gas Usage Sensor','RFXCom','RFXMETER[256]M or \'rfxmeter 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(21,'RFXPulse Water','Water Usage Sensor','RFXCom','RFXMETER[256]M or \'rfxmeter 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(22,'Oregon BWR102','Digital Bathroom Scale','Oregon','WEIGHT1[1] or \'weight1 0x1\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(23,'Oregon GR101','Digital Bathroom Scale','Oregon','WEIGHT2[1] or \'weight2 0x01\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(24,'Oregon THC138','Temp Sensor','Oregon','TEMP1[256] or \'temp1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(25,'Oregon THR138','Temp Sensor','Oregon','TEMP1[256] or \'temp1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(26,'Oregon THGR810','Temp/Hygro Sensor','Oregon','TH2[256] or \'th2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(27,'Plugwise Circle','Zigbee Appliance Module','Plugwise','000D6F000021811A',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(28,'Plugwise Circle+','Zigbee Appliance Module','Plugwise','000D6F000021811A',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(29,'KAKU Chime','Wireless Doorbell','X10','C1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(30,'Oregon THN132N','Temp Sensor','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(31,'Oregon THWR288','Temp Sensor','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(32,'Oregon BTHR918N','Baro/Temp/Hygro Sensor','Oregon','THB1[256] or \'thb1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(33,'Oregon BTHR968','Baro/Temp/Hygro Sensor','Oregon','THB2[256] or \'thb2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(34,'Marmitek AD10','Switch Module','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(35,'Marmitek LM12','Lamp Module','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(36,'Marmitek AM12','Appliance Module','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(37,'Oregon WGR918','Anemo Meter','Oregon','WIND3[256] or \'wind3 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(38,'Oregon PCR800','Rain Gauge','Oregon','RAIN2[256] or \'rain2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(39,'Oregon RTGR328N','Temp/Hygro/Time Sensor','Oregon','TH3[256] & DT1[256] or \'th3 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(40,'DSC PIR','Motion Sensor','DSC','Living',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(41,'DSC Contact','Door/Window Sensor','DSC','Backdoor',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(42,'DSC Smoke','Smoke Detector','DSC','Kitchen',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(43,'HE Module','HE Module','HEUK','\'13B5A11 10 or \'0x13B5A11 10\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(44,'3160HE Shutter Control Module','Crystal Shutter Control Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(45,'KNX/EIB Dim','EIS 2','KNX/EIB','0/1/2|0/1/3|0/1/4',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(46,'KNX/EIB On/Off','EIS 1','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(47,'KNX/EIB Values','EIS 5','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(48,'KNX/EIB Date','EIS 4','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(49,'KNX/EIB Time','EIS 3','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(50,'KNX/EIB Scaling %','EIS 6','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(51,'KNX/EIB Motor Drives','EIS 7','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(52,'KNX/EIB Forced Control','EIS 8','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(53,'KNX/EIB 32bit Float','EIS 9','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(54,'KNX/EIB 16bit Int','EIS 10','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(55,'KNX/EIB 32bit Int','EIS 11','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(56,'KNX/EIB 8bit Int','EIS 14','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(57,'KNX/EIB 14byte Text','EIS 15','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(58,'Dallas DS2423','4Kbit RAM + Counter','1-Wire','1D3AB905000000DB',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(59,'ARC Module','ARC Module','ARC','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(60,'AC Module','AC Module','AC','\'13B5A11 10 or \'0x13B5A11 10\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(61,'Z-Wave Switch','Binary Switch','Z-Wave','1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(62,'Z-Wave Dimmer','Multilevel Switch','Z-Wave','3',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(63,'Z-Wave D/W Sensor','Door/Window Sensor','Z-Wave','4',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(64,'Z-Wave PIR Sensor','Motion Sensor','Z-Wave','2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(65,'Dallas DS2438','Smart Battery Monitor ','1-Wire','26D050E7000000FF',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(66,'Cent-a-Meter','Power Usage Sensor','Oregon','ELEC1[256] or \'elec1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(67,'Marmitek DS10','Door/Window Sensor','X10Security','DWS[256]S or \'dws 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(68,'Visonic MCT302','Door/Window Sensor','X10Security','DWS[1DD9AE]S or \'dws 0xf0f1aa\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(69,'Marmitek MS90','Motion Sensor','X10Security','MOTION[256]S or \'motion 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(70,'Marmitek KR10','Keychain Security Remote','X10Security','REMOTE[256]S or \'remote 0xb62cc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(71,'Visonic MCT234','Security Remote KeyFob','X10Security','REMOTE[256]S or \'remote 0xf0f1aa\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(72,'Network Device','Status On/Off','Ping','192.168.1.10',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(73,'Network Host','Status Up/Down','Ping','192.168.1.10',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(74,'Oregon WTGR800','Anemo/Temp/Hygro Sensor','Oregon','TH5[256] & WIND1[256] or \'th5 0x701\' & \'wind1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(75,'Oregon BWR101','Digital Bathroom Scale','Oregon','WEIGHT1[1] or \'weight1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(76,'OWL CM113','Power Usage Sensor','Oregon','ELEC1[256] or \'elec1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(77,'Electrisave','Power Usage Sensor','Oregon','ELEC1[256] or \'elec1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(78,'OWL CM119','Power Usage Sensor','Oregon','ELEC2[256] or \'elec2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(79,'Oregon THC238','Temp Sensor Remote','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(80,'Oregon THC268','Temp Sensor Remote','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(81,'Oregon THN122N','Temp Sensor','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(82,'Oregon AW129','BBQ Thermometer','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(83,'Oregon AW131','BBQ Thermometer','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(84,'Oregon THWR800','Temp Sensor Floating','Oregon','TEMP3[256] or \'temp3 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(85,'Oregon RTHN318','Temp Sensor Outdoor','Oregon','TEMP4[256] or \'temp4 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(86,'Oregon THGN122N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(87,'Oregon THGN123N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(88,'Oregon THGR122N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(89,'Oregon THGR228N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(90,'Oregon THGR328N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(91,'Oregon THGR268','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(92,'Oregon THGR918','Temp/Hygro Sensor Outdoor','Oregon','TH6[256] or \'th6 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(93,'Oregon THGR228','Temp/Hygro Sensor Outdoor','Oregon','TH6[256] or \'th6 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(94,'Oregon RGR126','Rain Gauge','Oregon','RAIN1[256] or \'rain1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(95,'Oregon RGR682','Rain Gauge','Oregon','RAIN1[256] or \'rain1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(96,'Oregon RGR918','Rain Gauge','Oregon','RAIN1[256] or \'rain1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(97,'Oregon WGR800','Anemo Meter','Oregon','WIND2[256] or \'wind2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(98,'Oregon UVR128','UV Light Sensor','Oregon','UV1[256] or \'uv1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(99,'Oregon UVN800','UV Light Sensor','Oregon','UV2[256] or \'uv2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(100,'RFXSensor Temp','Temp Sensor','RFXCom','RFXSENSOR[256]T or \'rfxsensor 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(101,'RFXSensor A/D','A/D Sensor','RFXCom','RFXSENSOR[256]Z or \'rfxsensor 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(102,'RFXSensor Voltage','Supply Voltage (Internal)','RFXCom','RFXSENSOR[256]V or \'rfxsensor 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(103,'Marmitek SH624','Security Remote','X10Security','REMOTE[256]S or \'remote 0xb62cc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(104,'Marmitek KR21','Keychain Security Remote','X10Security','REMOTE[256]S or \'remote 0xb62cc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(105,'Visonic MCT302','Door/Window Sensor','X10Security','DWS[1DD9AE]S or \'dws 0xf0f1aa\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(106,'Visonic MCT425','Smoke Detector','X10Security','REMOTE[256]S or \'remote 0xf0f1aa\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(107,'Audio System','Audio System Status','Virtual','audiosystem',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(108,'Security System','Security System Status','Virtual','securitysystem',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(109,'Video System','Video System Status','Virtual','videosystem',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(110,'RFXPulse Power','Power Usage Sensor','RFXCom','RFXMETER[256]M or \'rfxmeter 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(111,'Visonic K980','Motion Sensor','X10Security','MOTION[256]S or \'motion 0xf0f1aa\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(112,'Squeeze Player','Audio Player','Squeeze','00:00:00:00:00:01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(113,'ATI Wonder','Remote Control','ATI','ATI[256]C',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(114,'ATI Wonder Plus','Remote Control','ATI','ATIPLUS[256]C',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(115,'APC BackUPS550','BackUPS','UPS','backups550',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(116,'2016 Dimmer Module','Lamp Module','PLCBUS','A1','','','',0,0,0,NULL,NULL,NULL,NULL),(117,'2017 Appliance Module','Appliance Module','PLCBUS','A1','','','',0,0,0,NULL,NULL,NULL,NULL),(118,'Universal Remote','Remote Control','LIRC','denon',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(119,'ELV FS10','Lamp/Appliance Module','FS10','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(120,'ELV FS20 Dimmer Module','Dimmer Module','FS20','hc|hc2|addr|repeat|arg or \'552900\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(121,'SLG RS200','Appliance Module','RS200','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(122,'ELRO AB400','Appliance Module','AB400','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(123,'ELRO AB601','Appliance Module','AB601','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(124,'Intertechno / Düwi','Appliance Module','IT','hc|hc2|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(125,'REV Ritter','Appliance Module','REV','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(126,'Brennenstuhl & Quigg','Appliance Module','BS-QU','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(127,'Kopp F.C.','Appliance Module','KO-FC','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(128,'Marmitek TM13','Wireless Transceiver','MARMI','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(129,'InScenio OASE FM-Master','Appliance Module','OA-FM','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(130,'Europe Supplies Ltd. RS862','Appliance Module','RS862','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(131,'Current Cost CC128','Power Usage Sensor','CurrentCost','1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(132,'T10 Preset Device','Lamp/Appliance Module','T10-Preset','12',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(133,'Denon Receiver','AV Receiver','Denon','fixed',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(134,'Onkyo Receiver','AV Receiver','Onkyo','fixed',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(135,'PwrCtrl Device 3 Ports','NET-PwrCtrl','PwrCtrl','192.168.100.2|3',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(136,'PwrCtrl Device 8 Ports','NET-PwrCtrl','PwrCtrl','192.168.100.2|3',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(137,'Sharp TV','TV','SharpTV','fixed',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(138,'LG TV','TV','LGTV','fixed',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(139,'RFXSensor Baro','Barometric Sensor','RFXCom','RFXSENSOR[256]Z or \'rfxsensor 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(140,'RFXSensor Humid','Humidity Sensor','RFXCom','RFXSENSOR[256]Z or \'rfxsensor 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(142,'Rooms JeeNode','Rooms JeeNode','JeeLabs','x',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(143,'Meter JeeNode','Meter JeeNode','JeeLabs','x',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(144,'Digimax RTS10','Thermostat','RTS10','DIGIMAX[44321]',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(145,'Dallas DS2405','Addressable Switch','1-Wire','05393730000000',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(146,'K8055 Digital Out','Digital Output port','K8055','DO1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(147,'K8055 Digital In','Digital Input port','K8055','DI1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(148,'K8055 Analog Out','Analog Output port','K8055','AO1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(149,'K8055 Analog In','Analog Input port','K8055','AI1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(150,'Harrison Curtain Module','Harrison Module','Harrison','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(151,'Koppla Module','Appliance Module','Koppla','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(152,'Waveman','Waveman Module','Waveman','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(153,'Flamingo Module','Flamingo Module','Flamingo','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(154,'HomeEasy EU','HomeEasy EU Module','HEEU','\'13B5A11 10 or \'0x13B5A11 10\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(155,'MGE Protection Center 657','MGE','UPS','mgeups',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(156,'ELV FHT80TF Sensor','Door/Window Sensor','FHT','12A214',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(157,'ELV FHT80B Thermostat','Thermostat Unit','FHT','1251',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(158,'ELV FHT80V Valve','Radiator Valve','FHT','1231',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(159,'PLCBUS Scene','Scene Address','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(160,'Status Device','Generic Status Device','Virtual','name',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(161,'2267 Micro Appliance','Appliance Micro Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(162,'2263 Micro Dimmer','Micro Dimmer Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(163,'4208 Metal Double Button','Double Button Wall Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(164,'3166 Pt Shutter Control Switch','Crystal Wall Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(165,'2280 PT Single Button','PT Single Button Wall Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(166,'ELV EM1000-WZ','Power Usage Sensor','EM1000','01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(167,'ELV EM1000-GZS','Gas Usage Sensor','EM1000','01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(168,'ELV EM1000-HSM','Power Usage Module','EM1000','01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(169,'ELV EM1000-FM','Power Usage Plug','EM1000','01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(170,'Conrad S555TH','Temp/Hygro Sensor','S300','1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(171,'ELV HMS100T','Temp/Hygro Sensor','HMS','1234',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(172,'Shell Value Device','Get values from cmd','Shell','/usr/local/bin/script.sh',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(173,'ELV S300TH','Temp/Hygro Sensor','S300','1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(174,'Chacon Avidsen NEXA','Smoke Detector','X10Security','smoke 0x0f121',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(175,'Visonic MCT550','Water Sensor','X10Security','dws 0xf0f1aa',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(176,'Marmitek MS10','Motion Sensor','X10Security','MOTION[256]S or \'motion 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(177,'Marmitek SD18','Smoke Detector','X10Security','DWS[256]S or \'dws 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(178,'X10-Pro HP564','Keychain Security Remote','X10Security','REMOTE[256]S or \'remote 0xb62cc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(179,'Marmitek DM10','Motion Sensor','X10Security','MOTION[256]S or \'motion 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(180,'Digimax 210','Thermostat','Digimax','DIGIMAX[44321] or \'digimax 0xfa10\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(181,'2224 Crystal Appliance Switch','Crystal Appliance Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(182,'2220 Crystal Lamp Switch','Crystal Wall Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(183,'2221 Crystal Double Lamp Switch','Crystal Double Lamp Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(184,'2225 Crystal Double Appl Switch','Crystal Double Appl Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(185,'2264 Two-Load Lamp Module','Two-Load Lamp Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(186,'2268 Two-Load Appliance Module','Two-Load Appliance Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(187,'2281 PT Double Button Switch','PT Double Button Wall Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(188,'2284 PT Fluorescent Light Switch','PT Fluorescent Light Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(189,'2285 PT Double Flu. Light Switch','PT Double Flu. Light Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(190,'3366 Curtain Module','Curtain Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(191,'RFXLAN Digital Output','Digital Output Port','RFXLanIO','io1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(192,'RFXLAN Digital Input','Digital Input Port','RFXLanIO','io1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(193,'Mertik Maxitrol Gas Fire','Gas Fire','Mertik','0x1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(194,'X10 Ninja Robocam','Camera Remote Control','Ninja','A',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(195,'HomeEasy HE105 Heating Control','Heating Controller','HE105','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(196,'Digimax RTS10','Thermostat','RTS10','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(197,'Conrad FS20 Bell Button','Bell Button','FS20','552900',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(198,'Conrad FS20 Wireless Remote S4','Wireless Remote','FS20','552900',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(199,'Conrad FS20 Master Slave Socket','Master Slave Socket','FS20','522900',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(200,'Conrad FS20 Wireless Remote S8','Wireless Remote','FS20','522900',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(201,'Conrad FS20 Wall Transmitter','Wall Transmitter','FS20','552900',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(202,'Conrad FS20 Wireless Remote S16','Wireless Remote','FS20','522600',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(203,'Conrad FS20 Dimmer Slider','Dimmer Slider','FS20','522690',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(204,'Conrad FS20 Wireless Remote S20','Wireless Remote','FS20','533290',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(205,'Conrad FS20 Flush Mounted','Flush Mounted Module','FS20','522490',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(206,'ELV FS20 Touch Control TC8','Touch Control','FS20','553290',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(207,'ELV FS20 Motion Sensor PIRI','Motion Sensor','FS20','532290',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(208,'ELV FS20 Motion Sensor PIRU','Motion Sensor','FS20','553291',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(209,'ELV FS20 Door Window Sensor','Door/Window Sensor','FS20','553121',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(210,'ELV FS20 Applicance Module','Applicance Module','FS20','hc|hc2|addr|repeat|arg or \'552900\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(211,'ELV FS20 Wireless Gong FG','Wireless Gong','FS20','553211',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(212,'ELV FS20 Wireless Signal SIG','Wireless Signal','FS20','553121',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(213,'Dallas DS18B20','Temp Sensor','1-Wire','1049023A01080011',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(214,'Oregon THR128','Temp Sensor','Oregon','TEMP1[256] or \'temp1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(215,'Oregon THGR328','Temp/Hygro Sensor','Oregon','TH4[256] or \'th4 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(216,'Unknown Device','Unknown device type','Unknown','*',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(217,'Dallas DS2406','Dual Addressable Switch','1-Wire','12D050E7000000FF/Pio.A','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(218,'Dallas DS2413','Dual I/O','1-Wire','3AD050E7000000FF/sensed.A','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(219,'Dallas DS2450','Quad A/D','1-Wire','20D050E7000000FF/volt.A','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(220,'Marmitek KR18','Keychain Security Remote','X10Security','REMOTE[256]S','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(221,'Marmitek KR22','Keyfob RF Remote','X10','REMOTE[256]S','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(222,'KAKU Module','KAKU Module','KAKU','A1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(223,'La Crosse TX-3TH','Temp/Hygro Sensor','LaCrosse','\'temp5 0x123\' or \'hum1 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(224,'La Crosse TX-4TH','Temp/Hygro Sensor','LaCrosse','\'temp5 0x123\' or \'hum1 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(225,'La Crosse TX-17','Temp Sensor','LaCrosse','temp5 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(226,'TFA Dostmann TS34C','Temp Sensor','TFA','th7 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(227,'Chacon Module','Appliance Module','EMW200','A1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(228,'Anslut Module','Appliance Module','Anslut','A01','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(229,'Impuls Module','Appliance Module','Impuls','A01','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(230,'Lightwave Module','Appliance Module','LightwaveRF','00aaff 1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(231,'TFA Dostmann Rain Sensor','Rain Sensor','TFA','rain3 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(232,'TFA Dostmann UV Sensor','UV Sensor','TFA','uv3 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(233,'TFA Dostmann Wind Sensor','Anemo Meter','TFA','wind4 0x121','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(234,'HomeMatic Thermostat','HM_CC_TC','HomeMatic','F1F1F1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(235,'UPM/ESIC WT440H/WT450H','Temp/Hygro Sensor','UPM','th8 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(236,'DSC Partition','Security Partition','DSC','1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(237,'OpenTherm Thermostat','OpenTherm Thermostat','OpenTherm','Thermostat','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(238,'OpenTherm Burner','OpenTherm Burner','OpenTherm','Burner','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(239,'OpenTherm Boiler','OpenTherm Boiler','OpenTherm','Boiler','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(240,'OpenTherm Central Heating','OpenTherm Central Heating','OpenTherm','CentralHeating','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(241,'OpenTherm Outside Temperature','OpenTherm Outside Temperature','OpenTherm','Outside','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(242,'Z-Wave Door Lock','Door Lock','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(243,'Z-Wave Thermostat','Thermostat','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(244,'Z-Wave Shade Controller','Shade Controller','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(245,'Cresta TX320','Temp/Hygro Sensor','Cresta','th7 0x3f0e','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(246,'P1 Meter Power Usage','Utility Meter','NTA8130','P1-PowerUsed','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(247,'La Crosse WS2300','Weather Station','LaCrosse','\'temp8 0x123\' or \'wind6 0x123\' or \'hum2 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(248,'TS15C','Temp Sensor','TFA','\'temp6 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(249,'Viking 02035','Temp Sensor','Viking','\'th9 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(250,'Viking 02038','Temp/Hygro Sensor','Viking','\'th9 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(251,'Viking 02811','Temp Sensor','Viking','\'temp7 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(252,'RUBiCSON','Temp Sensor','Rubicson','\'temp9 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(253,'UPM RG700','Rain Gauge','UPM','\'rain4 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(254,'UPM WDS500','Wind Sensor','UPM','\'wind5 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(255,'P1 Meter Power Exported','Utility Meter','NTA8130','P1-PowerDelivered','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(256,'P1 Meter Gas Usage','Utility Meter','NTA8130','P1-MBus1-4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(257,'P1 Meter Water Usage','Utility Meter','NTA8130','P1-MBus1-4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(258,'Pioneer Receiver','AV Receiver','Pioneer','1 (Main), 2 (Zone 2)','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(259,'xPL media.basic','Player Control','media.basic','[id]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(260,'xPL media.mptrnspt','Player Status','media.mptrnsp','[id]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(261,'xPL media.mpmedia','Media Status','media.mpmedia','[id]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(262,'xPL osd.basic','On Screen Display','osd.basic','[id]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(263,'Meteohub Temp Sensor','Temp Sensor','Meteohub','t[0-39]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(264,'Meteohub Temp/Hygro Sensor','Temp/Hygro Sensor','Meteohub','th[0-39]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(265,'Meteohub Temp/Hygro/Baro Sensor','Temp/Hygro/Baro Sensor','Meteohub','thb[0-19]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(266,'Meteohub Wind Sensor','Wind Sensor','Meteohub','wind[0-19]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(267,'Meteohub Rain Sensor','Rain Sensor','Meteohub','rain[0-19]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(268,'Meteohub Solar Sensor','Solar Sensor','Meteohub','sol[0-19]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(269,'Meteohub UV Sensor','UV Sensor','Meteohub','uv[0-19]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(270,'Cube Lan-Gateway','Gateway to all MAX! Devices','ELVMAX','[xxxxxx]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(271,'Door/Window Sensor','Door/Window Sensor','ELVMAX','[xxxxxx]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(272,'Wall Thermostat','Thermostat','ELVMAX','[xxxxxx]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(273,'Radiator Thermostat','Thermostat','ELVMAX','[xxxxxx]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(274,'OWL CM180','Power Usage Sensor','Oregon','ELEC3[256] or \'elec3 0x701\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(275,'Philips SBC SP370','Switch Module','PhilipsSBC','A05','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(276,'Philips SBC SP375','Dimmer Module','PhilipsSBC','A05','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(277,'RisingSun Module','Appliance Module','RisingSun','A01','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(278,'Everflourish EMW100','Module','EMW100','<Device> <Unit>','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(279,'ByeByeStandBy','Appliance Module','BBSB','00aaff 1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(280,'Dallas DS2408','8-Channel Addressable Switch','1-Wire','29D050E7000000FF/Pio.0-7','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(281,'YouLess LS110','Energy Usage Sensor','YouLess','1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(282,'Blyss Switch Module','Switch Module','Blyss','00FF A1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(283,'Blyss Dimmer Module','Dimmer Module','Blyss','00FF A1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(284,'Blyss Shutter Module','Shutter Module','Blyss','00FF A1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(285,'Meiantech Module','Security Sensor','Meiantech','x10sec B45211','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(286,'Omniksol Inverter','Solar Inverter','Omniksol','192.168.1.20:SERIALNO','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(287,'Visonic Keypad','keypad','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(288,'Visonic Keyfob','Keyfob','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(289,'Visonic PIR','Motion detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(290,'Visonic Shock Detector','Shock detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(291,'Visonic Door/Window Contact','Door/Window sensor','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(292,'Visonic Universal transmitter','Universal transmitter','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(293,'Visonic Smoke detector','Smoke detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(294,'Visonic Gas detector','Gas detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(295,'Visonic Flood detector','Flood detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(296,'Visonic Temperature detector','Temperature detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(297,'Plugwise Switch','Zigbee Wall Switch','Plugwise','000D6F000021811A:01','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(298,'KMTronic DINo Input','Digital Input','KMTronicUDP','192.168.178.11:IN01-IN04','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(299,'KMTronic DINo Relay','Relais Output','KMTronicUDP','192.168.178.11:OUT01-OUT04','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(300,'DMXPlayer Module','DMXPlayer','DMX','010','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(301,'GenericIO Module','GenericIO Module','GenericIO','|R1=|R2=|R3=|R4=|',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(302,'MQTTitude Client','MQTTitude Client','MQTT','topic like raw/location/ron','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(303,'MQTT Generic Device','MQTT Generic','MQTT','topic like raw/sensor','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(304,'Z-Wave Temperature Sensor','Temperature Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(305,'Z-Wave Humidity Sensor','Humidity Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(306,'Z-Wave 4-in-1 Sensor','PIR, Light, Temp and Humid','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(307,'Z-Wave Luminance Sensor','Light Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(308,'Z-Wave Power Sensor','Power Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(309,'Z-Wave Tag Reader','Tag Reader','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(310,'Z-Wave 3-in-1 Sensor','PIR, Light and Temp','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(311,'Z-Wave Siren','Alarm Siren','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(312,'Z-Wave Flood Sensor','Flood Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(313,'Z-Wave Smoke Detector','Smoke Detector','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(314,'Z-Wave Universal Binary Sensor','Binary Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(315,'Z-Wave Doorbell','Doorbell','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(316,'Z-Wave Temp and Input Sensor','Temp and Dry Input','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(317,'Z-Wave Temp and Flood Sensor','Temp and Flood Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(318,'Z-Wave Data Logger for E-Meters','Data Logger','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(319,'Z-Wave Switch Powermeter','Switch with Power Meter','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(320,'Z-Wave Smart Energy Switch','Smart Energy Switch','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(321,'Z-Wave Smart Energy Motor Control','Smart Energy Motor Control','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(322,'Z-Wave Smart Energy Dimmer','Smart Energy Dimmer','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(323,'Z-Wave Clamp Power Meter 2 CL','Power Meter 2 Clamps','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(324,'Z-Wave Clamp Power Meter 3 CL','Power Meter 3 Clamps','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(325,'Z-Wave Dual Relay Module','Dual Relay Module','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(326,'Z-Wave Single Relay Module','Single Relay Module','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(327,'Z-Wave Dual Wall Switch','Dual Wall Switch','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(328,'Z-Wave Single Wall Switch','Single Wall Switch','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(329,'Z-Wave RGB Controller','RGB Controller','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(330,'Z-Wave Temp Humid Sensor','Temp and Humid Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(331,'Z-Wave Plugin Switch','Plugin Switch','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(332,'Z-Wave Plugin Dimmer','Plugin Dimmer','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(333,'Z-Wave Door Lock','Door Lock','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (1,'Marmitek DS90','Door/Window Sensor','X10SecDW','DWS[256]S or \'dws 0xb62bc6\'','motion-on.gif','motion-off.gif','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(2,'Marmitek LW10G','Lamp Module','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(3,'Marmitek LD11','Dimmer Module','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(4,'Marmitek MS13E M','Motion Sensor','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(5,'Marmitek MS13E L','Light Sensor','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(6,'Xanura SAX35','I/O Actor','X10','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(7,'Oregon THGR238N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(8,'Oregon UV138','UV Light Sensor','Oregon','UV1[256] or \'uv1 0xf600\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(9,'RFXPwr Power','Power Usage Sensor','RFXCom','RFXMETER[256]M or \'rfxmeter 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(10,'Marmitek TM13','Wireless Transceiver','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(11,'HDDTemp Item','Temp Monitor','HDDTemp','/dev/sda',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(12,'Oregon THR128','Temp Sensor','Oregon','TEMP1[256] or \'temp1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(13,'Sony AIBO','Status AIBO','Ping','192.168.1.10',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(14,'APC SmartUPS1000','SmartUPS','UPS','smartups1000',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(15,'Dallas DS18S20','Temp Sensor','1-Wire','1049023A01080011',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(16,'Dallas Rain Gauge','Rain Gauge','1-Wire','1D3AB905000000DB',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(17,'Marmitek SD90','Smoke Detector','X10Security','DWS[256]S or \'dws 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(18,'Bluetooth Device','Phone','Bluetooth','00:1C:22:39:9D:31',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(19,'ITHO ECO Fan','Central Ventilation','Weeder','A',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(20,'RFXPulse Gas','Gas Usage Sensor','RFXCom','RFXMETER[256]M or \'rfxmeter 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(21,'RFXPulse Water','Water Usage Sensor','RFXCom','RFXMETER[256]M or \'rfxmeter 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(22,'Oregon BWR102','Digital Bathroom Scale','Oregon','WEIGHT1[1] or \'weight1 0x1\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(23,'Oregon GR101','Digital Bathroom Scale','Oregon','WEIGHT2[1] or \'weight2 0x01\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(24,'Oregon THC138','Temp Sensor','Oregon','TEMP1[256] or \'temp1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(25,'Oregon THR138','Temp Sensor','Oregon','TEMP1[256] or \'temp1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(26,'Oregon THGR810','Temp/Hygro Sensor','Oregon','TH2[256] or \'th2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(27,'Plugwise Circle','Zigbee Appliance Module','Plugwise','000D6F000021811A',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(28,'Plugwise Circle+','Zigbee Appliance Module','Plugwise','000D6F000021811A',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(29,'KAKU Chime','Wireless Doorbell','X10','C1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(30,'Oregon THN132N','Temp Sensor','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(31,'Oregon THWR288','Temp Sensor','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(32,'Oregon BTHR918N','Baro/Temp/Hygro Sensor','Oregon','THB1[256] or \'thb1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(33,'Oregon BTHR968','Baro/Temp/Hygro Sensor','Oregon','THB2[256] or \'thb2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(34,'Marmitek AD10','Switch Module','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(35,'Marmitek LM12','Lamp Module','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(36,'Marmitek AM12','Appliance Module','X10','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(37,'Oregon WGR918','Anemo Meter','Oregon','WIND3[256] or \'wind3 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(38,'Oregon PCR800','Rain Gauge','Oregon','RAIN2[256] or \'rain2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(39,'Oregon RTGR328N','Temp/Hygro/Time Sensor','Oregon','TH3[256] & DT1[256] or \'th3 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(40,'DSC PIR','Motion Sensor','DSC','Living',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(41,'DSC Contact','Door/Window Sensor','DSC','Backdoor',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(42,'DSC Smoke','Smoke Detector','DSC','Kitchen',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(43,'HE Module','HE Module','HEUK','\'13B5A11 10 or \'0x13B5A11 10\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(44,'3160HE Shutter Control Module','Crystal Shutter Control Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(45,'KNX/EIB Dim','EIS 2','KNX/EIB','0/1/2|0/1/3|0/1/4',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(46,'KNX/EIB On/Off','EIS 1','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(47,'KNX/EIB Values','EIS 5','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(48,'KNX/EIB Date','EIS 4','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(49,'KNX/EIB Time','EIS 3','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(50,'KNX/EIB Scaling %','EIS 6','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(51,'KNX/EIB Motor Drives','EIS 7','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(52,'KNX/EIB Forced Control','EIS 8','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(53,'KNX/EIB 32bit Float','EIS 9','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(54,'KNX/EIB 16bit Int','EIS 10','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(55,'KNX/EIB 32bit Int','EIS 11','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(56,'KNX/EIB 8bit Int','EIS 14','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(57,'KNX/EIB 14byte Text','EIS 15','KNX/EIB','0/1/2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(58,'Dallas DS2423','4Kbit RAM + Counter','1-Wire','1D3AB905000000DB',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(59,'ARC Module','ARC Module','ARC','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(60,'AC Module','AC Module','AC','\'13B5A11 10 or \'0x13B5A11 10\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(61,'Z-Wave Switch','Binary Switch','Z-Wave','1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(62,'Z-Wave Dimmer','Multilevel Switch','Z-Wave','3',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(63,'Z-Wave D/W Sensor','Door/Window Sensor','Z-Wave','4',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(64,'Z-Wave PIR Sensor','Motion Sensor','Z-Wave','2',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(65,'Dallas DS2438','Smart Battery Monitor ','1-Wire','26D050E7000000FF',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(66,'Cent-a-Meter','Power Usage Sensor','Oregon','ELEC1[256] or \'elec1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(67,'Marmitek DS10','Door/Window Sensor','X10SecDW','DWS[256]S or \'dws 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(68,'Visonic MCT302','Door/Window Sensor','X10SecDW','DWS[1DD9AE]S or \'dws 0xf0f1aa\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(69,'Marmitek MS90','Motion Sensor','X10SecMotion','MOTION[256]S or \'motion 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(70,'Marmitek KR10','Keychain Security Remote','X10SecRemote','REMOTE[256]S or \'remote 0xb62cc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(71,'Visonic MCT234','Security Remote KeyFob','X10SecRemote','REMOTE[256]S or \'remote 0xf0f1aa\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(72,'Network Device','Status On/Off','Ping','192.168.1.10',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(73,'Network Host','Status Up/Down','Ping','192.168.1.10',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(74,'Oregon WTGR800','Anemo/Temp/Hygro Sensor','Oregon','TH5[256] & WIND1[256] or \'th5 0x701\' & \'wind1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(75,'Oregon BWR101','Digital Bathroom Scale','Oregon','WEIGHT1[1] or \'weight1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(76,'OWL CM113','Power Usage Sensor','Oregon','ELEC1[256] or \'elec1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(77,'Electrisave','Power Usage Sensor','Oregon','ELEC1[256] or \'elec1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(78,'OWL CM119','Power Usage Sensor','Oregon','ELEC2[256] or \'elec2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(79,'Oregon THC238','Temp Sensor Remote','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(80,'Oregon THC268','Temp Sensor Remote','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(81,'Oregon THN122N','Temp Sensor','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(82,'Oregon AW129','BBQ Thermometer','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(83,'Oregon AW131','BBQ Thermometer','Oregon','TEMP2[256] or \'temp2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(84,'Oregon THWR800','Temp Sensor Floating','Oregon','TEMP3[256] or \'temp3 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(85,'Oregon RTHN318','Temp Sensor Outdoor','Oregon','TEMP4[256] or \'temp4 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(86,'Oregon THGN122N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(87,'Oregon THGN123N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(88,'Oregon THGR122N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(89,'Oregon THGR228N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(90,'Oregon THGR328N','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(91,'Oregon THGR268','Temp/Hygro Sensor','Oregon','TH1[256] or \'th1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(92,'Oregon THGR918','Temp/Hygro Sensor Outdoor','Oregon','TH6[256] or \'th6 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(93,'Oregon THGR228','Temp/Hygro Sensor Outdoor','Oregon','TH6[256] or \'th6 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(94,'Oregon RGR126','Rain Gauge','Oregon','RAIN1[256] or \'rain1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(95,'Oregon RGR682','Rain Gauge','Oregon','RAIN1[256] or \'rain1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(96,'Oregon RGR918','Rain Gauge','Oregon','RAIN1[256] or \'rain1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(97,'Oregon WGR800','Anemo Meter','Oregon','WIND2[256] or \'wind2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(98,'Oregon UVR128','UV Light Sensor','Oregon','UV1[256] or \'uv1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(99,'Oregon UVN800','UV Light Sensor','Oregon','UV2[256] or \'uv2 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(100,'RFXSensor Temp','Temp Sensor','RFXCom','RFXSENSOR[256]T or \'rfxsensor 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(101,'RFXSensor A/D','A/D Sensor','RFXCom','RFXSENSOR[256]Z or \'rfxsensor 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(102,'RFXSensor Voltage','Supply Voltage (Internal)','RFXCom','RFXSENSOR[256]V or \'rfxsensor 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(103,'Marmitek SH624','Security Remote','X10SecRemote','REMOTE[256]S or \'remote 0xb62cc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(104,'Marmitek KR21','Keychain Security Remote','X10SecRemote','REMOTE[256]S or \'remote 0xb62cc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(105,'Visonic MCT302','Door/Window Sensor','X10SecDW','DWS[1DD9AE]S or \'dws 0xf0f1aa\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(106,'Visonic MCT425','Smoke Detector','X10Security','REMOTE[256]S or \'remote 0xf0f1aa\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(107,'Audio System','Audio System Status','Virtual','audiosystem',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(108,'Security System','Security System Status','Virtual','securitysystem',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(109,'Video System','Video System Status','Virtual','videosystem',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(110,'RFXPulse Power','Power Usage Sensor','RFXCom','RFXMETER[256]M or \'rfxmeter 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(111,'Visonic K980','Motion Sensor','X10SecMotion','MOTION[256]S or \'motion 0xf0f1aa\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(112,'Squeeze Player','Audio Player','Squeeze','00:00:00:00:00:01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(113,'ATI Wonder','Remote Control','ATI','ATI[256]C',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(114,'ATI Wonder Plus','Remote Control','ATI','ATIPLUS[256]C',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(115,'APC BackUPS550','BackUPS','UPS','backups550',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(116,'2016 Dimmer Module','Lamp Module','PLCBUS','A1','','','',0,0,0,NULL,NULL,NULL,NULL),(117,'2017 Appliance Module','Appliance Module','PLCBUS','A1','','','',0,0,0,NULL,NULL,NULL,NULL),(118,'Universal Remote','Remote Control','LIRC','denon',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(119,'ELV FS10','Lamp/Appliance Module','FS10','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(120,'ELV FS20 Dimmer Module','Dimmer Module','FS20','hc|hc2|addr|repeat|arg or \'552900\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(121,'SLG RS200','Appliance Module','RS200','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(122,'ELRO AB400','Appliance Module','AB400','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(123,'ELRO AB601','Appliance Module','AB601','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(124,'Intertechno / Düwi','Appliance Module','IT','hc|hc2|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(125,'REV Ritter','Appliance Module','REV','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(126,'Brennenstuhl & Quigg','Appliance Module','BS-QU','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(127,'Kopp F.C.','Appliance Module','KO-FC','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(128,'Marmitek TM13','Wireless Transceiver','MARMI','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(129,'InScenio OASE FM-Master','Appliance Module','OA-FM','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(130,'Europe Supplies Ltd. RS862','Appliance Module','RS862','hc|0|address|repeat',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(131,'Current Cost CC128','Power Usage Sensor','CurrentCost','1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(132,'T10 Preset Device','Lamp/Appliance Module','T10-Preset','12',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(133,'Denon Receiver','AV Receiver','Denon','fixed',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(134,'Onkyo Receiver','AV Receiver','Onkyo','fixed',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(135,'PwrCtrl Device 3 Ports','NET-PwrCtrl','PwrCtrl','192.168.100.2|3',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(136,'PwrCtrl Device 8 Ports','NET-PwrCtrl','PwrCtrl','192.168.100.2|3',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(137,'Sharp TV','TV','SharpTV','fixed',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(138,'LG TV','TV','LGTV','fixed',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(139,'RFXSensor Baro','Barometric Sensor','RFXCom','RFXSENSOR[256]Z or \'rfxsensor 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(140,'RFXSensor Humid','Humidity Sensor','RFXCom','RFXSENSOR[256]Z or \'rfxsensor 0xf0\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(142,'Rooms JeeNode','Rooms JeeNode','JeeLabs','x',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(143,'Meter JeeNode','Meter JeeNode','JeeLabs','x',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(144,'Digimax RTS10','Thermostat','RTS10','DIGIMAX[44321]',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(145,'Dallas DS2405','Addressable Switch','1-Wire','05393730000000',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(146,'K8055 Digital Out','Digital Output port','K8055','DO1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(147,'K8055 Digital In','Digital Input port','K8055','DI1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(148,'K8055 Analog Out','Analog Output port','K8055','AO1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(149,'K8055 Analog In','Analog Input port','K8055','AI1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(150,'Harrison Curtain Module','Harrison Module','Harrison','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(151,'Koppla Module','Appliance Module','Koppla','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(152,'Waveman','Waveman Module','Waveman','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(153,'Flamingo Module','Flamingo Module','Flamingo','A01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(154,'HomeEasy EU','HomeEasy EU Module','HEEU','\'13B5A11 10 or \'0x13B5A11 10\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(155,'MGE Protection Center 657','MGE','UPS','mgeups',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(156,'ELV FHT80TF Sensor','Door/Window Sensor','FHT','12A214',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(157,'ELV FHT80B Thermostat','Thermostat Unit','FHT','1251',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(158,'ELV FHT80V Valve','Radiator Valve','FHT','1231',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(159,'PLCBUS Scene','Scene Address','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(160,'Status Device','Generic Status Device','Virtual','name',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(161,'2267 Micro Appliance','Appliance Micro Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(162,'2263 Micro Dimmer','Micro Dimmer Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(163,'4208 Metal Double Button','Double Button Wall Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(164,'3166 Pt Shutter Control Switch','Crystal Wall Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(165,'2280 PT Single Button','PT Single Button Wall Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(166,'ELV EM1000-WZ','Power Usage Sensor','EM1000','01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(167,'ELV EM1000-GZS','Gas Usage Sensor','EM1000','01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(168,'ELV EM1000-HSM','Power Usage Module','EM1000','01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(169,'ELV EM1000-FM','Power Usage Plug','EM1000','01',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(170,'Conrad S555TH','Temp/Hygro Sensor','S300','1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(171,'ELV HMS100T','Temp/Hygro Sensor','HMS','1234',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(172,'Shell Value Device','Get values from cmd','Shell','/usr/local/bin/script.sh',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(173,'ELV S300TH','Temp/Hygro Sensor','S300','1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(174,'Chacon Avidsen NEXA Flamingo','Smoke Detector','KD101','smoke 0x0f121',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(175,'Visonic MCT550','Water Sensor','X10Security','dws 0xf0f1aa',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(176,'Marmitek MS10','Motion Sensor','X10SecMotion','MOTION[256]S or \'motion 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(177,'Marmitek SD18','Smoke Detector','X10Security','DWS[256]S or \'dws 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(178,'X10-Pro HP564','Keychain Security Remote','X10SecRemote','REMOTE[256]S or \'remote 0xb62cc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(179,'Marmitek DM10','Motion Sensor','X10SecMotion','MOTION[256]S or \'motion 0xb62bc6\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(180,'Digimax 210','Thermostat','Digimax','DIGIMAX[44321] or \'digimax 0xfa10\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(181,'2224 Crystal Appliance Switch','Crystal Appliance Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(182,'2220 Crystal Lamp Switch','Crystal Wall Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(183,'2221 Crystal Double Lamp Switch','Crystal Double Lamp Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(184,'2225 Crystal Double Appl Switch','Crystal Double Appl Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(185,'2264 Two-Load Lamp Module','Two-Load Lamp Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(186,'2268 Two-Load Appliance Module','Two-Load Appliance Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(187,'2281 PT Double Button Switch','PT Double Button Wall Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(188,'2284 PT Fluorescent Light Switch','PT Fluorescent Light Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(189,'2285 PT Double Flu. Light Switch','PT Double Flu. Light Switch','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(190,'3366 Curtain Module','Curtain Module','PLCBUS','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(191,'RFXLAN Digital Output','Digital Output Port','RFXLanIO','io1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(192,'RFXLAN Digital Input','Digital Input Port','RFXLanIO','io1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(193,'Mertik Maxitrol Gas Fire','Gas Fire','Mertik','0x1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(194,'X10 Ninja Robocam','Camera Remote Control','Ninja','A',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(195,'HomeEasy HE105 Heating Control','Heating Controller','HE105','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(196,'Digimax RTS10','Thermostat','RTS10','A1',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(197,'Conrad FS20 Bell Button','Bell Button','FS20','552900',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(198,'Conrad FS20 Wireless Remote S4','Wireless Remote','FS20','552900',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(199,'Conrad FS20 Master Slave Socket','Master Slave Socket','FS20','522900',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(200,'Conrad FS20 Wireless Remote S8','Wireless Remote','FS20','522900',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(201,'Conrad FS20 Wall Transmitter','Wall Transmitter','FS20','552900',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(202,'Conrad FS20 Wireless Remote S16','Wireless Remote','FS20','522600',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(203,'Conrad FS20 Dimmer Slider','Dimmer Slider','FS20','522690',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(204,'Conrad FS20 Wireless Remote S20','Wireless Remote','FS20','533290',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(205,'Conrad FS20 Flush Mounted','Flush Mounted Module','FS20','522490',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(206,'ELV FS20 Touch Control TC8','Touch Control','FS20','553290',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(207,'ELV FS20 Motion Sensor PIRI','Motion Sensor','FS20','532290',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(208,'ELV FS20 Motion Sensor PIRU','Motion Sensor','FS20','553291',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(209,'ELV FS20 Door Window Sensor','Door/Window Sensor','FS20','553121',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(210,'ELV FS20 Applicance Module','Applicance Module','FS20','hc|hc2|addr|repeat|arg or \'552900\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(211,'ELV FS20 Wireless Gong FG','Wireless Gong','FS20','553211',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(212,'ELV FS20 Wireless Signal SIG','Wireless Signal','FS20','553121',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(213,'Dallas DS18B20','Temp Sensor','1-Wire','1049023A01080011',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(214,'Oregon THR128','Temp Sensor','Oregon','TEMP1[256] or \'temp1 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(215,'Oregon THGR328','Temp/Hygro Sensor','Oregon','TH4[256] or \'th4 0x701\'',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(216,'Unknown Device','Unknown device type','Unknown','*',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(217,'Dallas DS2406','Dual Addressable Switch','1-Wire','12D050E7000000FF/Pio.A','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(218,'Dallas DS2413','Dual I/O','1-Wire','3AD050E7000000FF/sensed.A','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(219,'Dallas DS2450','Quad A/D','1-Wire','20D050E7000000FF/volt.A','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(220,'Marmitek KR18','Keychain Security Remote','X10SecRemote','REMOTE[256]S','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(221,'Marmitek KR22','Keyfob RF Remote','X10','REMOTE[256]S','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(222,'KAKU Module','KAKU Module','KAKU','A1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(223,'La Crosse TX-3TH','Temp/Hygro Sensor','LaCrosse','\'temp5 0x123\' or \'hum1 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(224,'La Crosse TX-4TH','Temp/Hygro Sensor','LaCrosse','\'temp5 0x123\' or \'hum1 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(225,'La Crosse TX-17','Temp Sensor','LaCrosse','temp5 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(226,'TFA Dostmann TS34C','Temp Sensor','TFA','th7 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(227,'Chacon Module','Appliance Module','EMW200','A1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(228,'Anslut Module','Appliance Module','Anslut','A01','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(229,'Impuls Module','Appliance Module','Impuls','A01','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(230,'Lightwave Module','Appliance Module','LightwaveRF','00aaff 1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(231,'TFA Dostmann Rain Sensor','Rain Sensor','TFA','rain3 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(232,'TFA Dostmann UV Sensor','UV Sensor','TFA','uv3 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(233,'TFA Dostmann Wind Sensor','Anemo Meter','TFA','wind4 0x121','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(234,'HomeMatic Thermostat','HM_CC_TC','HomeMatic','F1F1F1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(235,'UPM/ESIC WT440H/WT450H','Temp/Hygro Sensor','UPM','th8 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(236,'DSC Partition','Security Partition','DSC','1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(237,'OpenTherm Thermostat','OpenTherm Thermostat','OpenTherm','Thermostat','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(238,'OpenTherm Burner','OpenTherm Burner','OpenTherm','Burner','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(239,'OpenTherm Boiler','OpenTherm Boiler','OpenTherm','Boiler','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(240,'OpenTherm Central Heating','OpenTherm Central Heating','OpenTherm','CentralHeating','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(241,'OpenTherm Outside Temperature','OpenTherm Outside Temperature','OpenTherm','Outside','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(242,'Z-Wave Door Lock','Door Lock','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(243,'Z-Wave Thermostat','Thermostat','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(244,'Z-Wave Shade Controller','Shade Controller','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(245,'Cresta TX320','Temp/Hygro Sensor','Cresta','th7 0x3f0e','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(246,'P1 Meter Power Usage','Utility Meter','NTA8130','P1-PowerUsed','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(247,'La Crosse WS2300','Weather Station','LaCrosse','\'temp8 0x123\' or \'wind6 0x123\' or \'hum2 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(248,'TS15C','Temp Sensor','TFA','\'temp6 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(249,'Viking 02035','Temp Sensor','Viking','\'th9 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(250,'Viking 02038','Temp/Hygro Sensor','Viking','\'th9 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(251,'Viking 02811','Temp Sensor','Viking','\'temp7 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(252,'RUBiCSON','Temp Sensor','Rubicson','\'temp9 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(253,'UPM RG700','Rain Gauge','UPM','\'rain4 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(254,'UPM WDS500','Wind Sensor','UPM','\'wind5 0x123\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(255,'P1 Meter Power Exported','Utility Meter','NTA8130','P1-PowerDelivered','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(256,'P1 Meter Gas Usage','Utility Meter','NTA8130','P1-MBus1-4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(257,'P1 Meter Water Usage','Utility Meter','NTA8130','P1-MBus1-4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(258,'Pioneer Receiver','AV Receiver','Pioneer','1 (Main), 2 (Zone 2)','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(259,'xPL media.basic','Player Control','media.basic','[id]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(260,'xPL media.mptrnspt','Player Status','media.mptrnsp','[id]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(261,'xPL media.mpmedia','Media Status','media.mpmedia','[id]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(262,'xPL osd.basic','On Screen Display','osd.basic','[id]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(263,'Meteohub Temp Sensor','Temp Sensor','Meteohub','t[0-39]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(264,'Meteohub Temp/Hygro Sensor','Temp/Hygro Sensor','Meteohub','th[0-39]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(265,'Meteohub Temp/Hygro/Baro Sensor','Temp/Hygro/Baro Sensor','Meteohub','thb[0-19]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(266,'Meteohub Wind Sensor','Wind Sensor','Meteohub','wind[0-19]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(267,'Meteohub Rain Sensor','Rain Sensor','Meteohub','rain[0-19]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(268,'Meteohub Solar Sensor','Solar Sensor','Meteohub','sol[0-19]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(269,'Meteohub UV Sensor','UV Sensor','Meteohub','uv[0-19]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(270,'Cube Lan-Gateway','Gateway to all MAX! Devices','ELVMAX','[xxxxxx]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(271,'Door/Window Sensor','Door/Window Sensor','ELVMAX','[xxxxxx]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(272,'Wall Thermostat','Thermostat','ELVMAX','[xxxxxx]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(273,'Radiator Thermostat','Thermostat','ELVMAX','[xxxxxx]','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(274,'OWL CM180','Power Usage Sensor','Oregon','ELEC3[256] or \'elec3 0x701\'','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(275,'Philips SBC SP370','Switch Module','PhilipsSBC','A05','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(276,'Philips SBC SP375','Dimmer Module','PhilipsSBC','A05','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(277,'RisingSun Module','Appliance Module','RisingSun','A01','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(278,'Everflourish EMW100','Module','EMW100','<Device> <Unit>','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(279,'ByeByeStandBy','Appliance Module','BBSB','00aaff 1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(280,'Dallas DS2408','8-Channel Addressable Switch','1-Wire','29D050E7000000FF/Pio.0-7','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(281,'YouLess LS110','Energy Usage Sensor','YouLess','1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(282,'Blyss Switch Module','Switch Module','Blyss','00FF A1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(283,'Blyss Dimmer Module','Dimmer Module','Blyss','00FF A1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(284,'Blyss Shutter Module','Shutter Module','Blyss','00FF A1','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(285,'Meiantech Module','Security Sensor','Meiantech','x10sec B45211','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(286,'Omniksol Inverter','Solar Inverter','Omniksol','192.168.1.20:SERIALNO','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(287,'Visonic Keypad','keypad','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(288,'Visonic Keyfob','Keyfob','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(289,'Visonic PIR','Motion detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(290,'Visonic Shock Detector','Shock detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(291,'Visonic Door/Window Contact','Door/Window sensor','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(292,'Visonic Universal transmitter','Universal transmitter','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(293,'Visonic Smoke detector','Smoke Detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(294,'Visonic Gas detector','Gas detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(295,'Visonic Flood detector','Flood detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(296,'Visonic Temperature detector','Temperature detector','Visonic','XXXXXXXXX','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(297,'Plugwise Switch','Zigbee Wall Switch','Plugwise','000D6F000021811A:01','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(298,'KMTronic DINo Input','Digital Input','KMTronicUDP','192.168.178.11:IN01-IN04','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(299,'KMTronic DINo Relay','Relais Output','KMTronicUDP','192.168.178.11:OUT01-OUT04','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(300,'DMXPlayer Module','DMXPlayer','DMX','010','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(301,'GenericIO Module','GenericIO Module','GenericIO','|R1=|R2=|R3=|R4=|',NULL,NULL,NULL,0,0,0,NULL,NULL,NULL,NULL),(302,'MQTTitude Client','MQTTitude Client','MQTT','topic like raw/location/ron','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(303,'MQTT Generic Device','MQTT Generic','MQTT','topic like raw/sensor','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(304,'Z-Wave Temperature Sensor','Temperature Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(305,'Z-Wave Humidity Sensor','Humidity Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(306,'Z-Wave 4-in-1 Sensor','PIR, Light, Temp and Humid','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(307,'Z-Wave Luminance Sensor','Light Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(308,'Z-Wave Power Sensor','Power Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(309,'Z-Wave Tag Reader','Tag Reader','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(310,'Z-Wave 3-in-1 Sensor','PIR, Light and Temp','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(311,'Z-Wave Siren','Alarm Siren','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(312,'Z-Wave Flood Sensor','Flood Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(313,'Z-Wave Smoke Detector','Smoke Detector','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(314,'Z-Wave Universal Binary Sensor','Binary Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(315,'Z-Wave Doorbell','Doorbell','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(316,'Z-Wave Temp and Input Sensor','Temp and Dry Input','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(317,'Z-Wave Temp and Flood Sensor','Temp and Flood Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(318,'Z-Wave Data Logger for E-Meters','Data Logger','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(319,'Z-Wave Switch Powermeter','Switch with Power Meter','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(320,'Z-Wave Smart Energy Switch','Smart Energy Switch','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(321,'Z-Wave Smart Energy Motor Control','Smart Energy Motor Control','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(322,'Z-Wave Smart Energy Dimmer','Smart Energy Dimmer','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(323,'Z-Wave Clamp Power Meter 2 CL','Power Meter 2 Clamps','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(324,'Z-Wave Clamp Power Meter 3 CL','Power Meter 3 Clamps','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(325,'Z-Wave Dual Relay Module','Dual Relay Module','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(326,'Z-Wave Single Relay Module','Single Relay Module','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(327,'Z-Wave Dual Wall Switch','Dual Wall Switch','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(328,'Z-Wave Single Wall Switch','Single Wall Switch','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(329,'Z-Wave RGB Controller','RGB Controller','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(330,'Z-Wave Temp Humid Sensor','Temp and Humid Sensor','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(331,'Z-Wave Plugin Switch','Plugin Switch','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(332,'Z-Wave Plugin Dimmer','Plugin Dimmer','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(333,'Z-Wave Door Lock','Door Lock','Z-Wave','1 or 1:2','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(334,'VMB4RY','Velbus - 4 channel relay module','Velbus','10|2',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(335,'VMB4DC','Velbus - 4 channel dimmer module','Velbus','11|2',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(336,'VMB7IN','Velbus - 7 channel input','Velbus','12|2',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(337,'VMBGPO','Velbus - OLED touch panel','Velbus','13',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(338,'VMBDME','Velbus - Dimmer module','Velbus','14',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(339,'Viera','Viera TV Plugin','Viera','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(340,'Alecto SA-30','Smoke Detector','SA30','C9F300','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(341,'Byron SX Doorbell','Doorbell','ByronSX','00F4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(342,'Byron SX PIR','PIR','ByronSX','00F4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(343,'Byron SX Door/Window','Door/Window Sensor','ByronSX','00F4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(344,'Energenie ENER010','Quad Power Socket','Energenie','A01','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(345,'Livolo Touch Dimmer','Dimmer Module','Livolo','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(346,'Livolo Touch Switch 1Gang','Appliance Module 1Gang','Livolo','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(347,'Livolo Touch Switch 3Gang','Appliance Module 3Gang','Livolo','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(348,'RGB Module','Applicance Module','TRC02','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(349,'MDRemote LED Dimmer','Dimmer Module','MDREMOTE','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(350,'Conrad RSL Dimmer','Dimmer Module','RSL','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(351,'Conrad RSL Appl Module','Applicance Module','RSL','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(352,'Conrad RSL Switch','Switch Module','RSL','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(353,'RUBiCSON/IW008T/TX95','Temp/Hygro Sensor','Rubicson','th10 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(354,'EW109','Temp/Hygro Sensor','Rubicson','th11 0x123','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(355,'Siemens SF01 Fan','Fan','SF01','0x001234','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL),(356,'Toon Thermostat','Thermostat Status','Toon','Thermostat','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(357,'Toon Power Usage','Power Usage','Toon','PowerUsage','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(358,'Toon Power Produced','Power Produced','Toon','PowerProdced','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(359,'Toon Gas Usage','Gas Usage','Toon','GasUsage','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(360,'Toon Schedule','Schedule Status','Toon','Schedule','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(361,'Ethernet IO Port Input','IO Port Input','KernelChip','IO1-22','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(362,'Ethernet IO Port Output','IO Port Output','KernelChip','IO1-22','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(363,'Ethernet Counter Port','Pulse Counter Port','KernelChip','INT1-4','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(364,'Ethernet ADC Port','Analog Port','KernelChip','ADC1-4','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),(365,'Ethernet PWM Port','PWM Port','KernelChip','PWM','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 /*!40000 ALTER TABLE `devicetypes` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -681,20 +683,20 @@ DROP TABLE IF EXISTS `events`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `events` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `name` varchar(64) DEFAULT NULL,
-  `log` tinyint(1) DEFAULT NULL,
+  `log` tinyint(1) NOT NULL DEFAULT '0',
   `firstrun` datetime DEFAULT NULL,
   `lastrun` datetime DEFAULT NULL,
   `comments` text,
-  `trigger1` int(11) DEFAULT NULL,
-  `condition1` int(11) DEFAULT NULL,
+  `trigger1` int(11) NOT NULL DEFAULT '0',
+  `condition1` int(11) NOT NULL DEFAULT '0',
   `operand` varchar(16) DEFAULT NULL,
-  `condition2` int(11) DEFAULT NULL,
-  `rerunenabled` tinyint(1) DEFAULT NULL,
-  `rerunvalue` int(11) DEFAULT NULL,
+  `condition2` int(11) NOT NULL DEFAULT '0',
+  `rerunenabled` tinyint(1) NOT NULL DEFAULT '0',
+  `rerunvalue` int(11) NOT NULL DEFAULT '0',
   `reruntype` varchar(16) DEFAULT NULL,
-  `category` int(11) DEFAULT NULL,
+  `category` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -705,7 +707,7 @@ CREATE TABLE `events` (
 
 LOCK TABLES `events` WRITE;
 /*!40000 ALTER TABLE `events` DISABLE KEYS */;
-INSERT INTO `events` VALUES (1,0,'Frontdoor Light On',-1,'2009-01-06 17:30:00','2009-03-05 17:15:00','Switch frontdoor light on at dawn',1,0,'',0,0,0,'gb.Second',NULL),(2,0,'Frontdoor Light Off',-1,'2009-01-05 22:17:00','2009-03-06 08:00:00','Switch frontdoor light off at sunset',2,0,'',0,0,0,'gb.Second',NULL),(3,0,'Kitchen Light On when Movement Detected',-1,'2009-01-18 22:15:54','2009-03-05 20:24:16','Switch kitchen light on when someone enters it',4,0,'',0,0,15,'gb.Hour',NULL),(4,0,'Kitchen Light Off if No Movement',-1,'2009-01-18 22:37:47','2009-03-05 20:25:16','Switch kitchen light off when no movement is detected',5,0,'',0,0,0,'gb.Second',NULL),(5,0,'Ventilate Bathroom if Showering',-1,'2009-01-29 18:38:54','2009-02-05 19:33:23','Switch fan to speed 3 if bathroom is moist',3,0,'',0,-1,1,'gb.Hour',NULL),(6,0,'Switch Ventilation to Normal',-1,'2009-01-30 16:53:24','2009-03-06 09:02:04','Switch fan back to normal speed',6,0,'',0,0,0,'gb.Second',NULL),(9,0,'If Time Now',0,NULL,NULL,'Test event for time now trigger',9,0,'',0,0,0,'gb.Second',NULL);
+INSERT INTO `events` VALUES (1,0,'Frontdoor Light On',-1,'2009-01-06 17:30:00','2009-03-05 17:15:00','Switch frontdoor light on at dawn',1,0,'',0,0,0,'gb.Second',0),(2,0,'Frontdoor Light Off',-1,'2009-01-05 22:17:00','2009-03-06 08:00:00','Switch frontdoor light off at sunset',2,0,'',0,0,0,'gb.Second',0),(3,0,'Kitchen Light On when Movement Detected',-1,'2009-01-18 22:15:54','2009-03-05 20:24:16','Switch kitchen light on when someone enters it',4,0,'',0,0,15,'gb.Hour',0),(4,0,'Kitchen Light Off if No Movement',-1,'2009-01-18 22:37:47','2009-03-05 20:25:16','Switch kitchen light off when no movement is detected',5,0,'',0,0,0,'gb.Second',0),(5,0,'Ventilate Bathroom if Showering',-1,'2009-01-29 18:38:54','2009-02-05 19:33:23','Switch fan to speed 3 if bathroom is moist',3,0,'',0,-1,1,'gb.Hour',0),(6,0,'Switch Ventilation to Normal',-1,'2009-01-30 16:53:24','2009-03-06 09:02:04','Switch fan back to normal speed',6,0,'',0,0,0,'gb.Second',0),(9,0,'If Time Now',0,NULL,NULL,'Test event for time now trigger',9,0,'',0,0,0,'gb.Second',0);
 /*!40000 ALTER TABLE `events` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -868,7 +870,7 @@ DROP TABLE IF EXISTS `graphs`;
 CREATE TABLE `graphs` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(32) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `comments` varchar(32) DEFAULT NULL,
   `graph_title` varchar(32) NOT NULL,
   `graph_height` int(10) NOT NULL,
@@ -938,7 +940,7 @@ CREATE TABLE `interfaces` (
   `type` varchar(512) DEFAULT NULL,
   `mode` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=53 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=55 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -947,7 +949,7 @@ CREATE TABLE `interfaces` (
 
 LOCK TABLES `interfaces` WRITE;
 /*!40000 ALTER TABLE `interfaces` DISABLE KEYS */;
-INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','X10 X10Security Oregon KAKU RFXCom HEUK ATI Digimax ARC AC HEEU','Read'),(2,'Xanura CTX35','X10','Read Write'),(3,'Midon TEMP08','1-Wire','Read Write'),(4,'HDDTemp Socket','HDDTemp','Read'),(5,'Ping Socket','Ping','Read'),(6,'UPS Socket','UPS','Read'),(7,'X10Cmd Interface','X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC Interface','DSC','Read Write'),(12,'RFXCom Transmitter','X10 ARC AC RFXCom X10Security HEEU HEUK Digimax Harrison Koppla Waveman Flamingo KAKU','Read Write'),(13,'KNX/EIB Interface','KNX/EIB','Read Write'),(14,'Digitemp','1-Wire','Read'),(15,'Z-Wave Controller','Z-Wave','Read Write'),(16,'PLCBUS Interface','PLCBUS','Read Write'),(17,'Virtual Interface','Virtual','Read Write'),(18,'SqueezeServer Interface','Squeeze','Read Write'),(19,'Current Cost Receiver','CurrentCost','Read'),(20,'EZcontrol T10 Interface','T10-Preset FS10 FS20 RS200 AB400 AB601 IT REV BS-QU MARMI OA-FM KO-FC RS862','Write'),(21,'LIRC Interface','LIRC','Read'),(22,'PwrCtrl Interface','PwrCtrl','Read Write'),(23,'Denon Interface','Denon','Read Write'),(24,'Onkyo Interface','Onkyo','Read Write'),(25,'SharpTV Interface','SharpTV','Read Write'),(26,'LGTV Interface','LGTV','Read Write'),(27,'iPort Interface','iPort','Read Write'),(29,'JeeLabs Interface','JeeLabs ARC KAKU','Read Write'),(30,'Velleman K8055','K8055','Read Write'),(31,'OWFS Interface','1-Wire','Read Write'),(32,'CUL Interface','FS20 EM1000 FHT S300 HMS','Read Write'),(33,'RFXCom xPL','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison RFXLanIO','Read Write'),(34,'Shell Interface','Shell','Read Write'),(35,'RFXCom Transceiver','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech','Read Write'),(36,'HomeMatic LAN Adapter','HomeMatic','Read Write'),(37,'OpenTherm Gateway','OpenTherm','Read Write'),(38,'SmartMeter Interface','NTA8130','Read'),(39,'Pioneer Interface','Pioneer','Read Write'),(40,'XBMC xPL Interface','media.basic media.mptrnsp media.mpmedia osd.basic','Read Write'),(41,'Meteohub Interface','Meteohub','Read'),(42,'ELV MAX! Interface','ELVMAX','Read Write'),(43,'YouLess Interface','YouLess','Read'),(44,'Mochad Interface','X10 X10Security','Read Write'),(45,'Omniksol Interface','Omniksol','Read'),(46,'Visonic Interface','Visonic','Read Write'),(47,'KMTronicUDP Interface','KMTronicUDP','Read Write'),(48,'DMXPlayer Interface','DMX','Read Write'),(49,'GenericIO Interface','GenericIO','Read Write'),(50,'MQTT Interface','MQTT','Read Write'),(51,'RaZBerry Z-Wave Interface','Z-Wave','Read Write'),(52,'Arduino Interface','Arduino','Read Write');
+INSERT INTO `interfaces` VALUES (1,'RFXCom Receiver','X10 X10Security Oregon KAKU RFXCom HEUK ATI Digimax ARC AC HEEU X10SecDW X10SecMotion X10SecRemote','Read'),(2,'Xanura CTX35','X10','Read Write'),(3,'Midon TEMP08','1-Wire','Read Write'),(4,'HDDTemp Socket','HDDTemp','Read'),(5,'Ping Socket','Ping','Read'),(6,'UPS Socket','UPS','Read'),(7,'X10Cmd Interface','X10','Write'),(8,'Bluetooth Dongle','Bluetooth','Read'),(9,'Weeder I/O Bus','Weeder','Read Write'),(10,'Plugwise Stick','Plugwise','Read Write'),(11,'DSC Interface','DSC','Read Write'),(12,'RFXCom Transmitter','X10 ARC AC RFXCom X10Security HEEU HEUK Digimax Harrison Koppla Waveman Flamingo KAKU','Read Write'),(13,'KNX/EIB Interface','KNX/EIB','Read Write'),(14,'Digitemp','1-Wire','Read'),(15,'Z-Wave Controller','Z-Wave','Read Write'),(16,'PLCBUS Interface','PLCBUS','Read Write'),(17,'Virtual Interface','Virtual','Read Write'),(18,'SqueezeServer Interface','Squeeze','Read Write'),(19,'Current Cost Receiver','CurrentCost','Read'),(20,'EZcontrol T10 Interface','T10-Preset FS10 FS20 RS200 AB400 AB601 IT REV BS-QU MARMI OA-FM KO-FC RS862','Write'),(21,'LIRC Interface','LIRC','Read'),(22,'PwrCtrl Interface','PwrCtrl','Read Write'),(23,'Denon Interface','Denon','Read Write'),(24,'Onkyo Interface','Onkyo','Read Write'),(25,'SharpTV Interface','SharpTV','Read Write'),(26,'LGTV Interface','LGTV','Read Write'),(27,'iPort Interface','iPort','Read Write'),(29,'JeeLabs Interface','JeeLabs ARC KAKU','Read Write'),(30,'Velleman K8055','K8055','Read Write'),(31,'OWFS Interface','1-Wire','Read Write'),(32,'CUL Interface','FS20 EM1000 FHT S300 HMS','Read Write'),(33,'RFXCom xPL','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison RFXLanIO X10SecDW X10SecMotion X10SecRemote','Read Write'),(34,'Shell Interface','Shell','Read Write'),(35,'RFXCom Transceiver','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01','Read Write'),(36,'HomeMatic LAN Adapter','HomeMatic','Read Write'),(37,'OpenTherm Gateway','OpenTherm','Read Write'),(38,'SmartMeter Interface','NTA8130','Read'),(39,'Pioneer Interface','Pioneer','Read Write'),(40,'XBMC xPL Interface','media.basic media.mptrnsp media.mpmedia osd.basic','Read Write'),(41,'Meteohub Interface','Meteohub','Read'),(42,'ELV MAX! Interface','ELVMAX','Read Write'),(43,'YouLess Interface','YouLess','Read'),(44,'Mochad Interface','X10 X10Security','Read Write'),(45,'Omniksol Interface','Omniksol','Read'),(46,'Visonic Interface','Visonic','Read Write'),(47,'KMTronicUDP Interface','KMTronicUDP','Read Write'),(48,'DMXPlayer Interface','DMX','Read Write'),(49,'GenericIO Interface','GenericIO','Read Write'),(50,'MQTT Interface','MQTT','Read Write'),(51,'RaZBerry Z-Wave Interface','Z-Wave','Read Write'),(52,'Arduino Interface','Arduino','Read Write'),(53,'Velbus Interface','Velbus','Read Write'),(54,'Viera Interface','Viera','Read Write'),(55,'Toon Interface','Toon','Read Write'),(56,'Jerome Ethernet Module','KernelChip','Read Write');
 /*!40000 ALTER TABLE `interfaces` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1040,7 +1042,7 @@ CREATE TABLE `menu` (
   `menu` int(11) DEFAULT NULL,
   `position` int(11) DEFAULT NULL,
   `icon` varchar(32) DEFAULT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=27 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1091,7 +1093,7 @@ CREATE TABLE `newsfeeds` (
   `name` varchar(32) DEFAULT NULL,
   `url` varchar(254) DEFAULT NULL,
   `description` text,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1383,7 +1385,7 @@ DROP TABLE IF EXISTS `scenes`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `scenes` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `name` varchar(64) DEFAULT NULL,
   `log` tinyint(1) DEFAULT NULL,
   `firstrun` datetime DEFAULT NULL,
@@ -1442,11 +1444,11 @@ DROP TABLE IF EXISTS `settings_arduino`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_arduino` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(32) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1470,13 +1472,13 @@ DROP TABLE IF EXISTS `settings_asterisk`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_asterisk` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
   `user` varchar(64) DEFAULT NULL,
   `password` varchar(64) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1506,7 +1508,7 @@ CREATE TABLE `settings_astro` (
   `twilight` varchar(32) DEFAULT NULL,
   `seasons` varchar(32) DEFAULT NULL,
   `seasonstarts` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `temperature` varchar(6) DEFAULT NULL,
   `currency` varchar(6) DEFAULT NULL,
   `dst` tinyint(1) DEFAULT NULL,
@@ -1533,11 +1535,11 @@ DROP TABLE IF EXISTS `settings_bluetooth`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_bluetooth` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `device` varchar(32) DEFAULT NULL,
   `threshold` int(11) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1561,7 +1563,7 @@ DROP TABLE IF EXISTS `settings_bwiredmap`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_bwiredmap` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `website` varchar(64) DEFAULT NULL,
   `websitepicurl` varchar(64) DEFAULT NULL,
   `title` varchar(64) DEFAULT NULL,
@@ -1572,7 +1574,7 @@ CREATE TABLE `settings_bwiredmap` (
   `gpslat` varchar(64) DEFAULT NULL,
   `gpslong` varchar(64) DEFAULT NULL,
   `pushtime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1596,13 +1598,13 @@ DROP TABLE IF EXISTS `settings_callerid`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_callerid` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `countrycode` varchar(16) DEFAULT NULL,
   `areacode` varchar(16) DEFAULT NULL,
   `prefixnational` varchar(16) DEFAULT NULL,
   `prefixinternational` varchar(16) DEFAULT NULL,
   `autocreatecontacts` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1626,12 +1628,12 @@ DROP TABLE IF EXISTS `settings_ctx35`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_ctx35` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
   `globalx10` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1655,7 +1657,7 @@ DROP TABLE IF EXISTS `settings_cul`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_cul` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` varchar(32) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
@@ -1663,7 +1665,7 @@ CREATE TABLE `settings_cul` (
   `baudrate` varchar(32) DEFAULT NULL,
   `model` int(11) DEFAULT NULL,
   `fhtid` varchar(32) DEFAULT '0000',
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1687,10 +1689,10 @@ DROP TABLE IF EXISTS `settings_currentcost`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_currentcost` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1714,13 +1716,13 @@ DROP TABLE IF EXISTS `settings_denon`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_denon` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1744,12 +1746,12 @@ DROP TABLE IF EXISTS `settings_digitemp`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_digitemp` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `command` varchar(32) DEFAULT NULL,
   `config` varchar(32) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
   `readtime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1773,10 +1775,10 @@ DROP TABLE IF EXISTS `settings_dmxplayer`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_dmxplayer` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1800,9 +1802,9 @@ DROP TABLE IF EXISTS `settings_domotica`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_domotica` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1826,12 +1828,12 @@ DROP TABLE IF EXISTS `settings_dsc`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_dsc` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` int(11) DEFAULT NULL,
-  `type` int(11) DEFAULT '0',
+  `type` int(11) NOT NULL DEFAULT '0',
   `mastercode` varchar(16) DEFAULT '1234',
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1855,10 +1857,10 @@ DROP TABLE IF EXISTS `settings_eib`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_eib` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1882,10 +1884,10 @@ DROP TABLE IF EXISTS `settings_elvmax`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_elvmax` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1909,7 +1911,7 @@ DROP TABLE IF EXISTS `settings_email`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_email` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `fromaddress` varchar(32) DEFAULT NULL,
   `toaddress` varchar(32) DEFAULT NULL,
   `smtpserver` varchar(32) DEFAULT NULL,
@@ -1917,7 +1919,7 @@ CREATE TABLE `settings_email` (
   `sslenabled` tinyint(1) DEFAULT NULL,
   `username` varchar(64) DEFAULT NULL,
   `password` varchar(64) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1941,9 +1943,9 @@ DROP TABLE IF EXISTS `settings_ezcontrol`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_ezcontrol` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `udphost` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1967,9 +1969,9 @@ DROP TABLE IF EXISTS `settings_fritzbox`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_fritzbox` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1993,13 +1995,13 @@ DROP TABLE IF EXISTS `settings_genericio`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_genericio` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `regex` varchar(128) DEFAULT NULL,
   `delimiter` varchar(128) DEFAULT NULL,
   PRIMARY KEY (`id`)
@@ -2025,11 +2027,11 @@ DROP TABLE IF EXISTS `settings_gmail`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_gmail` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `user` varchar(64) DEFAULT NULL,
   `password` varchar(64) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2054,10 +2056,10 @@ DROP TABLE IF EXISTS `settings_gps`;
 CREATE TABLE `settings_gps` (
   `id` int(11) NOT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2081,12 +2083,12 @@ DROP TABLE IF EXISTS `settings_hddtemp`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_hddtemp` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
   `threshold` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2110,8 +2112,8 @@ DROP TABLE IF EXISTS `settings_homematic`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_homematic` (
   `id` int(11) NOT NULL DEFAULT '0',
-  `enabled` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `hmid` varchar(32) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
@@ -2140,13 +2142,13 @@ DROP TABLE IF EXISTS `settings_iport`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_iport` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2170,9 +2172,9 @@ DROP TABLE IF EXISTS `settings_irman`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_irman` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2196,10 +2198,10 @@ DROP TABLE IF EXISTS `settings_irtrans`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_irtrans` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2223,10 +2225,10 @@ DROP TABLE IF EXISTS `settings_iviewer`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_iviewer` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcpport` int(11) DEFAULT NULL,
   `password` varchar(64) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2250,10 +2252,10 @@ DROP TABLE IF EXISTS `settings_jeelabs`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_jeelabs` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2269,6 +2271,36 @@ INSERT INTO `settings_jeelabs` VALUES (0,0,'/dev/ttyUSB8','57600',0),(1,0,'/dev/
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_jerome`
+--
+
+DROP TABLE IF EXISTS `settings_jerome`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_jerome` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) NOT NULL DEFAULT '0',
+  `username` varchar(64) DEFAULT NULL,
+  `password` varchar(64) DEFAULT NULL,
+  `polltime` int(11) NOT NULL DEFAULT '0',
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_jerome`
+--
+
+LOCK TABLES `settings_jerome` WRITE;
+/*!40000 ALTER TABLE `settings_jerome` DISABLE KEYS */;
+INSERT INTO `settings_jerome` VALUES (0,0,'192.168.100.5',2424,'username','password',60,0),(1,0,'192.168.100.5',2424,'username','password',60,0);
+/*!40000 ALTER TABLE `settings_jerome` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `settings_jsonrpc`
 --
 
@@ -2277,12 +2309,12 @@ DROP TABLE IF EXISTS `settings_jsonrpc`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_jsonrpc` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `httpport` int(11) DEFAULT NULL,
   `maxconn` int(11) DEFAULT NULL,
   `type` int(11) DEFAULT NULL,
   `auth` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2306,12 +2338,12 @@ DROP TABLE IF EXISTS `settings_k8055`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_k8055` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `polltime` int(11) DEFAULT NULL,
   `boardaddress` int(11) DEFAULT NULL,
   `debouncetime1` int(11) DEFAULT NULL,
   `debouncetime2` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2335,10 +2367,10 @@ DROP TABLE IF EXISTS `settings_kmtronicudp`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_kmtronicudp` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `udpport` int(11) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2362,12 +2394,12 @@ DROP TABLE IF EXISTS `settings_ledmatrix`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_ledmatrix` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `color` int(11) DEFAULT NULL,
   `speed` int(11) DEFAULT NULL,
   `displayid` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2391,13 +2423,13 @@ DROP TABLE IF EXISTS `settings_lgtv`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_lgtv` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2421,10 +2453,10 @@ DROP TABLE IF EXISTS `settings_lirc`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_lirc` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2450,7 +2482,7 @@ CREATE TABLE `settings_main` (
   `id` int(11) NOT NULL,
   `sleeptime` int(11) DEFAULT NULL,
   `flushtime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `logbuffer` int(11) DEFAULT NULL,
   `authentication` tinyint(1) DEFAULT NULL,
   `startpage` varchar(32) DEFAULT NULL,
@@ -2488,10 +2520,10 @@ DROP TABLE IF EXISTS `settings_meteohub`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_meteohub` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `fetchurl` varchar(128) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2515,11 +2547,11 @@ DROP TABLE IF EXISTS `settings_mochad`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_mochad` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `globalX10` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2543,7 +2575,7 @@ DROP TABLE IF EXISTS `settings_mqtt`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_mqtt` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(64) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `username` varchar(64) DEFAULT NULL,
@@ -2553,7 +2585,7 @@ CREATE TABLE `settings_mqtt` (
   `heartbeat` int(11) DEFAULT NULL,
   `retain` tinyint(1) DEFAULT NULL,
   `qos` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `clientname` varchar(23) DEFAULT 'domotiga',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -2578,9 +2610,9 @@ DROP TABLE IF EXISTS `settings_ncid`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_ncid` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `tcpport` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -2605,11 +2637,11 @@ DROP TABLE IF EXISTS `settings_nma`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_nma` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `apikey` varchar(64) DEFAULT NULL,
   `application` varchar(32) DEFAULT NULL,
   `event` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2633,10 +2665,10 @@ DROP TABLE IF EXISTS `settings_omniksol`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_omniksol` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `polltime` int(11) DEFAULT NULL,
   `autosearch` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2660,13 +2692,13 @@ DROP TABLE IF EXISTS `settings_onkyo`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_onkyo` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2692,7 +2724,7 @@ CREATE TABLE `settings_opentherm` (
   `id` int(11) NOT NULL,
   `temperatureoverride` varchar(32) DEFAULT NULL,
   `syncclock` tinyint(1) DEFAULT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
   `thermostat` varchar(32) DEFAULT NULL,
@@ -2701,7 +2733,7 @@ CREATE TABLE `settings_opentherm` (
   `type` varchar(32) DEFAULT NULL,
   `relayenabled` tinyint(1) DEFAULT NULL,
   `relayport` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2725,12 +2757,12 @@ DROP TABLE IF EXISTS `settings_openzwave`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_openzwave` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `reloadnodes` tinyint(1) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `polltimesleeping` varchar(16) DEFAULT NULL,
   `enablepollsleeping` tinyint(1) DEFAULT NULL,
   `enablepolllistening` tinyint(1) DEFAULT NULL,
@@ -2760,11 +2792,11 @@ DROP TABLE IF EXISTS `settings_owfs`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_owfs` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `polltime` int(11) DEFAULT NULL,
   `basedir` varchar(64) DEFAULT NULL,
   `cached` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2788,11 +2820,11 @@ DROP TABLE IF EXISTS `settings_oww`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_oww` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `servertype` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2816,7 +2848,7 @@ DROP TABLE IF EXISTS `settings_p2000`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_p2000` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `regios` varchar(64) DEFAULT NULL,
   `messages` int(11) DEFAULT NULL,
   `discipline` varchar(64) DEFAULT NULL,
@@ -2825,7 +2857,7 @@ CREATE TABLE `settings_p2000` (
   `fetchimage` tinyint(1) DEFAULT NULL,
   `maplink` tinyint(1) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2849,11 +2881,11 @@ DROP TABLE IF EXISTS `settings_pachube`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_pachube` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `feed` int(11) DEFAULT NULL,
   `apikey` varchar(128) DEFAULT NULL,
   `pushtime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2877,9 +2909,9 @@ DROP TABLE IF EXISTS `settings_ping`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_ping` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2903,13 +2935,13 @@ DROP TABLE IF EXISTS `settings_pioneer`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_pioneer` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2933,7 +2965,7 @@ DROP TABLE IF EXISTS `settings_plcbus`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_plcbus` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
@@ -2941,7 +2973,7 @@ CREATE TABLE `settings_plcbus` (
   `threephase` tinyint(1) DEFAULT NULL,
   `housecodes` varchar(32) DEFAULT NULL,
   `ack` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2965,10 +2997,10 @@ DROP TABLE IF EXISTS `settings_plugwise`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_plugwise` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2992,11 +3024,11 @@ DROP TABLE IF EXISTS `settings_prowl`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_prowl` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `apikey` varchar(64) DEFAULT NULL,
   `application` varchar(32) DEFAULT NULL,
   `event` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3020,11 +3052,11 @@ DROP TABLE IF EXISTS `settings_pushover`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_pushover` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `token` varchar(64) DEFAULT NULL,
   `user` varchar(64) DEFAULT NULL,
   `device` varchar(64) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3048,11 +3080,11 @@ DROP TABLE IF EXISTS `settings_pvoutput`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_pvoutput` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `api` varchar(64) DEFAULT NULL,
   `pvoutputid` varchar(64) DEFAULT NULL,
   `pushtime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `deviceid` int(11) NOT NULL,
   `devicevalue` varchar(8) NOT NULL,
   `usagedeviceid` int(11) NOT NULL,
@@ -3082,11 +3114,11 @@ DROP TABLE IF EXISTS `settings_pwrctrl`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_pwrctrl` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `udpread` int(11) DEFAULT NULL,
   `udpsend` int(11) DEFAULT NULL,
   `userpw` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3110,13 +3142,13 @@ DROP TABLE IF EXISTS `settings_razberry`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_razberry` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `username` varchar(64) DEFAULT NULL,
   `password` varchar(64) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3140,13 +3172,13 @@ DROP TABLE IF EXISTS `settings_rfxcomrx`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_rfxcomrx` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `relayenabled` tinyint(1) DEFAULT NULL,
   `relayport` int(11) DEFAULT NULL,
   `globalx10` tinyint(1) DEFAULT NULL,
@@ -3173,13 +3205,13 @@ DROP TABLE IF EXISTS `settings_rfxcomtrx`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_rfxcomtrx` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `relayenabled` tinyint(1) DEFAULT NULL,
   `relayport` int(11) DEFAULT NULL,
   `globalx10` tinyint(1) DEFAULT NULL,
@@ -3207,7 +3239,7 @@ DROP TABLE IF EXISTS `settings_rfxcomtx`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_rfxcomtx` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
@@ -3221,7 +3253,7 @@ CREATE TABLE `settings_rfxcomtx` (
   `enableharrison` tinyint(1) DEFAULT NULL,
   `enablekoppla` tinyint(1) DEFAULT NULL,
   `rfxmitter` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3245,12 +3277,12 @@ DROP TABLE IF EXISTS `settings_rfxcomxpl`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_rfxcomxpl` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `rxaddress` varchar(64) DEFAULT NULL,
   `txaddress` varchar(64) DEFAULT NULL,
   `oldaddrfmt` tinyint(1) DEFAULT NULL,
   `globalx10` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3275,8 +3307,8 @@ DROP TABLE IF EXISTS `settings_rrdtool`;
 CREATE TABLE `settings_rrdtool` (
   `id` int(11) NOT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `rra` varchar(256) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -3301,9 +3333,9 @@ DROP TABLE IF EXISTS `settings_serverstats`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_serverstats` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `servername` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=3 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3327,13 +3359,13 @@ DROP TABLE IF EXISTS `settings_sharptv`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_sharptv` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3357,9 +3389,9 @@ DROP TABLE IF EXISTS `settings_shell`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_shell` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3383,7 +3415,7 @@ DROP TABLE IF EXISTS `settings_smartmeter`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_smartmeter` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
@@ -3393,7 +3425,7 @@ CREATE TABLE `settings_smartmeter` (
   `stopbits` int(11) DEFAULT NULL,
   `parity` int(11) DEFAULT NULL,
   `requestline` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3417,9 +3449,9 @@ DROP TABLE IF EXISTS `settings_smartvisuserver`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_smartvisuserver` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcpport` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3444,13 +3476,13 @@ DROP TABLE IF EXISTS `settings_sms`;
 CREATE TABLE `settings_sms` (
   `id` int(11) NOT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `pin` varchar(32) DEFAULT NULL,
   `servicecentre` varchar(32) DEFAULT NULL,
   `contact` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3474,8 +3506,8 @@ DROP TABLE IF EXISTS `settings_sound`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_sound` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `volume` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -3500,10 +3532,10 @@ DROP TABLE IF EXISTS `settings_squeezeserver`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_squeezeserver` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3527,9 +3559,9 @@ DROP TABLE IF EXISTS `settings_telnetserver`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_telnetserver` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `telnetport` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3553,10 +3585,10 @@ DROP TABLE IF EXISTS `settings_temp08`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_temp08` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3580,11 +3612,11 @@ DROP TABLE IF EXISTS `settings_temperaturnu`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_temperaturnu` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `city` varchar(64) DEFAULT NULL,
   `apikey` varchar(64) DEFAULT NULL,
   `pushtime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `deviceid` int(11) NOT NULL,
   `devicevalue` varchar(8) NOT NULL,
   PRIMARY KEY (`id`)
@@ -3610,9 +3642,9 @@ DROP TABLE IF EXISTS `settings_thermostat`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_thermostat` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3628,6 +3660,34 @@ INSERT INTO `settings_thermostat` VALUES (0,0,120,0),(1,0,120,0);
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_toon`
+-- 
+
+DROP TABLE IF EXISTS `settings_toon`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_toon` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `polltime` int(11) NOT NULL DEFAULT '0',
+  `user` varchar(64) DEFAULT NULL,
+  `password` varchar(64) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_toon`
+--
+
+LOCK TABLES `settings_toon` WRITE;
+/*!40000 ALTER TABLE `settings_toon` DISABLE KEYS */; 
+INSERT INTO `settings_toon` VALUES (0,0,300,'toonlogin','toonpassword',0),(1,0,300,'toonlogin','toonpassword',0);
+/*!40000 ALTER TABLE `settings_toon` ENABLE KEYS */; 
+UNLOCK TABLES;
+
+--
 -- Table structure for table `settings_tvguide`
 --
 
@@ -3636,10 +3696,10 @@ DROP TABLE IF EXISTS `settings_tvguide`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_tvguide` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `xmlgrabcmd` text,
   `xmlfile` text,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3663,11 +3723,11 @@ DROP TABLE IF EXISTS `settings_twitter`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_twitter` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `username` varchar(64) DEFAULT NULL,
   `password` varchar(64) DEFAULT NULL,
   `sendtimestamp` tinyint(1) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3691,11 +3751,11 @@ DROP TABLE IF EXISTS `settings_ups`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_ups` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3711,6 +3771,31 @@ INSERT INTO `settings_ups` VALUES (0,0,'192.168.100.2',3493,300,0),(1,0,'192.168
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_velbus`
+--
+DROP TABLE IF EXISTS `settings_velbus`;
+CREATE TABLE `settings_velbus` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `serialport` varchar(32) DEFAULT NULL,
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) NOT NULL DEFAULT '0',
+  `type` varchar(32) DEFAULT NULL,
+  `relayenabled` tinyint(1) NOT NULL DEFAULT '0',
+  `relayport` int(11) NOT NULL DEFAULT '0',
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  `baudrate` varchar(32) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
+--
+-- Dumping data for table `settings_velbus`
+--
+LOCK TABLES `settings_velbus` WRITE;
+INSERT INTO `settings_velbus` VALUES (0,0,'/dev/ttyACM0','192.168.1.1',1080,'tcp',0,50000,0,'38400'),(1,0,'/dev/ttyACM0','192.168.1.1',1080,'serial',0,50000,0,'38400');
+UNLOCK TABLES;
+
+--
 -- Table structure for table `settings_videoserver`
 --
 
@@ -3719,7 +3804,7 @@ DROP TABLE IF EXISTS `settings_videoserver`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_videoserver` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
   `user` varchar(64) DEFAULT NULL,
@@ -3728,7 +3813,7 @@ CREATE TABLE `settings_videoserver` (
   `channel2` varchar(32) DEFAULT NULL,
   `channel3` varchar(32) DEFAULT NULL,
   `channel4` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3744,6 +3829,28 @@ INSERT INTO `settings_videoserver` VALUES (0,0,'192.168.100.8',NULL,NULL,NULL,'C
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_viera`
+--
+DROP TABLE IF EXISTS `settings_viera`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_viera` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) NOT NULL DEFAULT '0',
+  `refresh` int(11) NOT NULL DEFAULT '0',
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+LOCK TABLES `settings_viera` WRITE;
+/*!40000 ALTER TABLE `settings_viera` DISABLE KEYS */;
+INSERT INTO `settings_viera` VALUES (0,0,'127.0.0.1',55000,30,0),(1,0,'127.0.0.1',55000,30,0);
+/*!40000 ALTER TABLE `settings_viera` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `settings_visca`
 --
 
@@ -3752,11 +3859,11 @@ DROP TABLE IF EXISTS `settings_visca`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_visca` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `cameraaddress` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `device` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -3781,11 +3888,11 @@ DROP TABLE IF EXISTS `settings_visonic`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_visonic` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `type` int(11) DEFAULT '0',
   `mastercode` varchar(16) DEFAULT '1234',
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3809,12 +3916,12 @@ DROP TABLE IF EXISTS `settings_voicetext`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_voicetext` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `engine` varchar(32) DEFAULT NULL,
   `prefixcmd` varchar(32) DEFAULT NULL,
   `voicesmale` varchar(32) DEFAULT NULL,
   `voicesfemale` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3838,12 +3945,12 @@ DROP TABLE IF EXISTS `settings_weatherbug`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_weatherbug` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `weatherbugid` varchar(32) DEFAULT NULL,
   `city` varchar(128) DEFAULT NULL,
   `citycode` varchar(32) DEFAULT NULL,
   `countryname` varchar(32) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3867,11 +3974,11 @@ DROP TABLE IF EXISTS `settings_weatherug`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_weatherug` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `apikey` varchar(128) DEFAULT NULL,
   `city` varchar(128) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3895,9 +4002,9 @@ DROP TABLE IF EXISTS `settings_weeder`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_weeder` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3921,12 +4028,12 @@ DROP TABLE IF EXISTS `settings_x10cmd`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_x10cmd` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `command` varchar(128) DEFAULT NULL,
   `monitor` tinyint(1) DEFAULT NULL,
   `globalx10` tinyint(1) DEFAULT NULL,
   `type` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3950,10 +4057,10 @@ DROP TABLE IF EXISTS `settings_xbmcxpl`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_xbmcxpl` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `rxaddress` varchar(64) DEFAULT NULL,
   `txaddress` varchar(64) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -3977,10 +4084,10 @@ DROP TABLE IF EXISTS `settings_xmlrpc`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_xmlrpc` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `httpport` int(11) DEFAULT NULL,
   `maxconn` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   `broadcastudp` tinyint(1) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -4005,9 +4112,9 @@ DROP TABLE IF EXISTS `settings_xpl`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_xpl` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `heartbeat` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -4031,9 +4138,9 @@ DROP TABLE IF EXISTS `settings_youless`;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `settings_youless` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `polltime` int(11) DEFAULT NULL,
-  `debug` tinyint(1) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -4228,7 +4335,7 @@ CREATE TABLE `trafficfeeds` (
   `name` varchar(32) DEFAULT NULL,
   `url` varchar(254) DEFAULT NULL,
   `description` text,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `type` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -4435,7 +4542,7 @@ CREATE TABLE `version` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `db` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=60 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=61 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4444,7 +4551,7 @@ CREATE TABLE `version` (
 
 LOCK TABLES `version` WRITE;
 /*!40000 ALTER TABLE `version` DISABLE KEYS */;
-INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187'),(23,'0.1.188'),(24,'0.1.189'),(25,'0.1.190'),(26,'0.1.191'),(27,'0.1.192'),(28,'0.1.193'),(29,'0.1.194'),(30,'0.1.195'),(31,'0.1.196'),(32,'0.1.197'),(33,'0.1.198'),(34,'0.1.199'),(35,'0.1.200'),(36,'0.1.201'),(37,'0.1.202'),(38,'0.1.203'),(39,'0.1.204'),(40,'0.1.205'),(41,'0.1.206'),(42,'0.1.207'),(43,'0.1.208'),(44,'0.1.209'),(45,'1.0.000'),(46,'1.0.001'),(47,'1.0.002'),(48,'1.0.003'),(49,'1.0.004'),(50,'1.0.005'),(51,'1.0.006'),(52,'1.0.007'),(53,'1.0.008'),(54,'1.0.009'),(55,'1.0.010'),(56,'1.0.011'),(57,'1.0.012'),(58,'1.0.013'),(59,'1.0.014');
+INSERT INTO `version` VALUES (1,'0.1.166'),(2,'0.1.167'),(3,'0.1.168'),(4,'0.1.169'),(5,'0.1.170'),(6,'0.1.171'),(7,'0.1.172'),(8,'0.1.173'),(9,'0.1.174'),(10,'0.1.175'),(11,'0.1.176'),(12,'0.1.177'),(13,'0.1.178'),(14,'0.1.179'),(15,'0.1.180'),(16,'0.1.181'),(17,'0.1.182'),(18,'0.1.183'),(19,'0.1.184'),(20,'0.1.185'),(21,'0.1.186'),(22,'0.1.187'),(23,'0.1.188'),(24,'0.1.189'),(25,'0.1.190'),(26,'0.1.191'),(27,'0.1.192'),(28,'0.1.193'),(29,'0.1.194'),(30,'0.1.195'),(31,'0.1.196'),(32,'0.1.197'),(33,'0.1.198'),(34,'0.1.199'),(35,'0.1.200'),(36,'0.1.201'),(37,'0.1.202'),(38,'0.1.203'),(39,'0.1.204'),(40,'0.1.205'),(41,'0.1.206'),(42,'0.1.207'),(43,'0.1.208'),(44,'0.1.209'),(45,'1.0.000'),(46,'1.0.001'),(47,'1.0.002'),(48,'1.0.003'),(49,'1.0.004'),(50,'1.0.005'),(51,'1.0.006'),(52,'1.0.007'),(53,'1.0.008'),(54,'1.0.009'),(55,'1.0.010'),(56,'1.0.011'),(57,'1.0.012'),(58,'1.0.013'),(59,'1.0.014'),(60,'1.0.015');
 /*!40000 ALTER TABLE `version` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -4530,7 +4637,7 @@ CREATE TABLE `weatherfeeds` (
   `name` varchar(32) DEFAULT NULL,
   `url` varchar(254) DEFAULT NULL,
   `description` text,
-  `enabled` tinyint(1) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `type` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
@@ -4555,4 +4662,5 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2013-12-15 20:15:11
+-- Dump completed on 2014-02-23 13:16:08
+

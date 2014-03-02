@@ -834,7 +834,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 				if ( nodeInfo->instanceLabel[instanceID].find("Relative Humidity") != string::npos ) { str_tmp.append("Relative Humidity|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("|Luminance|") != string::npos ) { str_tmp.append("Luminance|"); }
 				if ( nodeInfo->instanceLabel[instanceID].find("Alarm Level") != string::npos ) { str_tmp.append("Alarm Level|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("Heating 1") != string::npos ) { str_tmp.append("SetPoint|Heating 1|"); }
+				if ( nodeInfo->instanceLabel[instanceID].find("Heating 1") != string::npos ) { str_tmp.append("Heating 1|"); }
 
 				// Replace the previous string with the newly generated
 				nodeInfo->instanceLabel[instanceID] = str_tmp;
@@ -844,7 +844,15 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 			{
 				nodeInfo->instanceLabel[instanceID] = "";
 				nodeInfo->instanceLabel[instanceID].append("|");
-				nodeInfo->instanceLabel[instanceID].append(label);
+
+				// The Heating 1 is special, we need to append the SetPoint. Then the temperature will go into value2
+				if ( label == "Heating 1" ) {
+					nodeInfo->instanceLabel[instanceID].append("SetPoint|Heating 1");
+				}
+				else
+				{
+					nodeInfo->instanceLabel[instanceID].append(label);
+				}
 				nodeInfo->instanceLabel[instanceID].append("|");
 			}
 		} 
@@ -912,6 +920,13 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 								value_no = delimitercount - 1;
 								break;
 							}
+						}
+
+						// Capture Heating 1"
+						if ( label == "Heating 1" )
+						{
+							value_no = 2;
+							break;
 						}
 
 						next = "";
@@ -2215,17 +2230,32 @@ void DomoZWave_Log( bool logging )
 
 //-----------------------------------------------------------------------------
 // <DomoZWave_AddSerialPort>
+// Add the serialport from the open-zwave library, it can have multiple serialports connected
 //-----------------------------------------------------------------------------
 
 void DomoZWave_AddSerialPort( const char* serialPort, const char* jsonrpcurl, bool logging )
 {
+	m_structCtrl* ctrl;
 	string Name;
 
 	// Store the serialPort used
 	Name = serialPort; 
 
+	// Loop through available controllers and check it doesn't exist
+	// Do NOT add if it already exist
+	for ( list<m_structCtrl*>::iterator it = g_allControllers.begin(); it != g_allControllers.end(); ++it )
+	{
+		ctrl = *it;
+		if ( ctrl->m_serialPort == Name )
+		{
+			// It exists, write log and exit
+			WriteLog( LogLevel_Error, true, "SerialPort=%s already exist in SerialPort list", serialPort );
+			return;
+		}
+	}
+
 	// Create and store new controller information
-	m_structCtrl* ctrl = new m_structCtrl();
+	ctrl = new m_structCtrl();
 
 	ctrl->m_serialPort = Name;
 	ctrl->m_homeId = 0;
@@ -2238,6 +2268,7 @@ void DomoZWave_AddSerialPort( const char* serialPort, const char* jsonrpcurl, bo
 
 	// Store the url
 	sprintf( ctrl->m_jsonrpcurl, "%s", jsonrpcurl );
+	WriteLog( LogLevel_Debug, false, "SerialPort=%s (Add)", serialPort );
 	WriteLog( LogLevel_Debug, false, "JSON-RPC URL=%s", ctrl->m_jsonrpcurl );
 
 	g_allControllers.push_back( ctrl );
@@ -2248,6 +2279,7 @@ void DomoZWave_AddSerialPort( const char* serialPort, const char* jsonrpcurl, bo
 
 //-----------------------------------------------------------------------------
 // <DomoZWave_RemoveSerialPort>
+// Remove the serialport from the open-zwave library
 //-----------------------------------------------------------------------------
 
 void DomoZWave_RemoveSerialPort( const char* serialPort )
@@ -2265,13 +2297,16 @@ void DomoZWave_RemoveSerialPort( const char* serialPort )
 		ctrl = *it;
 		if ( ctrl->m_serialPort == Name )
 		{
+			WriteLog( LogLevel_Debug, true, "SerialPort=%s (Remove)", serialPort );
+
 			ctrl->m_running = false;
+
+			// Only removedriver it is existed
+			pthread_mutex_lock( &g_criticalSection );
+			Manager::Get()->RemoveDriver( serialPort );
+			pthread_mutex_unlock( &g_criticalSection );
 		}
 	}
-
-        pthread_mutex_lock( &g_criticalSection );
-	Manager::Get()->RemoveDriver( serialPort );
-        pthread_mutex_unlock( &g_criticalSection );
 
 	// Remove the ctrl from the list, it is removed now
 	if ( ctrl != NULL ) {
@@ -3129,6 +3164,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 	int int_value;
 	uint8 uint8_value;
 	uint16 uint16_value;
+	float float_value;
 	bool response;
 	bool cmdfound = false;
 
@@ -3145,7 +3181,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 			int inst = (*it).GetInstance();
 			string label = Manager::Get()->GetValueLabel( (*it) );
 
-			if ( id == COMMAND_CLASS_SWITCH_MULTILEVEL || id == COMMAND_CLASS_SWITCH_BINARY )
+			if ( id == COMMAND_CLASS_SWITCH_MULTILEVEL || id == COMMAND_CLASS_SWITCH_BINARY || id == COMMAND_CLASS_THERMOSTAT_SETPOINT )
 			{
 
 				switch ( id )
@@ -3173,6 +3209,16 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 						}
 
 						break;
+					}
+					case COMMAND_CLASS_THERMOSTAT_SETPOINT:
+					{
+						// Currently we only support Heating 1
+						if ( label == "Heating 1" )
+						{
+							break;
+						}
+
+						continue;
 					}
 					default:
 					{
@@ -3211,6 +3257,13 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 						response = Manager::Get()->SetValue( *it, value );
 						cmdfound = true;
 	       				}
+					else if ( ValueID::ValueType_Decimal == (*it).GetType() )
+					{
+						// We don't get a float, so divide by 1000 to get the right value
+						float_value = (float)value / 1000;
+						response = Manager::Get()->SetValue( *it, float_value );
+						cmdfound = true;
+					}
       					else
 					{
 						WriteLog(LogLevel_Debug, false, "Return=false (unknown ValueType)");
@@ -3220,7 +3273,13 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 					WriteLog( LogLevel_Debug, false, "CommandClassId=%d", id );
 					WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id) );
 					WriteLog( LogLevel_Debug, false, "Instance=%d", instance );
-					WriteLog( LogLevel_Debug, false, "Value=%d", value );
+					if ( ValueID::ValueType_Decimal == (*it).GetType() ) {
+						WriteLog( LogLevel_Debug, false, "Value=%f (decimal)", float_value );
+					}
+					else
+					{
+						WriteLog( LogLevel_Debug, false, "Value=%d", value );
+					}
 					WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
 				}
 			}
