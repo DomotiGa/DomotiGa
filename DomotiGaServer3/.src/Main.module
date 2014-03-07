@@ -2012,16 +2012,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetGlobalVar(sVar As String) As Variant
 
-  ' The GlobalVar is a Collection, which doesn't support empty strings.
-  ' For this we internally store it as a "<EMPTY>", but return a "".
-  ' If the sVar doesn't exist, we return NULL.
-
   If GlobalVar.Exist(sVar) Then
-    If GlobalVar[sVar] = "<EMPTY>" Then
-      Return ""
-    Else
-      Return GlobalVar[sVar]
-    Endif
+    Return GlobalVar[sVar].Value
   Else
     Return Null
   Endif
@@ -2036,64 +2028,121 @@ Public Sub SetGlobalVar(sVar As String, vValue As Variant, Optional bBroadcast A
   Dim vTemp As Variant
   Dim rResult As Result
   Dim bGlobalVarExist As Boolean
+  Dim iDataType As Integer
+
+  ' Check if GlobalVar exists
+  bGlobalVarExist = GlobalVar.Exist(sVar)
 
   ' Don't call GetGlobalVar, we don't want a loop
-  If GlobalVar.Exist(sVar) Then
-    If TypeOf(GlobalVar[sVar]) = gb.String Then
-      If GlobalVar[sVar] = "<EMPTY>" Then
-        vTemp = ""
-      Else
-        vTemp = GlobalVar[sVar]
-      Endif
-    Else
-      vTemp = GlobalVar[sVar]
+  If bGlobalVarExist Then
+    vTemp = Main.GlobalVar[sVar].Value
+
+    ' Check if we have a system variable, this can *never* change datatype
+    ' Also if iDataType=0, it can't change either
+    If Main.GlobalVar[sVar].System Or If iDataType = 0 Then
+      iDataType = Main.GlobalVar[sVar].DataType
     Endif
+
   Else
     vTemp = Chr(0) & "NEVEREXISTS" & Chr(0)
+    If iDataType = 0 Then iDataType = TypeOf(vValue)
   Endif
+
+  ' Convert the input to the correct datatype
+  Select iDataType
+    Case gb.Boolean
+      If TypeOf(vValue) = gb.String Then
+        If UCase(vValue) = "TRUE" Or If UCase(vValue) = "T" Or If (vValue) = "1" Then
+          vValue = True
+        Else
+          vValue = False
+        Endif
+      Else
+        Try vValue = CBool(CInt(vValue))
+        If Error Then
+          If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Boolean datatype")
+          Return False
+        Endif
+      Endif
+    Case gb.Byte, gb.Short, gb.Integer ' Also convert Byte/Short to Integer
+      Try vValue = CInt(vValue)
+      If Error Then
+        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Integer datatype")
+        Return False
+      Endif
+      iDataType = gb.Integer
+    Case gb.Long
+      Try vValue = CLong(vValue)
+      If Error Then
+        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Long datatype")
+        Return False
+      Endif
+    Case gb.Single, gb.Float ' Also convert Single to Float
+      If TypeOf(vValue) = gb.String Then vValue = Replace(vValue, ",", ".")
+      Try vValue = CFloat(vValue)
+
+      If Error Then
+        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Float datatype")
+        Return False
+      Endif
+      iDataType = gb.Float
+    Case gb.Date
+      Try vValue = CDate(vValue)
+      If Error Then
+        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Date datatype")
+        Return False
+      Endif
+    Case gb.String ' do nothing
+    Default ' nothing matches - don't continue
+      If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' has invalid datatype=" & iDataType & ", detected=" & TypeOf(vValue))
+      Return False
+  End Select
 
   If Events.CheckCondition(vTemp, "<>", vValue, True) Then
 
-    ' First check if the GlobalVar exist
-    ' If vValue is blank, it is removed from the collection
-    bGlobalVarExist = GlobalVar.Exist(sVar)
-    GlobalVar[sVar] = vValue
+    ' Create GlobalVar entry
+    If Not bGlobalVarExist Then Main.GlobalVar.Add(CreateGlobalVarEntry(False, False, False, iDataType), sVar)
 
-    ' Never look for trigger for the uptime or tagline
-    If (sVar <> "Program_Uptime" And sVar <> "Tagline") Then
+    ' Store new value in the GlobalVar, required for CheckGlobalVarEvents
+    Main.GlobalVar[sVar].Value = vValue
+    Main.GlobalVar[sVar].DataType = iDataType
+
+    ' Never look for trigger for e.g. uptime or tagline
+    If Not Main.GlobalVar[sVar].SkipEvent Then
       Events.CheckGlobalVarEvents(sVar, vValue)
       If bBroadcast Then BroadcastEvent("[GlobalVar]" & sVar & "|" & vValue)
     Endif
 
-    ' Write it to the globalvars table, but ignore second and program uptime. We don't want to write too much
-    If (sVar <> "Second" And sVar <> "Program_Uptime") Then
-      If bGlobalVarExist Then
+    ' Don't do anything if value is -1, then we don't update the database
+    If Main.GlobalVar[sVar].WriteInterval = -1 Then Return False
 
-        ' Report the GlobalVar change
-        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' changed from '" & IIf(TypeOf(vTemp) = gb.Boolean, IIf(vTemp, "True", "False"), vTemp) & "' to '" & IIf(TypeOf(vValue) = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
-
-        rResult = Main.hDB.Exec("UPDATE globalvars SET value = &1, datatype = &2 WHERE var = &3", vValue, TypeOf(vValue), sVar)
+    ' Check interval - only write to database if enough time has passed
+    If Main.GlobalVar[sVar].WriteInterval > 0 Then
+      If Not Main.GlobalVar[sVar].LastUpdate Then
+        Main.GlobalVar[sVar].LastUpdate = Now()
       Else
-        ' Report the GlobalVar add
-        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' added with value '" & IIf(TypeOf(vValue) = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
-
-        ' Before we do an insert, first check if it already exist - as safeguard
-        rResult = Main.hDB.Exec("SELECT * FROM globalvars where var = &1", sVar)
-
-        If rResult.Count = 0 Then
-          Try rResult = Main.hDB.Exec("INSERT INTO globalvars SET var = &1, value = &2, datatype = &3", sVar, vValue, TypeOf(vValue))
-        Else
-          rResult = Main.hDB.Exec("UPDATE globalvars SET value = &1, datatype = &2 WHERE var = &3", vValue, TypeOf(vValue), sVar)
-        Endif
+        If DateDiff(Main.GlobalVar[sVar].LastUpdate, Now(), gb.Second) < Main.GlobalVar[sVar].WriteInterval Then Return False
+        Main.GlobalVar[sVar].LastUpdate = Now()
       Endif
-
     Endif
 
-    ' Convert an empty string to "<EMPTY>" - else the Collection will remove the sVar key
-    If TypeOf(vValue) = gb.String Then
-      If vValue = "" Then
-        vValue = "<EMPTY>"
-        GlobalVar[sVar] = vValue
+    If bGlobalVarExist Then
+
+      ' Report the GlobalVar change
+      If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' changed from '" & IIf(TypeOf(vTemp) = gb.Boolean, IIf(vTemp, "True", "False"), vTemp) & "' to '" & IIf(iDataType = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
+
+      rResult = Main.hDB.Exec("UPDATE globalvars SET value = &1, datatype = &2 WHERE var = &3", vValue, iDataType, sVar)
+    Else
+      ' Report the GlobalVar add
+      If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' added with value '" & IIf(iDataType = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
+
+      ' Before we do an insert, first check if it already exist - as safeguard
+      rResult = Main.hDB.Exec("SELECT * FROM globalvars where var = &1", sVar)
+
+      If rResult.Count = 0 Then
+        Try rResult = Main.hDB.Exec("INSERT INTO globalvars SET var = &1, value = &2, datatype = &3", sVar, vValue, iDataType)
+      Else
+        rResult = Main.hDB.Exec("UPDATE globalvars SET value = &1, datatype = &2 WHERE var = &3", vValue, iDataType, sVar)
       Endif
     Endif
 
@@ -2108,97 +2157,123 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub DelGlobalVar(sVar As String)
 
-  If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] Name='" & sVar & "' is deleted")
+  If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' is deleted")
   If Main.GlobalVar.Exist(sVar) Then Main.GlobalVar.Remove(sVar)
   Main.hDB.Exec("DELETE FROM globalvars WHERE var = &1", sVar)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Build up a GlobalVarEntry to be used in the RestoreGlobalVars
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CreateGlobalVarEntry(System As Boolean, ReadOnly As Boolean, SkipEvent As Boolean, DataType As Integer, Optional WriteInterval As Integer = 0) As CGlobalVarEntry
+
+  Dim cGV As New CGlobalVarEntry
+
+  cGV.System = System
+  cGV.ReadOnly = ReadOnly
+  cGV.SkipEvent = SkipEvent
+  cGV.WriteInterval = WriteInterval
+  cGV.DataType = DataType
+
+  Select DataType
+    Case gb.String
+      cGV.Value = ""
+    Case gb.Integer
+      cGV.Value = CInt(0)
+    Case gb.Boolean
+      cGV.Value = False
+  End Select
+
+  Return cGV
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' restore all globalvars from database
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub RestoreGlobalVars()
+Public Sub RestoreGlobalVars(Optional bReadTable As Boolean = True)
 
   Dim rResult As Result
+  Dim cGV As CGlobalVarEntry
 
-  ' Configure all system variables. 1=ReadOnly, 2=ReadWrite
-  ' When not added - it is a custom variable, anything allowed
-  GlobalVar_System.Clear()
-  GlobalVar_System.Add(1, "Program_Start")
-  GlobalVar_System.Add(1, "Second")
-  GlobalVar_System.Add(1, "Minute")
-  GlobalVar_System.Add(1, "Program_Uptime")
-  GlobalVar_System.Add(1, "Hour")
-  GlobalVar_System.Add(1, "Day")
-  GlobalVar_System.Add(1, "Month")
-  GlobalVar_System.Add(1, "Weekday")
-  GlobalVar_System.Add(1, "Time_Of_Day")
-  GlobalVar_System.Add(1, "Year")
-  GlobalVar_System.Add(1, "Sunrise")
-  GlobalVar_System.Add(1, "Sunrise_Twilight")
-  GlobalVar_System.Add(1, "Sunset")
-  GlobalVar_System.Add(1, "Sunset_Twilight")
-  GlobalVar_System.Add(1, "Season")
-  GlobalVar_System.Add(1, "Tagline")
-  GlobalVar_System.Add(1, "Weekend")
-  GlobalVar_System.Add(1, "Dark")
-  GlobalVar_System.Add(2, "House_Mode")
-  GlobalVar_System.Add(2, "Mute")
+  ' Clear the GlobalVar collection
+  Main.GlobalVar.Clear()
 
-  ' DataTypes:
-  ' gb.Boolean = 1, gb.Byte = 2, gb.Short = 3, gb.Integer = 4, gb.Long = 5, gb.Single = 6,
-  ' gb.Float = 7, gb.Date = 8, gb.String = 9, gb.Variant = 11, gb.Null = 15, gb.Object = 16
+  ' Configure the system variables
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Year")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Month")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Day")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Hour")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Minute")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer, -1), "Second")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Integer), "Weekday")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Time_Of_Day")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Program_Start")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, True, gb.String, 300), "Program_Uptime")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Sunrise")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Sunset")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Sunrise_Twilight")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Sunset_Twilight")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.String), "Season")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, True, gb.String, 300), "Tagline")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Boolean), "Weekend")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Boolean), "Dark")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, False, False, gb.Boolean), "House_Mode")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, False, False, gb.Boolean), "Mute")
+
+  ' Skip reading the database is requested
+  If Not bReadTable Then Return
 
   Try rResult = Main.hDB.Exec("SELECT * FROM globalvars")
   If rResult Then
     If rResult.Count Then
       For Each rResult
-        If rResult!value = "" Then
-          Main.GlobalVar[rResult!var] = "<EMPTY>"
+        ' Exist = It is a system variable - the Datatype can't be overruled
+        If GlobalVar.Exist(rResult!var) Then
+          cGV = GlobalVar[rResult!var]
         Else
-
-          If TypeOf(rResult!datatype) <> Null Then
-
-            Select rResult!datatype
-              Case gb.Boolean
-                Try Main.GlobalVar[rResult!var] = CBool(CInt(rResult!value))
-                If Error Then
-                  Main.GlobalVar[rResult!var] = False
-
-                  ' Try to fix value like "T"
-                  If TypeOf(rResult!value) = gb.String Then
-                    If rResult!value = "T" Then Main.GlobalVar[rResult!var] = True
-                  Endif 
-                Endif
-              Case gb.Byte
-                Try Main.GlobalVar[rResult!var] = CByte(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CByte(0)
-              Case gb.Short
-                Try Main.GlobalVar[rResult!var] = CShort(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CShort(0)
-              Case gb.Integer
-                Try Main.GlobalVar[rResult!var] = CInt(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CInteger(0)
-              Case gb.Long
-                Try Main.GlobalVar[rResult!var] = CLong(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CLong(0)
-              Case gb.Single
-                Try Main.GlobalVar[rResult!var] = CSingle(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CSingle(0)
-              Case gb.Float
-                Try Main.GlobalVar[rResult!var] = CFloat(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CFloat(0)
-              Case gb.Date
-                Try Main.GlobalVar[rResult!var] = CDate(rResult!value)
-                If Error Then Main.GlobalVar[rResult!var] = CDate(Now())
-              Default
-                Main.GlobalVar[rResult!var] = CString(rResult!value)
-            End Select
-
+          cGV = New CGlobalVarEntry
+          If rResult!datatype Then
+            cGV.DataType = CInt(rResult!datatype)
           Else
-            Main.GlobalVar[rResult!var] = CString(rResult!value)
+            cGV.DataType = gb.String
           Endif
+
+          GlobalVar.Add(cGV, rResult!var)
         Endif
+
+        Select cGV.DataType
+          Case gb.Boolean
+            If TypeOf(rResult!value) = gb.String Then
+              If UCase(rResult!value) = "TRUE" Or If UCase(rResult!value) = "T" Or If (rResult!value) = "1" Then
+                cGV.Value = True
+              Else
+                cGV.Value = False
+              Endif
+            Else
+              Try cGV.Value = CBool(CInt(rResult!value))
+            Endif
+          Case gb.Byte, gb.Short, gb.Integer ' Also convert Byte/Short to Integer
+            Try cGV.Value = CInt(rResult!value)
+            If Error Then cGV.Value = CInteger(0)
+            cGV.DataType = gb.Integer
+          Case gb.Long
+            Try cGV.Value = CLong(rResult!value)
+            If Error Then cGV.Value = CLong(0)
+          Case gb.Single, gb.Float ' Also convert Single to Float
+            Try cGV.Value = CFloat(rResult!value)
+            If Error Then cGV.Value = CFloat(0)
+            cGV.DataType = gb.Float
+          Case gb.Date
+            Try cGV.Value = CDate(rResult!value)
+            If Error Then cGV.Value = CDate(Now())
+          Default ' if nothing matches - make it is a String
+            cGV.Value = CString(rResult!value)
+            cGV.DataType = gb.String
+        End Select
+
+        If Main.bGlobalVarDebug Then Main.WriteDebugLog("[GlobalVar] '" & rResult!var & "'restored with value '" & IIf(cGV.DataType = gb.Boolean, IIf(cGV.Value, "True", "False"), cGV.Value) & "'.")
       Next
       If Main.bMainDebug Then Main.WriteDebugLog("[Main] Globalvars Restored.")
     Endif
