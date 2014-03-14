@@ -1,14 +1,14 @@
 ' Gambas class file
 
 ' Description:
-' CSmartVisuServer.class
+' CWebSocket.class
 ' Built-in SmartVISU server support.
 
 ' Development Status:
 ' Just started, minimal tested.
 
 ' DomotiGa - an open source home automation program.
-' Copyright (C) Ron Klinkien, The Netherlands.n
+' Copyright (C) Ron Klinkien, The Netherlands.
 
 ' Coded by gambasforge project, I made it work/fixed bugs.
 
@@ -17,10 +17,13 @@
 Event {Ready}
 Event Closed
 Event {Read}(data As String)
+Event {Error}(data As String)
 
-Private $hibil10 As Boolean ' the new protocol is used
 Public sock As Socket
-Private Handeled As Boolean ' socket is ready
+Private $hibil10 As Boolean ' the new protocol is used
+Private $Handeled As Boolean ' socket is ready
+Private $sData As String
+Private $iWait As Integer
 
 Public Sub _new($sock As Socket)
 
@@ -48,15 +51,49 @@ Public Sub Socket_Read()
 
   Read #Last, sData, Lof(Last)
 
-  ' Socket is opened and handshake is done
-  If Handeled Then
-    If $hibil10 Then
-      cData = hybi10Decode(sData)
-      Raise Read(cData["payload"])
+  ' If we already have data append it and let it be handled later
+  If $sData Then
+    $sData &= sData
+    Return
+  Else
+    $sData = sData
+    $iWait = 0
+  Endif
 
-      While cData["payloadnext"]
-        cData = hybi10Decode(cData["payloadnext"])
+  ' Socket is opened and handshake is done
+  If $Handeled Then
+    If $hibil10 Then
+      cData = hybi10Decode($sData)
+      If cData["payload"] Then
         Raise Read(cData["payload"])
+      Endif
+
+      $sData = cData["payloadnext"] 
+
+      While $sData
+        cData = hybi10Decode($sData)
+
+        ' Check if we got a payload
+        If cData["payload"] Then
+          Raise Read(cData["payload"])
+          $sData = cData["payloadnext"]
+
+          ' We got a valid payload, reset Wait to 0
+          $iWait = 0
+        Else
+          ' No payload, the data and length don't match
+
+          ' Don't wait indefinitely - we do NOT raise an event if we have incomplete data
+          If $iWait >= 10 Then
+            Raise Error("Invalid packet - " & $sData)
+            $sData = ""
+            Return
+          Endif
+
+          ' Start a short timer to hopefully get the rest of the data
+          Inc $iWait
+          Wait 0.01
+        Endif
       Wend
 
     Else
@@ -66,11 +103,13 @@ Public Sub Socket_Read()
     ResponseHeaders(sData)
   Endif
 
+  $sData = ""
+
 End
 
 Public Sub Send(text As String)
 
-  If Not Handeled Then Return
+  If Not $Handeled Then Return
   If Not (sock.Status = Net.Connected) Then Return
   If $hibil10 Then
     'Print " HyBi10 WebSocket > " & text
@@ -116,7 +155,7 @@ Private Sub ResponseHeaders(source As String)
   Endif
 
   Write #sock, (response)
-  Handeled = True
+  $Handeled = True
   Raise Ready
 
 Catch
@@ -316,8 +355,8 @@ Public Function hybi10Decode(sData As String) As Collection
   Dim iPayLoadLength As Integer = Asc(Mid(sdata, 2, 1)) And 127
   Dim i, j As Integer
 
-  'Close connection If unmasked frame Is Received:
-  If bisMasked = False Then
+  'Close connection If unmasked frame Is Received
+  If Not bisMasked Then
     '$this - > close(1002); '<= == == == == == == == a modifier
   Endif
 
@@ -363,9 +402,12 @@ Public Function hybi10Decode(sData As String) As Collection
     iDataLength = iPayLoadLength
   Endif
 
-  ' Reset DataLength if the packet is smaller, else DomotiGa will give an error
+  ' When the data packet isn't complete, don't process it
   If (iDataLength + iPayLoadOffset) > Len(sData) Then
-    iDataLength = Len(sData) - iPayLoadOffset
+    Main.WriteDebugLog("[XXX] Not complete, returning")
+    cDecodedData["payload"] = ""
+    cDecodedData["payloadnext"] = sData
+    Return cdecodedData
   Endif
 
   If bisMasked = True Then
