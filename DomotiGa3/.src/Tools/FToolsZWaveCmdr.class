@@ -23,9 +23,14 @@ Private tbText As TextBox
 Private tControllerCommandMessage As Timer
 Private tUserCodeEnrollMessage As Timer
 
-Private $InstanceList As New Integer[]
 Private $Error As String
+Private $InstanceList As New Integer[]
+Private $cControllerList As Collection
+Private $cControllerInfo As Collection
+Private $iHomeId As Integer
+Private $bIsRunning As Boolean
 
+' Only used in server mode
 Private hOpenZWave As Object
 
 Public tRefreshTabInfo As Timer
@@ -38,19 +43,24 @@ Public Sub Form_Open()
 
   Me.Move(FMain.X + 50, FMain.Y + 70)
 
-  If Not Plugin.IsPluginEnabled("OpenZWave", 0) Then
-    Message.Info(("OpenZWave Z-Wave interface is not enabled"))
-    Try Me.Close
-    Return
+  If Main.bServer Then
+    If Not Plugin.IsPluginEnabled("OpenZWave", 0) Then
+      Message.Info(("OpenZWave Z-Wave interface is not enabled"))
+      Try Me.Close
+      Return
+    Endif
   Endif
 
+  ' We are running in client/server mode - we only support JSON-RPC
   If Not Main.bServer Then
-    Message.Info(("Z-Wave Commander will only work in Server-Mode"))
-    Me.Close
-    Return
+    If Main.sRPCType <> "JSONRPC" Then
+      Message.Info(("Open Z-Wave Commander will only work in Client/Server mode if the JSON-RPC is configured in the GUI"))
+      Try Me.Close
+      Return
+    Endif
   Endif
 
-  ' Create/define the Z-Wave node table
+  ' Create/define the Open Z-Wave node table
   With tbvNodes
     .Columns.Count = 12
     .Columns[0].Title = ("Node")
@@ -105,9 +115,37 @@ Public Sub Form_Open()
     .Columns[3].Title = ("UserCode")
   End With
 
-  ' fill the combo list and auto-enable the first instance
-  ' First get the list of enabled instances
-  $InstanceList = Plugin.GetPluginEnabledList("OpenZWave")
+  ' Server will get the information locally, else we need to do a JSON-RPC call
+  If Main.bServer Then
+    ' fill the combo list and auto-enable the first instance
+    ' First get the list of enabled instances
+    $InstanceList = Plugin.GetPluginEnabledList("OpenZWave")
+
+  Else
+    $cControllerList = Client.ToolsOpenZWaveGet("list")
+
+    ' Don't continue if we get an empty response
+    If $cControllerList = Null Then
+      Message.Error(("Received an empty or invalid response from the JSON-RPC server.\nPlease consult the server logfile for more information"))
+      Try Me.Close
+      Return
+    Endif
+
+    ' Check if we received the valid fields and handle errors
+    If Not $cControllerList.Exist("instance_id") Then
+      Message.Error(("Missing controller list in response from the JSON-RPC server.\nPlease consult the server logfile for more information"))
+      Try Me.Close
+      Return
+    Endif
+
+    If TypeOf($cControllerList["instance_id"]) <> gb.Object Then
+      Message.Error(("Controller list is invalid in response from the JSON-RPC server.\nPlease consult the server logfile for more information"))
+      Try Me.Close
+      Return
+    Endif
+ 
+    $InstanceList = $cControllerList["instance_id"]
+  Endif
 
   ' loop through the list and fill the combo list
   cmbList.Clear()
@@ -154,7 +192,7 @@ Public Sub EnableControls(iRow As Integer)
   iSelectedNode = tbvNodes[iRow, 0].Text
 
   ' Don't allow anything if the homeid is empty
-  If hOpenZWave.iHomeID = 0 Then
+  If $iHomeId = 0 Then
     Return
   Endif
 
@@ -173,9 +211,15 @@ Public Sub EnableControls(iRow As Integer)
       spInstance.Enabled = False
 
     Case "Multilevel Switch"
+
+      If Main.bServer Then
+        Try slDim.Value = hOpenZWave.GetCurrentValueNode(iSelectedNode)
+      Else
+        ' todo
+      Endif
+
       btnNodeOn.Enabled = True
       btnNodeOff.Enabled = True
-      Try slDim.Value = hOpenZWave.GetCurrentValueNode(iSelectedNode)
       slDim.Enabled = True
       btnRequestBasicReport.Enabled = True
       btnRequestDynamicReport.Enabled = True
@@ -255,14 +299,22 @@ Public Sub UpdateTabStrip()
   Dim sElt As String[]
   Dim sStr As String
   Dim sLp As String
-  Dim sGroup As Integer
-  Dim sUserCode As Integer
-  Dim sCount As Integer
+  Dim iGroup As Integer
+  Dim iUserCode As Integer
+  Dim iCount As Integer
+  Dim iCnt As Integer
   Dim jCnt As Integer
+  Dim bConfig As Boolean
+  Dim bGroup As Boolean
+  Dim bUserCode As Boolean
+  Dim cNodeInfo As Collection
 
   ' We only update the Config/Association/UserCode/Wake-up if it is visible
 
   If iSelectedNode >= 1 Then
+
+    ' Find node in the $cNodeInfo list
+    'cNodeInfo = ...
 
     Select TabStripZWaveCmdr.Index
       Case 2 ' Configuration
@@ -276,183 +328,186 @@ Public Sub UpdateTabStrip()
           For jCnt = 2 To 3
             tbvConfig.Columns[jCnt].Width = tbvConfig.Font.TextWidth(tbvConfig.Columns[jCnt].Title) + tbvConfig.Font.Size
           Next
-          
-          ' If we don't have a configuration list, change the tab with usefull information how to continue
-          sStr = hOpenZWave.GetNodeConfigList(iSelectedNode)
-          If sStr = "" Then
 
-            ' We don't have a config list, hide the table & save button
-            '  Just show the old config stuff + warning
-            tbvConfig.Visible = False
-            txtConfigHelp.Visible = False
-            frConfigHelp.Visible = False
-            btnConfigSave.Visible = False
-            lbConfigParam.Visible = True
-            lbConfigValue.Visible = True
-            lbConfigSize.Visible = True
-            vbConfigParam.Visible = True
-            vbConfigValue.Visible = True
-            cmbConfigSize.Visible = True
-            btnConfigSet.Visible = True
-            txtConfigInfo.Visible = True
-            frConfigInfo.Visible = True
+          bConfig = False
 
-          Else
+          If Main.bServer Then
+            ' If we don't have a configuration list, change the tab with usefull information how to continue
+            sStr = hOpenZWave.GetNodeConfigList(iSelectedNode)
+            If sStr Then
+              bConfig = True
 
-            tbvConfig.Visible = True
-            txtConfigHelp.Visible = True
-            frConfigHelp.Visible = True
-            btnConfigSave.Visible = True
-            lbConfigParam.Visible = False
-            lbConfigValue.Visible = False
-            lbConfigSize.Visible = False          
-            vbConfigParam.Visible = False
-            vbConfigValue.Visible = False
-            cmbConfigSize.Visible = False
-            btnConfigSet.Visible = False
-            txtConfigInfo.Visible = False
-            frConfigInfo.Visible = False
-            
-            ' We got a list, fill the table now
-            sElt = Split(sStr, "|")
-            For Each sLp In sElt
+              ' We got a list, fill the table now
+              sElt = Split(sStr, "|")
+              For Each sLp In sElt
 
-              Inc tbvConfig.Rows.Count
-              tbvConfig[tbvConfig.Rows.Count - 1, 0].Text = sLp
-              tbvConfig[tbvConfig.Rows.Count - 1, 1].Text = hOpenZWave.GetNodeConfigValue(iSelectedNode, CInt(sLp))
-              tbvConfig[tbvConfig.Rows.Count - 1, 2].Text = hOpenZWave.GetNodeConfigLabel(iSelectedNode, CInt(sLp))
-              tbvConfig[tbvConfig.Rows.Count - 1, 3].Text = tbvConfig[tbvConfig.Rows.Count - 1, 1].Text
-
-              ' Make columns widther if needed, skip column 0
-              For jCnt = 2 To 3
-                If (tbvConfig.Font.TextWidth(tbvConfig[tbvConfig.Rows.Count - 1, jCnt].Text) + tbvConfig.Font.Size) > tbvConfig.Columns[jCnt].Width Then
-                  tbvConfig.Columns[jCnt].Width = tbvConfig.Font.TextWidth(tbvConfig[tbvConfig.Rows.Count - 1, jCnt].Text) + tbvNodes.Font.Size
-                Endif
+                Inc tbvConfig.Rows.Count
+                tbvConfig[tbvConfig.Rows.Count - 1, 0].Text = sLp
+                tbvConfig[tbvConfig.Rows.Count - 1, 1].Text = hOpenZWave.GetNodeConfigValue(iSelectedNode, CInt(sLp))
+                tbvConfig[tbvConfig.Rows.Count - 1, 2].Text = hOpenZWave.GetNodeConfigLabel(iSelectedNode, CInt(sLp))
+                tbvConfig[tbvConfig.Rows.Count - 1, 3].Text = tbvConfig[tbvConfig.Rows.Count - 1, 1].Text
               Next
 
-            Next
+            Endif
+          Else
+
+            ' The config is received in the nodeinfo request
 
           Endif
-          
+
+          ' We don't have a config list, hide the table & save button
+          '  Just show the old config stuff + warning
+          tbvConfig.Visible = bConfig
+          txtConfigHelp.Visible = bConfig
+          frConfigHelp.Visible = bConfig
+          btnConfigSave.Visible = bConfig
+          lbConfigParam.Visible = Not bConfig
+          lbConfigValue.Visible = Not bConfig
+          lbConfigSize.Visible = Not bConfig
+          vbConfigParam.Visible = Not bConfig
+          vbConfigValue.Visible = Not bConfig
+          cmbConfigSize.Visible = Not bConfig
+          btnConfigSet.Visible = Not bConfig
+          txtConfigInfo.Visible = Not bConfig
+          frConfigInfo.Visible = Not bConfig
+
+          ' Make columns widther if needed, skip column 0
+          For iCnt = 0 To (tbvConfig.Rows.Count - 1)
+
+            For jCnt = 2 To 3
+              If (tbvConfig.Font.TextWidth(tbvConfig[iCnt, jCnt].Text) + tbvConfig.Font.Size) > tbvConfig.Columns[jCnt].Width Then
+                tbvConfig.Columns[jCnt].Width = tbvConfig.Font.TextWidth(tbvConfig[iCnt, jCnt].Text) + tbvNodes.Font.Size
+              Endif
+            Next
+          Next
+
           iConfigNode = iSelectedNode
         Endif
       Case 3 ' Association
         If iSelectedNode <> iAssocNode Then
 
           tbvAssociation.Clear
-
           tbvAssociation.Rows.Count = 0
 
           For jCnt = 1 To 2
             tbvAssociation.Columns[jCnt].Width = tbvAssociation.Font.TextWidth(tbvAssociation.Columns[jCnt].Title) + tbvAssociation.Font.Size
           Next
-          
-          ' Retrieve the group count for this device
-          sGroup = hOpenZWave.GetNodeGroupCount(iSelectedNode)
-          If sGroup = 0 Then
 
-            ' We don't have a group list, remove all button
-            tbvAssociation.Visible = False
-            lbAssociationGroup.Visible = False
-            vbAssociationGroup.Visible = False
-            lbAssociationNode.Visible = False
-            vbAssociationNode.Visible = False
-            btnAddAssociation.Visible = False
-            btnRemoveAssociation.Visible = False
-            FrAssociationEmptyInfo.Visible = True
-          Else
+          bGroup = False
 
-            tbvAssociation.Visible = True
-            lbAssociationGroup.Visible = True
-            vbAssociationGroup.Visible = True
-            lbAssociationNode.Visible = True
-            vbAssociationNode.Visible = True
-            btnAddAssociation.Visible = True
-            btnRemoveAssociation.Visible = True
-            FrAssociationEmptyInfo.Visible = False
+          If Main.bServer Then
+            ' Retrieve the group count for this device
+            iGroup = hOpenZWave.GetNodeGroupCount(iSelectedNode)
+            If iGroup >= 1 Then
 
-            ' We got a list, fill the table now
-            For sCount = 1 To sGroup
-
-              Inc tbvAssociation.Rows.Count
-              tbvAssociation[tbvAssociation.Rows.Count - 1, 0].Text = sCount
-              tbvAssociation[tbvAssociation.Rows.Count - 1, 1].Text = hOpenZWave.GetNodeGroupLabel(iSelectedNode, sCount)
-              tbvAssociation[tbvAssociation.Rows.Count - 1, 2].Text = hOpenZWave.GetNodeGroupList(iSelectedNode, sCount)
-
-              ' Make columns widther if needed, skip column 0
-              For jCnt = 1 To 2
-                If (tbvAssociation.Font.TextWidth(tbvAssociation[tbvAssociation.Rows.Count - 1, jCnt].Text) + tbvAssociation.Font.Size) > tbvAssociation.Columns[jCnt].Width Then
-                  tbvAssociation.Columns[jCnt].Width = tbvAssociation.Font.TextWidth(tbvAssociation[tbvAssociation.Rows.Count - 1, jCnt].Text) + tbvAssociation.Font.Size
-                Endif
+              ' We got a list, fill the table now
+              bGroup = True
+              For iCount = 1 To iGroup
+                Inc tbvAssociation.Rows.Count
+                tbvAssociation[tbvAssociation.Rows.Count - 1, 0].Text = iCount
+                tbvAssociation[tbvAssociation.Rows.Count - 1, 1].Text = hOpenZWave.GetNodeGroupLabel(iSelectedNode, iCount)
+                tbvAssociation[tbvAssociation.Rows.Count - 1, 2].Text = hOpenZWave.GetNodeGroupList(iSelectedNode, iCount)
               Next
 
-            Next
+            Endif
+          Else
+
+            ' The groups are received in the nodeinfo request
 
           Endif
+
+          tbvAssociation.Visible = bGroup
+          lbAssociationGroup.Visible = bGroup
+          vbAssociationGroup.Visible = bGroup
+          lbAssociationNode.Visible = bGroup
+          vbAssociationNode.Visible = bGroup
+          btnAddAssociation.Visible = bGroup
+          btnRemoveAssociation.Visible = bGroup
+          FrAssociationEmptyInfo.Visible = Not bGroup
+
+          ' Make columns widther if needed, skip column 0
+          For iCnt = 0 To (tbvAssociation.Rows.Count - 1)
+            For jCnt = 1 To 2
+              If (tbvAssociation.Font.TextWidth(tbvAssociation[iCnt, jCnt].Text) + tbvAssociation.Font.Size) > tbvAssociation.Columns[jCnt].Width Then
+                tbvAssociation.Columns[jCnt].Width = tbvAssociation.Font.TextWidth(tbvAssociation[iCnt, jCnt].Text) + tbvAssociation.Font.Size
+              Endif
+            Next
+          Next
 
           iAssocNode = iSelectedNode
 
         Endif
+
       Case 4 ' Wake-up
         If iSelectedNode <> iUserCodeNode Then
-          vbWakeUpInterval.Value = hOpenZWave.GetNodeWakeUpInterval(iSelectedNode)
-	  If vbWakeUpInterval.Value = -1 Then
+
+          If Main.bServer Then
+            vbWakeUpInterval.Value = hOpenZWave.GetNodeWakeUpInterval(iSelectedNode)
+          Else
+
+          Endif
+
+          If vbWakeUpInterval.Value = -1 Then
             vbWakeUpInterval.Enabled = False
             vbWakeUpInterval.Value = 0
           Else
             vbWakeUpInterval.Enabled = True
           Endif
         Endif
+
       Case 5 ' UserCode
         If iSelectedNode <> iUserCodeNode Then
 
           tbvUserCode.Clear
-
           tbvUserCode.Rows.Count = 0
 
           For jCnt = 1 To 3
             tbvUserCode.Columns[jCnt].Width = tbvUserCode.Font.TextWidth(tbvUserCode.Columns[jCnt].Title) + tbvUserCode.Font.Size
           Next
 
-          ' Retrieve the group count for this device
-          sUserCode = hOpenZWave.GetNodeUserCodeCount(iSelectedNode)
-          If sUserCode = 0 Then
+          bUserCode = False
 
-            ' We don't have a usercode list, remove all button
-            tbvUserCode.Visible = False
-            btnUserCodeEnroll.Visible = False
-            btnUserCodeRemove.Visible = False
-            FrUserCodeEmptyInfo.Visible = True
-          Else
-            tbvUserCode.Visible = True
-            btnUserCodeEnroll.Visible = True
-            btnUserCodeRemove.Visible = True
-            btnUserCodeRemove.Enabled = False
-            FrUserCodeEmptyInfo.Visible = False
+          If Main.bServer Then
+            ' Retrieve the group count for this device
+            iUserCode = hOpenZWave.GetNodeUserCodeCount(iSelectedNode)
+            If iUserCode >= 1 Then
   
-            ' We got a list, fill the table now
-            For sCount = 1 To sUserCode
+              ' We got a list, fill the table now
+              bUserCode = True
+              For iCount = 1 To iUserCode
 
-              Inc tbvUserCode.Rows.Count
-              tbvUserCode[tbvUserCode.Rows.Count - 1, 0].Text = sCount
-              tbvUserCode[tbvUserCode.Rows.Count - 1, 1].Text = hOpenZWave.GetNodeUserCodeLabel(iSelectedNode, sCount)
-              tbvUserCode[tbvUserCode.Rows.Count - 1, 3].Text = hOpenZWave.GetNodeUserCodeValue(iSelectedNode, sCount)
-              If (Left(tbvUserCode[tbvUserCode.Rows.Count - 1, 3].Text, 4)) = "0x00" Then
-                tbvUserCode[tbvUserCode.Rows.Count - 1, 2].Text = "Free"
-              Else
-                tbvUserCode[tbvUserCode.Rows.Count - 1, 2].Text = "Enrolled"
-              Endif
-
-              ' Make columns widther if needed, skip column 0
-              For jCnt = 1 To 3
-                If (tbvUserCode.Font.TextWidth(tbvUserCode[tbvUserCode.Rows.Count - 1, jCnt].Text) + tbvUserCode.Font.Size) > tbvUserCode.Columns[jCnt].Width Then
-                  tbvUserCode.Columns[jCnt].Width = tbvUserCode.Font.TextWidth(tbvUserCode[tbvUserCode.Rows.Count - 1, jCnt].Text) + tbvUserCode.Font.Size
+                Inc tbvUserCode.Rows.Count
+                tbvUserCode[tbvUserCode.Rows.Count - 1, 0].Text = iCount
+                tbvUserCode[tbvUserCode.Rows.Count - 1, 1].Text = hOpenZWave.GetNodeUserCodeLabel(iSelectedNode, iCount)
+                tbvUserCode[tbvUserCode.Rows.Count - 1, 3].Text = hOpenZWave.GetNodeUserCodeValue(iSelectedNode, iCount)
+                If (Left(tbvUserCode[tbvUserCode.Rows.Count - 1, 3].Text, 4)) = "0x00" Then
+                  tbvUserCode[tbvUserCode.Rows.Count - 1, 2].Text = "Free"
+                Else
+                  tbvUserCode[tbvUserCode.Rows.Count - 1, 2].Text = "Enrolled"
                 Endif
               Next
 
-            Next
+            Endif
+          Else
+
+            ' The usercodes are received in the nodeinfo request
 
           Endif
+
+          tbvUserCode.Visible = bUserCode
+          btnUserCodeEnroll.Visible = bUserCode
+          btnUserCodeRemove.Visible = bUserCode
+          btnUserCodeRemove.Enabled = Not bUserCode
+          FrUserCodeEmptyInfo.Visible = Not bUserCode
+
+          ' Make columns widther if needed, skip column 0
+          For iCnt = 0 To (tbvUserCode.Rows.Count - 1)
+            For jCnt = 1 To 3
+              If (tbvUserCode.Font.TextWidth(tbvUserCode[iCnt, jCnt].Text) + tbvUserCode.Font.Size) > tbvUserCode.Columns[jCnt].Width Then
+                tbvUserCode.Columns[jCnt].Width = tbvUserCode.Font.TextWidth(tbvUserCode[iCnt, jCnt].Text) + tbvUserCode.Font.Size
+              Endif
+            Next
+          Next
 
           iUserCodeNode = iSelectedNode
 
@@ -945,12 +1000,26 @@ End
 Public Sub cmbList_Click()
 
   Dim aNodes As New Integer[]
-  Dim cNode As New COpenZWaveEntry
+  Dim cNode As Object
   Dim iCnt As Integer
   Dim jCnt As Integer
+  Dim bError As Boolean
 
-  Try hOpenZWave = Plugin.GetPluginObject("OpenZWave", $InstanceList[cmbList.Index]).Interface
-  If Error Then
+  If Main.bServer Then
+    Try hOpenZWave = Plugin.GetPluginObject("OpenZWave", $InstanceList[cmbList.Index]).Interface
+    bError = Error
+  Else
+    $cControllerInfo = Client.ToolsOpenZWaveGet("controller", $InstanceList[cmbList.Index])
+
+    ' Better error handling required
+    If $cControllerInfo = Null Then
+      bError = True
+    Else
+      bError = Not $cControllerInfo.Exist("instance_id")
+    Endif
+  Endif
+
+  If bError Then
     txtStatus.Text = ("Not Connected")
     txtStatus.Foreground = &HFF0000
     btnShowError.Visible = True
@@ -958,9 +1027,15 @@ Public Sub cmbList_Click()
 
     'EnableDisableTX(False)
   Else
-    'EnableDisableTX(hOpenZWave.IsRunning)
 
-    If hOpenZWave.IsRunning Then
+    'EnableDisableTX(hOpenZWave.IsRunning)
+    If Main.bServer Then
+      $bIsRunning = hOpenZWave.IsRunning
+    Else
+      Try $bIsRunning = $cControllerInfo["running"]
+    Endif
+
+    If $bIsRunning Then
       txtStatus.Text = ("Connected")
       txtStatus.Foreground = &H00FF00
       btnShowError.Visible = False
@@ -1022,8 +1097,14 @@ Public Sub cmbList_Click()
   btnRemoveFailedNode.Enabled = False
   btnReplaceFailedNode.Enabled = False
 
+  If Main.bServer Then
+    $iHomeId = hOpenZWave.GetHomeId()
+  Else
+    Try $iHomeId = $cControllerInfo["homeid"]
+  Endif
+
   ' Disallow the controller commands if we don't have a homeid
-  If hOpenZWave.GetHomeId() = 0 Then
+  If $iHomeId = 0 Then
     txtHomeID.Text = "UNKNOWN"
     btnAddDevice.Enabled = False
     btnRemoveDevice.Enabled = False
@@ -1034,7 +1115,7 @@ Public Sub cmbList_Click()
     btnRequestDynamicReportAll.Enabled = False
     btnRequestHealNetwork.Enabled = False
   Else
-    txtHomeID.Text = "0x" & Right(Hex(hOpenZWave.GetHomeId()), 8)
+    txtHomeID.Text = "0x" & Right(Hex($iHomeId), 8)
     btnAddDevice.Enabled = True
     btnRemoveDevice.Enabled = True
     btnCancelControllerCommand.Enabled = True
@@ -1045,46 +1126,86 @@ Public Sub cmbList_Click()
     btnRequestHealNetwork.Enabled = True
   Endif
 
-  txtControllerID.Text = hOpenZWave.GetControllerId()
-  txtControllerType.text = hOpenZWave.GetControllerType()
-  txtAPIVersion.Text = hOpenZWave.GetAPIVersion()
-  txtSDKVersion.Text = hOpenZWave.GetSDKVersion()
+  If Main.bServer Then
+    txtControllerID.Text = hOpenZWave.GetControllerId()
+    txtControllerType.text = hOpenZWave.GetControllerType()
+    txtAPIVersion.Text = hOpenZWave.GetAPIVersion()
+    txtSDKVersion.Text = hOpenZWave.GetSDKVersion()
 
-  aNodes = hOpenZWave.GetNodeList()
+    aNodes = hOpenZWave.GetNodeList()
 
-  If aNodes.Count >= 1 Then
-    tbvNodes.Enabled = True
-    tbvNodes.Rows.Count = aNodes.Count
-    For iCnt = 0 To (aNodes.Count - 1)
-      cNode = hOpenZWave.GetNodeInfo(aNodes[iCnt])
-      If cNode <> Null Then 
-        tbvNodes[iCnt, 0].Text = cNode.NodeId
-        tbvNodes[iCnt, 1].Text = hOpenZWave.BasicTypeName(cNode.Basic)
-        tbvNodes[iCnt, 2].Text = hOpenZWave.GenericTypeName(cNode.Generic)
-        tbvNodes[iCnt, 3].Text = cNode.Values["1"]
-        tbvNodes[iCnt, 4].Text = cNode.Values["2"]
-        tbvNodes[iCnt, 5].Text = cNode.Values["3"]
-        tbvNodes[iCnt, 6].Text = cNode.Values["4"]
-        tbvNodes[iCnt, 7].Text = IIf(cNode.Listening, "Listening", "Sleeping")
-        tbvNodes[iCnt, 8].Text = hOpenZWave.GetNodeManufacturerName(cNode.NodeId)
-        tbvNodes[iCnt, 9].Text = hOpenZWave.GetNodeProductName(cNode.NodeId)
-        tbvNodes[iCnt, 10].Text = hOpenZWave.GetNodeNeighborsList(cNode.NodeId)
-        tbvNodes[iCnt, 11].Text = hOpenZWave.GetNodeCommandClassList(cNode.NodeId)
+    If aNodes.Count >= 1 Then
+      tbvNodes.Enabled = True
+      tbvNodes.Rows.Count = aNodes.Count
+      For iCnt = 0 To (aNodes.Count - 1)
+        cNode = hOpenZWave.GetNodeInfo(aNodes[iCnt])
+        If cNode <> Null Then 
+          tbvNodes[iCnt, 0].Text = cNode.NodeId
+          tbvNodes[iCnt, 1].Text = hOpenZWave.BasicTypeName(cNode.Basic)
+          tbvNodes[iCnt, 2].Text = hOpenZWave.GenericTypeName(cNode.Generic)
+          tbvNodes[iCnt, 3].Text = cNode.Values["1"]
+          tbvNodes[iCnt, 4].Text = cNode.Values["2"]
+          tbvNodes[iCnt, 5].Text = cNode.Values["3"]
+          tbvNodes[iCnt, 6].Text = cNode.Values["4"]
+          tbvNodes[iCnt, 7].Text = IIf(cNode.Listening, "Listening", "Sleeping")
+          tbvNodes[iCnt, 8].Text = hOpenZWave.GetNodeManufacturerName(cNode.NodeId)
+          tbvNodes[iCnt, 9].Text = hOpenZWave.GetNodeProductName(cNode.NodeId)
+          tbvNodes[iCnt, 10].Text = hOpenZWave.GetNodeNeighborsList(cNode.NodeId)
+          tbvNodes[iCnt, 11].Text = hOpenZWave.GetNodeCommandClassList(cNode.NodeId)
 
-        ' Make column widther if needed
+          ' Make column widther if needed
+          For jCnt = 0 To 11
+            If (tbvNodes.Font.TextWidth(tbvNodes[iCnt, jCnt].Text) + tbvNodes.Font.Size) > tbvNodes.Columns[jCnt].Width Then
+              tbvNodes.Columns[jCnt].Width = tbvNodes.Font.TextWidth(tbvNodes[iCnt, jCnt].Text) + tbvNodes.Font.Size
+            Endif
+          Next
+        Endif
+
+      Next
+    Else
+      tbvNodes.Enabled = False
+      tbvNodes.Rows.Count = 0
+    Endif
+
+  Else
+    txtControllerID.Text = $cControllerInfo["controllerid"]
+    txtControllerType.text = $cControllerInfo["controllertype"]
+    txtAPIVersion.Text = $cControllerInfo["apiversion"]
+    txtSDKVersion.Text = $cControllerInfo["sdkversion"]
+
+    If $cControllerInfo <> Null And If $cControllerInfo["count"] > 0 Then
+
+      tbvNodes.Enabled = True
+      tbvNodes.Rows.Count = $cControllerInfo["count"]
+      iCnt = 0
+      For Each cNode In $cControllerInfo["nodeinfo"]
+        tbvNodes[iCnt, 0].Text = cNode["node_id"]
+        tbvNodes[iCnt, 1].Text = cNode["basic"]
+        tbvNodes[iCnt, 2].Text = cNode["generic"]
+        'tbvNodes[iCnt, 3].Text = cNode.Values["1"]
+        'tbvNodes[iCnt, 4].Text = cNode.Values["2"]
+        'tbvNodes[iCnt, 5].Text = cNode.Values["3"]
+        'tbvNodes[iCnt, 6].Text = cNode.Values["4"]
+        tbvNodes[iCnt, 7].Text = IIf(cNode["listening"], "Listening", "Sleeping")
+        tbvNodes[iCnt, 8].Text = cNode["manufacturername"]
+        tbvNodes[iCnt, 9].Text = cNode["productname"]
+        tbvNodes[iCnt, 10].Text = cNode["neighbors"]
+        tbvNodes[iCnt, 11].Text = cNode["commandclass"]
+
+          ' Make column widther if needed
         For jCnt = 0 To 11
-
           If (tbvNodes.Font.TextWidth(tbvNodes[iCnt, jCnt].Text) + tbvNodes.Font.Size) > tbvNodes.Columns[jCnt].Width Then
             tbvNodes.Columns[jCnt].Width = tbvNodes.Font.TextWidth(tbvNodes[iCnt, jCnt].Text) + tbvNodes.Font.Size
           Endif
-
         Next
-      Endif
 
-    Next
-  Else
-    tbvNodes.Enabled = False
-    tbvNodes.Rows.Count = 0
+        iCnt += 1
+      Next
+
+    Else
+      tbvNodes.Enabled = False
+      tbvNodes.Rows.Count = 0
+    Endif
   Endif
 
 End
