@@ -277,6 +277,10 @@ Public Function Connect() As Boolean
   hRpcFunc = New JsonRpcFunction("subscribe.deviceupdate")
   hJSONRPC.Register(hRpcFunc)
 
+  ' ### Tools Commander OpenZWave methods ###
+  hRpcFunc = New JsonRpcFunction("tools.openzwave.get")
+  hJSONRPC.Register(hRpcFunc)
+
   ' ---------------------------------------------------------
   ' All have been setup, now try to start the JSOC-RPC server
   ' ---------------------------------------------------------
@@ -487,6 +491,10 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As Collection)
       Call_Subscribe_LogUpdate()
     Case "subscribe.deviceupdate"
       Call_Subscribe_DeviceUpdate()
+
+      ' ### Tools ###
+    Case "tools.openzwave.get"
+      Call_Tools_OpenZWave_Get(cData)
 
       ' ### Default - return an error ###
     Default
@@ -2331,6 +2339,205 @@ End
 Public Sub Subscribe_DeviceUpdate(cData As Collection)
 
   hJSONRPC.DeviceUpdate(cData)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' method=tools.openzwave.get
+' Params:
+' - command: list, controller
+' - instance_id: numeric
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Call_Tools_OpenZWave_Get(cData As Collection)
+
+  Dim cOpenZWaveNode As New COpenZWaveEntry
+  Dim iInstance As Integer
+  Dim hOpenZWave As Object
+  Dim aNodeList As New Integer[]
+  Dim aInstanceList As New Integer[]
+  Dim iCnt As Integer
+  Dim jCnt As Integer
+  Dim iTemp As Integer
+  Dim cInfo As New Collection
+  Dim sValue As String
+  Dim sValueValue As String
+  Dim cValueValue As New Collection
+  Dim aValueValue As New Collection[]
+  Dim aValue As New Collection[]
+  Dim cValue As New Collection
+  Dim sElt As String[]
+  Dim iGroup As Integer
+  Dim iUserCode As Integer
+
+  If cData = Null Then
+    WriteDebugLogError("params 'command' and 'instance_id' is not supplied")
+    hJSONRPC.SetReply(-32602, Null)
+    Return
+  Endif
+
+  ' Detect if the "command" is a string
+  If TypeOf(cData["command"]) <> gb.String Then
+    WriteDebugLogError("params 'command' is not a string")
+    hJSONRPC.SetReply(-32602, Null)
+    Return
+  Endif
+
+  ' Check for "instance_id", only not needed when getting instance list
+  If cData["command"] <> "list" Then
+    If Not JSONCheckNumber(cData["instance_id"]) Then
+      WriteDebugLogError("params 'instance_id' is missing or isn't numeric")
+      hJSONRPC.SetReply(-32602, Null)
+      Return
+    Endif
+
+    Try iInstance = CInt(cData["instance_id"])
+    If Error Then
+      WriteDebugLogError("params 'instance_id' can't be converted to integer")
+      hJSONRPC.SetReply(-32602, Null)
+      Return
+    Endif
+
+    If iInstance <= 0 Then
+      WriteDebugLogError("params 'instance_id' can't be zero or negative")
+      hJSONRPC.SetReply(-32602, Null)
+      Return
+    Endif
+
+    ' Don't continue if the Plugin isn't enabled
+    If Not Plugin.IsPluginEnabled("OpenZWave", Instance) Then
+      '...
+    Endif
+
+    ' Make reference to our local object, makes it easier to code
+    Try hOpenZWave = Plugin.GetPluginObject("OpenZWave", iInstance).Interface
+    If Error Then
+      '...
+    Endif
+
+  Endif
+
+  Select cData["command"]
+    ' Get available/enabled controller list
+    Case "list"
+      aInstanceList = Plugin.GetPluginEnabledList("OpenZWave")
+      cValue["count"] = aInstanceList.Count
+      cValue["instance_id"] = aInstanceList
+
+    ' Get controller information. If working, which API, HomeId, etc
+    Case "controller"
+      cValue["instance_id"] = iInstance
+      cValue["running"] = hOpenZWave.IsRunning
+      If Not hOpenZWave.IsRunning Then cValue["errortext"] = hOpenZWave.ErrorText
+      cValue["homeid"] = hOpenZWave.GetHomeId()
+      cValue["controllerid"] = hOpenZWave.GetControllerId() 
+      cValue["controllertype"] = hOpenZWave.GetControllerType()
+      cValue["apiversion"] = hOpenZWave.GetAPIVersion()
+      cValue["sdkversion"] = hOpenZWave.GetSDKVersion()
+      cValue["wrapperversion"] = hOpenZWave.GetWrapperVersion()
+      cValue["ozwversion"] = hOpenZWave.GetOZWVersion()
+      cValue["allqueried"] = hOpenZWave.bAllQueried
+
+      aNodeList = hOpenZWave.GetNodeList()
+
+      If aNodeList.Count >= 1 Then
+        For iCnt = 0 To (aNodeList.Count - 1)
+          cOpenZWaveNode = hOpenZWave.GetNodeInfo(aNodeList[iCnt])
+          If cOpenZWaveNode <> Null Then
+            cInfo = New Collection
+            cInfo["node_id"] = cOpenZWaveNode.NodeId
+            cInfo["basic"] = JSONToEmptyString(hOpenZWave.BasicTypeName(cOpenZWaveNode.Basic))
+            cInfo["generic"] = JSONToEmptyString(hOpenZWave.GenericTypeName(cOpenZWaveNode.Generic))
+            cInfo["listening"] = cOpenZWaveNode.Listening
+            cInfo["frequentListening"] = cOpenZWaveNode.FrequentListening
+            cInfo["routing"] = cOpenZWaveNode.Routing
+            cInfo["security"] = cOpenZWaveNode.Security
+            cInfo["manufacturername"] = JSONToEmptyString(hOpenZWave.GetNodeManufacturerName(cOpenZWaveNode.NodeId))
+            cInfo["productname"] = JSONToEmptyString(hOpenZWave.GetNodeProductName(cOpenZWaveNode.NodeId))
+            cInfo["neighbors"] = JSONToEmptyString(hOpenZWave.GetNodeNeighborsList(cOpenZWaveNode.NodeId))
+            cInfo["commandclass"] = JSONToEmptyString(hOpenZWave.GetNodeCommandClassList(cOpenZWaveNode.NodeId))
+
+            aValueValue = New Collection[]
+            For Each sValueValue In cOpenZWaveNode.Values
+              Try iTemp = CInt(cOpenZWaveNode.Values.Key) 
+              If Not Error Then
+                cValueValue = New Collection
+                cValueValue["valuenum"] = iTemp
+                cValueValue["value"] = JSONToEmptyString(sValueValue)
+                aValueValue.Add(cValueValue)
+              Endif
+            Next
+
+            cInfo.Add(aValueValue, "values")
+
+            ' Add config items
+            aValueValue = New Collection[]
+
+            sValue = hOpenZWave.GetNodeConfigList(cOpenZWaveNode.NodeId)
+            If sValue Then
+
+              ' We got a list, fill the table now
+              sElt = Split(sValue, "|")
+              For Each sValue In sElt
+                cValueValue = New Collection
+                cValueValue["index"] = CInt(sValue)
+                cValueValue["label"] = hOpenZWave.GetNodeConfigLabel(cOpenZWaveNode.NodeId, CInt(sValue))
+                cValueValue["value"] = hOpenZWave.GetNodeConfigValue(cOpenZWaveNode.NodeId, CInt(sValue))
+                aValueValue.Add(cValueValue)
+              Next
+            Endif
+
+            cInfo.Add(aValueValue, "config")
+
+            ' Add group items
+            aValueValue = New Collection[]
+
+            iGroup = hOpenZWave.GetNodeGroupCount(COpenZWaveNode.NodeId)
+
+            For jCnt = 1 To iGroup
+              cValueValue = New Collection
+              cValueValue["group"] = jCnt
+              cValueValue["label"] = hOpenZWave.GetNodeGroupLabel(COpenZWaveNode.NodeId, jCnt)
+              cValueValue["list"] = hOpenZWave.GetNodeGroupList(COpenZWaveNode.NodeId, jCnt)
+              aValueValue.Add(cValueValue)
+            Next
+
+            cInfo.Add(aValueValue, "groups")
+
+            ' Add wakeup timer
+            cInfo.Add(hOpenZWave.GetNodeWakeUpInterval(COpenZWaveNode.NodeId), "wakeup")
+
+            ' Add UserCodes
+            aValueValue = New Collection[]
+
+            iUserCode = hOpenZWave.GetNodeUserCodeCount(COpenZWaveNode.NodeId)
+            For jCnt = 1 To iUserCode
+              cValueValue = New Collection
+              cValueValue["usercode"] = jCnt
+              cValueValue["label"] = hOpenZWave.GetNodeUserCodeLabel(COpenZWaveNode.NodeId, jCnt)
+              cValueValue["value"] = hOpenZWave.GetNodeUserCodeValue(COpenZWaveNode.NodeId, jCnt)
+              cValueValue["text"] = IIf(Left(cValueValue["value"], 4) = "0x00", "Free", "Enrolled")
+              aValueValue.Add(cValueValue)
+            Next
+
+            cInfo.Add(aValueValue, "usercode")
+
+            ' Add nodeinfo to an array
+            aValue.Add(cInfo)
+
+          Endif
+        Next
+      Endif
+
+      cValue["count"] = aNodeList.Count
+      cValue["nodeinfo"] = aValue
+
+    Default
+      WriteDebugLogError("params 'mode' has unknown value '" & cData["mode"] & "'")
+      hJSONRPC.SetReply(-32602, Null)
+      Return
+  End Select
+
+  hJSONRPC.SetReply(0, cValue)
 
 End
 
