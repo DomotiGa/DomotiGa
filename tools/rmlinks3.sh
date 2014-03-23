@@ -82,6 +82,7 @@ cp ../../DomotiGa3/.src/CSmartVISUServer.class .
 cp ../../DomotiGa3/.src/CSqueezeServer.class .
 cp ../../DomotiGa3/.src/CTelnetServer.class .
 cp ../../DomotiGa3/.src/CTemp08.class .
+cp ../../DomotiGa3/.src/CTemperaturNu.class .
 cp ../../DomotiGa3/.src/CToon.class .
 cp ../../DomotiGa3/.src/CTwitter.class .
 cp ../../DomotiGa3/.src/CUPS.class .
@@ -111,7 +112,6 @@ cp ../../DomotiGa3/.src/RRDTool.module .
 cp ../../DomotiGa3/.src/Scenes.module .
 cp ../../DomotiGa3/.src/ServerStats.module .
 cp ../../DomotiGa3/.src/Sounds.module .
-cp ../../DomotiGa3/.src/TemperaturNu.module .
 cp ../../DomotiGa3/.src/TVGuide.module .
 cp ../../DomotiGa3/.src/Thermostat.module .
 cp ../../DomotiGa3/.src/VideoServer.module .
