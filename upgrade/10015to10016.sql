@@ -3,7 +3,7 @@
 --
 -- Only use numbers above 1000, if an user adds its own devicetype. Else it can cause a conflict with new standard devices
 --
-ALTER TABLE `devicetypes` AUTO_INCREMENT = 1000;
+--ALTER TABLE `devicetypes` AUTO_INCREMENT = 1000;
 
 --
 -- Update Boolean '1' to '-1'
