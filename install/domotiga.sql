@@ -605,11 +605,6 @@ CREATE TABLE `devicetypes` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Only use numbers above 1000, if an user adds its own devicetype. Else it can cause a conflict with new standard devices
---
-ALTER TABLE `devicetypes` AUTO_INCREMENT = 1000;
-
---
 -- Dumping data for table `devicetypes`
 --
 
