@@ -29,6 +29,7 @@ ln -s ../../DomotiGa3/.src/CELVMAX.class
 ln -s ../../DomotiGa3/.src/CEIB.class
 ln -s ../../DomotiGa3/.src/CEZcontrol.class
 ln -s ../../DomotiGa3/.src/CFritzBox.class
+ln -s ../../DomotiGa3/.src/CGlobalVarEntry.class
 ln -s ../../DomotiGa3/.src/CGMail.class
 ln -s ../../DomotiGa3/.src/CGPS.class
 ln -s ../../DomotiGa3/.src/CGenericIO.class
@@ -80,6 +81,7 @@ ln -s ../../DomotiGa3/.src/CSmartVISUServer.class
 ln -s ../../DomotiGa3/.src/CSqueezeServer.class
 ln -s ../../DomotiGa3/.src/CTelnetServer.class
 ln -s ../../DomotiGa3/.src/CTemp08.class
+ln -s ../../DomotiGa3/.src/CTemperaturNu.class
 ln -s ../../DomotiGa3/.src/CToon.class
 ln -s ../../DomotiGa3/.src/CTwitter.class
 ln -s ../../DomotiGa3/.src/CUPS.class
@@ -110,7 +112,6 @@ ln -s ../../DomotiGa3/.src/RRDTool.module
 ln -s ../../DomotiGa3/.src/Scenes.module
 ln -s ../../DomotiGa3/.src/ServerStats.module
 ln -s ../../DomotiGa3/.src/Sounds.module
-ln -s ../../DomotiGa3/.src/TemperaturNu.module
 ln -s ../../DomotiGa3/.src/TVGuide.module
 ln -s ../../DomotiGa3/.src/Thermostat.module
 ln -s ../../DomotiGa3/.src/VideoServer.module

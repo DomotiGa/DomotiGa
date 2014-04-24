@@ -5,7 +5,7 @@
 ' Add a way to edit/delete globalvars.
 
 ' Development Status:
-' Just created.
+' Finished
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -16,6 +16,8 @@ Public Sub Form_Open()
 
   Me.Move(FMain.X + 50, FMain.Y + 70)
   GetVarList()
+
+  cmbDataType.Text = "String"
 
 End
 
@@ -28,33 +30,48 @@ End
 Public Sub GetVarList()
 
   Dim iCount As Integer
+  Dim cGV As CGlobalVarEntry
   Dim vValue As Variant
 
-  ' Lets refresh the globalvar list first
-  ' This is a crude method, needs to be improved!
+  ' Lets refresh the globalvar list first - don't continue on error
   If Not Main.bServer Then
-    Client.GetGlobalVars()
-    Wait 0.2
+    If Not Client.GetGlobalVars() Then
+      Message.Error(("Received an empty or invalid response from the JSON-RPC server. Check if the server is running."))
+      Me.Close
+      Return
+    Endif
   Endif
 
   With tbvGlobalVar
-    .Columns.Count = 2
+    .Columns.Count = 3
     .Rows.Count = Main.GlobalVar.Count
     .Columns[0].Title = ("Name")
-    .Columns[0].Width = 180
+    .Columns[0].Width = 170
     .Columns[1].Title = ("Value")
-    .Columns[1].Width = 150
+    .Columns[1].Width = 380
+    .Columns[2].Width = 0 ' automatic
+    .Columns[2].Title = "Datatype"
   End With
 
-  For Each vValue In Main.GlobalVar
+  For Each cGV In Main.GlobalVar
     ' Get the vValue via the GetGlobalVar, else empty values are incorrectly displayed
-    vValue = Main.GetGlobalVar(Main.GlobalVar.Key)
     tbvGlobalVar[iCount, 0].Text = Main.GlobalVar.Key
+    vValue = Main.GetGlobalVar(Main.GlobalVar.Key)
     If gb.Boolean = TypeOf(vValue) Then
       tbvGlobalVar[iCount, 1].Text = Main.DisplayBool(vValue)
     Else
       tbvGlobalVar[iCount, 1].Text = vValue
     Endif
+
+    Select TypeOf(vValue)
+      Case gb.Boolean
+        tbvGlobalVar[iCount, 2].Text = "Boolean"
+      Case gb.Byte, gb.Short, gb.Integer, gb.Long, gb.Single, gb.Float
+        tbvGlobalVar[iCount, 2].Text = "Number"
+      Default
+        tbvGlobalVar[iCount, 2].Text = "String"
+    End Select
+
     iCount = iCount + 1
   Next
 
@@ -77,9 +94,11 @@ Public Sub btnDelete_Click()
   ' Don't crash on a not existing row
   If tbvGlobalVar.Row = -1 Then Return
 
-  If Main.GlobalVar_System.Exist(tbvGlobalVar[tbvGlobalVar.Row, 0].Text) Then
-    Message.Info(("Can't delete a system variable"))
-    Return
+  If Main.GlobalVar.Exist(tbvGlobalVar[tbvGlobalVar.Row, 0].Text) Then
+    If Main.GlobalVar[tbvGlobalVar[tbvGlobalVar.Row, 0].Text].System Then
+      Message.Info(("Can't delete a system variable"))
+      Return
+    Endif
   Endif
 
   If Message.Question("Are you sure you want to delete var '" & tbvGlobalVar[tbvGlobalVar.Row, 0].Text & "'?", "Yes", "No") = 1 Then
@@ -94,57 +113,194 @@ Public Sub btnDelete_Click()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Edit the column. System variables and readonly are checked
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tbvGlobalVar_Activate()
 
-  tbvGlobalVar.Edit
+  Dim aList As New String[]
+  Dim bSystem As Boolean
+  Dim bReadOnly As Boolean
 
-End
-
-Public Sub tbvGlobalVar_Save(Row As Integer, Column As Integer, Value As String)
-  
-  Dim sOldGlobalVar As String
-
-  If tbvGlobalVar.Column = 0 Then
-    sOldGlobalVar = tbvGlobalVar[Row, 0].Text
-    tbvGlobalVar[Row, Column].Text = Value
-    Main.DelGlobalVar(sOldGlobalVar)
-    Main.SetGlobalVar(tbvGlobalVar[Row, 0].Text, tbvGlobalVar[Row, 1].Text)
-
-    If Not Main.bServer Then
-      Client.DelGlobalVar(sOldGlobalVar)
-      Client.SetGlobalVar(tbvGlobalVar[Row, 0].Text, tbvGlobalVar[Row, 1].Text)
-    Endif
-  Else If tbvGlobalVar.Column = 1 Then
-    tbvGlobalVar[Row, Column].Text = Value
-    Main.SetGlobalVar(tbvGlobalVar[Row, 0].Text, tbvGlobalVar[Row, 1].Text)
-
-    If Not Main.bServer Then
-      Client.SetGlobalVar(tbvGlobalVar[Row, 0].Text, tbvGlobalVar[Row, 1].Text)
-    Endif
+  If Main.GlobalVar.Exist(tbvGlobalVar[tbvGlobalVar.Row, 0].Text) Then
+    If Main.GlobalVar[tbvGlobalVar[tbvGlobalVar.Row, 0].Text].System Then bSystem = True
+    If Main.GlobalVar[tbvGlobalVar[tbvGlobalVar.Row, 0].Text].ReadOnly Then bReadOnly = True
   Endif
 
+  Select tbvGlobalVar.Column
+    Case 0 ' Name
+      If bSystem Then Return
+      tbvGlobalVar.Edit
+
+    Case 1 ' Value
+      If bReadOnly Then Return
+
+      ' With a Boolean datatype, only allow to choose between True and False
+      If tbvGlobalVar[tbvGlobalVar.Row, 2].Text = "Boolean" Then
+        aList.Clear
+        aList.Add("True")
+        aList.Add("False")
+        tbvGlobalVar.Edit(aList, True)
+      Else
+        tbvGlobalVar.Edit
+      Endif
+
+    Case 2 ' Datatype
+      If bSystem Or If bReadOnly Then Return
+
+      aList.Clear
+      aList.Add("Boolean")
+      aList.Add("Number")
+      aList.Add("String")
+      tbvGlobalVar.Edit(aList, True)
+
+  End Select
+
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Save the modified value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tbvGlobalVar_Save(Row As Integer, Column As Integer, NewValue As String)
+
+  Dim sOldGlobalVar As String
+  Dim sName As String
+  Dim sValue As String
+  Dim vValue As Variant
+  Dim sDataType As String
+
+  Select Column
+    Case 0 ' Name
+      sName = NewValue
+      sValue = tbvGlobalVar[Row, 1].Text
+      sDataType = tbvGlobalVar[Row, 2].Text
+    Case 1 ' Value
+      sName = tbvGlobalVar[Row, 0].Text
+      sValue = NewValue
+      sDataType = tbvGlobalVar[Row, 2].Text
+    Case 2 ' Datatype
+      sName = tbvGlobalVar[Row, 0].Text
+      sValue = tbvGlobalVar[Row, 1].Text
+      sDataType = NewValue
+  End Select
+
+  Select sDataType
+    Case "Boolean"
+      If UCase(sValue) = "TRUE" Or If UCase(sValue) = "T" Or If sValue = "1" Then
+        vValue = True
+      Else
+        vValue = False
+      Endif
+    Case "Number", "Numeric"
+      vValue = sValue
+      vValue = Replace(vValue, ",", ".")
+      Try vValue = CFloat(vValue)
+      If Error Then vValue = CFloat(0)
+    Case "String"
+      sDataType = "String"
+      vValue = sValue
+    Default
+      Message.Error("Unknown datatype '" & sDataType & "'")
+      Return
+  End Select
+
+  Select tbvGlobalVar.Column
+    Case 0
+      sOldGlobalVar = tbvGlobalVar[Row, 0].Text
+      tbvGlobalVar[Row, Column].Text = sValue
+
+      If sOldGlobalVar <> sName Then Main.DelGlobalVar(sOldGlobalVar)
+      Main.SetGlobalVar(sName, vValue)
+
+      If Not Main.bServer Then
+        If sOldGlobalVar <> sName Then Client.DelGlobalVar(sOldGlobalVar)
+        Client.SetGlobalVar(sName, sValue, vValue, sDataType)
+      Endif
+    Case 1
+      tbvGlobalVar[Row, 1].Text = sValue
+      Main.SetGlobalVar(sName, vValue)
+
+      If Not Main.bServer Then
+        Client.SetGlobalVar(sName, sValue, vValue, sDataType)
+      Endif
+    Case 2
+      If Main.GlobalVar.Exist(sName) Then
+        Select sDataType
+          Case "Boolean"
+            Main.GlobalVar[sName].DataType = gb.Boolean
+          Case "Number", "Numeric"
+            Main.GlobalVar[sName].DataType = gb.Float
+          Case "String"
+            Main.GlobalVar[sName].DataType = gb.String
+        End Select
+      Endif
+
+      Main.SetGlobalVar(sName, vValue)
+
+      If Not Main.bServer Then
+        Client.SetGlobalVar(sName, sValue, vValue, sDataType)
+      Endif
+
+      vValue = Main.GetGlobalVar(sName)
+      If gb.Boolean = TypeOf(vValue) Then
+        tbvGlobalVar[Row, 1].Text = Main.DisplayBool(vValue)
+      Else
+        tbvGlobalVar[Row, 1].Text = vValue
+      Endif
+
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tbvGlobalVar_Insert()
 
    tbvGlobalVar.Cancel
    
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub btnAdd_Click()
 
-  If Len(txtName.Text) > 0 And If Len(txtValue.Text) > 0 Then
+  Dim vValue As Variant
+
+  If Len(txtName.Text) > 0 Then
+
+    Select cmbDataType.Text
+      Case "Boolean"
+        If UCase(txtValue.Text) = "TRUE" Or If UCase(txtValue.Text) = "T" Or If (txtValue.Text) = "1" Then
+          vValue = True
+        Else
+          vValue = False
+        Endif
+      Case "Number", "Numeric" ' Numeric
+        vValue = txtValue.Text
+        vValue = Replace(vValue, ",", ".")
+        Try vValue = CFloat(vValue)
+        If Error Then vValue = CFloat(0)
+      Case "String" ' Leave it string
+        vValue = txtValue.Text
+      Default ' Error ...
+        Message.Error("Unknown datatype '" & cmbDataType.Text & "'")
+        Return
+    End Select
+
     If Main.bServer Then
-      Main.SetGlobalVar(txtName.Text, txtValue.Text)
+      Main.SetGlobalVar(txtName.Text, vValue)
     Else
-      Main.SetGlobalVar(txtName.Text, txtValue.Text)
-      Client.SetGlobalVar(txtName.Text, txtValue.Text)
+      Main.SetGlobalVar(txtName.Text, vValue)
+      Client.SetGlobalVar(txtName.Text, CStr(vValue), vValue, cmbDataType.Text)
     Endif
+
     GetVarList()
     txtName.Clear
     txtValue.Clear
   Else
-    Balloon("Fill in a variable name and a value first!", txtName)
+    Balloon("Fill in a variable name first!", txtName)
   Endif
 
 End

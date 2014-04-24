@@ -383,10 +383,10 @@ End
 
 Public Sub hXMLRPC_RemoteCall(sName As String, sData As Variant[])
 
-  Dim vValue As Variant
   Dim aArray As New RpcArray
   Dim sParam As String
   Dim iParam As Integer
+  Dim cGV As CGlobalVarEntry
 
   If $bXMLRPCDebug Then
     Main.WriteDebugLog(LogLabel & "Got a RemoteCall for method '" & sName & "'")
@@ -420,7 +420,7 @@ Public Sub hXMLRPC_RemoteCall(sName As String, sData As Variant[])
       SetMuteMode(sData)
     ' globalvar
     Case "globalvar.list"
-      For Each vValue In Main.GlobalVar
+      For Each cGV In Main.GlobalVar
         aArray.Add(Main.HtmlEncode(Main.GlobalVar.Key), XmlRpc.xString)
       Next
       hXMLRPC.SetReply(aArray)
@@ -608,14 +608,7 @@ Private Sub ReturnDeviceListDimSwitch(sType As String)
     If Not rResult!hide Then
       If (sType = "switchable" And rResult!switchable) Or (sType = "dimable" And rResult!dimable) Then
         ' status icon
-        If Not IsNull(rResult!onicon) Or Not IsNull(rResult!officon) Then
-          Try sValue = Devices.GetCurrentValueForDevice(rResult!id, 1)
-          If UCase$(sValue) = "ON" Or UCase$(sValue) = "OPEN" Or UCase$(sValue) = "MOTION" Then
-            sStatusIcon = rResult!onicon
-          Else
-            sStatusIcon = rResult!officon
-          Endif
-        Endif
+        sStatusIcon = Devices.GetStatusIcon(sValue, rResult!onicon, rResult!officon, rResult!dimicon)
         sString[iCnt] = rResult!id & ";;" & sStatusIcon & ";;" & rResult!name & ";;" & sValue
         sList.Add(rResult!name, sString[iCnt], XmlRpc.xString)
       Endif
@@ -869,24 +862,14 @@ Private Sub ReturnDeviceList()
       Try sValue2 = Devices.GetCurrentValueForDevice(rResult!id, 2)
       Try sValue3 = Devices.GetCurrentValueForDevice(rResult!id, 3)
       Try sValue4 = Devices.GetCurrentValueForDevice(rResult!id, 4)
-      
+
       Try sLabel = Devices.GetCurrentUnitsForDevice(rResult!id, 1)
       Try sLabel2 = Devices.GetCurrentUnitsForDevice(rResult!id, 2)
       Try sLabel3 = Devices.GetCurrentUnitsForDevice(rResult!id, 3)
-      Try sLabel4 = Devices.GetCurrentUnitsForDevice(rResult!id, 4)      
+      Try sLabel4 = Devices.GetCurrentUnitsForDevice(rResult!id, 4)
 
       ' status icon
-      If Not IsNull(rResult!onicon) Or Not IsNull(rResult!officon) Then
-        If UCase$(sValue) = "ON" Or UCase$(sValue) = "OPEN" Or UCase$(sValue) = "MOTION" Then
-          sStatusIcon = rResult!onicon
-        Else
-          sStatusIcon = rResult!officon
-        Endif
-      Else
-        sStatusIcon = ""
-      Endif
-      
-
+      sStatusIcon = Devices.GetStatusIcon(sValue, rResult!onicon, rResult!officon, rResult!dimicon)
       sString[iCnt] = rResult!id & ";;" & sStatusIcon & ";;" & rResult!name & ";;" & sLocation & ";;" & Main.HtmlEncode(sValue, True) & ";;" & sLabel & ";;" & Main.HtmlEncode(sValue2, True) & ";;" & sLabel2 & ";;" & Main.HtmlEncode(sValue3, True) & ";;" & sLabel3 & ";;" & Main.HtmlEncode(sValue4, True) & ";;" & sLabel4 & ";;" & sLastSeen & ";;" & rResult!dimable & ";;" & rResult!switchable & ";;" & rResult!batterystatus
       sList.Add(rResult!name, sString[iCnt], XmlRpc.xString)
     Endif
@@ -1084,11 +1067,18 @@ Private Sub GetGlobalVars()
 
   Dim vValue As Variant
   Dim aArray As New RpcArray
+  Dim cGV As CGlobalVarEntry
 
-  For Each vValue In Main.GlobalVar
+  For Each cGV In Main.GlobalVar
     aArray.Add(Main.HtmlEncode(Main.GlobalVar.Key), XmlRpc.xString)
+    vValue = cGV.Value
+
     ' convert booleans to strings
     If TypeOf(vValue) = gb.Boolean Then vValue = IIf(vValue = True, "True", "False")
+
+    ' Set the value to <empty>, "" isn't supported by XML-RPC
+    If vValue = Null Then vValue = "<EMPTY>"
+
     aArray.Add(Main.HtmlEncode(vValue), XmlRpc.xString)
   Next
   hXMLRPC.SetReply(aArray)
@@ -1097,20 +1087,24 @@ End
 
 Private Sub SetGlobalVar(sParams As Variant[])
 
+  Dim sVar As String
+
   If sParams.Count = 2 Then
 
+    sVar = Main.HtmlDecode(sParams[0])
+
     ' Check if somebody wants to set a ReadOnly variable
-    If Main.GlobalVar_System.Exist(Main.HtmlDecode(sParams[0])) Then
-      If Main.GlobalVar_System[Main.HtmlDecode(sParams[0])] = 1 Then
-        Main.WriteDebugLog(LogLabel & "ERROR: Trying to set a read-only variable '" & Main.HtmlDecode(sParams[0]) & "'!")
+    If Main.GlobalVar.Exist(sVar) Then
+      If Main.GlobalVar[sVar].ReadOnly Then
+        Main.WriteDebugLog(LogLabel & "ERROR: Trying to set a read-only variable '" & sVar & "'!")
         hXMLRPC.SetReply(False)
         Return
       Endif
     Endif
 
-    Try Main.SetGlobalVar(Main.HtmlDecode(sParams[0]), PrepareValue(Main.HtmlDecode(sParams[1])), False)
+    Try Main.SetGlobalVar(sVar, PrepareValue(Main.HtmlDecode(sParams[1])), False)
     If Error Then
-      Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' when setting globalvar!")
+      Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' when setting globalvar '" & sVar & "'!")
       hXMLRPC.SetReply(False)
     Else
       hXMLRPC.SetReply(True)
@@ -1782,18 +1776,24 @@ End
 
 Private Sub DelGlobalVar(sParams As Variant[])
 
+  Dim sVar As String
+
   If sParams.Count = 1 Then
 
-    ' Check if somebody wants to delete a system variable
-    If Main.GlobalVar_System.Exist(Main.HtmlDecode(sParams[0])) Then
-      Main.WriteDebugLog(LogLabel & "ERROR: Trying to delete a system variable '" & Main.HtmlDecode(sParams[0]) & "'!")
-      hXMLRPC.SetReply(False)
-      Return
+    sVar = Main.HtmlDecode(sParams[0])
+
+    ' Check if somebody wants to set a ReadOnly variable
+    If Main.GlobalVar.Exist(sVar) Then
+      If Main.GlobalVar[sVar].System Then
+        Main.WriteDebugLog(LogLabel & "ERROR: Trying to set a system variable '" & sVar & "'!")
+        hXMLRPC.SetReply(False)
+        Return
+      Endif
     Endif
 
-    Try Main.DelGlobalVar(Main.HtmlDecode(sParams[0]))
+    Try Main.DelGlobalVar(sVar)
     If Error Then
-      Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' when deleting globalvar!")
+      Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' when deleting globalvar '" & sVar & "'!")
       hXMLRPC.SetReply(False)
     Else
       hXMLRPC.SetReply(True)
