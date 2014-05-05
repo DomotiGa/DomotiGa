@@ -694,6 +694,10 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 			{
 				value_no = 2;
 			} 
+			else if ( label == "Power" )
+			{
+				value_no = 2;
+			} 
 
 			break;
 		}
