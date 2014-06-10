@@ -1,0 +1,379 @@
+' Gambas class file
+
+' Description:
+' CPushbullet.class
+' Contains code for sending Pushbullet messages
+
+' Development Status:
+' Works.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Pushbullet"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "Pushbullet"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[Pushbullet] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'Push type and Status code definitions
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Type_List As String[] = ["note", "link", "address", "list", "file"]
+Public Status_Codes As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $bDebug As Boolean
+Private $sToken As String
+Private $sDevice As String
+
+Public hPushbulletMessage As HttpClient
+Public hPushbulletDevices As HttpClient
+Public cPushbulletData As New Collection
+
+Public cPushbulletAllDevices As New Collection
+Public cPushbulletMyDevices As New Collection
+Public cPushbulletSharedDevices As New Collection
+
+Public Sub _new()
+
+  Status_Codes.Add("OK - Everything worked as expected.", "200")
+  Status_Codes.Add("Bad Request - Missing a required parameter?", "400")
+  Status_Codes.Add("Unauthorized - No valid API key provided.", "401")
+  Status_Codes.Add("Request Failed - Parameters were valid but the request failed.", "402")
+  Status_Codes.Add("Forbidden - The API key is not valid for that request.", "403")
+  Status_Codes.Add("Not Found - The requested item doesn\'t exist.", "404")
+  Run()
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $bDebug = cPl.Settings["debug"]
+  $sToken = cPl.Settings["token"]
+  $sDevice = cPl.Settings["device"]
+
+  ' Initialize
+  IsRunning = True
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Fetch devices
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Run()
+
+  Status_Codes.Add("OK - Everything worked as expected.", "200")
+  Status_Codes.Add("Bad Request - Missing a required parameter?", "400")
+  Status_Codes.Add("Unauthorized - No valid API key provided.", "401")
+  Status_Codes.Add("Request Failed - Parameters were valid but the request failed.", "402")
+  Status_Codes.Add("Forbidden - The API key is not valid for that request.", "403")
+  Status_Codes.Add("Not Found - The requested item doesn\'t exist.", "404")
+  GetDevices($bDebug)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Get all devices associated with the API key. sync
+' This is also a reliable way to do API key validation.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetDevicesTest(sToken As String, bDebug As Boolean) As Variant
+
+  Dim hPushbulletValidate As HttpClient
+  Dim sUrl As String = "https://api.pushbullet.com/api/devices"
+  Dim sData, sBuffer, sStatus, sError As String
+  Dim vResponse, vErrors, vDevices As Variant
+
+  hPushbulletValidate = New HttpClient As "hPushbulletValidate"
+  hPushbulletValidate.URL = sUrl
+  hPushbulletValidate.User = URL.Encode(sToken)
+  hPushbulletValidate.Auth = Net.AuthBasic
+  hPushbulletValidate.TimeOut = 8
+  hPushbulletValidate.Async = False
+  hPushbulletValidate.Get
+
+  If hPushbulletValidate.Status < 0 Then
+    ' failure fetching data or apikey is invalid
+    If bDebug Then Main.WriteDebugLog(LogLabel & "Error validating API token=" & sToken & ", Code=" & hPushbulletValidate.Status & " HTTP=" & hPushbulletValidate.Code)
+    Return "Failed, Code=" & hPushbulletValidate.Status & ", HTTP=" & hPushbulletValidate.Code
+  Else
+    ' success or error - read the data
+    If Lof(hPushbulletValidate) Then sBuffer = Read #hPushbulletValidate, Lof(hPushbulletValidate)
+
+    vResponse = JSON.Decode(sBuffer)
+
+    If vResponse.Exist("devices") Then vDevices = vResponse["devices"]
+    Try sError = Status_Codes[hPushbulletValidate.Code]
+
+    If hPushbulletValidate.Code = 200 Then
+      If bDebug Then Main.WriteDebugLog(LogLabel & "Successfully validated API token=" & sToken)
+      Return vDevices
+    Else
+      If bDebug Then Main.WriteDebugLog(LogLabel & "Failed to validated API token=" & sToken & ",  Code=" & hPushbulletValidate.Code & ", Error=" & sError)
+      Return "Code=" & hPushbulletValidate.Code & ", Error=" & sError
+    Endif
+  Endif
+  Return ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Get list of push devices
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetDevices(bDebug As Boolean) As Boolean
+
+  Dim sUrl As String = "https://api.pushbullet.com/api/devices"
+  Dim sData, sBuffer, sStatus, sError, sName, sIden As String
+  Dim vResponse, vErrors, vDevices, vDevice As Variant
+
+  hPushbulletDevices = New HttpClient As "hPushbulletValidate"
+  hPushbulletDevices.URL = sUrl
+  hPushbulletDevices.User = URL.Encode($sToken)
+  hPushbulletDevices.Auth = Net.AuthBasic
+  hPushbulletDevices.TimeOut = 8
+  hPushbulletDevices.Async = False
+  hPushbulletDevices.Get
+
+  If hPushbulletDevices.Status < 0 Then
+    ' failure fetching data or apikey is invalid
+    If bDebug Then Main.WriteDebugLog(LogLabel & "Error fetching devices for API token=" & $sToken & ", Code=" & hPushbulletDevices.Status & " HTTP=" & hPushbulletDevices.Code)
+  Else
+    ' success or error - read the data
+    If Lof(hPushbulletDevices) Then sBuffer = Read #hPushbulletDevices, Lof(hPushbulletDevices)
+
+    vResponse = JSON.Decode(sBuffer)
+
+   ' If vResponse.Exist("devices") Then vDevices = vResponse["devices"]
+    Try sError = Status_Codes[hPushbulletDevices.Code]
+
+    If hPushbulletDevices.Code = 200 Then
+      If bDebug Then Main.WriteDebugLog(LogLabel & "Successfully fetched devices for API token=" & $sToken)
+        cPushbulletAllDevices.Clear
+        cPushbulletMyDevices.Clear
+        cPushbulletSharedDevices.Clear
+        For Each vDevice In vResponse["devices"]
+          If vDevice["extras"]["nickname"] Then
+            sName = vDevice["extras"]["nickname"]
+          Else
+            sName = vDevice["extras"]["manufacturer"] & " " & vDevices["extras"]["model"]
+          Endif
+          sIden = vDevice["iden"]
+          cPushbulletAllDevices.Add(sIden, sName)
+          cPushbulletMyDevices.Add(sIden, sName)
+          If bDebug Then Main.WriteDebugLog(LogLabel & "Found 'My' Device: '" & sName & "' with iden '" & sIden & "'")
+        Next
+        For Each vDevice In vResponse["shared_devices"]
+          If vDevice["extras"]["nickname"] Then
+            sName = vDevice["extras"]["nickname"]
+          Else
+            sName = vDevice["extras"]["manufacturer"] & " " & vDevices["extras"]["model"]
+          Endif
+          sIden = vDevice["iden"]
+          cPushbulletAllDevices.Add(sIden, sName)
+          cPushbulletSharedDevices.Add(sIden, sName)
+          If bDebug Then Main.WriteDebugLog(LogLabel & "Found 'Shared' Device: '" & sName & "' with iden '" & sIden & "'")
+        Next
+      Return True
+    Else
+      If bDebug Then Main.WriteDebugLog(LogLabel & "Failed to get devices for API token=" & $sToken & ",  Code=" & hPushbulletDevices.Code & ", Error=" & sError)
+      Return False
+    Endif
+  Endif
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Post the Pushbullet message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PostPushbulletTest(sToken As String, sDevice As String, sSubject As String, sMessage As String, bDebug As Boolean) As String
+
+  Dim hPushbulletMessageTest As HttpClient
+  Dim sUrl As String = "https://api.pushbullet.com/api/pushes"
+  Dim sData, sBuffer, sStatus, sError, sIden As String
+  Dim vResponse, vErrors As Variant
+
+  If sToken = "" Then
+    Return "ERROR: No Pushbullet API Token supplied"
+  Endif
+
+  If Not cPushbulletAllDevices.Exist(sDevice) Then
+    If GetDevices($bDebug) = False Then
+      If bDebug Then Main.WriteDebugLog(LogLabel & "Cannot find IDEN string for device '" & sDevice & "'")
+    Endif
+  Else
+    sIden = cPushbulletAllDevices.Exist(sDevice)
+  Endif
+  Print sDevice
+Print sIden
+  ' construct data, type hardcoded for now
+  sData = "device_iden=" & URL.Encode(sIden) & "&" & "type=note" & "&" & "title=" & URL.Encode(sSubject) & "&" & "body=" & URL.Encode(sMessage)
+  'sData = "device_iden=" & URL.Encode("ujEZSOgGBc4djzWIEVDzOK") & "&" & "type=note" & "&" & "title=" & URL.Encode(sSubject) & "&" & "body=" & URL.Encode(sMessage)
+
+  hPushbulletMessageTest = New HttpClient As "hPushbulletMessage"
+  hPushbulletMessageTest.URL = sUrl
+  hPushbulletMessageTest.TimeOut = 8
+  hPushbulletMessageTest.User = URL.Encode(sToken)
+  hPushbulletMessageTest.Auth = Net.AuthBasic
+  hPushbulletMessageTest.Async = False
+  hPushbulletMessageTest.Post("application/x-www-form-urlencoded", sData)
+
+  If hPushbulletMessageTest.Status < 0 Then
+    ' faillure fetching data or apikey is invalid
+    If bDebug Then Main.WriteDebugLog(LogLabel & "Error sending Pushbullet message. API token=" & sToken & ", Device=" & sDevice & ", Device_Iden=" & sIden & ", HttpCode=" & hPushbulletMessageTest.Status)
+    Return "Failed, HTTP=" & hPushbulletMessageTest.Status
+  Else
+    ' success or error - read the data
+    If Lof(hPushbulletMessageTest) Then sBuffer = Read #hPushbulletMessageTest, Lof(hPushbulletMessageTest)
+
+    vResponse = JSON.Decode(sBuffer)
+    Try sError = Status_Codes[hPushbulletMessageTest.Code]
+
+    If hPushbulletMessageTest.Code = 200 Then
+      If bDebug Then Main.WriteDebugLog(LogLabel & "Successfully send message using API token=" & sToken & ", device=" & sDevice)
+      Return ""
+    Else
+      If bDebug Then Main.WriteDebugLog(LogLabel & "Failed to send message. API token=" & sToken & ", device=" & sDevice & ", Code=" & hPushbulletMessageTest.Code & ", Error=" & sError)
+      Return "Code=" & hPushbulletMessageTest.code & ", Error=" & sError
+    Endif
+  Endif
+
+  Return ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Post the Pushbullet message async
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PostPushbullet(sDevice As String, sMessage As String, Optional sSubject As String) As Boolean
+
+  Dim sUrl As String = "https://api.pushbullet.com/api/pushes"
+  Dim sData As String
+
+  If Not $bEnabled Then
+    Main.WriteDebugLog(LogLabel & PluginFriendlyName & " is disabled")
+    Return False
+  Endif
+
+  ' construct data, type hardcoded for now
+  sData = "device_iden=" & URL.Encode(sDevice) & "&" & "type=note" & "&" & "title=" & URL.Encode(sSubject) & "&" & "body=" & URL.Encode(sMessage)
+
+  hPushbulletMessage = New HttpClient As "hPushbulletMessage"
+  hPushbulletMessage.URL = sUrl
+  hPushbulletMessage.TimeOut = 8
+  hPushbulletMessage.User = URL.Encode($sToken)
+  hPushbulletMessage.Auth = Net.AuthBasic
+  hPushbulletMessage.Async = True
+  hPushbulletMessage.Post("application/x-www-form-urlencoded", sData)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Posting Pushbullet message.")
+
+  Return True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read the data send by Pushbullet, this can be called multiple times
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hPushbulletMessage_Read()
+
+  Dim sData, sBuffer As String
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If Lof(Last) Then sBuffer = Read #Last, Lof(Last)
+  If cPushbulletData[Last.Tag] Then
+    sData = cPushbulletData[Last.Tag] & sBuffer
+  Else
+    sData = sBuffer
+  Endif
+  cPushbulletData[Last.Tag] = sData
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' End of the Pushbullet response found, parse it
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hPushbulletMessage_Finished()
+
+  Dim sStatus, sUserResp, sDeviceResp, sError As String
+  Dim vResponse, vErrors As Variant
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+
+  If Last.Status < 0 Then
+    ' failure fetching data or apikey is invalid
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error sending Pushbullet message. API token=" & $sToken & ", HttpCode=" & Last.Status)
+  Else
+    ' success or error - read the data
+    vResponse = JSON.Decode(cPushbulletData[Last.Tag])
+    Try sError = Status_Codes[Last.Code]
+
+    If hPushbulletMessage.Code = 200 Then
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Successfully send message. API token=" & $sToken)
+    Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Failed to send message. API token=" & $sToken & ", Code=" & Last.Code & ", Error=" & sError)
+    Endif
+  Endif
+
+Finally
+
+  cPushbulletData.Remove(Last.Tag)
+  Last.Close
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " when sending Pushbullet message")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Error raised for the Pushbullet message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hPushbulletMessage_Error()
+
+  ' Return if it is sync request
+  If Last.Async = False Then Return
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Error sending Pushbullet message: " & Last.Status)
+
+  Try cPushbulletData.Remove(Last.Tag)
+  Try Last.Close
+
+End

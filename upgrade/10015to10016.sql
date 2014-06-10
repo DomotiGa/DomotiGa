@@ -1,3 +1,22 @@
+--
+-- Add settings table for pushbullet support
+--
+
+DROP TABLE IF EXISTS settings_pushbullet;
+
+CREATE TABLE settings_pushbullet (
+  id int(11) NOT NULL,
+  enabled tinyint(1) NOT NULL DEFAULT '0',
+  token varchar(64) DEFAULT NULL,
+  device varchar(64) DEFAULT NULL,
+  debug tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (id)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+
+LOCK TABLES settings_pushbullet WRITE;
+INSERT INTO settings_pushbullet VALUES
+(0,0,'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234','',0),(1,0,'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234','',0);
+UNLOCK TABLES;
 
 --
 -- Add new protocols to RFXtrx interface
