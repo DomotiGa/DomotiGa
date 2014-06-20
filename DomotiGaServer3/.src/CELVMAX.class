@@ -11,6 +11,7 @@
 ' Copyright (C) Ron Klinkien, The Netherlands.
 
 ' This module was written by Wouter Wolkers in 2012.
+' Incorporated changes from jpl - June 2014
 
 ' Read file called COPYING for license details.
 
@@ -44,9 +45,11 @@ Public hELVMAX As New Socket
 Public sBuffer As String
 
 Public iDeviceCount As Integer
+' variable for timer
+Public tELVMax As Timer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory subroutine for each Module/Class to initialize:
+' Mandatory Sub for EACH Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
 ' - Port/Connection will be started (any errors caught)
 ' - Any other code per Class
@@ -65,6 +68,9 @@ Public Sub StartPlugin(cPl As CPluginEntry)
  
   ' Connect/Initialize connection
   ConnectTCP()
+  
+  ' Initialize
+  Run()
 
 End
 
@@ -75,6 +81,29 @@ Public Sub StopPlugin()
 
   Try Disconnect()
 
+End
+
+' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' set timer
+' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Public Sub Run()
+
+  ' start poll Timer For ELVMAX
+  tELVMax = New Timer As "tELVMax" 
+  tELVMax.Delay = 10000 ' $iPollTime * 1000 ' multiply for seconds
+  tELVMax.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tELVMax_Timer()
+
+  SendCmd("l:")
+'  ELVMax_Read()
+    
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -249,7 +278,7 @@ End
 Public Sub SendCmd(sCmd As String)
 
   If $bELVMAXDebug Then Main.WriteDebugLog(LogLabel & "Sending '" & sCmd)
-  Try Write #hELVMAX, sCmd & Chr$(13), Len(sCmd) + 1
+  Try Write #hELVMAX, sCmd & Chr$(13) & Chr$(10)
   If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & ERROR.Text)
 
 End
@@ -304,12 +333,14 @@ Private Sub ParseLine(sStr As String)
   Dim iDeviceId, iRooms, iPos, iDataLength, iEcoTemp, iMaxSetpointTemp, iMinSetpointTemp, iTempOffset, iWindowOpenTemp, iWindowOpenDuration, iBoost, iRoomNumber As Integer
   Dim i, iNameLength, iRoomID, iPortalEnabled, Name_Length, Mi As Integer
   Dim iBoostDuration, iBoostValue, iDecalc, iDecalcDay, iDecalcTime, iMaximumValveSetting, iValveOffset, iData1, iData2, iTemperature, iValvePosition, iTimeUntil As Integer
+  Dim iSetTemp, iActualTemp As Float
 
   sMaincat = sStr
 
   ' Remove all CR and LF
   If Left(sMaincat, 1) = Chr$(10) Then sMaincat = Right(sMaincat, -1)
   If Left(sMaincat, 1) = Chr$(13) Then sMaincat = Right(sMaincat, -1)
+  If Left(sMaincat, 1) = Chr$(108) Then sMaincat = Right(sMaincat, -1)
   sMessage = Left(sMaincat, 2)
   If $bELVMAXDebug Then Main.WriteDebugLog(LogLabel & "Received: " & sMaincat)
 
@@ -382,8 +413,9 @@ Private Sub ParseLine(sStr As String)
           sDeviceAddress &= Hex$(Asc(Mid(sDecoded, i, 1)), 2)
         Next
         iPos += 3
+	sSerialNumber = ""
         For i = iPos To iPos + 9 ' read 10 bytes
-          sSerialNumber = Asc(Mid(sDecoded, i, 1))
+          sSerialNumber &= Chr$(Asc(Mid(sDecoded, i, 1)))
         Next
         iPos += 10
         iNameLength = Asc(Mid(sDecoded, iPos, 1))
@@ -402,6 +434,9 @@ Private Sub ParseLine(sStr As String)
           Case "1"
             ' Radiator thermostat
             sDeviceType = "ELVRadThermo"
+	  Case "3"
+	    ' Wall Thermostat
+	    sDeviceType = "ELVWallThermo"
           Case "4"
             ' Door/window sensor
             sDeviceType = "ELVDOOR"
@@ -493,9 +528,12 @@ Private Sub ParseLine(sStr As String)
           iPos += 1
 
           If $bELVMAXDebug Then Main.WriteDebugLog(LogLabel & "'" & sComfortTemp & "' '" & iEcoTemp & "' '" & itempOffset & "'")
-
+	  
+	Case "3" ' Wall Thermostat
+	  If $bELVMAXDebug Then Main.WriteDebugLog(LogLabel & "Found C: for Wall Thermostat. No further data.")
+	  
         Case "4" ' Door / window sensor
-          If $bELVMAXDebug Then Main.WriteDebugLog(LogLabel & " Found C: for Door / Window sensor. No further data.")
+          If $bELVMAXDebug Then Main.WriteDebugLog(LogLabel & "Found C: for Door / Window sensor. No further data.")
 
         Case Else
           Main.WriteDebugLog(LogLabel & "Unknown device type '" & sDeviceType & "', please report this to support.")
@@ -526,16 +564,43 @@ Private Sub ParseLine(sStr As String)
         iPos += 1
         iData2 = Asc(Mid(sDecoded, iPos, 1))
         iPos += 1
-        If iDataLength > 11 Then
+	If iDataLength = 11 Then 'jpl
           iValvePosition = Asc(Mid(sDecoded, iPos, 1))
+	  iPos += 1
+	  'iTemperature = Asc(Mid(sDecoded, iPos, 1)) / 2
+	  iSetTemp = Asc(Mid(sDecoded, iPos, 1)) / 2 'jpl
+	  iPos += 1
+	  ' DateUntil  ' 2 bytes
+	  iPos += 2
+	  iTimeUntil = Asc(Mid(sDecoded, iPos, 1)) * 0.5
+	  ' Update this device info in DomotiGa
+	  ' try to find device with address, and correct interface type.
+	  iDeviceId = Devices.Find(Instance, sDeviceAddress, Devices.FindInterface("ELV MAX! Interface"))
+	  ' if found then update it's value
+	  If iDeviceId Then
+	    Devices.ValueUpdateExt(iDeviceId, 3, iSetTemp)
+	    Devices.ValueUpdateExt(iDeviceId, 4, iValvePosition)
+	  Endif
+	Endif
+	' In case of Wallthermostat there are 12 bytes 
+	If iDataLength = 12 Then
           iPos += 1
-          iTemperature = Asc(Mid(sDecoded, iPos, 1)) / 2
-          iPos += 1
-          ' DateUntil  ' 2 bytes
-          iTimeUntil = Asc(Mid(sDecoded, iPos, 1)) * 0.5
+	  iSetTemp = Round((Asc(Mid(sDecoded, iPos, 1)) / 2), -1)
+	  iPos += 1
+	  iPos += 2
+	  iPos += 1
+	  iActualTemp = Round((Asc(Mid(sDecoded, iPos, 1)) / 10), -1)
+	  ' Update this device info in DomotiGa
+	  ' try to find device with address, and correct interface type.
+	  iDeviceId = Devices.Find(Instance, sDeviceAddress, Devices.FindInterface("ELV MAX! Interface"))
+	  ' if found then update it's value
+	  If iDeviceId Then
+	    Devices.ValueUpdateExt(iDeviceId, 3, iSetTemp)
+	    Devices.ValueUpdateExt(iDeviceId, 4, iActualTemp)
+	  Endif
         Endif
-        Main.WriteDebugLog(LogLabel & "len: " & iDataLength & " Deviceadd: " & sDeviceAddress)
-        ' Do something with the values here, before we clear them.
+	iPos += 1
+	If $bELVMAXDebug Then Main.WriteDebugLog(LogLabel & "len: " & iDataLength & " Deviceadd: " & sDeviceAddress)
         sDeviceAddress = ""
       Next
 
