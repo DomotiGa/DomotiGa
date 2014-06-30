@@ -54,7 +54,6 @@ ln -s ../../DomotiGa3/.src/CLIRC.class
 ln -s ../../DomotiGa3/.src/CNMA.class
 ln -s ../../DomotiGa3/.src/COpenTherm.class
 ln -s ../../DomotiGa3/.src/COpenZWave.class
-ln -s ../../DomotiGa3/.src/COpenZWaveEntry.class
 ln -s ../../DomotiGa3/.src/COnkyo.class
 ln -s ../../DomotiGa3/.src/COWFS.class
 ln -s ../../DomotiGa3/.src/COWW.class
@@ -88,6 +87,7 @@ ln -s ../../DomotiGa3/.src/CUPS.class
 ln -s ../../DomotiGa3/.src/CVISCA.class
 ln -s ../../DomotiGa3/.src/CWeeder.class
 ln -s ../../DomotiGa3/.src/CWebSocket.class
+ln -s ../../DomotiGa3/.src/CWirelesstags.class
 ln -s ../../DomotiGa3/.src/CX10Cmd.class
 ln -s ../../DomotiGa3/.src/CXMLRPC.class
 ln -s ../../DomotiGa3/.src/CXBMCxPL.class
@@ -112,6 +112,7 @@ ln -s ../../DomotiGa3/.src/RRDTool.module
 ln -s ../../DomotiGa3/.src/Scenes.module
 ln -s ../../DomotiGa3/.src/ServerStats.module
 ln -s ../../DomotiGa3/.src/Sounds.module
+ln -s ../../DomotiGa3/.src/Util.module
 ln -s ../../DomotiGa3/.src/TVGuide.module
 ln -s ../../DomotiGa3/.src/Thermostat.module
 ln -s ../../DomotiGa3/.src/VideoServer.module
