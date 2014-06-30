@@ -55,7 +55,6 @@ cp ../../DomotiGa3/.src/CLIRC.class .
 cp ../../DomotiGa3/.src/CNMA.class .
 cp ../../DomotiGa3/.src/COpenTherm.class .
 cp ../../DomotiGa3/.src/COpenZWave.class .
-cp ../../DomotiGa3/.src/COpenZWaveEntry.class .
 cp ../../DomotiGa3/.src/COnkyo.class .
 cp ../../DomotiGa3/.src/COWFS.class .
 cp ../../DomotiGa3/.src/COWW.class .
@@ -89,6 +88,7 @@ cp ../../DomotiGa3/.src/CUPS.class .
 cp ../../DomotiGa3/.src/CVISCA.class .
 cp ../../DomotiGa3/.src/CWeeder.class .
 cp ../../DomotiGa3/.src/CWebSocket.class .
+cp ../../DomotiGa3/.src/CWirelesstags.class .
 cp ../../DomotiGa3/.src/CX10Cmd.class .
 cp ../../DomotiGa3/.src/CXMLRPC.class .
 cp ../../DomotiGa3/.src/CXBMCxPL.class .
@@ -114,6 +114,7 @@ cp ../../DomotiGa3/.src/ServerStats.module .
 cp ../../DomotiGa3/.src/Sounds.module .
 cp ../../DomotiGa3/.src/TVGuide.module .
 cp ../../DomotiGa3/.src/Thermostat.module .
+cp ../../DomotiGa3/.src/Util.module .
 cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
 cp ../../DomotiGa3/.src/WeatherUG.module .
