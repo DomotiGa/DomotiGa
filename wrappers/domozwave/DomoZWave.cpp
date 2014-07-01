@@ -2211,6 +2211,7 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	Options::Get()->AddOptionBool( "AppendLogFile", false );
 	Options::Get()->AddOptionBool( "ConsoleOutput", false );
 
+	// Disable polling, this will be enabled in a later moment
 	Options::Get()->AddOptionInt( "PollInterval", 0 );
 	Options::Get()->AddOptionBool( "IntervalBetweenPolls", true );
 	Options::Get()->AddOptionBool( "SuppressValueRefresh", false );
@@ -2492,6 +2493,31 @@ const char* DomoZWave_ControllerType( uint32 home )
 
 	WriteLog( LogLevel_Debug, false, "ControllerType=%s", ctype.c_str() );
 	return ctype.c_str();
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_GetPollInterval>
+// Gets the poll interval of the OpenZWave driver for the nodes
+//-----------------------------------------------------------------------------
+int32 DomoZWave_GetPollInterval( )
+{
+	int32 milliseconds;
+
+	milliseconds = Manager::Get()->GetPollInterval();
+	WriteLog( LogLevel_Debug, true, "DomoZWave_GetPollInterval: Interval=%d msec", milliseconds );
+
+	return milliseconds;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetPollInterval>
+// Enable the poll interval of the OpenZWave driver for the nodes, it will be enabled for all controllers connected
+//-----------------------------------------------------------------------------
+void DomoZWave_SetPollInterval( int32 milliseconds, bool intervalbetweenpolls )
+{
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetPollInterval: Interval=%d msec", milliseconds );
+
+	Manager::Get()->SetPollInterval( milliseconds, intervalbetweenpolls );
 }
 
 //-----------------------------------------------------------------------------

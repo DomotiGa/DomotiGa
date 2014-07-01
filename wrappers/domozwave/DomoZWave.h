@@ -156,6 +156,8 @@ const char* DomoZWave_GetLibraryTypeName( uint32 home );
 const char* DomoZWave_ControllerType( uint32 home );
 
 // Enable/disable polling of the devices by open-zwave
+int32 DomoZWave_GetPollInterval( );
+void DomoZWave_SetPollInterval( int32 milliseconds, bool intervalbetweenpolls );
 void DomoZWave_EnablePolling( uint32 home, int32 node, int32 polltime );
 void DomoZWave_DisablePolling( uint32 home, int32 node );
 
