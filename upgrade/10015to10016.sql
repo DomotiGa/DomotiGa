@@ -25,10 +25,10 @@ CREATE TABLE settings_wirelesstags (
   password varchar(64) DEFAULT NULL,
   debug tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (id)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 
 --
--- Dumping data for table settings_wirelesstags--
+-- Dumping data for table settings_wirelesstags --
 
 LOCK TABLES settings_wirelesstags WRITE;
 /*!40000 ALTER TABLE settings_wirelesstags DISABLE KEYS */;
@@ -36,13 +36,6 @@ INSERT INTO settings_wirelesstags VALUES
 (0,0,300,'wirelesstagslogin','wirelesstagspassword',0),(1,-1,300,'username@domain.com','password',-1);
 /*!40000 ALTER TABLE settings_wirelesstags ENABLE KEYS */;
 UNLOCK TABLES;
-/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
-
-
---
--- Only use numbers above 1000, if an user adds its own devicetype. Else it can cause a conflict with new standard devices
---
---ALTER TABLE `devicetypes` AUTO_INCREMENT = 1000;
 
 --
 -- Update Boolean '1' to '-1'
