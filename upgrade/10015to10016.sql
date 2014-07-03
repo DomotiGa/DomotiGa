@@ -33,7 +33,7 @@ CREATE TABLE settings_wirelesstags (
 LOCK TABLES settings_wirelesstags WRITE;
 /*!40000 ALTER TABLE settings_wirelesstags DISABLE KEYS */;
 INSERT INTO settings_wirelesstags VALUES
-(0,0,300,'wirelesstagslogin','wirelesstagspassword',0),(1,-1,300,'username@domain.com','password',-1);
+(0,0,300,'username@domain.com','password',0),(1,0,300,'username@domain.com','password',0);
 /*!40000 ALTER TABLE settings_wirelesstags ENABLE KEYS */;
 UNLOCK TABLES;
 
