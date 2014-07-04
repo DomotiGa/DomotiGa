@@ -4,6 +4,16 @@
 --
 UPDATE interfaces SET type = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT' WHERE id=35;
 
+--
+-- Dumping data for table interfaces
+
+LOCK TABLES interfaces WRITE;
+/*!40000 ALTER TABLE interfaces DISABLE KEYS */;
+INSERT INTO interfaces VALUES  (57,'Wirelesstags Interface','Wirelesstags','Read Write');
+/*!40000 ALTER TABLE interfaces ENABLE KEYS */;
+UNLOCK TABLES;
+
+
 INSERT INTO `devicetypes` VALUES (366,'Somfy Blind','Blind Remote','RFY','0xf12ab 1','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (367,'Somfy Blind Ext','Blind Remote Ext','RFYEXT','0xf12ab 1','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (368,'Motion sensor','Motion Sensor','Wirelesstags','xxxxxxxxxx','','','',0,0,0,0,0,0,0);
@@ -32,8 +42,7 @@ CREATE TABLE settings_wirelesstags (
 
 LOCK TABLES settings_wirelesstags WRITE;
 /*!40000 ALTER TABLE settings_wirelesstags DISABLE KEYS */;
-INSERT INTO settings_wirelesstags VALUES
-(0,0,300,'username@domain.com','password',0),(1,0,300,'username@domain.com','password',0);
+INSERT INTO settings_wirelesstags VALUES (0,0,300,'username@domain.com','password',0),(1,0,300,'username@domain.com','password',0);
 /*!40000 ALTER TABLE settings_wirelesstags ENABLE KEYS */;
 UNLOCK TABLES;
 
