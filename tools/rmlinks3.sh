@@ -123,4 +123,5 @@ cp ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/JsonRpc/JsonRpcClient.class ./JsonRpc/.
 cp ../../DomotiGa3/.src/Timers/CTimerDelay.class ./Timers/.
 cp ../../DomotiGa3/.src/Timers/CTimerOnOff.class ./Timers/.
+cp ../../DomotiGa3/.src/Timers/CTimerGeneric.class ./Timers/.
 

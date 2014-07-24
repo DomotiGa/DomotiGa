@@ -122,4 +122,5 @@ ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class
 ln -s ../../DomotiGa3/.src/Timers/CTimerDelay.class
 ln -s ../../DomotiGa3/.src/Timers/CTimerOnOff.class
+ln -s ../../DomotiGa3/.src/Timers/CTimerGeneric.class
 
