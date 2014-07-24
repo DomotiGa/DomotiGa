@@ -8,8 +8,6 @@
 ' Initial testing build
 
 ' TODO:
-' Report zone violation to DomotiGa
-' Reset violation after e.g. 30 seconds
 ' Build Visonic Commander
 
 ' Links:
@@ -30,7 +28,7 @@
 Public PluginName As String = "Visonic"
 Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "Visonic Security"
-Public PluginVersion As String = "0.90"
+Public PluginVersion As String = "0.91"
 Public PluginAuthor As String = "Wouter Wolkers, Alexander Kuiper"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -38,6 +36,7 @@ Public PluginMaxInstances As Integer = 1
 Public KeyName As String
 Public LogLabel As String = "[Visonic] "
 Public Instance As Integer
+Public InterfaceId As Integer = 0
 Public IsRunning As Boolean
 Public ErrorText As String
 Public ErrorWhere As String
@@ -65,6 +64,7 @@ Private $iMasterCode As Integer = &H0000 ' Not Known
 Private $iDisarmArmCode As Integer = &H0000 ' Not Known
 Private $iDownloadCode As Integer = &H5650 ' VP
 Private $bSendInit As Boolean = False
+Private $iTripReset As Integer = 30 ' Reset status after 30 seconds
 
 Private $tPowerLinkKeepAlive As New Timer As "tPowerLinkKeepAlive"
 Public hVisonic As New SerialPort
@@ -92,6 +92,8 @@ Private $bPowerMaster As Boolean
 
 Private $tQueueDelay As New Timer As "tQueueDelay"
 Private $tQueueTimeout As New Timer As "tQueueTimeout"
+Private $oTripTimers As New Object[]
+Public $tTripTimer As CTimerGeneric
 
 Private $cConfig As New Collection
 Private $cMemoryMap As New Collection
@@ -178,8 +180,6 @@ Private VINFO_CHIME As String[] = ["Chime Off", "Melody Chime", "Zone Name Chime
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
 
-  Dim cEntry As New VisonicQueueEntry
-
   KeyName = cPl.KeyName
   Instance = cPl.Instance
   If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
@@ -188,6 +188,16 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnabled = cPl.Settings["enabled"]
   $sSerPort = cPl.Settings["serialport"]
   $bVisonicDebug = cPl.Settings["debug"]
+
+  ' Retrieve our Interface Id, we don't have to retrieve it more then once
+  InterfaceId = Devices.FindInterface("Visonic Interface")
+  If InterfaceId = 0 Then
+    Main.WriteLog(LogLabel & "ERROR: Required InterfaceId for 'Visonic Interfac' can't be retrieved from the database")
+
+    IsRunning = False
+    ErrorText = "Required InterfaceId for 'Visonic Interfac' can't be retrieved from the database"
+    Return
+  Endif
 
   $bDownloadMode = False
   $bInitialized = False
@@ -1135,6 +1145,9 @@ Private Sub ProcessSettings()
         ' Create a new collection for this node
         $cConfig["zoneinfo"][iCnt] = New Collection
 
+        $cConfig["zoneinfo"][iCnt]["tripstatus"] = -1
+        $cConfig["zoneinfo"][iCnt]["batterystatus"] = -1
+
         If $cConfig["zonename"].Exist(sZoneNames[iCnt - 1] + 1) Then
           $cConfig["zoneinfo"][iCnt]["zonename"] = $cConfig["zonename"][sZoneNames[iCnt - 1] + 1] 
         Else
@@ -1149,20 +1162,26 @@ Private Sub ProcessSettings()
             Case &H01
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Motion"
               $cConfig["zoneinfo"][iCnt]["sensorname"] = "Next PG2"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic PIR"
             Case &H04
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Camera"
               $cConfig["zoneinfo"][iCnt]["sensorname"] = "Next CAM PG2"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic Camera"
             Case &H15
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Smoke"
               $cConfig["zoneinfo"][iCnt]["sensorname"] = "SMD-427 PG2"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic Smoke Detector"
             Case &H16
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Smoke"
               $cConfig["zoneinfo"][iCnt]["sensorname"] = "SMD-426 PG2"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic Smoke Detector"
             Case &H2A
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Magnet"
               $cConfig["zoneinfo"][iCnt]["sensorname"] = "MC-302 PG2"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic Door/Window Contact"
             Default
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Unknown"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic Unknown"
           End Select
 
         Else
@@ -1172,16 +1191,22 @@ Private Sub ProcessSettings()
           Select ($cConfig["zoneinfo"][iCnt]["sensorid"] And &H0F)
             Case &H3, &H4, &HC
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Motion"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic PIR"
             Case &H5, &H6, &H7
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Magnet"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic Door/Window Contact"
             Case &HA
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Smoke"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic Smoke Detector"
             Case &HB
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Gas"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic Gas Detector"
             Case &HF
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Wired"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic Wired"
             Default
               $cConfig["zoneinfo"][iCnt]["sensortype"] = "Unknown"
+              $cConfig["zoneinfo"][iCnt]["autocreate"] = "Visonic Unknown"
           End Select
         Endif
 
@@ -1213,23 +1238,27 @@ Private Sub ProcessSettings()
     Next
 
     ' All information gathered, now print it in debug
-    If $bVisonicDebug Then
+    If $bVisonicDebug Then Main.WriteDebugLog(LogLabel & "ZoneInfo:")
 
-      Main.WriteDebugLog(LogLabel & "ZoneInfo:")
+    For iCnt = 1 To iZoneCnt
 
-      For iCnt = 1 To iZoneCnt
+      If $cConfig["zoneinfo"].Exist(iCnt) Then
 
-        If $cConfig["zoneinfo"].Exist(iCnt) Then
+        If $bVisonicDebug Then
           Main.WriteDebugLog(LogLabel & "  Zone " & Format$(iCnt, "00") & ": Enrolled")
           Main.WriteDebugLog(LogLabel & "    ZoneName: " & $cConfig["zoneinfo"][iCnt]["zonename"] & " (id=" & sZoneNames[iCnt] & ")")
           Main.WriteDebugLog(LogLabel & "    ZoneType: " & $cConfig["zoneinfo"][iCnt]["zonetypename"] & " (id=" & $cConfig["zoneinfo"][iCnt]["zonetype"] & ")")
           Main.WriteDebugLog(LogLabel & "    Sensor: " & $cConfig["zoneinfo"][iCnt]["sensortype"] & IIf($cConfig["zoneinfo"][iCnt]["sensorname"], " (" & $cConfig["zoneinfo"][iCnt]["sensorname"] & ")", "") & " (id=" & $cConfig["zoneinfo"][iCnt]["sensorid"] & ")")
-        Else
-          Main.WriteDebugLog(LogLabel & " Zone " & Format$(iCnt, "00") & ": Not Enrolled")
         Endif
 
-      Next
-    Endif
+        ' Try to find it, it will autocreate the device if needed
+        Devices.Find(Instance, "Z" & Format$(iCnt, "00"), InterfaceId, $cConfig["zoneinfo"][iCnt]["autocreate"])
+
+      Else
+        If $bVisonicDebug Then Main.WriteDebugLog(LogLabel & " Zone " & Format$(iCnt, "00") & ": Not Enrolled")
+      Endif
+
+    Next
 
   Endif
 
@@ -1872,7 +1901,11 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Handle_MsgTypeA5()
 
-   Dim sLog As String
+  Dim sLog As String
+  Dim iDeviceId As Integer
+  Dim iCnt As Integer
+  Dim bByte As Byte
+  Dim bBit As Byte
 
   ' Format: <msgtype> <total rows> <row> <data 8x bytes>
 
@@ -1892,6 +1925,51 @@ Private Sub Handle_MsgTypeA5()
         Main.WriteDebugLog(LogLabel & "Battery Zones 17-24: " & DisplayZoneBin($sReceiveData[9]))
         Main.WriteDebugLog(LogLabel & "Battery Zones 25-30: " & DisplayZoneBin($sReceiveData[10]))
       Endif 
+
+      ' Send an "On" when the zone status is 1. This doesn't work for PowerMaster PIRs, but seems to work for magnets
+      For iCnt = 1 To 30
+        bByte = (iCnt - 1) / 8
+        bBit = (iCnt - 1) Mod 8
+
+        ' Only do it, when the zone information is known
+        If $cConfig And If $cConfig["zoneinfo"][iCnt]["sensortype"] Then
+
+          ' Check the zone status
+          If ($sReceiveData[3 + bByte] And (2 ^ bBit)) <> $cConfig["zoneinfo"][iCnt]["tripstatus"] Then
+
+            ' Try to find it, it will autocreate the device if needed
+            iDeviceId = Devices.Find(Instance, "Z" & Format$(iCnt, "00"), InterfaceId, $cConfig["zoneinfo"][iCnt]["autocreate"])
+
+            If ($sReceiveData[3 + bByte] And (2 ^ bBit)) = 0 Then
+              If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, "Off")
+            Else
+              If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, "On")
+              EnableTripTimer("Z" & Format$(iCnt, "00"))
+            Endif
+
+            $cConfig["zoneinfo"][iCnt]["tripstatus"] = ($sReceiveData[3 + bByte] And (2 ^ bBit))
+          Endif
+
+          ' Check the battery status
+          If ($sReceiveData[7 + bByte] And (2 ^ bBit)) <> $cConfig["zoneinfo"][iCnt]["batterystatus"] Then
+
+            ' Try to find it, it will autocreate the device if needed
+            iDeviceId = Devices.Find(Instance, "Z" & Format$(iCnt, "00"), InterfaceId, $cConfig["zoneinfo"][iCnt]["autocreate"])
+
+            If ($sReceiveData[7 + bByte] And (2 ^ bBit)) = 0 Then
+              If iDeviceId Then Devices.Battery(iDeviceId, "Low")
+            Else
+              If iDeviceId Then Devices.Battery(iDeviceId, "OK")
+            Endif
+
+            ' Store latest battery status, we don't want to generate too many valueupdates
+            $cConfig["zoneinfo"][iCnt]["batterystatus"] = ($sReceiveData[7 + bByte] And (2 ^ bBit))
+          Endif
+
+        Else
+          Main.WriteLog(LogLabel & "ERROR: Zone information for zone '" & iCnt & "' is unknown, possible the Plugin couldn't retrieve the information from the panel?")
+        Endif
+      Next
 
     Case &H03 ' Tamper event
       If $bVisonicDebug Then Main.WriteDebugLog(LogLabel & "Tamper Event")
@@ -1928,7 +2006,6 @@ Private Sub Handle_MsgTypeA5()
           sLog = "Not Ready"
         Default
           sLog = "Unknown (" & Hex$($sReceiveData[3], 2) & ")"
-          
       End Select
 
       If $bVisonicDebug Then Main.WriteDebugLog(LogLabel & "Zone Event " & sLog)
@@ -2009,6 +2086,22 @@ Private Sub Handle_MsgTypeA5()
       If ($sReceiveData[4] And 128) Then 
         If $bVisonicDebug Then Main.WriteDebugLog(LogLabel & "Bit 7 set, Alarm!")
       Endif
+
+      ' Trigger a zone event
+      If $sReceiveData[7] = 3 Or If $sReceiveData[7] = 4 Or If $sReceiveData[7] = 5 Then
+
+        If $cConfig And If $cConfig["zoneinfo"][$sReceiveData[5]]["sensortype"] Then
+
+          ' Try to find it, it will autocreate the device if needed
+          iDeviceId = Devices.Find(Instance, "Z" & Format$(iCnt, "00"), InterfaceId, $cConfig["zoneinfo"][$sReceiveData[5]]["autocreate"])
+          If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, "On")
+          EnableTripTimer("Z" & Format$(iCnt, "00"))
+        Else
+          Main.WriteLog(LogLabel & "ERROR: Zone information for zone '" & $sReceiveData[5] & "' is unknown, possible the Plugin couldn't retrieve the information from the panel?")
+        Endif
+
+      Endif
+
     Case &H06 ' Status message enrolled/bypassed
       If $bVisonicDebug Then
         Main.WriteDebugLog(LogLabel & "Enrollment and Bypass Message")
@@ -2022,8 +2115,6 @@ Private Sub Handle_MsgTypeA5()
         Main.WriteDebugLog(LogLabel & "Bypassed Zones 25-30: " & DisplayZoneBin($sReceiveData[10]))
       Endif
 
-    Case &H10
-      If $bVisonicDebug Then Main.WriteDebugLog(LogLabel & "A5 Event 0x10, unknown")
     Default
       If $bVisonicDebug Then Main.WriteDebugLog(LogLabel & "Unknown A5 event: " & Hex$($sReceiveData[2], 2))
   End Select
@@ -2101,6 +2192,61 @@ Private Sub Handle_MsgTypeB0()
   If $sReceiveData[1] = &H03 And If $sReceiveData[2] = &H39 Then
     QueueCommand(VMSG_PMASTER_STAT1, "PowerMaster Msg1", &HB0)
     QueueCommand(VMSG_PMASTER_STAT2, "PowerMaster Msg2", &HB0)
+  Endif
+
+End
+
+'########################################################
+' Trip timers functions
+'########################################################
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Enable or restart the trip timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Private Sub EnableTripTimer(sZone As String)
+
+  Dim oObject As Object
+
+  ' First try to find running timers and remove it
+  For Each oObject In $oTripTimers
+    If oObject.Tag = sZone Then
+      $oTripTimers.Remove($oTripTimers.Find(oObject))
+      Break
+    Endif
+  Next
+
+  ' Start the timer (again)
+  $tTripTimer = New CTimerGeneric As "tTripTimer"
+  $oTripTimers.Add($tTripTimer)
+
+  $tTripTimer.Delay = $iTripReset * 1000
+  $tTripTimer.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Trip timer expired, reset the zone to Off
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tTripTimer_Timer()
+
+  Dim iDeviceId As Integer
+  Dim sZone As String
+  Dim iZone As Integer
+
+  ' Retrieve the zone information, stop and remove the timer
+  sZone = Last.Tag
+  Try iZone = CInt(Mid$(sZone, 1))
+  Last.Stop
+  $oTripTimers.Remove($oTripTimers.Find(Last))
+
+  If $cConfig And If $cConfig["zoneinfo"][iZone]["sensortype"] Then
+
+    ' Try to find it, it will autocreate the device if needed
+    iDeviceId = Devices.Find(Instance, sZone, InterfaceId, $cConfig["zoneinfo"][iZone]["autocreate"])
+    If iDeviceId Then Devices.ValueUpdateExt(iDeviceId, 1, "Off")
+  Else
+    Main.WriteLog(LogLabel & "ERROR: Zone information for zone '" & iZone & "' is unknown, possible the Plugin couldn't retrieve the information from the panel?")
   Endif
 
 End
