@@ -186,7 +186,7 @@ typedef struct
 	time_t		m_LastSeen;
 	TypeNodeState	m_DeviceState;
 	std::map<int,string> instancecommandclass;
-	std::map<int,string> instanceLabel;
+	std::map<int,std::map<int,string> > instanceLabel;
 	list<ValueID>	m_values;
 } NodeInfo;
 
@@ -388,15 +388,14 @@ void RPC_ValueRemoved( uint32 homeID, int nodeID, ValueID valueID )
 {
 	int id = valueID.GetCommandClassId();
 	int genre = valueID.GetGenre();
-	int instanceID = valueID.GetInstance();
 
 	WriteLog(LogLevel_Debug, true, "ValueRemoved: HomeId=0x%x Node=%d", homeID, nodeID);
 	WriteLog(LogLevel_Debug, false, "Genre=%d", genre);
 	WriteLog(LogLevel_Debug, false, "GenreName=%s", DomoZWave_GenreIdName(genre));
 	WriteLog(LogLevel_Debug, false, "CommandClassId=%d", id);
-	WriteLog(LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id));
-	WriteLog(LogLevel_Debug, false, "Instance=%d", instanceID);
-	WriteLog(LogLevel_Debug, false, "Index=%d", valueID.GetIndex());
+	WriteLog(LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id) );
+	WriteLog(LogLevel_Debug, false, "Instance=%d", valueID.GetInstance() );
+	WriteLog(LogLevel_Debug, false, "Index=%d", valueID.GetIndex() );
 }
 
 //-----------------------------------------------------------------------------
@@ -414,16 +413,9 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 	int instanceID = valueID.GetInstance();
 	int type = valueID.GetType();
 	char dev_value[1024];
-	char tmp_dev_value[1024];
-	uint8 byte_value;
-	bool bool_value;
-	string decimal_value;
-	string list_value;
-	string string_value;
-	int int_value;
-	int16 short_value;
-	int value_no = 0;
-	string str_tmp;
+	char dev_result[1024];
+	string dev_label;
+	int dev_index = 0;
 	NodeInfo* nodeInfo;
 
 	WriteLog( LogLevel_Debug, true, "%s: HomeId=0x%x Node=%d", (add)?"ValueAdded":"ValueChanged", homeID, nodeID );
@@ -443,18 +435,12 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		return;
 	}
 
-/*
-	if ( add )
-	{
-		Manager::Get()->SetChangeVerified( valueID, true );
-	}
-*/
-
 	// We need to check which ValueType it is, before we can output it as a string
 	switch ( type )
 	{
 		case ValueID::ValueType_Bool:
 		{
+			bool bool_value;
 			Manager::Get()->GetValueAsBool( valueID, &bool_value );
 			snprintf( dev_value, 1024, "%i", bool_value );
 			WriteLog( LogLevel_Debug, false, "Type=Bool (raw value=%s)", dev_value );
@@ -462,6 +448,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 		case ValueID::ValueType_Byte:
 		{
+			uint8 byte_value;
 			Manager::Get()->GetValueAsByte( valueID, &byte_value );
 			snprintf( dev_value, 1024, "%i", byte_value );
 			WriteLog( LogLevel_Debug, false, "Type=Byte (raw value=%s)", dev_value );
@@ -469,6 +456,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 		case ValueID::ValueType_Decimal:
 		{
+			string decimal_value;
 			Manager::Get()->GetValueAsString( valueID, &decimal_value );
 			snprintf( dev_value, 1024, "%s", strdup( decimal_value.c_str() ) );
 			WriteLog( LogLevel_Debug, false, "Type=Decimal (raw value=%s)", dev_value );
@@ -476,6 +464,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 		case ValueID::ValueType_Int:
 		{
+			int int_value;
 			Manager::Get()->GetValueAsInt( valueID, &int_value );
 			snprintf( dev_value, 1024, "%d", int_value );
 			WriteLog( LogLevel_Debug, false, "Type=Integer (raw value=%s)", dev_value );
@@ -483,6 +472,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 		case ValueID::ValueType_Short:
 		{
+			int16 short_value;
 			Manager::Get()->GetValueAsShort( valueID, &short_value );
 			snprintf( dev_value, 1024, "%d", short_value );
 			WriteLog( LogLevel_Debug, false, "Type=Short (raw value=%s)", dev_value );
@@ -496,6 +486,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 		case ValueID::ValueType_String:
 		{
+			string string_value;
 			Manager::Get()->GetValueAsString( valueID, &string_value );
 			snprintf( dev_value, 1024, "%s", strdup( string_value.c_str() ) );
 			WriteLog( LogLevel_Debug, false, "Type=String (raw value=%s)", dev_value );
@@ -509,6 +500,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 		case ValueID::ValueType_List:
 		{
+			string list_value;
 			Manager::Get()->GetValueListSelection( valueID, &list_value );
 			snprintf( dev_value, 1024, "%s", strdup( list_value.c_str() ) );
 			WriteLog( LogLevel_Debug, false, "Type=List (raw value=%s)", dev_value );
@@ -517,6 +509,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		case ValueID::ValueType_Raw:
 		{
 			// We can use AsString on a Raw
+			string string_value;
 			Manager::Get()->GetValueAsString( valueID, &string_value );
 			snprintf( dev_value, 1024, "%s", strdup( string_value.c_str() ) );
 			WriteLog( LogLevel_Debug, false, "Type=Raw (raw value=%s)", dev_value );
@@ -527,59 +520,85 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		return;
 	}
 
-//////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////////////////////
+	// If it is a ValueChange, CommandClass Basic and mapping is in place, override the id
+	// This will map the Basic value to the SENSOR, BINARY_SWITCH, MULTILEVEL, etc
+	if (( ! add ) && ( id == COMMAND_CLASS_BASIC ) && ( nodeInfo->basicmapping > 0 ) )
+	{
+		bool found = false;
+
+		// Find the mapped commandclass
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			if ( ( v.GetCommandClassId() == nodeInfo->basicmapping ) && ( v.GetInstance() == instanceID ) )
+			{
+				// No need to convert from Byte to Bool
+				id = v.GetCommandClassId();
+				label = Manager::Get()->GetValueLabel( v );
+				found = true;
+				break;
+			}
+		}
+
+		// The mapped commandclass has to be found
+		if ( ! found )
+		{
+WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - CommandClass Basic can't be mapped to the '%s', because it doesn't exist (bug in device?)", homeID, nodeID, instanceID, DomoZWave_CommandClassIdName(nodeInfo->basicmapping) );
+                        return;
+		}
+	}
+
+	//////////////////////////////////////////////////////////////////////////////////////////
 
 	switch ( id )
 	{
-		// We shouldn't see thie COMMAND_CLASS_BASIC anymore, because it should be
+		// We shouldn't see this COMMAND_CLASS_BASIC anymore, because it should be
 		// mapped already. We leave it in for backwards compatibility reasons
 		case COMMAND_CLASS_BASIC:
 		{
-			if ( label == "Basic" )
+			// A commandclass basic can only have label=basic and valuetype=byte
+			if ( ( label == "Basic" ) && ( type == ValueID::ValueType_Byte ) && ( nodeInfo->basicmapping == 0 ) )
 			{
-				// Store the label, because it is a known one
-				value_no = 1;
+				dev_index = 1;
+				dev_label = label;
 
-				if ( strcmp( dev_value, "255" ) == 0 ) 
+				if ( strcmp( dev_value, "255" ) == 0 )
 				{
-					strcpy(dev_value, "On" );
+					strcpy(dev_result, "On" );
 				}
-				else if ( strcmp( dev_value, "99" ) == 0 ) 
+				else if ( strcmp( dev_value, "100" ) == 0 )
 				{
-					strcpy( dev_value, "On" );
+					strcpy( dev_result, "On" );
 				}
-				else if ( strcmp( dev_value, "1" ) == 0 ) 
+				else if ( strcmp( dev_value, "99" ) == 0 )
 				{
-					strcpy( dev_value, "On");
+					strcpy( dev_result, "On" );
 				}
-				else if ( strcmp( dev_value, "0" ) == 0 ) 
+				else if ( strcmp( dev_value, "1" ) == 0 )
 				{
-					strcpy( dev_value, "Off" );
+					strcpy( dev_result, "On");
 				}
-/*
 				else
 				{
-					sprintf( tmp_dev_value, "Dim %s", dev_value );
-					strcpy( dev_value, tmp_dev_value );
+					strcpy( dev_result, "Off" );
 				}
-*/
 			}
 
 			break;
 		}
 		case COMMAND_CLASS_SWITCH_BINARY:
 		{
-			if ( label == "Switch" )
+			if (( label == "Switch" ) && ( type == ValueID::ValueType_Bool ) )
 			{
-				value_no = 1;
+				dev_index = 2;
+				dev_label = "Switch-Level";
 
-				if ( strcmp( dev_value, "1" ) == 0 ) 
+				if ( strcmp( dev_value, "0" ) == 0 )
 				{
-					strcpy( dev_value, "On" );
+					strcpy( dev_result, "Off" );
 				} else {
-					strcpy( dev_value, "Off" );
+					strcpy( dev_result, "On" );
 				}
 			}
 
@@ -587,24 +606,24 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 		case COMMAND_CLASS_SWITCH_MULTILEVEL:
 		{	
-			if ( label == "Level" )
+			if ( ( label == "Level" ) && ( type == ValueID::ValueType_Byte ) )
 			{
-				value_no = 1;
+				dev_index = 2;
+				dev_label = "Switch-Level";
 
-				sprintf( tmp_dev_value, "Dim %s", dev_value );
-				strcpy( dev_value, tmp_dev_value );
+				sprintf( dev_result, "Dim %s", dev_value );
 
-				if ( strcmp( dev_value, "Dim 0" ) == 0 )
+				if ( strcmp( dev_result, "Dim 0" ) == 0 )
 				{
-					strcpy( dev_value, "Off" );
+					strcpy( dev_result, "Off" );
 				}
-				else if ( strcmp( dev_value, "Dim 99" ) == 0 )
+				else if ( strcmp( dev_result, "Dim 99" ) == 0 )
 				{
-					strcpy( dev_value, "On" );
+					strcpy( dev_result, "On" );
 				}
-				else if ( strcmp( dev_value, "Dim 100" ) == 0 )
+				else if ( strcmp( dev_result, "Dim 100" ) == 0 )
 				{
-					strcpy( dev_value, "On" );
+					strcpy( dev_result, "On" );
 				}
 			}
 
@@ -612,32 +631,92 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 		case COMMAND_CLASS_METER:
 		{
-			if ( label == "Power" )
+			if ( type == ValueID::ValueType_Decimal )
 			{
-				value_no = 2;
-			}
-			else if ( ( label == "Energy" ) && ( unit == "kWh" ) )
-			{
-				value_no = 3;
+				if ( ( label == "Power" ) && ( unit == "W" ) )
+				{
+					dev_index = 3;
+					dev_label = "Power|W";
+				}
+				else if ( ( label == "Energy" ) && ( unit == "kWh" ) )
+				{
+					dev_index = 4;
+					dev_label = "Energy|kWh";
+				}
+				else if ( label == "Power" )
+				{
+					dev_index = 5;
+					dev_label = label;
+				}
+				else if ( label == "Energy" )
+				{
+					dev_index = 6;
+					dev_label = label;
+				}
+				else if ( label == "Voltage" )
+				{
+					dev_index = 7;
+					dev_label = label;
+				}
+				else if ( label == "Current" )
+				{
+					dev_index = 8;
+					dev_label = label;
+				}
+				else if ( label == "Count" )
+				{
+					dev_index = 9;
+					dev_label = label;
+				}
+
+				if ( dev_index > 0 )
+				{
+					strcpy( dev_result, dev_value );
+				}
 			}
 
 			break;
 		}
 		case COMMAND_CLASS_SENSOR_BINARY:
 		{	
-			if ( label == "Sensor" )
+			if ( type == ValueID::ValueType_Bool )
 			{
-				value_no = 1;
-
-				if ( strcmp( dev_value, "1" ) == 0 )
+				if ( label == "Sensor" )
 				{
-					// Closed
-					strcpy( dev_value, "On" );
+					dev_index = 10;
 				}
-				else
+				else if ( label == "Motion Sensor" )
 				{
-					// Open
-					strcpy( dev_value, "Off" );
+					dev_index = 11;
+				}
+				else if ( label == "Door/Window Sensor" )
+				{
+					dev_index = 12;
+				}
+				else if ( label == "Tamper Sensor" )
+				{
+					dev_index = 13;
+				}
+				else if ( label == "Magnet open" )
+				{
+					dev_index = 14;
+				}
+
+				// Only store the result if it is a valid valuenumber
+				if ( dev_index > 0 )
+				{
+					dev_label = label;
+
+					if ( strcmp( dev_value, "0" ) == 0 )
+					{
+						// Open
+						strcpy( dev_result, "Off" );
+					}
+					else
+					{
+						// Closed
+						strcpy( dev_result, "On" );
+					}
 				}
 			}
 
@@ -645,9 +724,196 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 		case COMMAND_CLASS_BATTERY:
 		{
-			if ( label == "Battery Level" )
+			if ( ( label == "Battery Level" ) && ( type == ValueID::ValueType_Byte ) )
 			{
-				value_no = 255;
+				dev_index = 255; // Fixed
+				dev_label = label;
+				strcpy( dev_result, dev_value );
+			}
+
+			break;
+		}
+		case COMMAND_CLASS_SENSOR_ALARM:
+		{
+			if ( type == ValueID::ValueType_Byte )
+			{
+				if ( label == "Flood" )
+				{
+					dev_index = 15;
+				}
+				else if ( label == "Smoke" )
+				{
+					dev_index = 16;
+				}
+				else if ( label == "Carbon Monoxide" )
+				{
+					dev_index = 17;
+				}
+				else if ( label == "Carbon Dioxide" )
+				{
+					dev_index = 18;
+				}
+				else if ( label == "Heat" )
+				{
+					dev_index = 19;
+				}
+				else if ( label == "General" )
+				{
+					dev_index = 20;
+				}
+
+				// Only store the result if it is a valid valuenumber
+				if ( dev_index > 0 )
+				{
+					dev_label = label;
+
+					if ( strcmp( dev_value, "0" ) == 0 )
+					{
+						strcpy( dev_result, "Off" );
+					}
+					else
+					{
+						strcpy( dev_result, "On" );
+					}
+				}
+			}
+
+			break;
+		}
+		case COMMAND_CLASS_SENSOR_MULTILEVEL:
+		{
+			if ( type == ValueID::ValueType_Decimal )
+			{
+				if ( label == "Temperature" )
+				{
+					dev_index = 21;
+				}
+				else if ( label == "Relative Humidity" )
+				{
+					dev_index = 22;
+				}
+				else if ( label == "Luminance" )
+				{
+					dev_index = 23;
+				}
+				else if ( label == "Power" )
+				{
+					dev_index = 24;
+				}
+				else if ( label == "Relative Humidity" )
+				{
+					dev_index = 25;
+				}
+				else if ( label == "Velocity" )
+				{
+					dev_index = 26;
+				}
+				else if ( label == "Direction" )
+				{
+					dev_index = 27;
+				}
+				else if ( label == "Atmospheric Pressure" )
+				{
+					dev_index = 28;
+				}
+				else if ( label == "Barometric Pressure" )
+				{
+					dev_index = 29;
+				}
+				else if ( label == "Solar Radiation" )
+				{
+					dev_index = 30;
+				}
+				else if ( label == "Dew Point" )
+				{
+					dev_index = 31;
+				}
+				else if ( label == "Rain Rate" )
+				{
+					dev_index = 32;
+				}
+				else if ( label == "Tide Level" )
+				{
+					dev_index = 33;
+				}
+				else if ( label == "Weight" )
+				{
+					dev_index = 34;
+				}
+				else if ( label == "Voltage" )
+				{
+					dev_index = 35;
+				}
+				else if ( label == "Current" )
+				{
+					dev_index = 36;
+				}
+				else if ( label == "CO2 Level" )
+				{
+					dev_index = 37;
+				}
+				else if ( label == "Air Flow" )
+				{
+					dev_index = 38;
+				}
+				else if ( label == "Tank Capacity" )
+				{
+					dev_index = 39;
+				}
+				else if ( label == "Distance" )
+				{
+					dev_index = 40;
+				}
+				else if ( label == "Angle Position" )
+				{
+					dev_index = 41;
+				}
+				else if ( label == "Rotation" )
+				{
+					dev_index = 42;
+				}
+				else if ( label == "Water Temperature" )
+				{
+					dev_index = 43;
+				}
+				else if ( label == "Soil Temperature" )
+				{
+					dev_index = 44;
+				}
+				else if ( label == "Seismic Intensity" )
+				{
+					dev_index = 45;
+				}
+				else if ( label == "Seismic Magnitude" )
+				{
+					dev_index = 46;
+				}
+				else if ( label == "Utraviolet" )
+				{
+					dev_index = 47;
+				}
+				else if ( label == "Electrical Resistivity" )
+				{
+					dev_index = 48;
+				}
+				else if ( label == "Electrical Conductivity" )
+				{
+					dev_index = 49;
+				}
+				else if ( label == "Loudness" )
+				{
+					dev_index = 50;
+				}
+				else if ( label == "Moisture" )
+				{
+					dev_index = 51;
+				}
+
+				if ( dev_index > 0 )
+				{
+					dev_label = label;
+					strcpy( dev_result, dev_value );
+				}
 			}
 
 			break;
@@ -656,72 +922,93 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		{
 			if ( label == "Alarm Level" )
 			{
-				value_no = 2;
+				dev_index = 52;
 
 				if ( strcmp( dev_value, "0" ) == 0 )
 				{
-					strcpy( dev_value, "Secure" );
+					strcpy( dev_result, "Secure" );
 				}
 				else
 				{
-					strcpy( dev_value, "Tamper" );
+					strcpy( dev_result, "Tamper" );
 				}
 			}
-
-			break;
-		}
-		case COMMAND_CLASS_SENSOR_ALARM:
-		{
-			if ( label == "Flood" )
-			{
-				value_no = 1;
-
-				if ( strcmp( dev_value, "0" ) == 0 )
-				{
-					strcpy( dev_value, "Off" );
-				}
-				else
-				{
-					strcpy( dev_value, "On" );
-				}
-			}
-			break;
-		}
-		case COMMAND_CLASS_SENSOR_MULTILEVEL:
-		{
-			if ( label == "Temperature" )
-			{
-				value_no = 1;
-			}
-			else if ( label == "Luminance" )
-			{
-				value_no = 3;
-			}
-			else if ( label == "Relative Humidity" )
-			{
-				value_no = 2;
-			} 
-			else if ( label == "Power" )
-			{
-				value_no = 2;
-			} 
 
 			break;
 		}
 		case COMMAND_CLASS_THERMOSTAT_SETPOINT:
 		{
-			// The heating temperature is stored in value2, because value1 is used to set the SETPOINT
-			if ( label == "Heating 1" )
+			if ( type == ValueID::ValueType_Decimal )
 			{
-				value_no = 2;
+				// The heating temperature is stored in value2, because value1 is used to set the SETPOINT
+				if ( label == "Heating 1" )
+				{
+					dev_index = 53;
+				}
+				else if ( label == "Cooling 1" )
+				{
+					dev_index = 54;
+				}
+				else if ( label == "Unused 3" )
+				{
+					dev_index = 55;
+				}
+				else if ( label == "Unused 4" )
+				{
+					dev_index = 56;
+				}
+				else if ( label == "Unused 5" )
+				{
+					dev_index = 57;
+				}
+				else if ( label == "Unused 6" )
+				{
+					dev_index = 58;
+				}
+				else if ( label == "Furnace" )
+				{
+					dev_index = 59;
+				}
+				else if ( label == "Dry Air" )
+				{
+					dev_index = 60;
+				}
+				else if ( label == "Moist Air" )
+				{
+					dev_index = 61;
+				}
+				else if ( label == "Auto Changeover" )
+				{
+					dev_index = 62;
+				}
+				else if ( label == "Heating Econ" )
+				{
+					dev_index = 63;
+				}
+				else if ( label == "Cooling Econ" )
+				{
+					dev_index = 64;
+				}
+				else if ( label == "Away Heating" )
+				{
+					dev_index = 65;
+				}
+
+				if ( dev_index > 0 )
+				{
+					dev_label = label;
+					strcpy( dev_result, dev_value );
+				}
 			}
 
 			break;
 		}
 	}
 
+	//////////////////////////////////////////////////////////////////////////////////////////
+
 	// We want to skip "add" values, because they are coming from the content of the zwcfg*xml. Normally
-	// only previously stored values are giving. DomotiGa is the only one using that file, thus all the
+	// only previously stored values are given. DomotiGa is the only one using that file, thus all the
 	// known values are already in the DomotiGa DB. Also if you do a start and directly restart and the
 	// value hasn't been refreshed, after the restart the value is empty == GARBAGE
 
@@ -731,19 +1018,25 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 	if ( add )
 	{
 		WriteLog( LogLevel_Debug, false, "ValueKnown=%s, ReadOnly=%s, WriteOnly=%s", ( Manager::Get()->IsValueSet( valueID ) )?"true":"false", ( Manager::Get()->IsValueReadOnly( valueID ) )?"true":"false", ( Manager::Get()->IsValueWriteOnly( valueID ) )?"true":"false" );
-		WriteLog( LogLevel_Debug, false, "Min=%d", Manager::Get()->GetValueMin( valueID ) );
-		WriteLog( LogLevel_Debug, false, "Max=%d", Manager::Get()->GetValueMax( valueID ) );
 
-		if ( value_no > 0 )
+		// Only show min and max when it is numeric
+		if ( ( type == ValueID::ValueType_Byte ) || ( type == ValueID::ValueType_Short ) || ( type = ValueID::ValueType_Int ) )
 		{
-			WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
+			WriteLog( LogLevel_Debug, false, "Min=%d", Manager::Get()->GetValueMin( valueID ) );
+			WriteLog( LogLevel_Debug, false, "Max=%d", Manager::Get()->GetValueMax( valueID ) );
+		}
+
+		// Report the index if the type is something we want to send to DomotiGa
+		if ( dev_index > 0 )
+		{
+			WriteLog( LogLevel_Debug, false, "Value=%s (Index=%d)", dev_result, dev_index );
 		}
 		else
 		{
 			WriteLog( LogLevel_Debug, false, "Value=%s", dev_value );
 		}
 
-		if ( ( Manager::Get()->GetValueHelp( valueID ) != "" ) && ( add ) )
+		if ( Manager::Get()->GetValueHelp( valueID ) != "" )
 		{
 			WriteLog( LogLevel_Debug, false, "Help=%s", Manager::Get()->GetValueHelp( valueID ).c_str() );
 		}
@@ -755,19 +1048,20 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		}
 
 		// Add to the nodeInfo commandclass list
-		str_tmp = string( DomoZWave_CommandClassIdName( id ) );
-		str_tmp.append( "|" );
+		string tmp_str;
+		tmp_str = string( DomoZWave_CommandClassIdName( id ) );
+		tmp_str.append( "|" );
 
 		if ( nodeInfo->commandclass == "" )
 		{
 			nodeInfo->commandclass = "|";
-			nodeInfo->commandclass.append( str_tmp );
+			nodeInfo->commandclass.append( tmp_str );
 		}
 		else
 		{
-			if ( nodeInfo->commandclass.find(str_tmp) == string::npos )
+			if ( nodeInfo->commandclass.find(tmp_str) == string::npos )
 			{
-				nodeInfo->commandclass.append(str_tmp);
+				nodeInfo->commandclass.append(tmp_str);
 			}
 		}
 
@@ -775,189 +1069,83 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		// determine if an issues is a Switch/Dim device
 		if ( nodeInfo->instancecommandclass.find(instanceID) != nodeInfo->instancecommandclass.end() )
 		{
-			if ( nodeInfo->instancecommandclass[instanceID].find(str_tmp) == string::npos )
+			if ( nodeInfo->instancecommandclass[instanceID].find(tmp_str) == string::npos )
 			{
-				nodeInfo->instancecommandclass[instanceID].append(str_tmp);
+				nodeInfo->instancecommandclass[instanceID].append(tmp_str);
 			}
 		}
 		else
 		{
 			nodeInfo->instancecommandclass[instanceID] = "";
 			nodeInfo->instancecommandclass[instanceID].append("|");
-			nodeInfo->instancecommandclass[instanceID].append(str_tmp);
+			nodeInfo->instancecommandclass[instanceID].append(tmp_str);
 		}
 
-		// We need to skip the "Basic" label if we got a basicmapping
-		if ( ( id == COMMAND_CLASS_BASIC ) && (nodeInfo->basicmapping > 0 ) )
+		// Lets store the instance & known labels (variable), but "Basic" is skipped
+		// When a ValueChange happens, we need to try to map them to Value1 - X
+		if ( dev_index > 1  )
 		{
-			value_no = 0;
-		}
-
-		// Lets store the instance & known labels (variable)
-		// When a ValueChange happens, we need to try to map them to Value1 - 4
-		if ( ( value_no >= 1  ) && ( value_no <= 254 ) )
-		{
-
-			// All possible labels (sorted in priority):
-			// Basic, Switch, Level, Sensor, Power, Energy, Temperature, Luminance, Relative Humidity, Alarm Level
-
-			// NOTE: Basic+Switch+Level are normally same the for a switch/dimmer
-
-			// Known and supported combinations:
-			// Switch + Power + Energy + Alarm Level (e.g. GreenWave PowerNode 1)
-			// Sensor + Alarm Level (e.g. Everspring SP103) 
-			// Sensor + Temperature + Luminance + Humidity (e.g. Aeon 4in1)
-			// Sensor + Temperature + Alarm Level? (e.g. Digital Home System DHS-ZW-SNMT-01)
-			// SetPoint + Heating 1 (e.g. Danfoss)
-
-			// Following code concats the label to the string, also adds a "|" delimiter
-			// After it is added, we need re-sort the string to make it useable in ValueChanged
-			if ( nodeInfo->instanceLabel.find( instanceID ) != nodeInfo->instanceLabel.end() )
-			{
-				nodeInfo->instanceLabel[instanceID].append(label);
-				nodeInfo->instanceLabel[instanceID].append("|");
-
-				str_tmp = "|";
-				if ( nodeInfo->instanceLabel[instanceID].find("|Basic|") != string::npos ) { str_tmp.append("Basic|"); }
-
-				// Normally a dimmer has Switch+Level, so we need to combine in the same value
-				if ( ( nodeInfo->instanceLabel[instanceID].find("|Switch|") != string::npos ) &&  ( nodeInfo->instanceLabel[instanceID].find("|Level|") != string::npos ) )
-				{
-					str_tmp.append("Switch-Level|");
-				}
-				else if ( nodeInfo->instanceLabel[instanceID].find("|Switch-Level|") != string::npos )
-				{
-					str_tmp.append("Switch-Level|");
-				}
-				else if ( nodeInfo->instanceLabel[instanceID].find("|Switch|") != string::npos )
-				{
-					str_tmp.append("Switch|");
-				}
-				else if ( nodeInfo->instanceLabel[instanceID].find("|Level|") != string::npos )
-				{
-					str_tmp.append("Level|");
-				}
-
-				if ( nodeInfo->instanceLabel[instanceID].find("|Sensor|") != string::npos ) { str_tmp.append("Sensor|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("|Power|") != string::npos ) { str_tmp.append("Power|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("|Energy|") != string::npos ) { str_tmp.append("Energy|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("|Temperature|") != string::npos ) { str_tmp.append("Temperature|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("Relative Humidity") != string::npos ) { str_tmp.append("Relative Humidity|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("|Luminance|") != string::npos ) { str_tmp.append("Luminance|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("Alarm Level") != string::npos ) { str_tmp.append("Alarm Level|"); }
-				if ( nodeInfo->instanceLabel[instanceID].find("Heating 1") != string::npos ) { str_tmp.append("Heating 1|"); }
-
-				// Replace the previous string with the newly generated
-				nodeInfo->instanceLabel[instanceID] = str_tmp;
-
-			}
-			else
-			{
-				nodeInfo->instanceLabel[instanceID] = "";
-				nodeInfo->instanceLabel[instanceID].append("|");
-
-				// The Heating 1 is special, we need to append the SetPoint. Then the temperature will go into value2
-				if ( label == "Heating 1" ) {
-					nodeInfo->instanceLabel[instanceID].append("SetPoint|Heating 1");
-				}
-				else
-				{
-					nodeInfo->instanceLabel[instanceID].append(label);
-				}
-				nodeInfo->instanceLabel[instanceID].append("|");
-			}
+			// Store the index and label when we receive a ValueUpdate, then we can map it to the right DomotiGa valueX
+			nodeInfo->instanceLabel[instanceID][dev_index] = dev_label;
 		} 
 
-		// We will not send the ValueAdd to DomotiGa, because they are in general unreliable and open-zwave in most cases
-		// during a restart send empty values
+		// We will not send the ValueAdd to DomotiGa, because they are in general unreliable and
+		// open-zwave in most cases during a restart send empty values
 		WriteLog( LogLevel_Debug, false, "Note=Value not send to DomotiGa to with ValueAdd (values are unreliable at startup)" );
 		return;
 	}
 
-	// If we are CommandClass Basic and mapping is enabled for this device, report it and exit
-	if ( ( id == COMMAND_CLASS_BASIC ) && (nodeInfo->basicmapping > 0 ) )
+	// Handle CommandClass Basic in a special way
+	if ( id == COMMAND_CLASS_BASIC )
 	{
-		// We have a mapping, we report it to the logfile
-		WriteLog( LogLevel_Debug, false, "Mapping=COMMAND_CLASS_BASIC mapped to %s", DomoZWave_CommandClassIdName( nodeInfo->basicmapping ) );
-		WriteLog( LogLevel_Debug, false, "Note=Value not send to DomotiGa, because COMMAND_CLASS_BASIC mapping exists" );
-		return;
-	}
-	else
-	{
-		// Report Mapping=None if we found a device which doesn't support it
-		if ( id == COMMAND_CLASS_BASIC )
+		// If we are CommandClass Basic and mapping is enabled for this device, report it and exit
+		if (nodeInfo->basicmapping > 0 )
+		{
+			// We have a mapping, we report it to the logfile
+			WriteLog( LogLevel_Debug, false, "Mapping=COMMAND_CLASS_BASIC mapped to %s", DomoZWave_CommandClassIdName( nodeInfo->basicmapping ) );
+		}
+		else
 		{
 			WriteLog( LogLevel_Debug, false, "Mapping=None" );
+			return;
 		}
 	}
 
 	// Only send it to DomotiGa if the value is >0 (1, 2, 3, 4 or 255)
-	if ( value_no > 0 )
+	if ( dev_index > 0 )
 	{
-		// If we have a list of instanceLabels, write it to the debug logfile
-		if ( nodeInfo->instanceLabel.find(instanceID) != nodeInfo->instanceLabel.end() )
+		uint valueid = std::distance( nodeInfo->instanceLabel[instanceID].begin(), nodeInfo->instanceLabel[instanceID].find(dev_index) );
+	
+		// Check if the index/label exists in our list
+		if ( valueid >= nodeInfo->instanceLabel[instanceID].size() )
 		{
-			//WriteLog(LogLevel_Debug, false, "Node=%d, Instance=%d, InstanceLabel=%s", nodeID, instanceID, nodeInfo->instanceLabel[instanceID].c_str());
-			WriteLog( LogLevel_Debug, false, "InstanceLabel=%s", nodeInfo->instanceLabel[instanceID].c_str() );
-
-			// Only overrule the value_no if the node and labels are known for this instance
-			// So if an error or unknown device happens, it falls back to the old mapping
-
-			string next = "";
-			string tnext;
-			int delimitercount = 0;
-
-			for ( string::const_iterator it = nodeInfo->instanceLabel[instanceID].begin(); it != nodeInfo->instanceLabel[instanceID].end(); it++ )
-			{
-				tnext = *it;
-				if ( tnext == "|" )
-				{
-					delimitercount++;
-
-					if ( next.length() > 0 )
-					{
-
-						if ( label == next )
-						{
-							value_no = delimitercount - 1;
-							break;
-						}
-
-						// Captures the special Switch-Level case
-						if ( ( label == "Switch" ) || ( label == "Level" ) )
-						{
-							if ( next == "Switch-Level" )
-							{
-								value_no = delimitercount - 1;
-								break;
-							}
-						}
-
-						// Capture Heating 1"
-						if ( label == "Heating 1" )
-						{
-							value_no = 2;
-							break;
-						}
-
-						next = "";
-					}
-				}
-				else
-				{
-					next += *it;
-				}
-			}
+			WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d Index=%d Label=%s - Index/Label hasn't been added during ValueAdd - Please report this as a BUG", homeID, nodeID, instanceID, dev_index, dev_label.c_str() );
+			return;
 		}
 
-		WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
+		// Add +1 to the valueid, because we started with 0
+		valueid++; 
+
+		// Battery level needs to stay on 255
+		if ( dev_index == 255 )
+		{
+			valueid = 255;
+		}
+
+		// Heating 1 requires to go in value2
+		if ( ( dev_index == 53 ) && ( valueid == 1 ) )
+		{
+			valueid = 2;
+		}
+		
+		WriteLog( LogLevel_Debug, false, "Value%d=%s", valueid, dev_result );
 
 		json_object *jparams = json_object_new_object();
 		json_object *jhomeid = json_object_new_int( homeID );
 		json_object *jnodeid = json_object_new_int( nodeID );
 		json_object *jinstanceid = json_object_new_int( instanceID );
-		json_object *jvalueid = json_object_new_int( value_no );
-		json_object *jvalue = json_object_new_string( dev_value );
+		json_object *jvalueid = json_object_new_int( valueid );
+		json_object *jvalue = json_object_new_string( dev_result );
 		json_object *jlabel = json_object_new_string( label.c_str() );
 		json_object *junit = json_object_new_string( unit.c_str() );
 
@@ -4945,7 +5133,7 @@ const char* DomoZWave_CommandClassIdName(int class_value)
 
 const char* DomoZWave_GenreIdName( int genre )
 {
-	char str_tmp[100];
+	char tmp_str[100];
 
 	switch ( genre )
 	{
@@ -4962,8 +5150,8 @@ const char* DomoZWave_GenreIdName( int genre )
 		default:
 		{
 			// We report UNKNOWN including the 0xYY hexcode
-			snprintf( str_tmp, 100, "UNKNOWN (0x%02X)", genre );
-			return string(str_tmp).c_str();
+			snprintf( tmp_str, 100, "UNKNOWN (0x%02X)", genre );
+			return string(tmp_str).c_str();
 		}
 	}
 }
