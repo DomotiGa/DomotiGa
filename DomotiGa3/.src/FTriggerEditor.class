@@ -5,7 +5,7 @@
 ' Support for creating and edit event triggers.
 
 ' Development Status:
-' Just started, not working 100% yet.
+' Finished
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -15,12 +15,206 @@
 Public bAddTrigger As Boolean
 Public bTriggerEdit As Boolean
 Private rResult As Result
-Private rResultDevices As Result
 Private sVarCompare As String
 Private sDevCompare As String
-Private iTriggerTab As Integer
-Private cTriggerTypeNames As New Collection
+Private $iTriggerTab As Integer
+Private $cTriggerTypeNames As New Collection
+Private $cDevices As New Collection
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Code which will be executed when the form opens
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Form_Open()
+
+  Dim rResultDevices As Result
+  Dim cGV As CGlobalVarEntry
+  Dim iCount As Integer
+  Dim cCol As Collection
+  Dim cValue As Integer[]
+  Dim iValueNum As Integer
+
+  Me.Move(FMain.X + 50, FMain.Y + 70)
+
+  ' Retrieve all devices and their values. If a device doesn't have a value, it will NOT be in the list
+  rResultDevices = Devices.GetDevicesAndValues(["sortOrder": "name", "inc_device_values": True])
+
+  If rResultDevices Then
+    If rResultDevices.Count Then
+      For Each rResultDevices
+        If rResultDevices!device_name Then
+          If $cDevices.Exist(rResultDevices!device_name) Then
+            cCol = $cDevices[rResultDevices!device_name]
+          Else
+            ' Store a new device and its id
+            cCol = New Collection
+            cValue = New Integer[]
+            cCol["device_id"] = rResultDevices!device_id
+            cCol["valuenum"] = cValue
+            $cDevices[rResultDevices!device_name] = cCol
+          Endif
+
+          ' Store all valuenum of this device. We only show used valenum (dynamic)
+          If Not cCol["valuenum"].Exist(rResultDevices!device_value_valuenum) Then
+            cCol["valuenum"].Add(rResultDevices!device_value_valuenum)
+            cCol["valuenum"].Sort()
+          Endif
+        Endif
+      Next
+    Endif
+  Else
+    Message.Info(("ERROR: table 'devices' not found!"))
+    Return
+  Endif
+
+  ' Check if we got at least once the GlobalVar values
+  If Main.GetGlobalVar("Year") = 0 Then
+    If Not Main.bServer Then
+      If Not Client.GetGlobalVars() Then
+        Message.Error(("Received an empty or invalid response from the JSON-RPC server. Check if the server is running."))
+        Me.Close
+        Return
+      Endif
+    Endif
+  Endif
+
+  ' Change thw window name if it is a new trigger
+  If bAddTrigger Then
+    Me.Text = ("Create Trigger")
+    btnDeleteTrigger.Visible = False
+  Endif
+
+  ' Fill combo with all trigger types & and keep track of the order
+  $cTriggerTypeNames.Clear()
+  For iCount = 1 To tabTriggerTypes.Count
+    cmbTriggerTypes.Add(tabTriggerTypes[iCount - 1].Text)
+    $cTriggerTypeNames.Add(iCount, tabTriggerTypes[iCount - 1].Text)
+  Next
+
+  ' fill combo with available global vars
+  cmbVariables.Add("")
+  For Each cGV In Main.GlobalVar
+    cmbVariables.Add(Main.GlobalVar.Key)
+  Next
+  rbVarEqual_Click()
+
+  ' fill combo with available devices
+  cmbDevices.Add("")
+  cmbDevicesLastseen.Add("")
+
+  For Each $cDevices
+    cmbDevices.Add($cDevices.Key)
+    cmbDevicesLastseen.Add($cDevices.Key)
+  Next
+
+  LoadTreeView()
+
+  ' Load an existing trigger
+  If Not bAddTrigger Then
+    ' fetch trigger details
+    If bTriggerEdit Then
+      Try rResult = Main.hDB.Exec("SELECT * FROM triggers WHERE id = &1", FEvents.txtCurEvent)
+    Else
+      Try rResult = Main.hDB.Exec("SELECT * FROM triggers WHERE id = &1", FEventEditor.iTrigger)
+    Endif
+    If Not rResult Then
+      Message.Info(("ERROR: couldn't find trigger details!"))
+      Return
+    Endif
+    If rResult.Count = 1 Then
+      txtTriggerName.Text = rResult!name
+      txtDescription.text = rResult!description
+      $iTriggerTab = rResult!type
+
+      ' preload controls to values from database
+      Select rResult!type
+        Case 1 ' time now
+          txtCronTab.Text = rResult!param1
+        Case 2 ' variable
+          cmbVariables.Text = rResult!param1
+          SelectVarCompare(rResult!param2)
+          txtVariable.Text = rResult!param3
+          cmbVariables_Click()
+        Case 3 ' device change
+          cmbDevices.Text = ""
+
+          ' Find the device name, based on the id. If it doesn't exist anymore, 
+          ' e.g. if the device is deleted, then the value stays blank
+          For Each $cDevices
+            If $cDevices[$cDevices.Key]["device_id"] = rResult!param1 Then
+              cmbDevices.Text = $cDevices.Key
+              Break
+            Endif
+          Next
+
+          ' Fill the table with available valuenum for this device
+          cmbValue.Clear()
+          If cmbDevices.Text Then
+            For Each iValueNum In $cDevices[cmbDevices.Text]["valuenum"]
+              cmbValue.Add("value" & iValueNum)
+            Next
+          Endif
+
+          Try cmbValue.Text = "value" & rResult!param2
+          SelectDevCompare(rResult!param3)
+          Try txtDevice.Text = rResult!param4
+          ChangeDevice()
+        Case 4 ' ir remote
+          Try txtRemote.Text = rResult!param1
+          Try txtButton.Text = rResult!param2
+        Case 5 ' iviewer remote
+          Try txtIViewerRemote.Text = rResult!param1
+          Try txtIViewerJoin.Text = rResult!param2
+          Try txtIViewerValue.Text = rResult!param3
+        Case 6 ' temp multi trigger
+          LoadTriggers()
+        Case 7 ' manually
+          ' Nothing to do
+        Case 8 ' device lastseen
+          cmbDevicesLastseen.Text = ""
+
+          ' Find the device name, based on the id. If it doesn't exist anymore, 
+          ' e.g. if the device is deleted, then the value stays blank
+          For Each $cDevices
+            If $cDevices[$cDevices.Key]["device_id"] = rResult!param1 Then
+              cmbDevicesLastseen.Text = $cDevices.Key
+              Break
+            Endif
+          Next
+
+          If cmbDevicesLastSeen.Text Then
+            txtDeviceLastseen.Text = Devices.GetLastSeenForDevice(rResult!param1)
+          Else
+            txtDeviceLastseen.Text = ""
+          Endif
+      End Select
+
+      Try tabTriggerTypes.Index = rResult!type - 1
+      tabTriggerTypes.SetFocus()
+    Else
+      bAddTrigger = True
+    Endif
+  Endif
+
+ ' Hide all tabs
+  For iCount = 1 To tabTriggerTypes.Count
+    tabTriggerTypes[iCount - 1].Visible = False
+  Next
+  
+  ' If the number is out-of-range, set it to default
+  If $iTriggerTab < 1 Or $iTriggerTab > tabTriggerTypes.Count Then
+    $iTriggerTab = 1
+  Endif
+
+  ' Set current action type
+  cmbTriggerTypes.Index = $cTriggerTypeNames[tabTriggerTypes[$iTriggerTab - 1].Text] - 1
+  ' Make only 1 tab visible
+  tabTriggerTypes[$iTriggerTab - 1].Visible = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Kick of loading the var and dev into the treeview
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub LoadTreeView()
 
   tvVariables.Clear
@@ -29,6 +223,9 @@ Public Sub LoadTreeView()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Load the triggers
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub LoadTriggers()
 
   Dim aTriggers As String[]
@@ -43,12 +240,9 @@ Public Sub LoadTriggers()
 
 End
 
-Public Sub lvTriggerList_DblClick()
-
-  Try lvTriggerList.Remove(lvTriggerList.Item.Key)
-
-End
-
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Load the available GlobalVar names into the Variable tableview
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub LoadVariables(sParent As String)
 
   Dim cGV As CGlobalVarEntry
@@ -60,37 +254,57 @@ Public Sub LoadVariables(sParent As String)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Load the available device id into the Variable tableview
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub LoadDevices(sParent As String)
 
-  Dim iCount As Integer
-  Dim rDevices As Result
   Dim sKey As String
-  
+  Dim iValueNum As Integer
+
   tvVariables.Add(Left(sParent, 3), sParent)
 
-  rResult = Devices.GetDevicesAndValues(["sortOrder": "name"])
-  
-  If Not rResult Then
-    LoadItem("ERROR", "Error: table 'devices' not found!", Left(sParent, 3))
-    Return
-  Endif
-
-  For Each rResult
-    sKey = Left(sParent, 3) & "_" & rResult!device_id
+  For Each $cDevices
+    sKey = Left(sParent, 3) & "_" & $cDevices[$cDevices.Key]["device_id"]
     If Not tvVariables.Exist(sKey) Then
-      tvVariables.Add(sKey, rResult!device_name & " (" & rResult!device_id & ")",, Left(sParent, 3))
+      tvVariables.Add(sKey, $cDevices.Key & " (" & $cDevices[$cDevices.Key]["device_id"] & ")",, Left(sParent, 3))
       LoadItem("LastChanged", "LastChanged", sKey)
       LoadItem("LastSeen", "LastSeen", sKey)
       LoadItem("BatteryStatus", "BatteryStatus", sKey)
     Endif
-    LoadItem("Value" & rResult!device_value_valuenum, "Value" & rResult!device_value_valuenum, sKey)
-  Next  
+
+    For Each iValueNum In $cDevices[$cDevices.Key]["valuenum"]
+      LoadItem("Value" & iValueNum, "Value" & iValueNum, sKey)
+    Next
+  Next
 
 End
 
 Public Sub LoadItem(sKey As String, sText As String, sParent As String)
 
   tvVariables.Add(sParent & "_" & sKey, sText,, sParent)
+
+End
+
+Public Sub GetTriggers() As String
+
+  Dim iCount As Integer
+  Dim sTriggers As String = "|"
+
+  lvTriggerList.MoveFirst
+
+  For iCount = 1 To lvTriggerList.Count
+    sTriggers &= lvTriggerList.Item.Text & "|"
+    lvTriggerList.MoveNext
+  Next
+
+  Return sTriggers
+
+End
+
+Public Sub lvTriggerList_DblClick()
+
+  Try lvTriggerList.Remove(lvTriggerList.Item.Key)
 
 End
 
@@ -125,135 +339,7 @@ End
 
 Public Sub lvTriggerList_Activate()
 
-    Try lvTriggerList.Remove(lvTriggerList.Item.Key)
-
-End
-
-Public Sub Form_Open()
-
-  Dim cGV As CGlobalVarEntry
-  Dim iCount As Integer
-
-  If bAddTrigger Then
-    Me.Text = ("Create Trigger")
-    btnDeleteTrigger.Visible = False
-  Endif
-
-  Me.Move(FMain.X + 50, FMain.Y + 70)
-
-' Fill combo with all trigger types & and keep track of the order
-  cTriggerTypeNames.Clear()
-  For iCount = 1 To tabTriggerTypes.Count
-    cmbTriggerTypes.Add(tabTriggerTypes[iCount - 1].Text)
-    cTriggerTypeNames.Add(iCount, tabTriggerTypes[iCount - 1].Text)
-  Next
-
-  ' fill combo with available global vars
-  cmbVariables.Add("")
-  For Each cGV In Main.GlobalVar
-    cmbVariables.Add(Main.GlobalVar.Key)
-  Next
-  rbVarEqual_Click()
-  ' fill combo with available devices
-  cmbDevices.Add("")
-  cmbDevicesLastseen.Add("")
-  rResultDevices = Main.hDB.Exec("SELECT * FROM devices ORDER BY name")
-  If rResultDevices Then
-    If rResultDevices.Count Then
-      For Each rResultDevices
-        cmbDevices.Add(rResultDevices!name)
-        cmbDevicesLastseen.Add(rResultDevices!name)
-      Next
-    Endif
-  Else
-    Message.Info(("Error: couldn't find trigger details!"))
-    Return
-  Endif
-
-  LoadTreeView()
-
-  If Not bAddTrigger Then
-    ' fetch trigger details
-    If bTriggerEdit Then
-      Try rResult = Main.hDB.Exec("SELECT * FROM triggers WHERE id = &1", FEvents.txtCurEvent)
-    Else
-      Try rResult = Main.hDB.Exec("SELECT * FROM triggers WHERE id = &1", FEventEditor.iTrigger)
-    Endif
-    If Not rResult Then
-      Message.Info(("Error: couldn't find trigger details!"))
-      Return
-    Endif
-    If rResult.Count = 1 Then
-      txtTriggerName.Text = rResult!name
-      txtDescription.text = rResult!description
-      iTriggerTab = rResult!type
-
-      ' preload controls to values from database
-      Select rResult!type
-        Case 1 ' time now
-          txtCronTab.Text = rResult!param1
-        Case 2 ' variable
-          cmbVariables.Text = rResult!param1
-          SelectVarCompare(rResult!param2)
-          txtVariable.Text = rResult!param3
-          cmbVariables_Click()
-        Case 3 ' device change
-          Try cmbDevices.Text = Devices.FindNameForDevice(rResult!param1)
-          Try cmbValue.Index = rResult!param2
-          SelectDevCompare(rResult!param3)
-          Try txtDevice.Text = rResult!param4
-          cmbDevices_Click()
-        Case 4 ' ir remote
-          Try txtRemote.Text = rResult!param1
-          Try txtButton.Text = rResult!param2
-        Case 5 ' iviewer remote
-          Try txtIViewerRemote.Text = rResult!param1
-          Try txtIViewerJoin.Text = rResult!param2
-          Try txtIViewerValue.Text = rResult!param3
-        Case 6 ' temp multi trigger
-          LoadTriggers()
-        Case 7 ' manually
-          ' Nothing to do
-        Case 8 ' device lastseen
-          Try cmbDevicesLastseen.Text = Devices.FindNameForDevice(rResult!param1)
-          txtDeviceLastseen.Text = Devices.GetLastSeenForDevice(rResult!param1)
-      End Select
-      Try tabTriggerTypes.Index = rResult!type - 1
-      tabTriggerTypes.SetFocus()
-    Else
-      bAddTrigger = True
-    Endif
-  Endif
-
- ' Hide all tabs
-  For iCount = 1 To tabTriggerTypes.Count
-    tabTriggerTypes[iCount - 1].Visible = False
-  Next
-  
-  ' If the number is out-of-range, set it to default
-  If iTriggerTab < 1 Or iTriggerTab > tabTriggerTypes.Count Then
-    iTriggerTab = 1
-  Endif
-  ' Set current action type
-  cmbTriggerTypes.Index = cTriggerTypeNames[tabTriggerTypes[iTriggerTab - 1].Text] - 1
-  ' Make only 1 tab visible
-  tabTriggerTypes[iTriggerTab - 1].Visible = True
-
-End
-
-Public Sub GetTriggers() As String
-
-  Dim iCount As Integer
-  Dim sTriggers As String = "|"
-
-  lvTriggerList.MoveFirst
-
-  For iCount = 1 To lvTriggerList.Count
-    sTriggers &= lvTriggerList.Item.Text & "|"
-    lvTriggerList.MoveNext
-  Next
-
-  Return sTriggers
+  Try lvTriggerList.Remove(lvTriggerList.Item.Key)
 
 End
 
@@ -347,7 +433,7 @@ Public Sub btnSave_Click()
     Endif
   Endif
 
-  iType = cTriggerTypeNames[cmbTriggerTypes.Text]
+  iType = $cTriggerTypeNames[cmbTriggerTypes.Text]
 
   Select iType
     Case 1
@@ -364,6 +450,10 @@ Public Sub btnSave_Click()
         Balloon(("Please select a variable!"), cmbVariables)
         Return
       Endif
+      If Not sVarCompare Then
+        Balloon(("Please enter a compare choice!"), rbVarEqual)
+        Return
+      Endif
       sParam1 = cmbVariables.Text
       sParam2 = sVarCompare
       If Not txtVariable.Text Then
@@ -376,16 +466,20 @@ Public Sub btnSave_Click()
         Balloon(("Please select a device!"), cmbDevices)
         Return
       Endif
-      sParam1 = Devices.FindIdForDevice(cmbDevices.Text)
       If Not cmbValue.Text Then
         Balloon(("Please select the field to check!"), cmbValue)
+        Return
+      Endif
+      If Not sDevCompare Then
+        Balloon(("Please enter a compare choice!"), rbDevEqual)
         Return
       Endif
       If Not txtDevice.Text Then
         Balloon(("Please enter a value to check!"), txtDevice)
         Return
       Endif
-      sParam2 = cmbValue.Index
+      sParam1 = $cDevices[cmbDevices.Text]["device_id"]
+      sParam2 = Replace$(cmbValue.Text, "value", "")
       sParam3 = sDevCompare
       sParam4 = txtDevice.Text
     Case 4
@@ -421,7 +515,7 @@ Public Sub btnSave_Click()
         Balloon(("Please select a device!"), cmbDevicesLastseen)
         Return
       Endif
-      sParam1 = Devices.FindIdForDevice(cmbDevicesLastseen.Text)
+      sParam1 = $cDevices[cmbDevicesLastseen.Text]["device_id"]
       If Not txtDeviceLastseen.Text Then
         Balloon(("Please enter a value to check!"), txtDeviceLastseen)
         Return
@@ -462,19 +556,6 @@ Public Sub btnSave_Click()
 
 End
 
-Public Sub btnNewTrigger_Click()
-
-  bAddTrigger = True
-  btnSave_Click()
-
-End
-
-Public Sub btnCancel_Click()
-
-  Me.Close
-
-End
-
 Private Sub TriggerNameExist(sName As String) As Boolean
 
   Dim rResultTrig As Result
@@ -506,29 +587,6 @@ Private Sub SelectVarCompare(sValue As String)
 
 End
 
-Public Sub cmbVariables_Click()
-
-  If cmbVariables.Text Then
-    If TypeOf(Main.GetGlobalVar(cmbVariables.Text)) = gb.Boolean Then
-      txtVariableValue.Text = Main.DisplayBool(Main.GetGlobalVar(cmbVariables.Text))
-      rbVarSmaller.Enabled = False
-      rbVarBigger.Enabled = False
-      rbVarMod.Enabled = False
-    Else If Not TypeOf(Main.GetGlobalVar(cmbVariables.Text)) <= gb.Float Then
-      rbVarSmaller.Enabled = False
-      rbVarBigger.Enabled = False
-      rbVarMod.Enabled = False
-      txtVariableValue.Text = Main.GetGlobalVar(cmbVariables.Text)
-    Else If Not Main.IsTime(Main.GetGlobalVar(cmbVariables.Text)) Then
-      rbVarMod.Enabled = False
-      txtVariableValue.Text = Main.GetGlobalVar(cmbVariables.Text)
-    Else
-      txtVariableValue.Text = Main.GetGlobalVar(cmbVariables.Text)
-    Endif
-  Endif
-
-End
-
 Private Sub SelectDevCompare(sValue As String)
 
   Select sValue
@@ -543,6 +601,47 @@ Private Sub SelectDevCompare(sValue As String)
   End Select
 
 End
+
+Public Sub cmbVariables_Click()
+
+  If cmbVariables.Text Then
+    If TypeOf(Main.GetGlobalVar(cmbVariables.Text)) = gb.Boolean Then
+      txtVariableValue.Text = Main.DisplayBool(Main.GetGlobalVar(cmbVariables.Text))
+      rbVarSmaller.Enabled = False
+      rbVarBigger.Enabled = False
+      rbVarMod.Enabled = False
+    Else If TypeOf(Main.GetGlobalVar(cmbVariables.Text)) <= gb.Float Then
+      rbVarSmaller.Enabled = True
+      rbVarBigger.Enabled = True
+      rbVarMod.Enabled = True
+      txtVariableValue.Text = Main.GetGlobalVar(cmbVariables.Text)
+    Else If Main.IsTime(Main.GetGlobalVar(cmbVariables.Text)) Then
+      rbVarSmaller.Enabled = True
+      rbVarBigger.Enabled = True
+      rbVarMod.Enabled = False
+      txtVariableValue.Text = Main.GetGlobalVar(cmbVariables.Text)
+    Else
+      rbVarSmaller.Enabled = False
+      rbVarBigger.Enabled = False
+      rbVarMod.Enabled = False
+      txtVariableValue.Text = Main.GetGlobalVar(cmbVariables.Text)
+    Endif
+  Endif
+
+End
+
+Public Sub btnNewTrigger_Click()
+
+  bAddTrigger = True
+  btnSave_Click()
+
+End
+
+Public Sub btnCancel_Click()
+
+  Me.Close
+
+End   
 
 Public Sub rbDevEqual_Click()
 
@@ -570,11 +669,29 @@ End
 
 Public Sub cmbDevices_Click()
 
+  Dim iValueNum As Integer
+
+  ' The valuenum is a dynamic list
+  cmbValue.Clear()
+  If cmbDevices.Text Then
+
+    For Each iValueNum In $cDevices[cmbDevices.Text]["valuenum"]
+      cmbValue.Add("value" & iValueNum)
+    Next
+  Endif
+
+  ChangeDevice()
+
+End
+
+Private Sub ChangeDevice()
+
   Dim iId As Integer
 
   If cmbValue.Text And cmbDevices.Text Then
-    iId = Devices.FindIdForDevice(cmbDevices.Text)
-    If iId Then txtDeviceValue.Text = Devices.GetCurrentValueForDevice(iId, cmbValue.Index)
+    Try iId = $cDevices[cmbDevices.Text]["device_id"]
+
+    If iId Then txtDeviceValue.Text = Devices.GetCurrentValueForDevice(iId, Replace$(cmbValue.Text, "value", ""))
     If TypeOf(Val(txtDeviceValue.Text)) <= gb.Float Then
       rbDevBigger.Enabled = True
       rbDevSmaller.Enabled = True
@@ -583,6 +700,8 @@ Public Sub cmbDevices_Click()
       rbDevBigger.Enabled = False
       rbDevSmaller.Enabled = False
     Endif
+  Else
+    txtDeviceValue.Text = ""
   Endif
 
 End
@@ -592,15 +711,17 @@ Public Sub cmbDevicesLastseen_Click()
   Dim iId As Integer
 
   If cmbDevicesLastseen.Text Then
-    iId = Devices.FindIdForDevice(cmbDevicesLastseen.Text)
+    Try iId = $cDevices[cmbDevicesLastseen.Text]["device_id"]
     If iId Then txtDeviceLastseen.Text = Devices.GetLastSeenForDevice(iId)
+  Else
+    txtDeviceLastseen.Text = ""
   Endif
 
 End
 
 Public Sub cmbValue_Click()
 
-  cmbDevices_Click()
+  ChangeDevice()
 
 End
 
@@ -640,23 +761,20 @@ Public Sub cmbTriggerTypes_Click()
 
   Dim iCount As Integer
   ' Find the right tab, if our List is sorted
-  iTriggerTab = cTriggerTypeNames[cmbTriggerTypes.Text]
+  $iTriggerTab = $cTriggerTypeNames[cmbTriggerTypes.Text]
   ' Hide all tabs
   For iCount = 1 To tabTriggerTypes.Count
     tabTriggerTypes[iCount - 1].Visible = False
   Next
   
   ' If the number is out-of-range, set it to default
-  If iTriggerTab < 1 Or iTriggerTab > tabTriggerTypes.Count Then
-    iTriggerTab = 1
+  If $iTriggerTab < 1 Or $iTriggerTab > tabTriggerTypes.Count Then
+    $iTriggerTab = 1
   Endif
-  tabTriggerTypes[iTriggerTab - 1].Visible = True
+  tabTriggerTypes[$iTriggerTab - 1].Visible = True
 
 End
 
-
 Public Sub txtCronTab_KeyPress()
-
-  
 
 End
