@@ -733,180 +733,133 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 			break;
 		}
-		case COMMAND_CLASS_SENSOR_ALARM:
-		{
-			if ( type == ValueID::ValueType_Byte )
-			{
-				if ( label == "Flood" )
-				{
-					dev_index = 15;
-				}
-				else if ( label == "Smoke" )
-				{
-					dev_index = 16;
-				}
-				else if ( label == "Carbon Monoxide" )
-				{
-					dev_index = 17;
-				}
-				else if ( label == "Carbon Dioxide" )
-				{
-					dev_index = 18;
-				}
-				else if ( label == "Heat" )
-				{
-					dev_index = 19;
-				}
-				else if ( label == "General" )
-				{
-					dev_index = 20;
-				}
-
-				// Only store the result if it is a valid valuenumber
-				if ( dev_index > 0 )
-				{
-					dev_label = label;
-
-					if ( strcmp( dev_value, "0" ) == 0 )
-					{
-						strcpy( dev_result, "Off" );
-					}
-					else
-					{
-						strcpy( dev_result, "On" );
-					}
-				}
-			}
-
-			break;
-		}
 		case COMMAND_CLASS_SENSOR_MULTILEVEL:
 		{
 			if ( type == ValueID::ValueType_Decimal )
 			{
 				if ( label == "Temperature" )
 				{
-					dev_index = 21;
+					dev_index = 15;
 				}
 				else if ( label == "Relative Humidity" )
 				{
-					dev_index = 22;
+					dev_index = 16;
 				}
 				else if ( label == "Luminance" )
 				{
-					dev_index = 23;
+					dev_index = 17;
 				}
 				else if ( label == "Power" )
 				{
-					dev_index = 24;
+					dev_index = 18;
 				}
 				else if ( label == "Relative Humidity" )
 				{
-					dev_index = 25;
+					dev_index = 19;
 				}
 				else if ( label == "Velocity" )
 				{
-					dev_index = 26;
+					dev_index = 20;
 				}
 				else if ( label == "Direction" )
 				{
-					dev_index = 27;
+					dev_index = 21;
 				}
 				else if ( label == "Atmospheric Pressure" )
 				{
-					dev_index = 28;
+					dev_index = 22;
 				}
 				else if ( label == "Barometric Pressure" )
 				{
-					dev_index = 29;
+					dev_index = 23;
 				}
 				else if ( label == "Solar Radiation" )
 				{
-					dev_index = 30;
+					dev_index = 24;
 				}
 				else if ( label == "Dew Point" )
 				{
-					dev_index = 31;
+					dev_index = 25;
 				}
 				else if ( label == "Rain Rate" )
 				{
-					dev_index = 32;
+					dev_index = 26;
 				}
 				else if ( label == "Tide Level" )
 				{
-					dev_index = 33;
+					dev_index = 27;
 				}
 				else if ( label == "Weight" )
 				{
-					dev_index = 34;
+					dev_index = 28;
 				}
 				else if ( label == "Voltage" )
 				{
-					dev_index = 35;
+					dev_index = 29;
 				}
 				else if ( label == "Current" )
 				{
-					dev_index = 36;
+					dev_index = 30;
 				}
 				else if ( label == "CO2 Level" )
 				{
-					dev_index = 37;
+					dev_index = 31;
 				}
 				else if ( label == "Air Flow" )
 				{
-					dev_index = 38;
+					dev_index = 32;
 				}
 				else if ( label == "Tank Capacity" )
 				{
-					dev_index = 39;
+					dev_index = 33;
 				}
 				else if ( label == "Distance" )
 				{
-					dev_index = 40;
+					dev_index = 34;
 				}
 				else if ( label == "Angle Position" )
 				{
-					dev_index = 41;
+					dev_index = 35;
 				}
 				else if ( label == "Rotation" )
 				{
-					dev_index = 42;
+					dev_index = 36;
 				}
 				else if ( label == "Water Temperature" )
 				{
-					dev_index = 43;
+					dev_index = 37;
 				}
 				else if ( label == "Soil Temperature" )
 				{
-					dev_index = 44;
+					dev_index = 38;
 				}
 				else if ( label == "Seismic Intensity" )
 				{
-					dev_index = 45;
+					dev_index = 39;
 				}
 				else if ( label == "Seismic Magnitude" )
 				{
-					dev_index = 46;
+					dev_index = 40;
 				}
 				else if ( label == "Utraviolet" )
 				{
-					dev_index = 47;
+					dev_index = 41;
 				}
 				else if ( label == "Electrical Resistivity" )
 				{
-					dev_index = 48;
+					dev_index = 42;
 				}
 				else if ( label == "Electrical Conductivity" )
 				{
-					dev_index = 49;
+					dev_index = 43;
 				}
 				else if ( label == "Loudness" )
 				{
-					dev_index = 50;
+					dev_index = 44;
 				}
 				else if ( label == "Moisture" )
 				{
-					dev_index = 51;
+					dev_index = 45;
 				}
 
 				if ( dev_index > 0 )
@@ -922,7 +875,7 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		{
 			if ( label == "Alarm Level" )
 			{
-				dev_index = 52;
+				dev_index = 46;
 
 				if ( strcmp( dev_value, "0" ) == 0 )
 				{
@@ -931,6 +884,53 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 				else
 				{
 					strcpy( dev_result, "Tamper" );
+				}
+			}
+
+			break;
+		}
+		case COMMAND_CLASS_SENSOR_ALARM:
+		{
+			if ( type == ValueID::ValueType_Byte )
+			{
+				if ( label == "Flood" )
+				{
+					dev_index = 47;
+				}
+				else if ( label == "Smoke" )
+				{
+					dev_index = 48;
+				}
+				else if ( label == "Carbon Monoxide" )
+				{
+					dev_index = 49;
+				}
+				else if ( label == "Carbon Dioxide" )
+				{
+					dev_index = 50;
+				}
+				else if ( label == "Heat" )
+				{
+					dev_index = 51;
+				}
+				else if ( label == "General" )
+				{
+					dev_index = 52;
+				}
+
+				// Only store the result if it is a valid valuenumber
+				if ( dev_index > 0 )
+				{
+					dev_label = label;
+
+					if ( strcmp( dev_value, "0" ) == 0 )
+					{
+						strcpy( dev_result, "Off" );
+					}
+					else
+					{
+						strcpy( dev_result, "On" );
+					}
 				}
 			}
 
