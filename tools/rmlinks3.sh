@@ -8,9 +8,18 @@ if [ -d DomotiGaServer3 ]; then
 else
   cd ../DomotiGaServer3/.src/
 fi
+#
 cp Main.module Main.module.back
+#
 rm *.class
 rm *.module
+rm */*.class
+rm */*.module
+mkdir -p JsonRpc
+mkdir -p SmtpClient
+mkdir -p Timers
+mkdir -p XmlRpc
+#
 cp Main.module.back Main.module
 cp ../../DomotiGa3/.src/Astro.module .
 cp ../../DomotiGa3/.src/AVControl.module .
@@ -118,10 +127,8 @@ cp ../../DomotiGa3/.src/Util.module .
 cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
 cp ../../DomotiGa3/.src/WeatherUG.module .
-cp ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class ./JsonRpc/.
-cp ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class ./JsonRpc/.
-cp ../../DomotiGa3/.src/JsonRpc/JsonRpcClient.class ./JsonRpc/.
-cp ../../DomotiGa3/.src/Timers/CTimerDelay.class ./Timers/.
-cp ../../DomotiGa3/.src/Timers/CTimerOnOff.class ./Timers/.
-cp ../../DomotiGa3/.src/Timers/CTimerGeneric.class ./Timers/.
+cp ../../DomotiGa3/.src/JsonRpc/* ./JsonRpc/
+cp ../../DomotiGa3/.src/SmtpClient/* ./SmtpClient/
+cp ../../DomotiGa3/.src/Timers/* ./Timers/
+cp ../../DomotiGa3/.src/XmlRpc/* ./XmlRpc/
 
