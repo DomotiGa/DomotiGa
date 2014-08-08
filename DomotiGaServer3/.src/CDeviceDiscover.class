@@ -6,6 +6,9 @@
 '
 ' Development Status
 ' Proof of concept to see if integrating this in the core would work for finding and configuring network devices with DomotiGa
+' TODO: Parse Service List 
+' TODO: Save cache time
+' TODO: update list and keep updated
 '
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -17,8 +20,8 @@
 
 Public PluginName As String = "DeviceDiscover"
 Public PluginFriendlyName As String = "Device Discover Plugin"
-Public PluginVersion As String = "0.01"
-Public PluginAuthor As String = "Simon Jones"
+Public PluginVersion As String = "0.02"
+Public PluginAuthor As String = "Simon Jones, Jesse Kerkhoven"
 Public PluginProtocols As String[]
 Public PluginType As Integer = Plugin.Type_Class
 Public PluginMaxInstances As Integer = 1
@@ -33,7 +36,6 @@ Public IsRunning As Boolean
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Private Variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private $sLocalIP As String
 Private $sMultiCastUDPIP As String
 Private $iLocalPort As Integer
 Private $iMultiCastUDPPort As Integer
@@ -54,7 +56,7 @@ Private hSrvSocket As ServerSocket
 Private hDeviceSocket As Socket
 Private tBroadcast As Timer
 Private qDevicesFound As Queue
-Private oDeviceSockets As New Object[]
+Private oDeviceSockets As New Collection
 
 ' Structure for Service List of a device
 Public Struct DeviceSrv
@@ -67,7 +69,6 @@ End Struct
 
 ' Structure for a discovered uPNP device
 Public Struct uPNPDevice
-  id As Integer
   locationurl As String
   requesturl As String
   manufacturer As String
@@ -103,18 +104,9 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnabled = cPl.Settings["enabled"]
   $sMultiCastUDPIP = cPl.Settings["multicasthost"]
   $iMultiCastUDPPort = cPl.Settings["multicastport"]
-  $sLocalIP = cPl.Settings["localip"]
   $bListenOnly = cPl.Settings["listenonly"]
   $iBroadcastInterval = cPl.Settings["broadcastinterval"]
   $buPNPDebug = cPl.Settings["debug"]
-
-  ' $bEnabled = True
-  ' $sMultiCastUDPIP = "239.255.255.250"
-  ' $iMultiCastUDPPort = 1900
-  ' $sLocalIP = "192.168.178.80"
-  ' $bListenOnly = False
-  ' $iBroadcastInterval = 1
-  ' $buPNPDebug = True
 
   IsRunning = True
 
@@ -135,9 +127,19 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
+  Dim cCol As Collection
+  Dim hS As Socket
+
   Try hMultiCastSocketR.Close
   Try hMultiCastSocketS.Close
   Try hSrvSocket.Close
+
+  For Each cCol In oDeviceSockets
+    hS = cCol["socket"]
+    Try Close #hS
+    oDeviceSockets.Remove(cCol["id"])
+  Next
+
 
   IsRunning = False
   Main.WriteLog(LogLabel & PluginFriendlyName & " Stopped.")
@@ -201,8 +203,6 @@ Private Sub ProcessDeviceFoundQueue()
       If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " location url not found in data.")
     Endif
 
-    'If $buPNPDebug Then Main.WriteLog(LogLabel & PluginFriendlyName & " waiting for 5 seconds before continuing...")
-    Wait 0.5
   Wend
 
 End
@@ -231,8 +231,8 @@ Private Sub SendMultiCastBroadcast()
 
   hMultiCastSocketS.Begin
   Try Write #hMultiCastSocketS, sBroadcast, Len(sBroadcast)
-    hMultiCastSocketS.Send
-    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " MultiCast M-Search sent.")
+  hMultiCastSocketS.Send
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " MultiCast M-Search send.")
 
 Catch
   If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " Error sending MultiCast M-Search.")
@@ -242,7 +242,7 @@ Catch
 End
 
 
-Private Function Build_UPNPString(Command As String, Optional sUPNPDevice As UPNPDevice, Optional HostIP As String) As String
+Private Function Build_UPNPString(Command As String, Optional sUPNPDevice As UPNPDevice) As String
 
   Dim sReturn As String
 
@@ -261,7 +261,7 @@ Private Function Build_UPNPString(Command As String, Optional sUPNPDevice As UPN
       Case "Get"
         If sUPNPDevice Then
           sReturn = "GET " & sUPNPDevice.requesturl & " HTTP/1.1\r\n"
-          sReturn &= "HOST: " & HostIP & ":1900\r\n" 
+          sReturn &= "HOST: " & sUPNPDevice.ipaddress & "\r\n" 
           sReturn &= "\r\n"  
         Endif
 
@@ -312,6 +312,9 @@ Private Sub GetDeviceData(sLocation As String) As UPNPDevice
   Dim sBuffer, sData As String
   Dim iCount As Integer = 0
 
+  Dim oDeviceSocketEntry As New Collection
+  Dim iId As Integer
+
   hDeviceSocket = New Socket As "DeviceSocket"
   hDeviceSocket.Timeout = 2000
 
@@ -322,10 +325,19 @@ Private Sub GetDeviceData(sLocation As String) As UPNPDevice
   If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " sending: " & sData)
 
   hDeviceSocket.Connect(sUPNPDevice.ipaddress, sUPNPDevice.port)
-  oDeviceSockets.Add(hDeviceSocket)
+  
+  Randomize
+  Do
+    iId = Int(Rnd(1, 32768))
+  Loop Until Not oDeviceSockets.Exist(iId)
+
+  oDeviceSocketEntry.Add("", "buffer")
+  oDeviceSocketEntry.Add(hDeviceSocket, "socket")
+  oDeviceSocketEntry.Add(CStr(iId), "id")
+  oDeviceSockets.Add(oDeviceSocketEntry, CStr(iId))
 
   iCount = 0
-  Do While (hDeviceSocket.Status <> 7) And (hDeviceSocket.Status > 0)
+  Do While (hDeviceSocket.Status <> Net.Connected) And (hDeviceSocket.Status > Net.Inactive)
     If iCount >= 20 Then
       If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " Device Comms connect timeout (2 Sec)")
         hDeviceSocket.Close
@@ -336,7 +348,7 @@ Private Sub GetDeviceData(sLocation As String) As UPNPDevice
     Endif
     Wait 0.1
   Loop
-  sData = Build_UPNPString("Get", sUPNPDevice, hDeviceSocket.LocalHost)
+  sData = Build_UPNPString("Get", sUPNPDevice)
 
   Write #hDeviceSocket, sData, Len(sData)
 
@@ -345,31 +357,70 @@ Catch
     If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " error during GetDeviceData (" & sLocation & ")")
     If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & ErrorText)
     If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & ErrorWhere)
-    'Try hDeviceSocket.Close
+    Try hDeviceSocket.Close
 
 End
 
 Public Sub DeviceSocket_Closed()
 
-  oDeviceSockets.Remove(oDeviceSockets.Find(Last))
+  Dim cCol As Collection
+
+  For Each cCol In oDeviceSockets
+    If Last = cCol["socket"] Then
+      Try Close #Last
+      oDeviceSockets.Remove(cCol["id"])
+      Break
+    End If
+
+  Next
 
 End
 
 Public Sub DeviceSocket_Read()
 
-  Dim sBuffer, sRemoteIP As String
+  Dim sBuffer As String
   Dim iDeviceSocket, iCount As Integer = -1
-  'Dim hSocket As Socket = oDeviceSockets(oDeviceSockets.Find(Last))
+  Dim sUPNPDevice As UPNPDevice
+  
+  Dim hS As Socket
+  Dim cCol As Collection
+  Dim cCount As Integer
+  Dim cWait As Integer = 1
+  Dim Buf As String
+  
+  For Each cCol In oDeviceSockets
+    If cCol["socket"] = Last Then
+      hS = Last
+      Break
+    Endif
+  Next
 
   If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " DeviceSocket_Read() called...")
-  sRemoteIP = Last.RemoteHost
-  Read #Last, sBuffer, Lof(Last)
+  sUPNPDevice = FindUPNPDeviceByIp(hS.RemoteHost)
 
-  Last.Close
+  If cCol["buffer"] = "" Then
+    Try Read #hS, Buf, Lof(hS)
+    cCol["buffer"] &= Buf
+  Else
+    Try Read #hS, Buf, Lof(hS)
+    cCol["buffer"] &= Buf
 
-   If sBuffer Then
-    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " DeviceSocket_Read() data read: " & sBuffer)
-    ParseGetData(sBuffer, sRemoteIP)
+    ' Don't continue, because this is the second (or more) iteration to read the data
+    ' The first iteration will handle the complete request
+    Return
+  End If
+
+  For cCount = cWait To 199 Step 1
+    If hS = Null Then Return
+    If hs.Status = Net.Inactive Then Break
+    Wait 0.005
+  Next
+
+
+
+   If cCol["buffer"] Then
+    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " DeviceSocket_Read() data read: " & cCol["buffer"])
+    ParseGetData(cCol["buffer"], sUPNPDevice)
    Else
      If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " DeviceSocket_Read() nothing read?")
    Endif
@@ -377,19 +428,52 @@ Public Sub DeviceSocket_Read()
 Catch
     Try Last.Close
     If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " DeviceSocket_Read() error reading from socket")
+    Print Error.Where & " " & Error.Text
 
 End
 
-Private Function ParseGetData(sData As String, RemoteIP As String) As String
+Private Function ParseGetData(sData As String, sUPNPDevice As UPNPDevice) As String
 
   Dim sXMLItem, sXMLValue As String
   Dim xml As New XmlReader
-  Dim sUPNPDevice As UPNPDevice
+  Dim iPos As Integer
+  Dim iLength As Integer
+  Dim sHdr As String
+  Dim sBody As String
 
   If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " ParseGetData() parsing get data from device.")
 
+  ' We got the whole HTTP request, first split the header and body
+  If InStr(sData, "HTTP") <> 1 Then Return
+
+  iPos = InStr(sData, Chr(13) & Chr(10) & Chr(13) & Chr(10)) 
+  If iPos = 0 Then Return
+  sHdr = Left(sData, iPos - 1)
+  sBody = Mid(sData, iPos + 4)
+
+  ' If we are in chunked mode, remove that data
+  If InStr(UCase(sHdr), "TRANSFER-ENCODING: CHUNKED") > 0 Then
+    sData = ""
+    While sBody
+      iPos = InStr(sBody, Chr(13) & Chr(10)) 
+      If iPos >= 1 Then
+        iLength = 0
+        Try iLength = Val("&H" & Left(sBody, iPos - 1)) 
+        sData &= Mid(sBody, iPos + 2, iLength)
+        sBody = Mid(sBody, iPos + 2 + iLength)
+      Else
+        sBody = ""
+      Endif
+    Wend
+  Else
+    sData = sBody
+  Endif
+
+
   If sData Then
-    xml.FromString(sdata)
+    
+    If Not sUPNPDevice.active Then sUPNPDevice.active = True
+    xml.FromString(sData)
 
     While Not xml.Eof
       Select Case xml.Node.Type
@@ -425,11 +509,24 @@ End
 
 Private Sub UpdateUPNPDevice(sName As String, sValue As String, sUPNPDevice As UPNPDevice)
 
-  Select Case sName
-
+  Select Case LCase(sName)
+    Case "devicetype"
+      sUPNPDevice.devicetype = sValue
+    Case "manufacturer"
+      sUPNPDevice.manufacturer = sValue
+    Case "modeldescription" 
+      sUPNPDevice.modeldesc = sValue
+    Case "modelname" 
+      sUPNPDevice.modelname = sValue
+    Case "presentationurl"
+      sUPNPDevice.presentationurl = sValue
+    Case "udn" 
+      sUPNPDevice.udn = sValue
     Case Else
-
+      Return
   End Select
+
+  sUPNPDevice.lastupdate = Now
 
 End
 
@@ -576,9 +673,8 @@ Private Sub ParseLocation(sURL As String) As UPNPDevice
     rPort = New RegExp(sURL, "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}(:\\d{1,5})")
 
     If rIPAddress.Offset <> -1 Then
-        sUPNPDevice = New UPNPDevice
+        sUPNPDevice = FindUPNPDeviceByIp(rIPAddress.Text)
         sUPNPDevice.locationurl = sURL
-        sUPNPDevice.ipaddress = rIPAddress.Text
         If rPort.Offset = -1 Then
               sUPNPDevice.port = 80
         Else
@@ -608,3 +704,18 @@ Private Function CheckMultiCastRouting() As Boolean
 
 End
 
+Private Function FindUPNPDeviceByIp(ipaddress As String) As UPNPDevice
+  
+  Dim sUPNPDevice As UPNPDevice
+  
+  If DeviceList.Exist(ipaddress) Then
+    sUPNPDevice = DeviceList[ipaddress]
+  Else
+    sUPNPDevice = New UPNPDevice
+    sUPNPDevice.ipaddress = ipaddress
+    DeviceList.Add(sUPNPDevice, sUPNPDevice.ipaddress)
+  Endif
+  
+  Return sUPNPDevice
+
+End
