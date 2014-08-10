@@ -4987,7 +4987,7 @@ const char* DomoZWave_GetNodeStatistics( uint32 home, int32 node )
 	jvalue = json_object_new_string( data.m_receivedTS.c_str() );
 	json_object_object_add( jstats, "receivedts", jvalue );
 	jcount = json_object_new_int( data.m_averageRequestRTT );
-	json_object_object_add( jstats, "averagerequesrtt", jcount );
+	json_object_object_add( jstats, "averagerequestrtt", jcount );
 	jcount = json_object_new_int( data.m_averageResponseRTT );
 	json_object_object_add( jstats, "averageresponsertt", jcount );
 	jcount = json_object_new_int( data.m_quality );
