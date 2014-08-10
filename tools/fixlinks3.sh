@@ -22,6 +22,7 @@ ln -s ../../DomotiGa3/.src/CBwiredMap.class
 ln -s ../../DomotiGa3/.src/CCTX35.class
 ln -s ../../DomotiGa3/.src/CCurrentCost.class
 ln -s ../../DomotiGa3/.src/CDenon.class
+ln -s ../../DomotiGa3/.src/CDeviceDiscover.class
 ln -s ../../DomotiGa3/.src/CDigitemp.class
 ln -s ../../DomotiGa3/.src/CDomotica.class
 ln -s ../../DomotiGa3/.src/CDSC.class
