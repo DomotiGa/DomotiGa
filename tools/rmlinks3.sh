@@ -22,6 +22,7 @@ cp ../../DomotiGa3/.src/CBwiredMap.class .
 cp ../../DomotiGa3/.src/CCTX35.class .
 cp ../../DomotiGa3/.src/CCurrentCost.class .
 cp ../../DomotiGa3/.src/CDenon.class .
+cp ../../DomotiGa3/.src/CDeviceDiscover.class .
 cp ../../DomotiGa3/.src/CDigitemp.class .
 cp ../../DomotiGa3/.src/CDMXPlayer.class .
 cp ../../DomotiGa3/.src/CDomotica.class .
@@ -60,6 +61,7 @@ cp ../../DomotiGa3/.src/COWFS.class .
 cp ../../DomotiGa3/.src/COWW.class .
 cp ../../DomotiGa3/.src/CP2000.class .
 cp ../../DomotiGa3/.src/CPachube.class .
+cp ../../DomotiGa3/.src/CPilipsHue.class .
 cp ../../DomotiGa3/.src/CPLCBUS.class .
 cp ../../DomotiGa3/.src/CPluginEntry.class .
 cp ../../DomotiGa3/.src/CPlugwise.class .
