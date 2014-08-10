@@ -62,7 +62,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sXMLFile = cPl.Settings["xmlfile"]
   $bTVGuideDebug = cPl.Settings["debug"]
 
-  ' Initialize 
+  ' Nothing to initialize 
 
 End
 
@@ -80,10 +80,12 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub ImportGuide()
 
-  If Not Main.bTVGuideEnabled Then Return
+  If Not $bEnabled Then Return
   sMC2XMLLog = ""
-  hTVProcess = Shell (Main.sTVGuideXMLGrabCommand) For Read Write As "hTVProcess"
-  Main.WriteDebugLog(LogLabel & "Started grabbing XML with '" & Main.sTVGuideXMLGrabCommand & "'.")
+  hTVProcess = Shell ($sXMLGrabCommand) For Read Write As "hTVProcess"
+  If $bTVGuideDebug Then
+    Main.WriteDebugLog(LogLabel & "Started grabbing XML with '" & $sXMLGrabCommand & "'.")
+  Endif
 
 End
 
@@ -103,138 +105,157 @@ End
 Public Sub hTVProcess_Kill()
 
   '--- declare variables ---
-  Dim hFile As File
-  Dim sLine, sFile As String = Temp()
+  Dim sFile As String = Temp()
 
   '--- command not found etc. ---
   If hTVProcess.Value Then Main.WriteDebugLog(LogLabel & "Error return value: " & hTVProcess.Value)
+  
+  ' TODO: Check if the modification date is later then the XML grab command started
+  
+  If $bTVGuideDebug Then
+    File.Save(sFile, sMC2XMLLog)
+    Main.WriteDebugLog(LogLabel & "Output of '" & $sXMLGrabCommand & "' dumped to " & sFile)
+  Endif
+  
+  PushTVGuideXMLToDB()
+    
+End
 
-  File.Save(sFile, sMC2XMLLog)
-  hFile = Open sFile For Input
-  While Not Eof(hFile)
-    Line Input #hFile, sLine
-    If Left(sLine, 15) = "Start time .. :" Then Main.WriteDebugLog(LogLabel & "EPG - Valid from:" & " " & Right(sLine, Len(sLine) - 15))
-    If Left(sLine, 15) = "End time .... :" Then Main.WriteDebugLog(LogLabel & "EPG - Valid until:" & " " & Right(sLine, Len(sLine) - 15))
-    If Left(sLine, 15) = "Parsing ..... :" Then Main.WriteDebugLog(LogLabel & "Identifier:" & " " & Right(sLine, Len(sLine) - 15))
-    If Left(sLine, 15) = "Completed ... :" Then Main.WriteDebugLog(LogLabel & "Summary:" & " " & PushTVGuideXMLToDB(Main.sTVGuideXMLFile))
-    If Left(sLine, 15) = "Status ...... :" Then Main.WriteDebugLog(LogLabel & "Status:" & " " & Right(sLine, Len(sLine) - 15))
-  Wend
-  hFile.Close
-  Kill sFile
-
+' get the value from a sub node of given parent with given name
+Public Function GetNamedChildValue(XmlParent As XmlNode, sName As String) As String
+  
+  Dim XmlChildNode As XmlNode
+  Dim sValue As String
+  
+  sValue = Null
+  For Each XmlChildNode In XmlParent.Children
+    If Comp(XmlChildNode.Name, sName, gb.IgnoreCase) = 0 Then
+      sValue = XmlChildNode.TextContent
+    Endif
+  Next
+  
+  Return sValue
 End
 
 ' push the retrieved xml file to the DB
-Public Function PushTVGuideXMLToDB(sData As String) As String
-
-    ' declare variables
-   Dim XmlR As New XmlReader
-   Dim iCI, iPI, iChannelCount, iProgramCount, iCategoriesCount As Integer
-   Dim sChannel, sProgram, sChannelInfo, sProgramInfo As String
-
-   ' init variables & cleanup database
-   sChannelInfo = ("[TVGuide] Processing XML file ... Channels so far: ")
-   sProgramInfo = ("[TVGuide] Processing XML file ... Programs so far: ")
-   XmlR = New XmlReader
-   XmlR.Open(sData)
-   Main.hDB.Exec("UPDATE tv_channels SET isupdated = 0")
-   Main.hDB.Exec("UPDATE tv_categories SET isupdated = 0")
-   Main.hDB.Exec("UPDATE tv_subcategories SET isupdated = 0")
-   Main.hDB.Exec("DELETE FROM tv_programs")
-   sChannel = ""
-   sProgram = ""
-   iChannelCount = 0
-   iProgramCount = 0
-   iPI = 0
-   iCI = 0
-
-   ' loop trough the whole XML buffer
-   While Not XmlR.Eof
-    Select Case XmlR.Node.Name
-      Case "display-name"
-        Inc iCI
-      Case "title", "desc", "category"
-        Inc iPI
-    End Select
-    If XmlR.Node.name = "#text" Then
-      If iCI = 6 Then
-        sChannel &= XmlR.Node.Value
-        SaveChannelToDB(sChannel, Main.sActiveUserID)
-      Else
-        If iPI = 2 Or If iPI = 4 Or If iPI = 6 Or If iPI = 8 Then
-          sProgram &= XmlR.Node.value & "|"
-        Endif
-        If iPI = 8 Then
-          SaveProgramToDB(sProgram, Main.sActiveUserID)
-        Endif
-      Endif
-    Else
-      ' here we have an XML node with subelements, split it up in different lines
-      Select Case XmlR.Node.Type
-        Case XmlReaderNodeType.Element
-          If XmlR.Node.Attributes.count > 0 Then
-            For Each XmlR.Node.Attributes
-              Select Case XmlR.Node.Name
-                Case "id"
-                  sChannel = XmlR.Node.Value & "|"
-                  iCI = 1
-                  Inc iChannelCount
-                  If iChannelCount / 10 = Int(iChannelCount / 10) Then
-                    Main.WriteDebugLog(LogLabel & sChannelInfo & CStr(iChannelCount))
-                    Wait
-                  Endif
-                Case "start"
-                  sProgram = Left(XmlR.Node.Value, 12) & "|"
-                  iPI = 1
-                  Inc iProgramCount
-                  If (iProgramCount / 1000 = Int(iProgramCount / 1000)) Or If (iProgramCount = 1) Then
-                    Main.WriteDebugLog(LogLabel & sProgramInfo & CStr(iProgramCount))
-                    Wait
-                  Endif
-                Case "stop"
-                  sProgram &= Left(XmlR.Node.Value, 12) & "|"
-                Case "channel"
-                  sProgram &= XmlR.Node.Value & "|"
-              End Select
-            Next
-          Endif
-        End Select
-    Endif
-    XmlR.Read()
-   Wend
-   XmlR.Close
-   XmlR = Null
-   ' do a little cleanup in the channels
-   Main.hDB.Exec("DELETE FROM tv_channels WHERE IsUpdated = 0")
-   Main.hDB.Exec("DELETE FROM tv_categories WHERE IsUpdated = 0")
-   Main.hDB.Exec("DELETE FROM tv_subcategories WHERE IsUpdated = 0")
-   ' we converted all channels and programs, now update category/subcategory tables
-   iCategoriesCount = UpdateTVCategories(Main.sActiveUserID)
-   Return "Finished. " & iChannelCount & " " & ("Channels") & ", " & CStr(iCategoriesCount) & " " & ("Main Categories and") & " " & CStr(iProgramCount) & " " & ("Programs processed !")
-
-Catch
-  Main.WriteDebugLog(LogLabel & "Error parsing XML file: " & Error.Text & " at " & Error.Where)
-
-End
-
-' write the info in the channeltag (taken from the MC XML file) into the database
-Private Sub SaveChannelToDB(sChannelTag As String, sUserID As String)
-
+' See http://wiki.xmltv.org/index.php/XMLTVFormat for the format spec
+Private Function PushTVGuideXMLToDB()
+  
   ' declare variables
+  Dim XmlDoc As New XmlDocument
+  Dim XmlTV, XmlNode As XmlNode
   Dim rRes As Result
-
-  ' first check if channel already exists
-  rRes = Main.hDB.Exec("SELECT * FROM tv_channels WHERE ChannelName = &1 AND ChannelID = &2", Main.ParseTag(sChannelTag, 2, "|"), Main.ParseTag(sChannelTag, 1, "|"))
-  If rRes Then
-    ' channel found, update modification info, and set IsUpdated
-    If rRes.Count Then
-      Main.hDB.Exec("UPDATE tv_channels SET IsUpdated = 1, ModificationDate = &1, FK_Users = &2 WHERE ChannelName = &3 AND ChannelID = &4", Format(Now, "yyyymmddhhnn"), sUserID, Main.ParseTag(sChannelTag, 2, "|"), Main.ParseTag(sChannelTag, 1, "|"))
-    Else
-      sChannelTag = Replace(sChannelTag, "'", "`")
-      Main.hDB.Exec("INSERT INTO tv_channels (ChannelName, ChannelID, CreationDate, ModificationDate, FK_Users, IsUsed, IsUpdated) VALUES(&1,&2,&3,&4,&5,&6,&7)", Main.ParseTag(sChannelTag, 2, "|"), Main.ParseTag(sChannelTag, 1, "|"), Format(Now, "yyyymmddhhnn"), Format(Now, "yyyymmddhhnn"), sUserID, 0, 1)
-    Endif
+  Dim sId, sChannelName As String
+  Dim sSql As String
+  Dim sNow As String
+  Dim sStart, sStop, sChannel As String
+  Dim sTitle, sSubTitle, sDesc, sCategory As String
+  Dim iChannelCount, iProgramCount, iCategoriesCount As Integer
+        
+  sNow = Format(Now(), "yyyymmddhhnn")
+  iChannelCount = 0
+  iProgramCount = 0
+ 
+  ' read XML data into DOM object
+  XmlDoc.Open($sXMLFile)
+  XmlTV = XmlDoc.Root
+  If Comp(XmlTV.Name, "tv", gb.IgnoreCase) <> 0 Then
+    Main.WriteDebugLog(LogLabel & "Error parsing XML file: no tv xml root node found")
+    Return
   Endif
 
+  Main.hDB.Exec("UPDATE tv_channels SET isupdated = 0")
+  Main.hDB.Exec("UPDATE tv_categories SET isupdated = 0")
+  Main.hDB.Exec("UPDATE tv_subcategories SET isupdated = 0")
+  Main.hDB.Exec("DELETE FROM tv_programs")
+    
+  For Each XmlNode In XmlTV.Children
+   
+    ' Channels
+    If Comp(XmlNode.Name, "channel", gb.IgnoreCase) = 0 Then
+     
+      ' id attribute
+      sId = XmlNode.Attributes["id"]
+      
+      ' display-name subnode
+      sChannelName = GetNamedChildValue(XmlNode, "display-name")
+      
+      ' create SQL strings; escape single quote by double quotes
+      sId = "'" & Replace(sId, "'", "''") & "'"
+      sChannelName = "'" & Replace(sChannelName, "'", "''") & "'"
+     
+      ' TODO: BLOBlogo/EXTlogo based on icon element?
+
+      ' Common things to be set
+      sSql = "SET IsUpdated = 1, ModificationDate = " & sNow & ", FK_Users = " & Main.sActiveUserID
+
+      rRes = Main.hDB.Exec("SELECT * FROM tv_channels WHERE ChannelName = " & sChannelName & " AND ChannelID = " & sId)
+      If rRes.Count Then
+        ' channel found, update modification info, and set IsUpdated
+        sSql = "UPDATE tv_channels " & sSql
+        sSql &= " WHERE ChannelName = " & sChannelName & " AND ChannelID = " & sId
+      Else
+        sSql = "INSERT INTO tv_channels " & sSql
+        sSql &= ", ChannelName = " & sChannelName & ", ChannelID = " & sId & ", CreationDate = " & sNow & ", IsUsed = 0"
+      Endif
+      Main.hDB.Exec(sSql)
+      Inc iChannelCount
+    Endif
+   
+    ' Programme's
+    If Comp(XmlNode.Name, "programme", gb.IgnoreCase) = 0 Then
+     
+      ' start, stop and channel attributes
+      sStart = XmlNode.Attributes["start"]
+      sStop = XmlNode.Attributes["stop"]
+      sChannel = XmlNode.Attributes["channel"]
+     
+      ' title/sub-title, desc, category
+      sTitle = GetNamedChildValue(XmlNode, "title")
+      sSubTitle = GetNamedChildValue(XmlNode, "sub-title")
+      If sSubTitle Then
+          sTitle &= " - " & sSubTitle
+      Endif
+      sDesc = GetNamedChildValue(XmlNode, "desc")
+      sCategory = GetNamedChildValue(XmlNode, "category")
+     
+      ' create SQL strings; escape single quote by double quotes
+      sStart = "'" & Replace(sStart, "'", "''") & "'"
+      sStop = "'" & Replace(sStop, "'", "''") & "'"
+      sChannel = "'" & Replace(sChannel, "'", "''") & "'"
+      sTitle = "'" & Replace(sTitle, "'", "''") & "'"
+      sDesc = "'" & Replace(sDesc, "'", "''") & "'"
+      sCategory = "'" & Replace(sCategory, "'", "''") & "'"
+     
+      ' TODO: First word/two words of desc for tv_grab_nl_py seems to be SubCategory
+     
+      sSql = "INSERT INTO tv_programs SET StartPoint = " & sStart & ", EndPoint = " & sStop & ", ChannelID = " & sChannel & ", "
+      sSql &= "ProgramName = " & sTitle & ", ProgramDescription = " & sDesc & ", CategoryName = " & sCategory & ", SubCategoryName = '', "
+      sSql &= "CreationDate = " & sNow & ", FK_Users = " & Main.sActiveUserID
+      Main.hDB.Exec(sSql)
+      
+      ' Can take some time so service pending events
+      If (iProgramCount % 500 = 0) Then
+        Main.WriteDebugLog(LogLabel & CStr(iProgramCount) & "programs processed")
+        Wait
+      Endif
+      Inc iProgramCount
+    Endif
+  Next
+  
+  ' do a little cleanup in the channels
+  Main.hDB.Exec("DELETE FROM tv_channels WHERE IsUpdated = 0")
+  Main.hDB.Exec("DELETE FROM tv_categories WHERE IsUpdated = 0")
+  Main.hDB.Exec("DELETE FROM tv_subcategories WHERE IsUpdated = 0")
+ 
+  ' we converted all channels and programs, now update category/subcategory tables
+  iCategoriesCount = UpdateTVCategories(Main.sActiveUserID)
+  
+  Main.WriteLog(LogLabel & "Finished: " & CStr(iChannelCount) & " channels " & ", " & CStr(iCategoriesCount) & " categories and " & CStr(iProgramCount) & " programs processed!")
+
+Catch
+  Main.WriteLog(LogLabel & "Error parsing XML file: " & Error.Text & " at " & Error.Where)
+   
 End
 
 ' update the categories/categories table, based on contents of the tv_programs table
@@ -273,12 +294,5 @@ Private Sub UpdateTVCategories(sUserID As String) As Integer
       Return rRes.Count
     Endif
   Endif
-
-End
-
-' write the info in the ProgramTag (taken from the XML file) into the database
-Private Sub SaveProgramToDB(sProgramTag As String, sUserID As String)
-
-  Main.hDB.Exec("INSERT INTO tv_programs (StartPoint, EndPoint, ChannelID, ProgramName, ProgramDescription, CategoryName, SubCategoryName, CreationDate, FK_Users) VALUES(&1,&2,&3,&4,&5,&6,&7,&8,&9)", Main.ParseTag(sProgramTag, 1, "|"), Main.ParseTag(sProgramTag, 2, "|"), Main.ParseTag(sProgramTag, 3, "|"), Main.ParseTag(sProgramTag, 4, "|"), Main.ParseTag(sProgramTag, 5, "|"), Main.ParseTag(sProgramTag, 6, "|"), Main.ParseTag(sProgramTag, 7, "|"), Format(Now, "yyyymmddhhnn"), sUserID)
 
 End
