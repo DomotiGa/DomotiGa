@@ -31,7 +31,7 @@ foreach($data as $subitem) {
    $subdata[$totcount]['deviceicon'] = $subitem['deviceicon'];
    $subdata[$totcount]['devicename'] = $subitem['devicename'];
    $subdata[$totcount]['devicelocation'] = $subitem['devicelocation'];
-   $subdata[$totcount]['devicevalue'] = $subitem['devicevalue'];
+   $subdata[$totcount]['devicevalue1'] = $subitem['devicevalue1'];
    $subdata[$totcount]['devicevalue2'] = $subitem['devicevalue2'];
    $subdata[$totcount]['devicevalue3'] = $subitem['devicevalue3'];
    $subdata[$totcount]['devicevalue4'] = $subitem['devicevalue4'];

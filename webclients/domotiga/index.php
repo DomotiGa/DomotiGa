@@ -25,8 +25,8 @@ if (file_exists($configfile)) {
    echo "<h3>Check contents of config.php.example first, then rename it to config.php!</h3>";
    exit;
 }
-if (!extension_loaded('xmlrpc')) {
-   echo "<h3>PHP xmlrpc module is not found, check your apache/php server setup!</h3>";
+if (!extension_loaded('curl')) {
+   echo "<h3>PHP curl module is not found, check your apache/php server setup!</h3>";
    exit;
 }
 include "functions.php";
@@ -45,23 +45,9 @@ if (!isset($_SESSION['view'])) $_SESSION['view']="main";
 //if (!isset($_SESSION['refresh'])) $_SESSION['refresh']=$defaultrefresh;
 //if (!isset($r_debug)) $r_debug=0;
 
-// Pachube view only outputs the data from Pachube.CreatePachubeData()
-if ($_SESSION['view']=="pachube") {
-   $request = xmlrpc_encode_request("pachube.list",null);
-   $response = do_xmlrpc($request);
-   if (is_array($response) && xmlrpc_is_fault($response)) {
-       trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");
-   } else {
-     header("Content-type: application/xml");
-     print($response);
-   }
-   exit;
-}
-
 if(isset($_GET['action'])){
    echo "<h3>Requested to turn ".$_GET['name']." ".$_GET['action'].".</h3>";
-   $request = xmlrpc_encode_request("device.setdevice",array( $_GET['deviceid'], $_GET['action'] ) );
-   $response = do_xmlrpc($request);
+   $response = do_jsonrpc("device.set", array("device_id" => (int)$_GET['deviceid'], "value" => $_GET['action']));
    header("Location: index.php?setview=control");
 }
 
@@ -152,7 +138,7 @@ if ($_SESSION['view']=="main") {
    echo "<div class='headcol' style='width:25px;'><a href='?setsortkey=deviceicon&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>&nbsp;S</a>&nbsp;".($_SESSION['sortkey']=="deviceicon" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
    echo "<div class='headcol' style='width:171px;'><a href='?setsortkey=devicename&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Device</a>&nbsp;".($_SESSION['sortkey']=="devicename" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
    echo "<div class='headcol' style='width:112px;'><a href='?setsortkey=devicelocation&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Location</a>&nbsp;".($_SESSION['sortkey']=="devicelocation" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
-   echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Value1</a>&nbsp;".($_SESSION['sortkey']=="devicevalue" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
+   echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue1&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Value1</a>&nbsp;".($_SESSION['sortkey']=="devicevalue" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
    echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue2&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Value2</a>&nbsp;".($_SESSION['sortkey']=="devicevalue2" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
    echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue3&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Value3</a>&nbsp;".($_SESSION['sortkey']=="devicevalue3" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
    echo "<div class='headcol' style='width:100px;'><a href='?setsortkey=devicevalue4&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Value4</a>&nbsp;".($_SESSION['sortkey']=="devicevalue4" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
@@ -175,7 +161,7 @@ if ($_SESSION['view']=="main") {
       echo "<div class='imgcol' style='width:20px;' id='i".$item['id']."deviceicon'>&nbsp;".$item['deviceicon']."</div>\n";
       echo "<div class='datacol' style='width:170px;' id='i".$item['id']."devicename'>&nbsp;".$item['devicename']."</div>\n";
       echo "<div class='datacol' style='width:110px;' id='i".$item['id']."devicelocation'>&nbsp;".$item['devicelocation']."</div>\n";
-      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue'>&nbsp;".$item['devicevalue']."</div>\n";
+      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue1'>&nbsp;".$item['devicevalue1']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue2'>&nbsp;".$item['devicevalue2']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue3'>&nbsp;".$item['devicevalue3']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue4'>&nbsp;".$item['devicevalue4']."</div>\n";
@@ -201,7 +187,7 @@ if ($_SESSION['view']=="control") {
 
    echo "<div class='headcol' style='width:25px;'><a href='?setsortkey=deviceicon&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>&nbsp;S</a>&nbsp;".($_SESSION['sortkey']=="deviceicon" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
    echo "<div class='headcol' style='width:171px;'><a href='?setsortkey=devicename&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Device</a>&nbsp;".($_SESSION['sortkey']=="devicename" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
-   echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Status</a>&nbsp;".($_SESSION['sortkey']=="devicevalue" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
+   echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue1&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Status</a>&nbsp;".($_SESSION['sortkey']=="devicevalue1" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
    echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue2&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>On</a>&nbsp;".($_SESSION['sortkey']=="devicevalue2" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
    echo "<div class='headcol' style='width:101px;'><a href='?setsortkey=devicevalue3&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Off</a>&nbsp;".($_SESSION['sortkey']=="devicevalue3" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
    echo "<div class='headcollast' style='width:241px;'><a href='?setsortkey=devicelastseen&amp;setsortord=".($_SESSION['sortord']=="asc" ? "desc" : "asc")."'>Last Seen</a>&nbsp;".($_SESSION['sortkey']=="devicelastseen" ? ($_SESSION['sortord']=="asc" ? "$downarr" : "$uparr") :"")."</div>\n";
@@ -224,7 +210,7 @@ if ($_SESSION['view']=="control") {
       echo "<div class='$thisrow'>\n";
       echo "<div class='imgcol' style='width:20px;' id='i".$item['id']."deviceicon'>&nbsp;".$item['deviceicon']."</div>\n";
       echo "<div class='datacol' style='width:170px;' id='i".$item['id']."devicename'>&nbsp;".$item['devicename']."</div>\n";
-      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue'>&nbsp;".$item['devicevalue']."</div>\n";
+      echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue1'>&nbsp;".$item['devicevalue1']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue2'>&nbsp;<a href='?action=On&deviceid=".urlencode($item['id'])."'>On</a></div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue3'>&nbsp;<a href='?action=Off&deviceid=".urlencode($item['id'])."'>Off</a></div>\n";
       echo "<div class='datacollast' style='width:190px;' id='i".$item['id']."devicelastseen'>&nbsp;".$item['devicelastseen']."</div>\n";
@@ -254,7 +240,7 @@ echo "<span class='msgs' id='data_newvoicemails'>".$status['data_newvoicemails']
 
 // Footer
 echo "<div align='center' class='smalltext'>Page created in ".$restime=round(microtime(true)-$execstart,3)." secs.  ";
-echo "<a href='http://domotiga.nl' target='_blank'>DomotiGa V".$status['program_version']."</a> - by Ron Klinkien 2008-2011.</div>\n";
+echo "<a href='http://domotiga.nl' target='_blank'>DomotiGa V".$status['program_version']."</a> - by Ron Klinkien 2008-2014.</div>\n";
 ?>
 </div>
 </body>
