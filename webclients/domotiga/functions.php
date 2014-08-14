@@ -16,82 +16,113 @@
 // You should have received a copy of the GNU General PUBLIC License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-function do_xmlrpc($request) {
-   global $rpc_connect;
-   global $use_curl;
+// Do the JSON-RPC and error handling
+function do_jsonrpc($method, $params) {
+  global $rpc_connect;
 
-   if ( $use_curl == "yes" ) {
-      $ch = curl_init($rpc_connect);
-      curl_setopt($ch, CURLOPT_POST, 1);
-      curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: text/xml'));
-      curl_setopt($ch, CURLOPT_POSTFIELDS, "$request");
-      curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-      $context = curl_exec($ch);
-      if ( curl_error($ch) == "" ) {
-         curl_close($ch);
-         return xmlrpc_decode($context,"UTF-8");
-      } else {
-         curl_close($ch);
-         die ("<h2>Cannot connect to the DomotiGa server!</h2>");
-      }
-   } else {
-      $context = stream_context_create(array('http' => array('method' => "POST",'header' =>"Content-Type: text/xml",'content' => $request)));
-      if ($file = @file_get_contents($rpc_connect, false, $context)) {
-         $file=str_replace("i8","double",$file);
-         return xmlrpc_decode($file, "UTF-8");
-      } else {
-         die ("<h2>Cannot connect to the DomotiGa server!</h2>");
-      }
-   }
+  // Build up the JSON-RPC request, add the other headers
+  if ($params == null) {
+    $request = array("jsonrpc" => "2.0", "method" => $method, "id" => 1);
+  } else {
+    $request = array("jsonrpc" => "2.0", "method" => $method, "params" => $params, "id" => 1);
+  }
+
+  $ch = curl_init($rpc_connect);
+  curl_setopt($ch, CURLOPT_POST, 1);
+  curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));
+  curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($request));
+  curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+  $context = curl_exec($ch);
+
+  if ( curl_error($ch) == "" ) {
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+    if ( $status != 200 ) {
+      curl_close($ch);
+      die ("<h2>DomotiGa JSON-RPC returned HTTP Code=$status, expected=200</h2>");
+    }
+
+    curl_close($ch);
+
+    $response = json_decode($context, true);
+
+//    if (isset($response->result)) {
+      return $response['result'];
+//    } else {
+//      die ("<h2>DomotiGa JSON-RPC didn't return a result, no devices present?</h2>");
+//    }
+  } else {
+    curl_close($ch);
+    die ("<h2>Cannot connect to the DomotiGa server!</h2>");
+  }
 }
 
 // Get device list
 function get_device_list($view) {
-   $request = xmlrpc_encode_request("device.list",null);
-   $response = do_xmlrpc($request);
+  $response = do_jsonrpc("device.list", array("list" => "enabled"));
 
-   if (xmlrpc_is_fault($response)) {
-       trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");
-   } else {
-      $index=0;
-      foreach($response AS $item) {
-         list( $retarr[$index]['id'], $retarr[$index]['deviceicon'], $retarr[$index]['devicename'], $retarr[$index]['devicelocation'], $retarr[$index]['devicevalue'], $retarr[$index]['devicelabel'], $retarr[$index]['devicevalue2'], $retarr[$index]['devicelabel2'], $retarr[$index]['devicevalue3'], $retarr[$index]['devicelabel3'], $retarr[$index]['devicevalue4'], $retarr[$index]['devicelabel4'], $retarr[$index]['devicelastseen'], $retarr[$index]['dimmable'], $retarr[$index]['switchable']) = explode (';;', $item);
-         if ($retarr[$index]['deviceicon']) { $retarr[$index]['deviceicon'] = "<img src='images/icons/".$retarr[$index]['deviceicon']."' height='16' width='16' alt='icon' />"; } else { $retarr[$index]['deviceicon'] = ""; }
-         if (strlen($retarr[$index]['devicevalue']) && $retarr[$index]['devicelabel']) { $retarr[$index]['devicevalue'] = $retarr[$index]['devicevalue']. " ".$retarr[$index]['devicelabel']; }
-         if (strlen($retarr[$index]['devicevalue2']) && $retarr[$index]['devicelabel2']) { $retarr[$index]['devicevalue2'] = $retarr[$index]['devicevalue2']. " ".$retarr[$index]['devicelabel2']; }
-         if (strlen($retarr[$index]['devicevalue3']) && $retarr[$index]['devicelabel3']) { $retarr[$index]['devicevalue3'] = $retarr[$index]['devicevalue3']. " ".$retarr[$index]['devicelabel3']; }
-         if (strlen($retarr[$index]['devicevalue4']) && $retarr[$index]['devicelabel4']) { $retarr[$index]['devicevalue4'] = $retarr[$index]['devicevalue4']. " ".$retarr[$index]['devicelabel4']; }
-         $index++;
-      }
-      if (isset($retarr)) {
-         return $retarr;
-      } else {
-         return FALSE;
-      }
-   }
+  $index=0;
+  foreach($response AS $item) {
+
+    $retarr[$index]['id'] = $item['device_id'];
+    $retarr[$index]['deviceicon'] = $item['icon'];
+    $retarr[$index]['devicename'] = $item['name'];
+    $retarr[$index]['devicelocation'] = $item['locationname'];
+    //$retarr[$index]['devicevalue1']
+    //$retarr[$index]['devicelabel1']
+    //$retarr[$index]['devicevalue2']
+    //$retarr[$index]['devicelabel2']
+    //$retarr[$index]['devicevalue3']
+    //$retarr[$index]['devicelabel3']
+    //$retarr[$index]['devicevalue4']
+    //$retarr[$index]['devicelabel4']
+    $retarr[$index]['devicelastseen'] = $item['lastseen'];
+    $retarr[$index]['dimmable'] = $item['dimable'];
+    $retarr[$index]['switchable'] = $item['switchable'];
+
+    foreach($item['values'] AS $value) {
+      $retarr[$index]['devicevalue' . $value['valuenum']] = $value['value'];
+      $retarr[$index]['devicelabel' . $value['valuenum']] = $value['units'];
+    }
+
+    if ($retarr[$index]['deviceicon']) { $retarr[$index]['deviceicon'] = "<img src='images/icons/".$retarr[$index]['deviceicon']."' height='16' width='16' alt='icon' />"; } else { $retarr[$index]['deviceicon'] = ""; }
+    if (strlen($retarr[$index]['devicevalue1']) && $retarr[$index]['devicelabel1']) { $retarr[$index]['devicevalue1'] = $retarr[$index]['devicevalue1']. " ".$retarr[$index]['devicelabel1']; }
+    if (strlen($retarr[$index]['devicevalue2']) && $retarr[$index]['devicelabel2']) { $retarr[$index]['devicevalue2'] = $retarr[$index]['devicevalue2']. " ".$retarr[$index]['devicelabel2']; }
+    if (strlen($retarr[$index]['devicevalue3']) && $retarr[$index]['devicelabel3']) { $retarr[$index]['devicevalue3'] = $retarr[$index]['devicevalue3']. " ".$retarr[$index]['devicelabel3']; }
+    if (strlen($retarr[$index]['devicevalue4']) && $retarr[$index]['devicelabel4']) { $retarr[$index]['devicevalue4'] = $retarr[$index]['devicevalue4']. " ".$retarr[$index]['devicelabel4']; }
+    $index++;
+  }
+
+  if (isset($retarr)) {
+    return $retarr;
+  } else {
+    return FALSE;
+  }
 }
 
 // Get status
 function get_status() {
+
    // modes
-   $retarr['house_mode'] = do_xmlrpc(xmlrpc_encode_request("mode.get_housemode",null));
-   $retarr['mute_mode'] = do_xmlrpc(xmlrpc_encode_request("mode.get_mutemode",null));
+   $housemode = do_jsonrpc("housemode.get", null);
+   $retarr['house_mode'] = $housemode['mode'];
+   $retarr['mute_mode'] = $housemode['mute'];
    if ($retarr['mute_mode']) { $retarr['mute_mode'] ="<img src='images/icons/mute.png' height='16' width='16' alt='icon' />"; }
    else { $retarr['mute_mode'] ="<img src='images/icons/sound.png' height='16' width='16' alt='icon' />"; }
 
    // domotiga version
-   $retarr['program_version'] = do_xmlrpc(xmlrpc_encode_request("system.program_version",null));
+   $retarr['program_version'] = do_jsonrpc("domotiga.version", null);
 
    // sun moon data
-   $response = do_xmlrpc(xmlrpc_encode_request("data.sunmoon",null));
-   $retarr['data_sunset'] = $response[1];
-   $retarr['data_sunrise'] = $response[0];
+   $astro = do_jsonrpc("astro.get", null);
+   $retarr['data_sunset'] = $astro['sunset'];
+   $retarr['data_sunrise'] = $astro['sunrise'];
 
    // new messages
-   $response = do_xmlrpc(xmlrpc_encode_request("data.newmessages",null));
-   $retarr['data_newmails'] = $response[0];
-   $retarr['data_newcalls'] = $response[1];
-   $retarr['data_newvoicemails'] = $response[2];
+   $newmessage = do_jsonrpc("data.newmessage", null);
+   $retarr['data_newmails'] = $newmessage['email'];
+   $retarr['data_newcalls'] = $newmessage['call'];
+   $retarr['data_newvoicemails'] = $newmessage['voicemail'];
 
    return $retarr;
 }
