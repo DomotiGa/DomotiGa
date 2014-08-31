@@ -60,7 +60,7 @@ ln -s ../../DomotiGa3/.src/COWFS.class
 ln -s ../../DomotiGa3/.src/COWW.class
 ln -s ../../DomotiGa3/.src/CP2000.class
 ln -s ../../DomotiGa3/.src/CPachube.class
-ln -s ../../DomotiGa3/.src/CPilipsHue.class
+ln -s ../../DomotiGa3/.src/CPillipsHue.class
 ln -s ../../DomotiGa3/.src/CPLCBUS.class
 ln -s ../../DomotiGa3/.src/CPluginEntry.class
 ln -s ../../DomotiGa3/.src/CPlugwise.class
