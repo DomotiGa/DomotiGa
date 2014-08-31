@@ -1,0 +1,737 @@
+' Gambas class file
+
+' Description
+' CDeviceDiscover.class
+' Discover Network Devices using UPNP
+'
+' Development Status
+' Proof of concept to see if integrating this in the core would work for finding and configuring network devices with DomotiGa
+' TODO: Parse Service List 
+' TODO: Save cache time
+' TODO: update list and keep updated
+'
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Credits
+' Written by Simon Jones < si at sc-jones dot co dot uk>
+'
+' Read file called COPYING for license details.
+
+Public PluginName As String = "DeviceDiscover"
+Public PluginFriendlyName As String = "Device Discover Plugin"
+Public PluginVersion As String = "0.02"
+Public PluginAuthor As String = "Simon Jones, Jesse Kerkhoven"
+Public PluginProtocols As String[]
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[UPNP] "
+Public ErrorText As String
+Public ErrorWhere As String
+Public Instance As Integer
+Public IsRunning As Boolean
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $sMultiCastUDPIP As String
+Private $iLocalPort As Integer
+Private $iMultiCastUDPPort As Integer
+Private $iBroadcastInterval As Integer
+Private $bEnabled As Boolean
+Private $bListenOnly As Boolean
+Private $buPNPDebug As Boolean
+
+' 2 Sockets for MultiCast
+' This socket receives broadcasts announced on Multicast port
+Private hMultiCastSocketR As UdpSocket
+' This socket sends broadcasts and awaits responses from it
+Private hMultiCastSocketS As UdpSocket
+' Socket for other uPNP devices to query us.
+Private hSrvSocket As ServerSocket
+
+' Direct device comms socket
+Private hDeviceSocket As Socket
+Private tBroadcast As Timer
+Private qDevicesFound As Queue
+Private oDeviceSockets As New Collection
+
+' Structure for Service List of a device
+Public Struct DeviceSrv
+  ServiceType As String
+  ServiceID As String
+  SCPDURL As String
+  ControlURL As String
+  EventSubURL As String
+End Struct
+
+' Structure for a discovered uPNP device
+Public Struct uPNPDevice
+  locationurl As String
+  requesturl As String
+  manufacturer As String
+  modelname As String
+  modeldesc As String
+  presentationurl As String
+  ipaddress As String
+  devicetype As String
+  udn As String
+  lastupdate As Date
+  servicelist As DeviceSrv[]
+  port As Integer
+  cachetime As Integer
+  active As Boolean
+End Struct
+
+' Stores the discovered devices and services
+Private DeviceList As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory Sub for EACH Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sMultiCastUDPIP = cPl.Settings["multicasthost"]
+  $iMultiCastUDPPort = cPl.Settings["multicastport"]
+  $bListenOnly = cPl.Settings["listenonly"]
+  $iBroadcastInterval = cPl.Settings["broadcastinterval"]
+  $buPNPDebug = cPl.Settings["debug"]
+
+  IsRunning = True
+
+  qDevicesFound = New Queue
+  Main.WriteLog(LogLabel & PluginFriendlyName & " Started.")
+
+  StartBroadCastReceive()
+
+  ' Start the broadcast timer after 5 seconds to allow for start up and not tie up the splash screen.
+  tBroadcast = New Timer As "Broadcast"
+  tBroadcast.Delay = 5000
+  tBroadcast.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for EACH Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Dim cCol As Collection
+  Dim hS As Socket
+
+  Try hMultiCastSocketR.Close
+  Try hMultiCastSocketS.Close
+  Try hSrvSocket.Close
+
+  For Each cCol In oDeviceSockets
+    hS = cCol["socket"]
+    Try Close #hS
+    oDeviceSockets.Remove(cCol["id"])
+  Next
+
+
+  IsRunning = False
+  Main.WriteLog(LogLabel & PluginFriendlyName & " Stopped.")
+
+End
+
+Public Sub Broadcast_Timer()
+
+  If tBroadcast.Enabled Then tBroadcast.Enabled = False
+
+  SendMultiCastBroadcast()
+
+  Wait 5.5
+
+  ProcessDeviceFoundQueue()
+
+  If tBroadcast.Delay <> ($iBroadcastInterval * 60000) Then
+    tBroadcast.Delay = $iBroadcastInterval * 60000
+    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " reset multicast broadcast timer to: " & CStr($iBroadcastInterval) & " minutes.")
+  Endif
+
+  tBroadcast.Start
+
+End
+
+Private Sub ProcessDeviceFoundQueue()
+
+  Dim sBroadcastData, sIPAddress, sLocation As String
+  Dim sSplitString As String[]
+  Dim bLocationFound As Boolean = False
+  Dim iCount As Integer = 0
+  Dim iLocation As Integer
+
+  If qDevicesFound.IsEmpty Then Return
+
+  While Not qDevicesFound.IsEmpty
+    If Not IsNull(sSplitString) Then sSplitString.Clear
+    iLocation = 0
+    bLocationFound = False
+    sBroadcastData = CStr(qDevicesFound.Dequeue())
+    sSplitString = Split(sBroadcastData, "\n") 
+    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " splitstring count: " & CStr(sSplitString.Count))
+    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " processing: " & sBroadcastData)
+
+    While Not bLocationFound And iLocation <= sSplitString.Count - 1
+      sLocation = sSplitString[iLocation]
+      If LCase(Left(sLocation, 8)) = "location" Then
+        bLocationFound = True
+      Else
+       Inc iLocation
+      Endif
+    Wend
+
+    If bLocationFound Then
+      sLocation = Right(sLocation, Len(sLocation) - 9) ' try to pull just the url out, will be a \r at end so we minus that as well.
+      sLocation = Replace(sLocation, "\r", "")
+      sLocation = Trim(sLocation)
+      If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " found " & sLocation)
+      GetDeviceData(sLocation)
+    Else
+      If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " location url not found in data.")
+    Endif
+
+  Wend
+
+End
+
+
+Private Sub SetupBroadcastSendSocket()
+
+  hMultiCastSocketS = New UdpSocket As "MultiCastS"
+
+  hMultiCastSocketS.TargetHost = $sMultiCastUDPIP
+  hMultiCastSocketS.TargetPort = $iMultiCastUDPPort
+  hMultiCastSocketS.Bind
+
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " broadcast socket has been setup.")
+
+End
+
+Private Sub SendMultiCastBroadcast()
+
+  Dim sBroadcast As String = Build_UPNPString("M-Search")
+
+  If Not hMultiCastSocketS Then
+    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " no broadcast socket setup, creating..")
+    SetupBroadcastSendSocket()
+  Endif
+
+  hMultiCastSocketS.Begin
+  Try Write #hMultiCastSocketS, sBroadcast, Len(sBroadcast)
+  hMultiCastSocketS.Send
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " MultiCast M-Search send.")
+
+Catch
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " Error sending MultiCast M-Search.")
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & ErrorText)
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & ErrorWhere)
+  
+End
+
+
+Private Function Build_UPNPString(Command As String, Optional sUPNPDevice As UPNPDevice) As String
+
+  Dim sReturn As String
+
+  Select Case Command
+      Case "M-Search"
+        sReturn = "M-SEARCH * HTTP/1.1\r\n"
+        sReturn &= "HOST: " & $sMultiCastUDPIP & ":" & $iMultiCastUDPPort & "\r\n"
+        sReturn &= "MAN: \"ssdp:discover\"\r\n"
+        sReturn &= "MX: 5\r\n"
+        sReturn &= "ST: upnp:rootdevice\r\n"
+        'sReturn &= "ST: ssdp:all\r\n"
+        sReturn &= "USER-AGENT: Linux/3.0 UPnP/1.0 DomotiGa/" & Main.sProgramVersion & "\r\n"
+        sReturn &= "\r\n"
+      Case "Notify"
+
+      Case "Get"
+        If sUPNPDevice Then
+          sReturn = "GET " & sUPNPDevice.requesturl & " HTTP/1.1\r\n"
+          sReturn &= "HOST: " & sUPNPDevice.ipaddress & "\r\n" 
+          sReturn &= "\r\n"  
+        Endif
+
+  End Select
+
+  Return sReturn
+
+End
+
+Public Sub SrvSocket_Connection(Host As String)
+
+  Dim SrvSocketReceive As Socket
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " SrvSocket_Connection() incoming connection from: " & Host)
+  SrvSocketReceive = hSrvSocket.Accept()
+
+End
+
+Public Sub SrvSocket_Read()
+
+  Dim sBuffer As String
+  Dim iCount As Integer = 0
+
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " SrvSocket_Read() called...")
+   Do While Lof(Last)
+    Wait 0.1
+    If iCount >= 10 Then
+      If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " SrvSocket_Read() receive timeout (1 Sec)")
+        Last.Close
+        Return  
+      Else
+        iCount += 1
+    Endif
+  Loop
+
+  Read #Last, sBuffer, Lof(Last)
+
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " SrvSocket_Read() read data from socket: " & sBuffer)
+
+  ParseGetData(sBuffer)
+  Last.Close
+
+End
+
+
+Private Sub GetDeviceData(sLocation As String) As UPNPDevice
+
+  Dim sUPNPDevice As UPNPDevice = ParseLocation(sLocation)
+  Dim sBuffer, sData As String
+  Dim iCount As Integer = 0
+
+  Dim oDeviceSocketEntry As New Collection
+  Dim iId As Integer
+
+  hDeviceSocket = New Socket As "DeviceSocket"
+  hDeviceSocket.Timeout = 2000
+
+  ' if supnpdevice is null then exit
+  If Not sUPNPDevice Then Return sUPNPDevice
+
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " connecting to device at " & sUPNPDevice.ipaddress & ":" & CStr(sUPNPDevice.port))
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " sending: " & sData)
+
+  hDeviceSocket.Connect(sUPNPDevice.ipaddress, sUPNPDevice.port)
+  
+  Randomize
+  Do
+    iId = Int(Rnd(1, 32768))
+  Loop Until Not oDeviceSockets.Exist(iId)
+
+  oDeviceSocketEntry.Add("", "buffer")
+  oDeviceSocketEntry.Add(hDeviceSocket, "socket")
+  oDeviceSocketEntry.Add(CStr(iId), "id")
+  oDeviceSockets.Add(oDeviceSocketEntry, CStr(iId))
+
+  iCount = 0
+  Do While (hDeviceSocket.Status <> Net.Connected) And (hDeviceSocket.Status > Net.Inactive)
+    If iCount >= 20 Then
+      If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " Device Comms connect timeout (2 Sec)")
+        hDeviceSocket.Close
+        oDeviceSockets.Remove(oDeviceSockets.Find(hDeviceSocket))
+        Return
+      Else
+        iCount += 1
+    Endif
+    Wait 0.1
+  Loop
+  sData = Build_UPNPString("Get", sUPNPDevice)
+
+  Write #hDeviceSocket, sData, Len(sData)
+
+Catch
+
+    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " error during GetDeviceData (" & sLocation & ")")
+    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & ErrorText)
+    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & ErrorWhere)
+    Try hDeviceSocket.Close
+
+End
+
+Public Sub DeviceSocket_Closed()
+
+  Dim cCol As Collection
+
+  For Each cCol In oDeviceSockets
+    If Last = cCol["socket"] Then
+      Try Close #Last
+      oDeviceSockets.Remove(cCol["id"])
+      Break
+    End If
+
+  Next
+
+End
+
+Public Sub DeviceSocket_Read()
+
+  Dim sBuffer As String
+  Dim iDeviceSocket, iCount As Integer = -1
+  Dim sUPNPDevice As UPNPDevice
+  
+  Dim hS As Socket
+  Dim cCol As Collection
+  Dim cCount As Integer
+  Dim cWait As Integer = 1
+  Dim Buf As String
+  
+  For Each cCol In oDeviceSockets
+    If cCol["socket"] = Last Then
+      hS = Last
+      Break
+    Endif
+  Next
+
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " DeviceSocket_Read() called...")
+  sUPNPDevice = FindUPNPDeviceByIp(hS.RemoteHost)
+
+  If cCol["buffer"] = "" Then
+    Try Read #hS, Buf, Lof(hS)
+    cCol["buffer"] &= Buf
+  Else
+    Try Read #hS, Buf, Lof(hS)
+    cCol["buffer"] &= Buf
+
+    ' Don't continue, because this is the second (or more) iteration to read the data
+    ' The first iteration will handle the complete request
+    Return
+  End If
+
+  For cCount = cWait To 199 Step 1
+    If hS = Null Then Return
+    If hs.Status = Net.Inactive Then Break
+    Wait 0.005
+  Next
+
+
+
+   If cCol["buffer"] Then
+    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " DeviceSocket_Read() data read: " & cCol["buffer"])
+    ParseGetData(cCol["buffer"], sUPNPDevice)
+   Else
+     If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " DeviceSocket_Read() nothing read?")
+   Endif
+
+Catch
+    Try Last.Close
+    If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " DeviceSocket_Read() error reading from socket")
+    Print Error.Where & " " & Error.Text
+
+End
+
+Private Function ParseGetData(sData As String, sUPNPDevice As UPNPDevice) As String
+
+  Dim sXMLItem, sXMLValue As String
+  Dim xml As New XmlReader
+  Dim iPos As Integer
+  Dim iLength As Integer
+  Dim sHdr As String
+  Dim sBody As String
+
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " ParseGetData() parsing get data from device.")
+
+  ' We got the whole HTTP request, first split the header and body
+  If InStr(sData, "HTTP") <> 1 Then Return
+
+  iPos = InStr(sData, Chr(13) & Chr(10) & Chr(13) & Chr(10)) 
+  If iPos = 0 Then Return
+  sHdr = Left(sData, iPos - 1)
+  sBody = Mid(sData, iPos + 4)
+
+  ' If we are in chunked mode, remove that data
+  If InStr(UCase(sHdr), "TRANSFER-ENCODING: CHUNKED") > 0 Then
+    sData = ""
+    While sBody
+      iPos = InStr(sBody, Chr(13) & Chr(10)) 
+      If iPos >= 1 Then
+        iLength = 0
+        Try iLength = Val("&H" & Left(sBody, iPos - 1)) 
+        sData &= Mid(sBody, iPos + 2, iLength)
+        sBody = Mid(sBody, iPos + 2 + iLength)
+      Else
+        sBody = ""
+      Endif
+    Wend
+  Else
+    sData = sBody
+  Endif
+
+
+  If sData Then
+    
+    If Not sUPNPDevice.active Then sUPNPDevice.active = True
+    xml.FromString(sData)
+
+    While Not xml.Eof
+      Select Case xml.Node.Type
+        Case XmlReaderNodeType.EndElement
+
+        Case XmlReaderNodeType.Element
+
+          sXMLItem = xml.Node.Name
+          sXMLValue = ""
+
+        Case XmlReaderNodeType.Text
+
+          If sXMLItem Then sXMLValue = xml.Node.Value
+
+      End Select
+
+      xml.Read
+
+      If xml.State = XmlReaderNodeType.EndElement Then
+        If sXMLItem And sXMLValue Then
+          UpdateUPNPDevice(sXMLItem, sXMLValue, sUPNPDevice)
+          sXMLItem = ""
+          sXMLValue = ""
+        Endif
+        xml.Read
+      Endif
+
+    Wend
+
+  Endif
+
+End
+
+Private Sub UpdateUPNPDevice(sName As String, sValue As String, sUPNPDevice As UPNPDevice)
+
+  Select Case LCase(sName)
+    Case "devicetype"
+      sUPNPDevice.devicetype = sValue
+    Case "manufacturer"
+      sUPNPDevice.manufacturer = sValue
+    Case "modeldescription" 
+      sUPNPDevice.modeldesc = sValue
+    Case "modelname" 
+      sUPNPDevice.modelname = sValue
+    Case "presentationurl"
+      sUPNPDevice.presentationurl = sValue
+    Case "udn" 
+      sUPNPDevice.udn = sValue
+    Case Else
+      Return
+  End Select
+
+  sUPNPDevice.lastupdate = Now
+
+End
+
+Private Sub StartBroadCastReceive()
+
+  hMultiCastSocketR = New UdpSocket As "MultiCastR"
+  hSrvSocket = New ServerSocket As "SrvSocket"
+
+  hMultiCastSocketR.Port = $iMultiCastUDPPort
+  hSrvSocket.Port = $iMultiCastUDPPort
+  hSrvSocket.Timeout = 5000
+  hSrvSocket.Type = ServerSocket.Internet
+
+  Try hSrvSocket.Listen
+  Try hMultiCastSocketR.Bind
+
+ Catch
+    Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & ErrorText)
+    Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & ErrorWhere)
+
+End
+
+Public Sub MultiCastS_Read()
+
+  Dim sBuffer As String
+  Dim iCount As Integer = 0
+
+ If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " Multicast S receiving data...")
+
+ Do While Lof(hMultiCastSocketS) = 0
+    Wait 0.1
+    If iCount >= 10 Then
+      If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " Multicast S receive timeout (1 Sec)")
+        Return
+      Else
+        iCount += 1
+    Endif
+  Loop
+
+  Read #hMultiCastSocketS, sBuffer, Lof(hMultiCastSocketS)
+
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " Multicast S received data: \r\n" & sBuffer)
+
+  qDevicesFound.Enqueue(sBuffer)
+
+  If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " queued device response to query later.")
+
+End
+
+Public Sub MultiCastS_Error()
+
+    ' handle error
+  Select Case hMultiCastSocketS.Status
+    Case Net.CannotCreateSocket
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: OS not allowing socket to be created (Multicast Send).")
+    Case Net.CannotBindSocket
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: Cannot bind socket (Multicast Send).")
+    Case Net.CannotListen
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: Cannot listen on port (Multicast Send).")
+    Case Net.CannotWrite
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: Cannot write to port (Multicast Send).")
+    Case Net.CannotRead
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: Cannot read from port (Multicast Send).")
+    Case Net.Timeout
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: Timeout (Multicast Send).")
+  End Select 
+
+End
+
+Public Sub DeviceSocket_Error()
+
+      ' handle error
+  Select Case hDeviceSocket.Status
+    Case Net.CannotCreateSocket
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: OS not allowing socket to be created (Device Socket).")
+    Case Net.CannotBindSocket
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: Cannot bind socket (Device Socket).")
+    Case Net.CannotListen
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: Cannot listen on port (Device Socket).")
+    Case Net.CannotWrite
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: Cannot write to port (Device Socket).")
+    Case Net.CannotRead
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: Cannot read from port (Device Socket).")
+    Case Net.Timeout
+      Main.WriteLog(LogLabel & PluginFriendlyName & " ERROR: Timeout (Device Socket).")
+    Case Else
+       Main.WriteLog(LogLabel & PluginFriendlyName & " Error Code: " & CStr(hDeviceSocket.Status) & " (Device Socket).")
+  End Select 
+
+End
+
+
+Public Sub MultiCastR_Read()
+
+  Dim sBuffer As String
+  Dim iCount As Integer = 0
+
+ If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & "Multicast R receiving data...")
+
+ Do While Lof(hMultiCastSocketR) = 0
+    Wait 0.1
+    If iCount >= 10 Then
+      If $buPNPDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " Multicast R receive timeout (1 Sec)")
+      Return
+      Else
+        iCount += 1
+    Endif
+  Loop
+
+  Read #hMultiCastSocketR, sBuffer, Lof(hMultiCastSocketR)
+
+  If $buPNPDebug Then Main.WriteLog(LogLabel & PluginFriendlyName & "Multicast R received data: " & sBuffer)
+
+  qDevicesFound.Enqueue(sBuffer)
+
+  If $buPNPDebug Then Main.WriteLog(LogLabel & PluginFriendlyName & " queued device response to query later.")
+
+End
+
+Public Sub MultiCastR_Error()
+
+    ' handle error
+  Select Case hMultiCastSocketR.Status
+    Case Net.CannotCreateSocket
+      Main.WriteLog(LogLabel & PluginFriendlyName & " OS not allowing socket to be created.")
+    Case Net.CannotBindSocket
+      Main.WriteLog(LogLabel & PluginFriendlyName & " Cannot bind socket.")
+    Case Net.CannotListen
+      Main.WriteLog(LogLabel & PluginFriendlyName & " Cannot listen on port.")
+  End Select
+
+End
+
+Private Sub ParseLocation(sURL As String) As UPNPDevice
+
+    Dim sIPPort As String[]
+    Dim stmpURL, sIPAddress As String
+    Dim rIPAddress, rPort As RegExp
+    Dim iCharCount, iPort As Integer
+    Dim bPortFound As Boolean = False
+    Dim sUPNPDevice As UPNPDevice
+
+    rIPAddress = New RegExp(sURL, "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}")
+    rPort = New RegExp(sURL, "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}(:\\d{1,5})")
+
+    If rIPAddress.Offset <> -1 Then
+        sUPNPDevice = FindUPNPDeviceByIp(rIPAddress.Text)
+        sUPNPDevice.locationurl = sURL
+        If rPort.Offset = -1 Then
+              sUPNPDevice.port = 80
+        Else
+              bPortFound = True
+              sIPPort = Split(rPort.Text, ":")
+              sUPNPDevice.port = CInt(sIPPort[1])
+        Endif
+        If bPortFound Then
+          iCharCount = Len(sUPNPDevice.ipaddress) + Len(CStr(sUPNPDevice.port)) + 1 ' Add one for : in between IP and Port
+        Else
+          iCharCount = Len(sUPNPDevice.ipaddress)
+        Endif
+
+        stmpURL = Replace(sURL, "http://", "", gb.IgnoreCase)
+
+        sUPNPDevice.requesturl = Right(stmpURL, Len(stmpURL) - iCharCount)
+
+    Endif
+
+    Return sUPNPDevice
+End
+
+Private Function CheckMultiCastRouting() As Boolean
+
+  '' TODO Implement check that MultiCast is enabled in the routing table
+  Return True
+
+End
+
+Private Function FindUPNPDeviceByIp(ipaddress As String) As UPNPDevice
+  
+  Dim sUPNPDevice As UPNPDevice
+  
+  If DeviceList.Exist(ipaddress) Then
+    sUPNPDevice = DeviceList[ipaddress]
+  Else
+    sUPNPDevice = New UPNPDevice
+    sUPNPDevice.ipaddress = ipaddress
+    DeviceList.Add(sUPNPDevice, sUPNPDevice.ipaddress)
+  Endif
+  
+  Return sUPNPDevice
+
+End
+
+
+' Public methode to ipaddress for device with model name
+Public Function FindDeviceWhereModelNameIsLike(name As String) As String
+
+  Dim device As UPNPDevice
+
+  For Each device In DeviceList
+    If InStr(device.modelname, name) Then
+      Return device.ipaddress
+    Endif
+  Next
+
+  Return 
+
+End
