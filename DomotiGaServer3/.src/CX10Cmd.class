@@ -1,7 +1,7 @@
 ' Gambas class file
 
 ' Description:
-' X10Cmd.module
+' CX10Cmd.class
 ' Use Heyu or other command to control X10 devices.
 
 ' Development Status:
@@ -18,9 +18,8 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "X10Cmd"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "X10Cmd"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "1.01"
 Public PluginAuthor As String = "Renaud"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -40,7 +39,7 @@ Private $sCommand As String
 Private $bMonitor As Boolean
 Private $bGlobalX10 As Boolean
 Private $iType As Integer
-Private $bX10CmdDebug As Boolean
+Private $bDebug As Boolean
 
 Private sOutput As String
 Private sMonitorBuffer As String
@@ -74,7 +73,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bMonitor = cPl.Settings["monitor"]
   $bGlobalX10 = cPl.Settings["globalx10"]
   $iType = cPl.Settings["type"]
-  $bX10CmdDebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
 
   ' Initialize
   IsRunning = True
@@ -163,8 +162,8 @@ Public Sub SendCommand(sDevice As String, sCmd As String)
       iDim = Val(aDim[1])
       Select $iType
         Case Type_cm11a
-          If iDim > 0 Then iDim = Round(0.32 * iDim) ' 32 steps
-          sCommand = "preset " & sDevice & " " & iDim
+          iDim = Round(0.63 * iDim) ' 0-63 steps
+          sCommand = "xpreset " & sDevice & " " & iDim
         Case Type_cma15a
           sCommand = LCase(sDevice) & " " & "xDim " & iDim
       End Select
@@ -222,10 +221,10 @@ End
 Public Sub RunCommand(sCmd As String, sKey As String)
 
   If $iType = Type_cma15a And $bMonitor = True Then
-     If $bX10CmdDebug Then Main.WriteDebugLog(LogLabel & "Run: " & sCmd)
+     If $bDebug Then Main.WriteDebugLog(LogLabel & "Run: " & sCmd)
      Print #pMonitor, "x " & sCmd
   Else  
-    If $bX10CmdDebug Then Main.WriteDebugLog(LogLabel & "Run: " & $sCommand & " " & sCmd)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Run: " & $sCommand & " " & sCmd)
     Shell $sCommand & " " & sCmd & " 2>&1" For Read As "X10Cmd"
     If bX10CmdBusy = False Then bX10CmdBusy = True
   Endif
@@ -255,12 +254,12 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub X10Cmd_Kill()
 
-  If $bX10CmdDebug Then Main.WriteDebugLog(LogLabel & "Result: " & sOutput)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Result: " & sOutput)
   sOutput = Null
 
   bX10CmdBusy = False
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If $bX10CmdDebug Then Main.WriteDebugLog(LogLabel & "Sending next command from Queue (count = " & cQueue.Count & ")")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending next command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
 
@@ -319,51 +318,97 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ParseMonitorMessageHeyu(sMessage As String)
 
-  Dim iDeviceId, iCnt As Integer
-  Dim aFirstLine, aSecondLine As String[]
-  Dim sAddress, sOrder, sHouseCode As String
+  Dim aAddressLine, aFunctionLine, aValueLine As String[]
+  Dim sAddress, sFunction, sValue As String
 
-  If $bX10CmdDebug Then Main.WriteDebugLog(LogLabel & "[X10Cmd] Monitor get: " & sMessage)
+  'If $bX10CmdDebug Then Main.WriteDebugLog(LogLabel & "[X10Cmd] Monitor get: " & sMessage)
 
   ' Message sample :
-  ' 1 line : 09/19 18:44:53  rcvi addr unit       4 : hu I4  (_no_alias_)
-  ' 2 line : 09/19 18:44:53  rcvi func          Off : hc I
+    ' 08/28 09:57:34 Monitor started
+    '         TIMESTAMP          SOURCE   ADDR/FUNC   Unit/Order  : hu/hc/level   Home/Address/Value    Alias/Dim/Bright     Value       Alias
+    ' Double line commands:
+    ' Line 1: 08/28 09:57:43     rcvi     addr        unit 11     : hu            A11                   (_no_alias_)
+    ' Line 2: 08/28 09:57:43     rcvi     func        Off         : hc            A
+    ' Line 1: 08/28 09:57:51     rcvi     addr        unit 11     : hu            A11                   (_no_alias_)
+    ' Line 2: 08/28 09:57:51     rcvi     func        On          : hc            A
+    ' Single line commands (note that function is either applied to all Units in Housecode or for the Dim/Bright command on the last selected unit):
+    ' Line 1: 08/28 09:57:58     rcvi     func        Dim         : hc            A                     dim %17 [36]
+    ' Line 1: 08/28 09:58:01     rcvi     func        Bright      : hc            A                     bright %12 [25]
+    ' Line 1: 08/28 09:58:54     rcvi     func        LightsOn    : hc            A
+    ' Line 1: 08/28 09:59:00     rcvi     func        AllOff      : hc            A
+    ' Many line command: AllOn
+    ' Line 1: 08/28 12:03:13     sndc     addr        unit 1      : hu            A1                    (_no_alias_)
+    ' Line 2: 08/28 12:03:13     sndc     addr        unit 2      : hu            A2                    (_no_alias_)
+    '... 
+    ' Line 16: 08/28 12:03:13    sndc     addr        unit 16     : hu           A16                   (_no_alias_)
+    ' Line 17: 08/28 12:03:15    sndc     func        On          : hc            A
 
-  aFirstLine = Scan(sMessage, "*addr unit* : hu*(*")
-  aSecondLine = Scan(sMessage, "*func*: hc*")
+    ' Double line commands:
+    ' Line 1: 08/28 09:59:17     sndc     addr        unit 11     : hu            A11                   (_no_alias_)
+    ' Line 2: 08/28 09:59:18     sndc     func        On          : hc            A
+    ' Line 1: 08/28 09:59:21     sndc     addr        unit 11     : hu            A11                   (_no_alias_)
+    ' Line 2: 08/28 09:59:22     sndc     func        Off         : hc            A
+    ' Line 1: 08/28 09:59:33     sndc     addr        unit 11     : hu            A11                   (_no_alias_)
+    ' Line 2: 08/28 09:59:34     sndc     func        Dim         : hc            A                     dim %22 [~46]
+    ' Line 1: 08/28 09:59:49     sndc     addr        unit 11     : hu            A11                   (_no_alias_)
+    ' Line 2: 08/28 09:59:50     sndc     func        Bright      : hc            A                     bright %22 [~46]
+    ' Line 1: 08/28 10:00:19     sndc     addr        unit 11     : hu            A11                   (_no_alias_)
+    ' Line 2: 08/28 10:00:20     sndc     func        Preset      : level         5
+    'Single line commands:
+    ' Line 1: 08/28 10:00:26     sndc     func        xPreset     : hu            A11                   level                 5         (_no_alias_)
 
-  If aFirstLine.Count = 4 And aSecondLine.Count = 3 Then
-    sAddress = Trim(aFirstLine[2])
+  'Find Function (AllOn,AllOff, Preset,...), line always exists
+  aFunctionLine = Scan(sMessage, "*func*: *\n*") 'Scan for Function
+  sFunction = Trim(aFunctionLine[1])
 
-    If Len(sAddress) = 2 Then
-      sAddress = Left(sAddress, 1) & "0" & Right(sAddress, 1)
+  'Find Address (HouseCode or UnitCode)
+  If InStr(sMessage, "addr") Then 'Scan for Address, line does not always exist
+    aAddressLine = Scan(sMessage, "*addr*: hu*(*") 
+    sAddress = Trim(aAddressLine[2])
+    If Len(sAddress) == 2 Then sAddress = Left(sAddress, 1) & "0" & Right(sAddress, 1) 'Creating a double digit UnitCode
+    If InStr(aAddressLine[3], "addr") Then 'Check if it has multiple address's available => must be an AllOn Command
+      sFunction = "AllOn" 
+      sAddress = Left(sAddress, 1) '=> use HouseCode
     Endif
-    sOrder = Trim(aSecondLine[1])
-
-    If $bGlobalX10 Then
-      iDeviceId = Devices.FindAll(sAddress, 9999, "X10")
-    Else
-      iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("X10Cmd Interface"), "X10")
-    Endif
-
-    ' if found then update it's value
-    If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sOrder)
-  Else ' support for AllOff
-    If aSecondLine.Count = 3 And Trim(aSecondLine[1]) = "AllOff" Then
-      sHouseCode = Trim(aSecondLine[2])
-      If $bX10CmdDebug Then Main.WriteDebugLog(LogLabel & "AllOff command detected for HouseCode: " & sHouseCode)
-      For iCnt = 1 To 16 Step 1
-        sAddress = sHouseCode & Format(iCnt, "0#")
-        If $bGlobalX10 Then
-          iDeviceId = Devices.FindAll(sAddress, 9999, "X10")
-        Else
-          iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("X10Cmd Interface"), "X10")
-        Endif
-        If $bX10CmdDebug Then Main.WriteDebugLog(LogLabel & "Switching device " & sHouseCode & icnt & " Off")
-        If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Off")
-      Next
-    Endif
+  Else 'Extract Address from function line
+    aFunctionLine = Scan(sMessage, "*func*: h* * *") 
+    sAddress = Trim(aFunctionLine[3])
+    If Len(sAddress) == 2 Then sAddress = Left(sAddress, 1) & "0" & Right(sAddress, 1) 'Creating a double digit UnitCode
   Endif
+
+  'Find Value for each Function & update Device Values
+  Select sFunction
+  Case "AllOn", "AllOff", "LightsOff", "LightsOn"
+    If Comp(sFunction, "AllOn") = 0 Or Comp(sFunction, "LightsOn") = 0 Then sValue = "On"
+    If Comp(sFunction, "AllOff") = 0 Or Comp(sFunction, "LightsOff") = 0 Then sValue = "Off"
+    X10DeviceValueUpdate(sAddress, sFunction, sValue)
+  Case "On", "Off"
+    sValue = sFunction
+    X10DeviceValueUpdate(sAddress, sFunction, sValue)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Switching device " & sAddress & " " & sValue)
+  Case "xPreset" 'Dimming command for X10 Dimmers with eXtended Functionality
+    aValueLine = Scan(sMessage, "*level*(*")
+    sValue = "Dim " & Round(Trim(aValueLine[1]) * (100 / 63)) 'xPreset takes values from 0...63 (=100%)
+    X10DeviceValueUpdate(sAddress, sFunction, sValue)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Dimming (extended code X10) device " & sAddress & " to " & sValue & "%")
+  Case "Preset" '"Old" dimming command for X10 Dimmers, allegedly only applicable to Smarthome company devices ??? 
+    aValueLine = Scan(sMessage, "*level*(*")
+    sValue = "Dim " & Round(Max(Trim(aValueLine[1]), 1) * (100 / 32)) 'Preset takes values from 1...32 (=100%), note: not allowed to be zero !
+    X10DeviceValueUpdate(sAddress, sFunction, sValue)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Dimming (non-extended code X10) device " & sAddress & " to " & sValue & "%")
+  Case "Dim" 
+    'Nasty one: 
+    '- succesive Dim/Bright commands do not have a UnitCode (it uses the last seen unitcode)
+    '- Dim & Bright use relative commands, without the starting point (history) you don't know the absolute intensity/dim level
+    'So we will not update Domotiga with any value for Dim & Bright function
+    aValueLine = Scan(sMessage, "*%* *")
+    sValue = Trim(aValueLine[1])
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Relative Dimming of last selected X10-device by " & sValue & "%")
+  Case "Bright" 'See comments "Dim"
+    aValueLine = Scan(sMessage, "*%* *")
+    sValue = Trim(aValueLine[1])
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Relative Dimming of last selected X10-device by " & sValue & "%")
+  End Select
 
 End
 
@@ -376,20 +421,20 @@ Private Sub ParseMonitorMessageCm15demo(sMessage As String)
   Dim data As String[]
   Dim sAddress, sOrder, sCurrentValue As String
 
-  If $bX10CmdDebug Then Main.WriteDebugLog(LogLabel & "Monitor get: " & sMessage)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Monitor get: " & sMessage)
 
-  ' Message sample :
+  ' Message sample:
   ' date X PLC-R: C-1  Off        ?
 
   data = Scan(sMessage, "*PLC-R: * * *")
- 
+
   If data.Count = 4
     sAddress = Trim(data[1])
     sAddress = Replace$(sAddress, "-", "")
     If Len(sAddress) = 2 Then
       sAddress = Left(sAddress, 1) & "0" & Right(sAddress, 1)
     Endif
-    
+
     sOrder = Trim(data[2])
 
     If $bGlobalX10 Then
@@ -404,6 +449,50 @@ Private Sub ParseMonitorMessageCm15demo(sMessage As String)
         Devices.ValueUpdate(iDeviceId, 1, sOrder)
       Endif
     Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Update the X10 device value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub X10DeviceValueUpdate(sAddress As String, sFunction As String, sValue As String)
+
+  Dim rDevice As Result
+  Dim sHouseCode As String
+  Dim iDeviceId, iCnt As Integer
+
+  If Len(sAddress) == 1 Then 'HouseCode Function
+    sHouseCode = sAddress
+    If $bDebug Then Main.WriteDebugLog(LogLabel & sFunction & " command detected for HouseCode: " & sHouseCode)
+    For iCnt = 1 To 16 Step 1 'There are 16 Unit addresses in a Housecode
+      sAddress = sHouseCode & Format(iCnt, "0#")
+      If $bGlobalX10 Then 'If there are multiple devices on the same address
+        iDeviceId = Devices.FindAll(sAddress, 9999, "X10")
+      Else
+        iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("X10Cmd Interface"), "X10")
+      Endif
+      Select sFunction
+        Case "AllOn", "AllOff"
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Switching device " & sHouseCode & iCnt & " " & sValue)
+          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sValue)
+        Case "LightsOff", "LightsOn"
+          rDevice = Main.hDB.Exec("SELECT groups FROM devices WHERE id = &1", iDeviceId)
+            If rDevice.Available
+              If InStr(LCase$(rDevice!groups), "light") Then 'The X10 device must be in a group that contains the word "light" 
+                If $bDebug Then Main.WriteDebugLog(LogLabel & "Switching device " & sHouseCode & icnt & " " & sValue)
+                If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sValue)
+                Endif
+            Endif
+      End Select
+    Next
+  Else If Len(sAddress) > 1 Then 'Single UnitCode Function
+    If $bGlobalX10 Then
+      iDeviceId = Devices.FindAll(sAddress, 9999, "X10")
+    Else
+      iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("X10Cmd Interface"), "X10")
+    Endif
+    If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sValue)      ' if found then update it's value    
   Endif
 
 End
