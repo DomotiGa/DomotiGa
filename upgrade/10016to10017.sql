@@ -40,6 +40,7 @@ CREATE TABLE `settings_philipshue` (
   `id` int(11) NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `username` varchar(44) DEFAULT NULL,
+  `polltime` int(11) NOT NULL DEFAULT '10',
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1
@@ -50,7 +51,7 @@ CREATE TABLE `settings_philipshue` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 LOCK TABLES `settings_philipshue` WRITE;
 /*!40000 ALTER TABLE `settings_philipshue` DISABLE KEYS */;
-INSERT INTO `settings_philipshue` VALUES (0,0,null,0),(1,0,null,0);
+INSERT INTO `settings_philipshue` VALUES (0,0,null,10,0),(1,0,null,10,0);
 /*!40000 ALTER TABLE `settings_philipshue` ENABLE KEYS */;
 UNLOCK TABLES;
 
