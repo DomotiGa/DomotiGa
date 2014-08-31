@@ -70,7 +70,7 @@ cp ../../DomotiGa3/.src/COWFS.class .
 cp ../../DomotiGa3/.src/COWW.class .
 cp ../../DomotiGa3/.src/CP2000.class .
 cp ../../DomotiGa3/.src/CPachube.class .
-cp ../../DomotiGa3/.src/CPillipsHue.class .
+cp ../../DomotiGa3/.src/CPilipsHue.class .
 cp ../../DomotiGa3/.src/CPLCBUS.class .
 cp ../../DomotiGa3/.src/CPluginEntry.class .
 cp ../../DomotiGa3/.src/CPlugwise.class .
