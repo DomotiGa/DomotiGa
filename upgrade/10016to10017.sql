@@ -4,6 +4,16 @@
 DROP TABLE IF EXISTS `settings_weatherbug`;
 
 --
+-- Remove OpenZWave devices table (not used anymore)
+--
+DROP TABLE IF EXISTS devices_zwave;
+
+--
+-- Remove Weather table, info stored in virtualdevice
+--
+DROP TABLE IF EXISTS weather;
+
+--
 -- Table structure for table `settings_devicediscover`
 --
 DROP TABLE IF EXISTS `settings_devicediscover`;
