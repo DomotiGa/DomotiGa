@@ -111,8 +111,7 @@
 #define GENERIC_TYPE_GENERIC_CONTROLLER 0x01
 #define GENERIC_TYPE_STATIC_CONTROLLER 0x02
 #define GENERIC_TYPE_AV_CONTROL_POINT 0x03
-#define GENERIC_TYPE_DISPLAY 0x06
-#define GENERIC_TYPE_GARAGE_DOOR 0x07
+#define GENERIC_TYPE_DISPLAY 0x04
 #define GENERIC_TYPE_THERMOSTAT 0x08
 #define GENERIC_TYPE_WINDOW_COVERING 0x09
 #define GENERIC_TYPE_REPEATER_SLAVE 0x0F
@@ -122,9 +121,9 @@
 #define GENERIC_TYPE_SWITCH_TOGGLE 0x13
 #define GENERIC_TYPE_ZIP_GATEWAY 0x14
 #define GENERIC_TYPE_ZIP_NODE 0x15
+#define GENERIC_TYPE_VENTILATION 0x16
 #define GENERIC_TYPE_SENSOR_BINARY 0x20
 #define GENERIC_TYPE_SENSOR_MULTILEVEL 0x21
-#define GENERIC_TYPE_WATER_CONTROL 0x22
 #define GENERIC_TYPE_METER_PULSE 0x30
 #define GENERIC_TYPE_METER 0x31
 #define GENERIC_TYPE_ENTRY_CONTROL 0x40
@@ -157,6 +156,8 @@ const char* DomoZWave_GetLibraryTypeName( uint32 home );
 const char* DomoZWave_ControllerType( uint32 home );
 
 // Enable/disable polling of the devices by open-zwave
+int32 DomoZWave_GetPollInterval( );
+void DomoZWave_SetPollInterval( int32 milliseconds, bool intervalbetweenpolls );
 void DomoZWave_EnablePolling( uint32 home, int32 node, int32 polltime );
 void DomoZWave_DisablePolling( uint32 home, int32 node );
 
@@ -193,31 +194,19 @@ bool DomoZWave_SetConfigParam( uint32 home, int32 node, int32 param, int32 value
 bool DomoZWave_SetConfigParamList( uint32 home, int32 node, int32 param, const char* value );
 void DomoZWave_RequestConfigParam( uint32 home, int32 node, int32 param );
 void DomoZWave_RequestAllConfigParams( uint32 home, int32 node );
-const char* DomoZWave_GetNodeConfigValue( uint32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigList( uint32 home, int32 node );
-const char* DomoZWave_GetNodeConfigLabel( uint32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigHelp( uint32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigValue( uint32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigValueType( uint32 home, int32 node, int32 item );
-const char* DomoZWave_GetNodeConfigValueList( uint32 home, int32 node, int32 item );
-bool DomoZWave_GetNodeConfigValueReadOnly( uint32 home, int32 node, int32 item );
+const char* DomoZWave_GetNodeConfig( uint32 home, int32 node );
 
 // Retrieve the node neighborhood list or commandclass list
 const char* DomoZWave_GetNodeNeighborsList( uint32 home, int32 node );
 const char* DomoZWave_GetNodeCommandClassList( uint32 home, int32 node, int32 instance );
 
 // Request or update the group/association of a node
-int DomoZWave_GetNodeGroupCount( uint32 home, int32 node );
-const char* DomoZWave_GetNodeGroupList( uint32 home, int32 node, int32 ogroup );
-int DomoZWave_GetNodeGroupMax( uint32 home, int32 node, int32 ogroup );
-const char* DomoZWave_GetNodeGroupLabel( uint32 home, int32 node, int32 ogroup );
+const char* DomoZWave_GetNodeGroup( uint32 home, int32 node );
 void DomoZWave_AddAssociation( uint32 home, int32 node, int group, int otherNode );
 void DomoZWave_RemoveAssociation( uint32 home, int32 node, int group, int otherNode );
 
 // Request or set UserCode of a node
-int DomoZWave_GetNodeUserCodeCount( uint32 home, int32 node );
-const char* DomoZWave_GetNodeUserCodeLabel( uint32 home, int32 node, int32 usercode );
-const char* DomoZWave_GetNodeUserCodeValue( uint32 home, int32 node, int32 usercode );
+const char* DomoZWave_GetNodeUserCode( uint32 home, int32 node );
 bool DomoZWave_SetNodeUserCodeStart( uint32 home, int32 node );
 bool DomoZWave_SetNodeUserCodeStop( uint32 home );
 bool DomoZWave_SetNodeUserCodeRemove( uint32 home, int32 node, int32 usercode );
@@ -252,6 +241,7 @@ void DomoZWave_TestNetwork( uint32 home, int32 count );
 
 // Statistical information
 const char* DomoZWave_GetDriverStatistics( uint32 home );
+const char* DomoZWave_GetNodeStatistics( uint32 home, int32 node );
 long DomoZWave_GetSendQueueCount( uint32 home );
 
 // Make certain information readable
@@ -259,6 +249,7 @@ const char* DomoZWave_CommandClassIdName( int class_value );
 const char* DomoZWave_GenreIdName( int genre );
 const char* DomoZWave_BasicTypeName( int basictype );
 const char* DomoZWave_GenericTypeName( int generictype );
+const char* DomoZWave_SpecificTypeName( int generictype, int specifictype );
 
 //-----------------------------------------------------------------------------
 // Thermostate and Scenes are not supported (yet)

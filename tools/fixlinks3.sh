@@ -22,6 +22,7 @@ ln -s ../../DomotiGa3/.src/CBwiredMap.class
 ln -s ../../DomotiGa3/.src/CCTX35.class
 ln -s ../../DomotiGa3/.src/CCurrentCost.class
 ln -s ../../DomotiGa3/.src/CDenon.class
+ln -s ../../DomotiGa3/.src/CDeviceDiscover.class
 ln -s ../../DomotiGa3/.src/CDigitemp.class
 ln -s ../../DomotiGa3/.src/CDomotica.class
 ln -s ../../DomotiGa3/.src/CDSC.class
@@ -54,12 +55,12 @@ ln -s ../../DomotiGa3/.src/CLIRC.class
 ln -s ../../DomotiGa3/.src/CNMA.class
 ln -s ../../DomotiGa3/.src/COpenTherm.class
 ln -s ../../DomotiGa3/.src/COpenZWave.class
-ln -s ../../DomotiGa3/.src/COpenZWaveEntry.class
 ln -s ../../DomotiGa3/.src/COnkyo.class
 ln -s ../../DomotiGa3/.src/COWFS.class
 ln -s ../../DomotiGa3/.src/COWW.class
 ln -s ../../DomotiGa3/.src/CP2000.class
 ln -s ../../DomotiGa3/.src/CPachube.class
+ln -s ../../DomotiGa3/.src/CPhilipsHue.class
 ln -s ../../DomotiGa3/.src/CPLCBUS.class
 ln -s ../../DomotiGa3/.src/CPluginEntry.class
 ln -s ../../DomotiGa3/.src/CPlugwise.class
@@ -88,6 +89,7 @@ ln -s ../../DomotiGa3/.src/CUPS.class
 ln -s ../../DomotiGa3/.src/CVISCA.class
 ln -s ../../DomotiGa3/.src/CWeeder.class
 ln -s ../../DomotiGa3/.src/CWebSocket.class
+ln -s ../../DomotiGa3/.src/CWirelesstags.class
 ln -s ../../DomotiGa3/.src/CX10Cmd.class
 ln -s ../../DomotiGa3/.src/CXMLRPC.class
 ln -s ../../DomotiGa3/.src/CXBMCxPL.class
@@ -112,6 +114,7 @@ ln -s ../../DomotiGa3/.src/RRDTool.module
 ln -s ../../DomotiGa3/.src/Scenes.module
 ln -s ../../DomotiGa3/.src/ServerStats.module
 ln -s ../../DomotiGa3/.src/Sounds.module
+ln -s ../../DomotiGa3/.src/Util.module
 ln -s ../../DomotiGa3/.src/TVGuide.module
 ln -s ../../DomotiGa3/.src/Thermostat.module
 ln -s ../../DomotiGa3/.src/VideoServer.module
@@ -121,4 +124,5 @@ ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class
 ln -s ../../DomotiGa3/.src/Timers/CTimerDelay.class
 ln -s ../../DomotiGa3/.src/Timers/CTimerOnOff.class
+ln -s ../../DomotiGa3/.src/Timers/CTimerGeneric.class
 

@@ -1,0 +1,631 @@
+' Gambas class file
+
+' Description:
+' CWirelesstags.class
+' Contains code for supporting wirelesstags.net devices
+
+' Links:
+' http://www.wirelesstags.net/
+' http://caogadgets.com/media/mytaglist.com/apidoc.html
+
+' Development Status:
+' In progress
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Wirelesstags"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "Wirelesstags"
+Public PluginVersion As String = "0.01"
+Public PluginAuthor As String = "Wouter Wolkers"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[Wirelesstags] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $bDebug As Boolean
+Private $sUser As String
+Private $sPassword As String
+Private $iPolltime As Integer
+
+Public tWirelesstags As Timer
+Public hWirelesstags As HttpClient
+
+Private $sBuffer As String
+Private $sStateBuffer As String
+Private $sThermostatBuffer As String
+Private $bAuthenticated As Boolean
+Private cState As Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $bDebug = cPl.Settings["debug"]
+  $sUser = cPl.Settings["user"]
+  $sPassword = cPl.Settings["password"]
+  $iPolltime = cPl.Settings["polltime"]
+
+  ' Initialize
+  Run()
+  IsRunning = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tWirelesstags.Stop
+  If $bAuthenticated Then WirelesstagsLogout()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Run()
+
+  ' start poll timer for Wirelesstags
+  tWirelesstags = New Timer As "tWirelesstags"
+  tWirelesstags.Delay = $iPollTime * 1000 ' multiply for seconds
+  tWirelesstags.Start
+
+  If Not $bAuthenticated Then WirelesstagsLogin()
+
+  WirelesstagsGetTagList()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tWirelesstags_Timer()
+
+  If Not $bAuthenticated Then WirelesstagsLogin()
+
+  WirelesstagsGetTagList()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a login request and returns a JSON collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WirelesstagsLogin()
+
+  Dim cPostData As New Collection
+  Dim sBuffer As String
+
+  If $sUser = "" And If $sPassword = "" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Need a username and password for mytagslist.com portal!")
+    Return
+  Endif
+  
+  ' create json data
+  cPostData.Add($sUser, "email")
+  cPostData.Add($sPassword, "password")
+
+  hWirelesstags = New HttpClient As "hWirelesstagsLogin"
+  hWirelesstags.URL = "https://www.mytaglist.com/ethAccount.asmx/SignIn"
+  hWirelesstags.Async = False
+  hWirelesstags.TimeOut = 5
+  hWirelesstags.CookiesFile = "/tmp/wirelesscookie"
+  hWirelesstags.UpdateCookies = True
+  hWirelesstags.Post("application/json", JSON.Encode(cPostData))
+
+  If hWirelesstags.Status < 0 Then
+    ' Failure
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error fetching data from server, Code=" & hWirelesstags.Status & " HTTP=" & hWirelesstags.Code)
+    Return
+  Else
+    ' Success or error - read the data
+    If Lof(hWirelesstags) Then sBuffer = Read #hWirelesstags, Lof(hWirelesstags)
+    Select hWirelesstags.Code
+      Case 200
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Login request successful, received data '" & sBuffer & "'.")
+	$bAuthenticated = True
+      Case 500
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Could not authenticate successfully with given credentials!")
+      Case Else
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown error while login: " & hWirelesstags.Code)
+        Write sBuffer
+        Try Write JSON.Decode(sBuffer)
+    End Select
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a logout request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WirelesstagsLogout()
+
+  Dim sBuffer As String
+
+  If $sUser = "" And If $sPassword = "" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Need a username and password for the wirelesstags portal!")
+    Return
+  Endif
+
+  hWirelesstags = New HttpClient As "hWirelesstagsLogout"
+  hWirelesstags.URL = "https://www.mytaglist.com/ethClient.asmx/SignOut"
+  hWirelesstags.Async = False
+  hWirelesstags.TimeOut = 5
+  hWirelesstags.CookiesFile = "/tmp/wirelesscookie"
+  hWirelesstags.UpdateCookies = True
+  hWirelesstags.Post("application/json", "{}")
+
+  If hWirelesstags.Status < 0 Then
+    ' Failure
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error with logout request from portal, Code=" & hWirelesstags.Status & " HTTP=" & hWirelesstags.Code)
+    Return
+  Else
+    ' Success or error - read the data
+    If Lof(hWirelesstags) Then sBuffer = Read #hWirelesstags, Lof(hWirelesstags)
+    Select hWirelesstags.Code
+      Case 200
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Logout request successful, received data '" & sBuffer & "'.")
+        $bAuthenticated = False
+      Case 500
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Could not logout successfully!")
+      Case Else
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown error while logout: " & hWirelesstags.Code)
+    End Select
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Get the email address which is currently logged in.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WirelesstagsGetLoginEmail()
+
+  Dim sBuffer As String
+
+  hWirelesstags = New HttpClient As "hWirelesstagsGetLoginEmail"
+  hWirelesstags.URL = "https://www.mytaglist.com/ethAccount.asmx/SignIn"
+  hWirelesstags.Async = False
+  hWirelesstags.TimeOut = 5
+  hWirelesstags.CookiesFile = "/tmp/wirelesscookie"
+  hWirelesstags.UpdateCookies = True
+  hWirelesstags.Post("application/json", "")
+
+  If hWirelesstags.Status < 0 Then
+    ' Failure
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error fetching data from server, Code=" & hWirelesstags.Status & " HTTP=" & hWirelesstags.Code)
+    Return
+  Else
+    ' Success or error - read the data
+    If Lof(hWirelesstags) Then sBuffer = Read #hWirelesstags, Lof(hWirelesstags)
+    Select hWirelesstags.Code
+      Case 200
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "GetLoginEmail request successful, received data '" & sBuffer & "'.")
+	$bAuthenticated = True
+      Case 400
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Could not authenticate successfully with given credentials!")
+      Case Else
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown error during GetLoginEmail: " & hWirelesstags.Code)
+        Write sBuffer
+        Write JSON.Decode(sBuffer)
+    End Select
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' called from devices module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Select UCase(sAddress)
+    Case "THERMOSTAT"
+'      SetThermostat(sCmd)
+    Case "SCHEDULE"
+'      SetState(sCmd)
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Only Wirelesstags's thermostat and schedule device are controllable!")
+  End Select
+
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a get state request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WirelesstagsGetTagList()
+
+  Dim sURL As String = "https://www.mytaglist.com/ethClient.asmx/GetTagList"
+
+  If Not $bAuthenticated Then
+     If $bDebug Then Main.WriteDebugLog(LogLabel & "Not logged in.")
+    Return
+  Endif
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Getting tags with URL " & sURL)
+
+  hWirelesstags = New HttpClient As "hWirelesstagsGetTagList"
+  hWirelesstags.URL = sURL
+  hWirelesstags.Async = True
+  hWirelesstags.TimeOut = 5
+  hWirelesstags.CookiesFile = "/tmp/wirelesscookie"
+  hWirelesstags.UpdateCookies = True
+  hWirelesstags.Post("application/json", "{}")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Gather data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hWirelesstagsGetTagList_Read()
+
+  If Lof(Last) Then $sBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hWirelesstagsGetTagList_Finished()
+
+  Dim sProgramStates As Array = ["Comfort", "Home", "Sleep", "Away"]
+  Dim sBurnerStates As Array = ["Idle", "Heating", "Hot Water", "Pre-Heating"]
+  Dim iDeviceId, iUnixTime, iTagNumber As Integer
+  Dim sTagName, sTagUUID, sTagType, sTagLastComm, sTagEventState As String
+  Dim fTagTemperature, fTagBatteryVolt, fTagCap As Float
+  Dim d As Date
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "GetTagList request received data '" & $sBuffer & "'.")
+      cState = JSON.Decode($sBuffer)
+      iTagNumber = 0
+      Do While iTagNumber < cState["d"].count
+
+      Try sTagName = cState["d"][iTagNumber]["name"]
+      If Not Error Then
+        sTagUUID = cState["d"][iTagNumber]["uuid"]
+        Select cState["d"][iTagNumber]["tagType"]
+          Case 12
+            sTagType = "ZGW05"
+          Case 32
+            sTagType = "ZGW06"
+          Case Else
+            sTagType = "Unknown : " & cState["d"][iTagNumber]["tagType"]
+        End Select
+
+        iUnixTime = Int(cState["d"][iTagNumber]["lastComm"])
+        d = DateAdd(Date(1973, 1, 1), gb.Second, iUnixTime)
+        sTagLastComm = Str(d)
+
+        fTagTemperature = cState["d"][iTagNumber]["temperature"]
+        fTagBatteryVolt = cState["d"][iTagNumber]["batteryVolt"]
+	sTagEventState = cState["d"][iTagNumber]["eventState"]
+	fTagCap = cState["d"][iTagNumber]["cap"]
+        iDeviceId = Devices.Find(Instance, sTagUUID, Devices.FindInterface("Wirelesstags Interface"), sTagType, sTagName)
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, Format(fTagTemperature, "-##0.00"))
+          Devices.ValueUpdate(iDeviceId, 2, sTagLastComm)
+          Devices.ValueUpdate(iDeviceId, 3, Format(fTagBatteryVolt, "##0.00"))
+          Devices.ValueUpdate(iDeviceId, 4, sTagEventState)
+          Devices.ValueUpdate(iDeviceId, 5, Format(fTagCap, "##0.00"))
+        Endif
+      Endif
+      Inc iTagNumber
+      Loop
+    Case 500
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while getting state, received '" & $sBuffer & "'. HTTP Error=" & hWirelesstags.Code)
+      $bAuthenticated = False
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown Error while get state: " & Last.Code)
+  End Select
+  Last.Close
+  $sBuffer = ""
+
+Catch
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while get Wirelesstags state: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+Public Sub GetThermostatState() As Collection
+
+  Try Return cState
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Get all Tag managers
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WirelesstagsGetTagManagers()
+
+  If Not $bAuthenticated Then
+     If $bDebug Then Main.WriteDebugLog(LogLabel & "Not logged in.")
+    Return
+  Endif
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Getting state with URL https://www.mytaglist.com/ethAccount.asmx/GetTagManagers")
+
+  hWirelesstags = New HttpClient As "GetTagManagers"
+  hWirelesstags.URL = "https://www.mytaglist.com/ethAccount.asmx/GetTagManagers"
+  hWirelesstags.Async = True
+  hWirelesstags.TimeOut = 5
+  hWirelesstags.CookiesFile = "/tmp/wirelesscookie"
+  hWirelesstags.UpdateCookies = True
+  hWirelesstags.Post("application/json; charset=utf-8", "{}")
+
+End
+
+Public Sub GetTagManagers_Connect()
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Connected to " & hWirelesstags.URL)
+  
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Gather data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetTagManagers_Read()
+
+  If Lof(Last) Then $sBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetTagManagers_Finished()
+
+  Dim sProgramStates As Array = ["Comfort", "Home", "Sleep", "Away"]
+  Dim sBurnerStates As Array = ["Idle", "Heating", "Hot Water", "Pre-Heating"]
+  Dim fTemp, fTempSet, fGas, fPowerUsage, fGasTotal, fGasDayCost, fGasDayUsage, fPowerHigh, fPowerLow, fPowerProduced, fPowerDayCost, fPowerProducedDayCost, fPowerDayUsage, fPowerDayLowUsage As Float
+  Dim iAway, iHome, iSleep, iComfort, iActiveState, iNextState, iBurnerState, iModulationLevel, iDeviceId As Integer
+  Dim sThermostatState, sNextSetpoint As String
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Get state request received data '" & $sBuffer & "'.")
+      cState = JSON.Decode($sBuffer)
+
+      ' d:[
+      ' {
+      ' "name":string
+      ' "mac":string
+      ' "linkedToMac":string
+      ' "allowMore":boolean
+      ' "selected":boolean
+      ' "online":boolean
+      ' wirelessConfig:{
+      '   "dataRate":unsignedByte
+      '   "activeInterval":unsignedByte
+      '   "Freq":unsignedShort
+      '   },
+      ' "radioId":string
+      ' },
+      ' {
+      ' "name":string
+      ' "mac":string
+      ' "linkedToMac":string
+      ' "allowMore":boolean
+      ' "selected":boolean
+      ' "online":boolean
+      ' wirelessConfig:{
+      '    "dataRate":unsignedByte
+      '    "activeInterval":unsignedByte
+      '    "Freq":unsignedShort
+      ' },
+      ' "radioId":string
+      ' },
+      ' ]
+
+      ' "thermostatInfo": {
+      '   "currentTemp": 1903,
+      '   "currentSetpoint": 1800,
+      '   "programState": 1,
+      '   "activeState": 1,
+      '   "nextProgram": 1,
+      '   "nextState": 0,
+      '   "nextTime": 1392483600,
+      '   "nextSetpoint": 2100,
+      '   "randomConfigId": 1804289381,
+      '   "errorFound": 255,
+      '   "zwaveOthermConnected": 0,
+      '   "burnerInfo": "0",
+      '   "otCommError": "0",
+      '   "currentModulationLevel": 0,
+      '   "haveOTBoiler": 1
+      ' },
+      Try fTemp = cState["thermostatInfo"]["currentTemp"] / 100
+      If Not Error Then
+        fTempSet = cState["thermostatInfo"]["currentSetpoint"] / 100
+        iBurnerState = cState["thermostatInfo"]["burnerInfo"]
+        iNextState = cState["thermostatInfo"]["nextProgram"]
+        sNextSetpoint = cState["thermostatInfo"]["nextSetpoint"]
+        iModulationLevel = cState["thermostatInfo"]["currentModulationLevel"]
+        iActiveState = cState["thermostatInfo"]["activeState"]
+        Select iActiveState
+          Case 0, 1, 2, 3
+            sThermostatState = sProgramStates[iActiveState]
+          Case -1
+            sThermostatState = "Manual"
+          Case Else
+            sThermostatState = "Unknown"
+        End Select
+        If iModulationLevel = 0 Then iBurnerState = 0
+        ' update thermostat device
+        ' value       value2        value3      value4              value5
+        ' setpoint C  currenttemp C burnerinfo  modulation level %  current program
+        iDeviceId = Devices.Find(Instance, "Thermostat", Devices.FindInterface("Wirelesstags Interface"), "Wirelesstags Thermostat")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, Format(fTempSet, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 2, Format(fTemp, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 3, sBurnerStates[iBurnerState])
+          Devices.ValueUpdate(iDeviceId, 4, iModulationLevel)
+          Devices.ValueUpdate(iDeviceId, 5, sThermostatState)
+        Endif
+      Endif
+      ' "thermostatStates": {
+      '   "state": [
+      '     {
+      '       "id": 0,
+      '       "tempValue": 2100,
+      '       "dhw": 1
+      '     },
+      '     {
+      '       "id": 1,
+      '       "tempValue": 1800,
+      '       "dhw": 1
+      '     },
+      '     {
+      '       "id": 2,
+      '       "tempValue": 1500,
+      '       "dhw": 1
+      '     },
+      '     {
+      '       "id": 3,
+      '       "tempValue": 1500,
+      '       "dhw": 1
+      '     },
+      '     {
+      '       "id": 4,
+      '       "tempValue": 600,
+      '       "dhw": 0
+      '     },
+      '     {
+      '       "id": 5,
+      '       "tempValue": 600,
+      '       "dhw": 1
+      '     }
+      '   ]
+      ' }
+      ' states
+      Try iAway = cState["thermostatStates"]["state"][3]["tempValue"] / 100
+      If Not Error Then
+        iSleep = cState["thermostatStates"]["state"][2]["tempValue"] / 100
+        iHome = cState["thermostatStates"]["state"][1]["tempValue"] / 100
+        iComfort = cState["thermostatStates"]["state"][0]["tempValue"] / 100
+        ' update schedule device
+        ' value   value2  value3  value4  value5
+        ' active  away    sleep   home    comfort
+        iDeviceId = Devices.Find(Instance, "Schedule", Devices.FindInterface("Wirelesstags Interface"), "Wirelesstags Schedule")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, sThermostatState)
+          Devices.ValueUpdate(iDeviceId, 2, Format(iAway, "##.00"))
+          Devices.ValueUpdate(iDeviceId, 3, Format(iSleep, "##.00"))
+          Devices.ValueUpdate(iDeviceId, 4, Format(iHome, "##.00"))
+          Devices.ValueUpdate(iDeviceId, 5, Format(iComfort, "##.00"))
+        Endif
+      Endif
+
+      ' "gasUsage": {
+      '   "value": 104,
+      '   "dayCost": 1.35,
+      '   "avgValue": 207.33,
+      '   "meterReading": 660061,
+      '   "avgDayValue": 4975.86,
+      '   "dayUsage": 1129,
+      '   "isSmart": 1
+      ' },
+      Try fGas = cState["gasUsage"]["value"] / 1000
+      If Not Error Then
+        fGasTotal = cState["gasUsage"]["meterReading"]
+        fGasDayCost = cState["gasUsage"]["dayCost"]
+        fGasDayUsage = cState["gasUsage"]["dayUsage"] / 1000
+        ' update gas usage device
+        ' value         value2      value3
+        ' dayusage m3   daycost eur total m3
+        iDeviceId = Devices.Find(Instance, "GasUsage", Devices.FindInterface("Wirelesstags Interface"), "Wirelesstags Gas Usage")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, Format(fGasDayUsage, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 2, Format(fGasDayCost, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 3, fGasTotal)
+        Endif
+      Endif
+
+      ' "powerUsage": {
+      '   "value": 340,
+      '   "dayCost": 1.80,
+      '   "valueProduced": "0",
+      '   "dayCostProduced": "0.00",
+      '   "avgValue": 656.40,
+      '   "meterReading": 1393473,
+      '   "meterReadingLow": 1160198,
+      '   "dayUsage": 0,
+      '   "dayLowUsage": 10598,
+      '   "isSmart": 1
+      ' },
+      Try fPowerUsage = cState["powerUsage"]["value"]
+      If Not Error Then
+        fPowerLow = cState["powerUsage"]["meterReadingLow"]
+        fPowerHigh = cState["powerUsage"]["meterReading"]
+        fPowerDayCost = cState["powerUsage"]["dayCost"]
+        fPowerProduced = cState["powerUsage"]["valueProduced"]
+        fPowerProducedDayCost = cState["powerUsage"]["dayCostProduced"]
+        fPowerDayUsage = cState["powerUsage"]["dayUsage"]
+        fPowerDayLowUsage = cState["powerUsage"]["dayLowUsage"]
+        ' update power usage device
+        ' value     value2      value3      value4
+        ' current W daycost eur readinglow  readinghigh
+        iDeviceId = Devices.Find(Instance, "PowerUsage", Devices.FindInterface("Wirelesstags Interface"), "Wirelesstags Power Usage")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, Format(fPowerUsage, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 2, Format(fPowerDayCost, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 3, fPowerLow)
+          Devices.ValueUpdate(iDeviceId, 4, fPowerHigh)
+          Devices.ValueUpdate(iDeviceId, 5, fPowerDayUsage)
+          Devices.ValueUpdate(iDeviceId, 6, fPowerDayLowUsage)
+        Endif
+        ' update power produced device
+        ' value     value2
+        ' produced  daycostproduced
+        iDeviceId = Devices.Find(Instance, "PowerProduced", Devices.FindInterface("Wirelesstags Interface"), "Wirelesstags Power Produced")
+        ' if found then update it's values
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, Format(fPowerProduced, "0.00"))
+          Devices.ValueUpdate(iDeviceId, 2, Format(fPowerProducedDayCost, "0.00"))
+        Endif
+      Endif
+    Case 500
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while getting state, received '" & $sBuffer & "'. HTTP Error=" & hWirelesstags.Code)
+      $bAuthenticated = False
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown Error while get state: " & Last.Code)
+  End Select
+  Last.Close
+  $sBuffer = ""
+
+Catch
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Error while get Wirelesstags state: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+

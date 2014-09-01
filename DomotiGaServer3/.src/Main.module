@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-Public sProgramVersion As String = "1.0.015"
+Public sProgramVersion As String = "1.0.016"
 Public sBaseDir As String
 Public sSettings As String = "server-domotiga.conf"
 Public bExitProgram As Boolean ' exit program flag
@@ -227,13 +227,6 @@ Public sXBMCxPLTXAddress As String
 Public bXBMCxPLDebug As Boolean
 Public hXBMCxPL As CXBMCxPL
 
-' WeatherUnderground
-Public bWeatherUGEnabled As Boolean
-Public sWeatherUGApiKey As String
-Public sWeatherUGCity As String
-Public iWeatherUGRefresh As Integer
-Public bWeatherUGDebug As Boolean
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' this is where domotiga starts
 ' determine basedir, set language and run application
@@ -244,12 +237,15 @@ Public Function Main() As Boolean
   Dim iSleep, iSleepTimer As Integer
 
   ' determine basedir
-  If Exist(Application.Path &/ "logs") Then
-    sBaseDir = Application.Path
-  Else If Exist(Mid$(Application.Path &/ "logs", 1, RInStr(Application.Path, "/")))
-    sBaseDir = Mid$(Application.Path, 1, RInStr(Application.Path, "/"))
-  Else
-    Main.WriteLog("ERROR: Couldn't determine DomotiGaServer's base directory.")
+  sBaseDir = Application.Path
+  If InStr(sBaseDir, "/" & Application.Name) Then
+    If RInStr(sBaseDir, "/") = InStr(sBaseDir, "/" & Application.Name, RInStr(sBaseDir, "/")) Then
+      sBaseDir = Left(sBaseDir, RInStr(sBaseDir, "/") - 1)
+    Endif
+  Endif
+
+  If Not Exist(sBaseDir) Then
+    Print "ERROR: Couldn't determine DomotiGaServer's base directory."
     Quit
   Endif
 
@@ -527,11 +523,19 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SetConfig()
 
-  SetConfigValue("MySQL/Host", sSQLHost)
-  SetConfigValue("MySQL/User", sSQLUser)
-  SetConfigValue("MySQL/Password", sSQLPass)
-  SetConfigValue("MySQL/Database", sSQLDatabase)
-  SetConfigValue("Program/Language", sLanguage)
+  Dim hSettings As Settings
+
+  hSettings = New Settings(sBaseDir &/ sSettings)
+  hSettings["MySQL/Host"] = sSQLHost
+  hSettings["MySQL/User"] = sSQLUser
+  hSettings["MySQL/Password"] = sSQLPass
+  hSettings["MySQL/Database"] = sSQLDatabase
+  hSettings["Program/Language"] = sLanguage
+
+  Try hSettings.Save
+  If Error Then
+    Print "ERROR: Unable to write to file '" & sBaseDir &/ sSettings & "'. Please check the file permissions"
+  Endif
 
 End
 
@@ -551,7 +555,13 @@ Public Sub GetConfig()
     hSettings["MySQL/Password"] = "kung-fu"
     hSettings["MySQL/Database"] = "domotiga"
     hSettings["Program/Language"] = "en_US.UTF-8"
-    hSettings.Save
+
+    Try hSettings.Save
+    If Error Then
+      Print "ERROR: Unable to write to file '" & sBaseDir &/ sSettings & "'. Please check the file permissions"
+      Quit
+    Endif
+
     ' re-load
     GetConfig()
     Main.WriteLog("[Main] Couldn't open config file called '" & Main.sSettings & "'. Created one with default settings!")
@@ -721,32 +731,11 @@ Public Sub GetSettings()
   sXBMCxPLTXAddress = rResult!txaddress
   bXBMCxPLDebug = rResult!debug
 
-  ' Weather Underground
-  rResult = GetSettingTable("weatherug")
-  bWeatherUGEnabled = rResult!enabled
-  sWeatherUGApiKey = rResult!apikey
-  sWeatherUGCity = rResult!city
-  iWeatherUGRefresh = rResult!polltime
-  bWeatherUGDebug = rResult!debug
-
 Catch
   WriteLog("[Main] ERROR: " & Error.Text & " " & Error.Code & " while loading settings at " & Error.Where & "!\nIs your database version correct?")
 
   CloseAll()
   Quit
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' set a value in the config file
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SetConfigValue(sKey As String, vValue As Variant)
-
-   Dim hSettings As Settings
-
-   hSettings = New Settings(sBaseDir &/ sSettings)
-   hSettings[sKey] = vValue
-   hSettings.Save
 
 End
 
@@ -927,7 +916,6 @@ Public Sub Setup()
   Setup_Shell() ' Shell support
   Setup_Calendar() 'Calendar planning support
   Setup_XBMCxPL() ' XBMC control via xPL
-  Setup_WeatherUG() ' Weather Underground support
 
   ' Register all plugins
   Plugin.Init()
@@ -982,10 +970,10 @@ Public Sub Setup_Logfiles()
   Try Close #hSpeakLogFile
   Try Close #hDebugLogFile
 
-  sMainLogFile As String = "server-main-" & Format(Now, "yyyy-mm") & ".log"
-  sSpeakLogFile As String = "server-speak-" & Format(Now, "yyyy-mm") & ".log"
-  sDebugLogFile As String = "server-debug-" & Format(Now, "yyyy-mm") & ".log"
-  sDomoZWaveFile As String = "server-domozwave-"
+  sMainLogFile = "server-main-" & Format(Now, "yyyy-mm") & ".log"
+  sSpeakLogFile = "server-speak-" & Format(Now, "yyyy-mm") & ".log"
+  sDebugLogFile = "server-debug-" & Format(Now, "yyyy-mm") & ".log"
+  sDomoZWaveFile = "server-domozwave-"
 
   ' If "logs" doesn't exist, try to create it first
   If Exist(sBaseDir &/ "logs") = False Then
@@ -1384,31 +1372,6 @@ Public Sub Restart_WeatherBug()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' check if weatherug support is enabled
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Setup_WeatherUG()
-
-  If bWeatherUGEnabled Then
-    WriteLog("[Plugin] Weather Underground support enabled.")
-    WeatherUG.Run()
-  Else
-    Try WeatherUG.tWeatherUG.Stop
-    If bMainDebug Then WriteLog("[Plugin] Weather Undergound support disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart weatherug after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Restart_WeatherUG()
-
-  ' not much todo now
-  Setup_WeatherUG()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' thermostat
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Setup_Thermostat()
@@ -1712,9 +1675,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopTimers()
 
-  WriteLog("Stopping running timers.")
-  ' weatherug
-  Try WeatherUG.tWeatherUG.Stop
+  WriteLog("[Main] Stopping running timers.")
   ' thermostat timer
   Try Thermostat.tThermostat.Stop
   ' serverstats timer
@@ -2177,7 +2138,7 @@ Public Sub RestoreGlobalVars(Optional bReadTable As Boolean = True)
   Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, True, gb.String, 300), "Tagline")
   Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Boolean), "Weekend")
   Main.GlobalVar.Add(CreateGlobalVarEntry(True, True, False, gb.Boolean), "Dark")
-  Main.GlobalVar.Add(CreateGlobalVarEntry(True, False, False, gb.Boolean), "House_Mode")
+  Main.GlobalVar.Add(CreateGlobalVarEntry(True, False, False, gb.String), "House_Mode")
   Main.GlobalVar.Add(CreateGlobalVarEntry(True, False, False, gb.Boolean), "Mute")
 
   ' Skip reading the database is requested

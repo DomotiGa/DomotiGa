@@ -1,0 +1,649 @@
+' Gambas class file
+
+' Description:
+' CWeatherUnderground.class
+' Provides various weather related functions.
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' This module was written by Marco Frijmann, The Netherlands
+' Updated to work with new api by Ron Klinkien.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "WeatherUG"
+Public PluginFriendlyName As String = "WeatherUG"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[WeatherUG] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sApiKey As String
+Private $sCity As String
+Private $iRefresh As Integer
+Private $bDebug As Boolean
+
+Public hWeatherUG As New HttpClient
+Public tWeatherUG As New Timer
+Public $sBuffer As String
+
+Private $cWeatherData As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+  
+  KeyName = cPl.KeyName
+  Instance = 1 ' Module can only have 1 instance 
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sApiKey = cPl.Settings["apikey"]
+  $sCity = cPl.Settings["city"]
+  $iRefresh = cPl.Settings["polltime"]
+  $bDebug = cPl.Settings["debug"]
+
+  ' Initialize 
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tWeatherUG.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Run()
+
+  ' Fetch the initial data
+  GetWeather()
+  Try tWeatherUG.Stop
+
+  ' create refresh timer
+  tWeatherUG = New Timer As "tWeatherUG"
+  tWeatherUG.Delay = $iRefresh * 1000
+  tWeatherUG.Start
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Started refresh timer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tWeatherUG_Timer()
+
+  GetWeather()
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Updating data.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a GET call to Wunderground and returns a JSON collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WeatherGetCity(sApiKey As String, sCity As String) As Collection
+
+  Dim hWeatherCity As HttpClient
+  Dim sURL As String
+  Dim sBuffer As String
+  Dim iCnt As Integer
+  Dim cCityList As New String[]
+  Dim cWeather As New Collection
+  Dim cResult As New Collection
+
+  ' If no city is supplied, try the auto ip detection of WeatherUnderground
+  If sCity = "" Then
+    sCity = "autoip"
+  Endif
+
+  sURL = "http://api.wunderground.com/api/" & URL.Encode(sApiKey) & "/geolookup/q/" & Replace(Replace(sCity, ".", "%2E"), " ", "%20") & ".json"
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching data for Country/City '" & IIf(sCity = "autoip", "Auto-Detection", sCity) & "' with request '" & sURL & "'")
+
+  hWeatherCity = New HttpClient As "JSONWeatherGetCity"
+  hWeatherCity.URL = sURL
+  hWeatherCity.Async = False
+  hWeatherCity.TimeOut = 5
+  hWeatherCity.Get
+ 
+  If hWeatherCity.Status < 0 Then
+    ' Failure fetching data or apikey has failed
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: searching for Country/City '" & IIf(sCity = "autoip", "Auto-Detection", sCity) & "', Code=" & hWeatherCity.Status & " HTTP=" & hWeatherCity.Code)
+    cResult["error"] = "HTTP GET Failed, Code=" & hWeatherCity.Status & ". Most likely there is a network or internet issue"
+  Else
+    Select hWeatherCity.Code
+      Case 200
+        ' success
+        If Lof(hWeatherCity) Then sBuffer = Read #hWeatherCity, Lof(hWeatherCity)
+        cWeather = JSON.Decode(sBuffer)
+
+        ' Check if get a valid response
+        If cWeather.Exist("response") Then
+          If Not cWeather["response"].Exist("error") Then
+            ' We can 2 types of response: 1 entry of more then 1 multiple responses
+            If cWeather["response"].Exist("results") Then
+              For iCnt = 0 To cWeather["response"]["results"].Count - 1
+                Try cCityList.Add(cWeather["response"]["results"][iCnt]["country_name"] & "/" & cWeather["response"]["results"][iCnt]["city"])
+              Next
+              cCityList["city"] = cCityList
+            Else
+              ' Only 1 entry - easy
+              If cWeather.Exist("location") Then
+                cCityList.Add(cWeather["location"]["country_name"] & "/" & cWeather["location"]["city"])
+                cResult["city"] = cCityList
+              Else
+                cResult["error"] = "Unknown JSON Response. Data=" & sBuffer
+              Endif
+            Endif
+          Else
+            ' Error
+            Try cResult["error"] = cWeather["response"]["error"]["description"]
+          Endif
+        Else
+          cResult["error"] = "Unknown JSON Response. Data=" & sBuffer
+        Endif
+      Default
+      ' Something else then expected HTTP 200 returned
+        cResult["error"] = "Unknown HTTP Code=" & hWeatherCity.Code
+    End Select
+  Endif
+
+  Return cResult
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a GET call to WeatherUnderground and returns a JSON collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetWeatherCustom(sCity As String) As Collection
+
+  Dim sURL As String
+  Dim cResult As New Collection
+  Dim sBuffer As String
+  Dim hWeatherCustom As New HttpClient
+
+  ' Build up the GET Url, we retrieve conditions and forecast
+  sURL = "http://api.wunderground.com/api/" & URL.Encode($sApiKey) & "/astronomy/conditions/forecast/q/" & Replace(Replace(sCity, ".", "%2E"), " ", "%20") & ".json"
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching data for Country/City '" & IIf(sCity, sCity, $sCity) & "' with request '" & sURL & "'")
+
+  hWeatherCustom.URL = sURL
+  hWeatherCustom.Async = False
+  hWeatherCustom.TimeOut = 5
+  hWeatherCustom.Get
+
+  If hWeatherCustom.Status < 0 Then
+    cResult["error"] = "HTTP GET Failed, Code=" & hWeatherCustom.Status & ". Most likely there is a network or internet issue"
+  Else
+
+    Select hWeatherUG.Code
+      Case 200
+        ' success
+        If Lof(hWeatherCustom) Then sBuffer = Read #hWeatherCustom, Lof(hWeatherCustom)
+        cResult = DecodeWeatherUG(JSON.Decode(Replace($sBuffer, "&deg;", "deg")))
+      Default
+        cResult["error"] = "Unknown HTTP Code=" & hWeatherCustom.Code
+    End Select
+
+  Endif
+
+  Return cResult
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a GET call to WeatherUnderground and store the info
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetWeather()
+
+  Dim sURL As String
+
+  ' Don't start a new session if one is already active
+  If hWeatherUG.Status > 0 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Fetching data is already in progress")
+    Return
+  Endif
+
+  $sBuffer = ""
+
+  ' Build up the GET Url, we retrieve conditions and forecast
+  sURL = "http://api.wunderground.com/api/" & URL.Encode($sApiKey) & "/astronomy/conditions/forecast/q/" & Replace(Replace($sCity, ".", "%2E"), " ", "%20") & ".json"
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching data for Country/City '" & $sCity & "' with request '" & sURL & "'")
+
+  hWeatherUG = New HttpClient As "hWeatherUG"
+  hWeatherUG.URL = sURL
+  hWeatherUG.Async = True
+  hWeatherUG.TimeOut = 5
+  hWeatherUG.Get
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle data reading
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hWeatherUG_Read()
+
+  IsRunning = True
+  If Lof(Last) Then $sBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle read errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hWeatherUG_Error()
+
+  isRunning = False
+  ErrorText = "Error retrieving WeatherUnderground URL. Code=" & hWeatherUG.Status
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle finish request and start parsing the data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hWeatherUG_Finished()
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received '" & $sBuffer & "'")
+      DecodeWeatherUG(JSON.Decode(Replace($sBuffer, "&deg;", "deg")), True)
+    Default
+      IsRunning = False
+      ErrorText = "Unknown HTTP Code=" & Last.Code
+      Main.WriteLog(LogLabel & "ERROR: Unknown HTTP Code=" & Last.Code & "while fetching weather data!")
+  End Select
+
+  Try Last.Close
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Progress WeatherUnderground data and store it in a virtualdevice and Collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DecodeWeatherUG(cData As Collection, Optional bStore As Boolean = False) As Collection
+
+  Dim cResult As New Collection
+  Dim cCurrent As New Collection
+  Dim cForeCast As New Collection[]
+  Dim cForeCastEntry As New Collection
+  Dim iCnt As Integer
+
+  ' Reinitialise the WeatherData info
+  If bStore Then
+    $cWeatherData = New Collection
+  Endif
+
+  ' current:
+  ' lastupdate = ["current_observation"]["observation_epoch"] - It is in UTC, so we need to add the timezone
+  ' weatherstation = ["current_observation"]["display_location"]["city"] & ", " & ["current_observation"]["display_location"]["state_name"]
+  ' temperature = ["current_observation"]["temp_c"] (or temp_f)
+  ' weatherdesc = ["current_observation"]["weather"]
+  ' humidity = ["current_observation"]["relative_humidity"]
+  ' visibility = ["current_observation"]["visibility_km"] (or visibility_mi) - 10km or 6.2mi is unlimited
+  ' wind_dir = ["current_observation"]["wind_dir"]
+  ' wind_dir_text = wind_dir long text
+  ' wind_degrees = ["current_observation"]["wind_degrees"]
+  ' wind = ["current_observation"]["wind_kph"] (or wind_mph)
+  ' wind_gust = ["current_observation"]["wind_gust_kph"] ( or wind_gust_mph)
+  ' windchill = ["current_observation"]["windchill_c"] (or windchill_f) - normally "NA"
+  ' dewpoint = ["current_observation"]["dewpoint_c"] (or dewpoint_f)
+  ' feelslike = ["current_observation"]["feelslike_c"] (or feelslike_f)
+  ' uv = ["current_observation"]["UV"]
+  ' heat_index = ["current_observation"]["heat_index_c"] (or heat_index_f) - normally "NA"
+  ' pressure = ["current_observation"]["pressure_mb"] (or pressure_in)
+  ' precip_1h = ["current_observation"]["precip_1h_metric"] (or precip_1h_in)
+  ' precip_today = ["current_observation"]["precip_today_metric"] (or precip_today_in)
+  ' forecast_url = ["current_observation"]["forecast_url"]
+  ' history_url = ["current_observation"]["history_url"]
+  ' icon_url = ["current_observation"]["icon_url"]
+  ' icon_name = ["current_observation"]["icon"]
+  ' illuminated = ["moon_phase"]["percentIlluminated"]
+  ' ageofmoon = ["moon_phase"]["ageOfMoon"]
+
+  If Not cData.Exist("response") Then
+    Main.WriteLog(LogLabel & "ERROR: Data looks to be invalid, \"response\" missing")
+    cResult["error"] = "Data looks to be invalid, \"response\" missing" 
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  If cData["response"].Exist("error") Then
+    Main.WriteLog(LogLabel & "ERROR: Type=" & cData["response"]["error"]["type"] & ", Description=" & cData["response"]["error"]["description"])
+    cResult["error"] = "Type=" & cData["response"]["error"]["type"] & ", Description=" & cData["response"]["error"]["description"]
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+ If Not cData.Exist("current_observation") Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Data looks to be invalid, \"current_observation\" missing")
+    cResult["error"] = "Data looks to be invalid, \"current_observation\" missing"
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  If Not cData.Exist("forecast") Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Data looks to be invalid, \"forecast\" missing")
+    cResult["error"] = "Data looks to be invalid, \"forecast\" missing"
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  If Not cData["forecast"].Exist("txt_forecast") Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Data looks to be invalid, \"forecast => txt_forecast\" missing")
+    cResult["error"] = "Data looks to be invalid, \"forecast => txt_forecast\" missing"
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  If Not cData["forecast"].Exist("simpleforecast") Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Data looks to be invalid, \"forecast => simpleforecast\" missing")
+    cResult["error"] = "Data looks to be invalid, \"forecast => simpleforecast\" missing"
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  ' Store all information in result collection
+  cCurrent["lastupdate"] = Util.TimeSinceEpoch(cData["current_observation"]["observation_epoch"], True)
+  cCurrent["weatherstation"] = cData["current_observation"]["display_location"]["city"] & ", " & cData["current_observation"]["display_location"]["state_name"]
+
+  cCurrent["humidity"] = Replace(cData["current_observation"]["relative_humidity"], "%", "")
+  cCurrent["weatherdesc"] = cData["current_observation"]["weather"]
+  cCurrent["wind_dir"] = cData["current_observation"]["wind_dir"]
+  cCurrent["wind_dir_text"] = WindDirString(cData["current_observation"]["wind_dir"])
+  cCurrent["wind_degrees"] = cData["current_observation"]["wind_degrees"]
+  cCurrent["uv"] = cData["current_observation"]["UV"]
+  cCurrent["forecast_url"] = cData["current_observation"]["forecast_url"]
+  cCurrent["history_url"] = cData["current_observation"]["history_url"]
+  cCurrent["icon_url"] = IconFullName(cData["current_observation"]["icon"])
+  cCurrent["icon"] = cData["current_observation"]["icon"]
+  cCurrent["illuminated"] = cData["moon_phase"]["percentIlluminated"]
+  cCurrent["ageofmoon"] = cData["moon_phase"]["ageOfMoon"]
+  cCurrent["wind_ms"] = Round(CFloat(cData["current_observation"]["wind_kph"]) / 3.6, -2)
+  cCurrent["wind_gust_ms"] = Round(CFloat(cData["current_observation"]["wind_gust_kph"]) / 3.6, -2)
+  cCurrent["wind_beaufort"] = WindBeaufort(cData["current_observation"]["wind_mph"])
+  cCurrent["wind_gust_beaufort"] = WindBeaufort(cData["current_observation"]["wind_gust_mph"])
+
+  If Main.sTemperature = "°C" Then
+    cCurrent["temperature"] = cData["current_observation"]["temp_c"]
+    cCurrent["visibility"] = cData["current_observation"]["visibility_km"]
+    cCurrent["wind"] = cData["current_observation"]["wind_kph"]
+    cCurrent["wind_gust"] = cData["current_observation"]["wind_gust_kph"]
+    cCurrent["windchill"] = cData["current_observation"]["windchill_c"]
+    cCurrent["dewpoint"] = cData["current_observation"]["dewpoint_c"]
+    cCurrent["feelslike"] = cData["current_observation"]["feelslike_c"]
+    cCurrent["heat_index"] = cData["current_observation"]["heat_index_c"]
+    cCurrent["pressure"] = cData["current_observation"]["pressure_mb"]
+    cCurrent["precip_1h"] = Trim(cData["current_observation"]["precip_1hr_metric"])
+    cCurrent["precip_today"] = cData["current_observation"]["precip_today_metric"]
+  Else
+    cCurrent["temperature"] = cData["current_observation"]["temp_f"]
+    cCurrent["visibility"] = cData["current_observation"]["visibility_mi"]
+    cCurrent["wind"] = cData["current_observation"]["wind_mph"]
+    cCurrent["wind_gust"] = cData["current_observation"]["wind_gust_mph"]
+    cCurrent["windchill"] = cData["current_observation"]["windchill_f"]
+    cCurrent["dewpoint"] = cData["current_observation"]["dewpoint_f"]
+    cCurrent["feelslike"] = cData["current_observation"]["feelslike_f"]
+    cCurrent["heat_index"] = cData["current_observation"]["heat_index_f"]
+    cCurrent["pressure"] = cData["current_observation"]["pressure_in"]
+    cCurrent["precip_1h"] = cData["current_observation"]["precip_1hr_in"]
+    cCurrent["precip_today"] = cData["current_observation"]["precip_today_in"]
+  Endif
+
+  cResult["current"] = cCurrent
+
+  cForeCast = New Collection[]
+
+  ' X day forecast detailed, day is in 3 segments
+  For iCnt = 0 To (cData["forecast"]["txt_forecast"]["forecastday"].Count - 1)
+    cForeCastEntry = New Collection
+
+    cForeCastEntry["title"] = cData["forecast"]["txt_forecast"]["forecastday"][iCnt]["title"]
+    cForeCastEntry["icon"] = cData["forecast"]["txt_forecast"]["forecastday"][iCnt]["icon"]
+    cForeCastEntry["icon_url"] = IconFullName(cData["forecast"]["txt_forecast"]["forecastday"][iCnt]["icon"])
+
+    If Main.sTemperature = "°C" Then
+      cForeCastEntry["text"] = cData["forecast"]["txt_forecast"]["forecastday"][iCnt]["fcttext_metric"]
+    Else
+      cForeCastEntry["text"] = cData["forecast"]["txt_forecast"]["forecastday"][iCnt]["fcttext"]
+    Endif
+
+    cForeCast.Add(cForeCastEntry)
+  Next
+
+  cResult["forecast_detail"] = cForeCast
+
+  cForeCast = New Collection[]
+
+  ' X days simple forecast
+  For iCnt = 0 To (cData["forecast"]["simpleforecast"]["forecastday"].Count - 1)
+    cForeCastEntry = New Collection
+
+    cForeCastEntry["weekday"] = cData["forecast"]["simpleforecast"]["forecastday"][iCnt]["date"]["weekday"]
+    cForeCastEntry["condition"] = cData["forecast"]["simpleforecast"]["forecastday"][iCnt]["conditions"]
+    cForeCastEntry["icon"] = cData["forecast"]["simpleforecast"]["forecastday"][iCnt]["icon"]
+    cForeCastEntry["icon_url"] = IconFullName(cData["forecast"]["simpleforecast"]["forecastday"][iCnt]["icon"])
+
+    If Main.sTemperature = "°C" Then
+      cForeCastEntry["temperature_high"] = cData["forecast"]["simpleforecast"]["forecastday"][iCnt]["high"]["celsius"]
+      cForeCastEntry["temperature_low"] = cData["forecast"]["simpleforecast"]["forecastday"][iCnt]["low"]["celsius"]
+    Else
+      cForeCastEntry["temperature_high"] = cData["forecast"]["simpleforecast"]["forecastday"][iCnt]["high"]["fahrenheit"]
+      cForeCastEntry["temperature_low"] = cData["forecast"]["simpleforecast"]["forecastday"][iCnt]["low"]["fahrenheit"]
+    Endif
+
+    cForeCast.Add(cForeCastEntry)
+  Next
+
+  cResult["forecast_simple"] = cForeCast
+
+  If bStore Then
+    $cWeatherData = cResult
+
+    ' Update VirtualDevice
+    ' ...
+    ' ...
+    ' ...
+  Endif
+
+  Return cResult
+
+  'calculcat and concat all different units
+  'aWind = WindString(CFloat(cJSON["current_observation"]["wind_mph"]))
+  'aWindGust = WindString(CFloat(cJSON["current_observation"]["wind_gust_mph"]))
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.text & " at " & Error.where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return full pathname to the icon of WeatherUnderground
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub IconFullName(sIcon As String) As String
+
+  Return "http://icons.wxug.com/i/c/i/" & sIcon & ".gif"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a readable weather string
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function WeatherStrip(sWeatherString As String) As String
+
+  Dim aWeather As New String[]
+  Dim iCnt As Integer
+
+  sWeatherString = Replace(sWeatherString, "-", " ")
+  aWeather = Split(sWeatherString, " ")
+
+  If aWeather.Count > 1
+    sWeatherString = ""
+    For iCnt = 0 To aWeather.Count - 3
+      If iCnt > 0 Then
+        sWeatherString &= " " & aWeather[iCnt]
+      Else
+        sWeatherString = aWeather[iCnt]
+      Endif
+    Next
+  Endif
+  Return sWeatherString
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Converts MPH to metric seconds and beaufort
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function WindBeaufort(WindSpeed As Float) As String
+
+  Dim iBeaufort As Integer
+
+  If WindSpeed < 1 Then
+    iBeaufort = 0
+  Else If WindSpeed >= 1 And WindSpeed <= 3 Then
+    iBeaufort = 1
+  Else If WindSpeed > 3 And WindSpeed <= 7 Then
+    iBeaufort = 2
+  Else If WindSpeed > 7 And WindSpeed <= 12 Then
+    iBeaufort = 3
+  Else If WindSpeed > 12 And WindSpeed <= 17 Then
+    iBeaufort = 4
+  Else If WindSpeed > 17 And WindSpeed <= 24 Then
+    iBeaufort = 5
+  Else If WindSpeed > 24 And WindSpeed <= 30 Then
+    iBeaufort = 6
+  Else If WindSpeed > 30 And WindSpeed <= 38 Then
+    iBeaufort = 7
+  Else If WindSpeed > 38 And WindSpeed <= 46 Then
+    iBeaufort = 8
+  Else If WindSpeed > 46 And WindSpeed <= 54 Then
+    iBeaufort = 9
+  Else If WindSpeed > 54 And WindSpeed <= 63 Then
+    iBeaufort = 10
+  Else If WindSpeed > 63 And WindSpeed <= 72 Then
+    iBeaufort = 11
+  Else If WindSpeed > 72 Then
+    iBeaufort = 12
+  Endif
+
+  Return iBeaufort
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a readable winddirection string
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function WindDirString(sWinDir As String) As String
+
+  Dim iWinDirLen, IntI As Integer
+  Dim sChar, sDirection, TxtWindDir, sBackUpDirection, cSep As String
+
+  If sWinDir <> "North" And sWinDir <> "East" And sWinDir <> "South" And sWinDir <> "West" Then
+    iWinDirLen = Len(sWinDir)
+     For IntI = 1 To iWinDirLen
+      sChar = Mid(sWinDir, IntI, 1)
+        Select Case sChar
+          Case "N"
+            sDirection = ("North")
+          Case "E"
+            sDirection = ("East")
+          Case "S"
+           sDirection = ("South")
+          Case "W"
+            sDirection = ("West")
+        End Select
+        If iWinDirLen > 2 Then
+          If IntI = 1
+            TxtWindDir = sDirection
+          Else
+            If sDirection = sBackUpDirection Then
+              cSep = ","
+            Else
+              If IntI = 2
+                cSep = ","
+              Else
+                cSep = "/"
+              Endif
+            Endif
+            TxtWindDir = TxtWindDir & cSep & sDirection
+          Endif
+        Else
+          If IntI > 1
+          cSep = "/"
+          Endif
+          TxtWindDir = TxtWindDir & cSep & sDirection
+          Endif
+        sBackUpDirection = sDirection
+      Next
+    Else
+    TxtWindDir = WeatherStrip(sWinDir & "+weather+context")
+  Endif
+  Return TxtWindDir
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Fetches Wunderground forecast data and returns a JSON collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JSONWeatherForecast(Optional sCity As String) As Collection
+
+  Dim sURL, sBuf As String
+  Dim hJSONWeatherForecast As HttpClient
+
+  If sCity = "" Then sCity = $sCity
+
+  sURL = "http://api.wunderground.com/api/" & $sApiKey & "/astronomy/conditions/forecast/q/" & Replace(Replace(sCity, " ", "%20"), ".", "%2E") & ".json"
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching data for Country/City '" & sCity & "' with request '" & sURL & "'")
+
+  hJSONWeatherForecast = New HttpClient As "JSONWeatherForecast"
+  hJSONWeatherForecast.URL = sURL
+  hJSONWeatherForecast.Async = False
+  hJSONWeatherForecast.TimeOut = 3
+  hJSONWeatherForecast.Get
+
+  ' success - read the data
+  If Lof(hJSONWeatherForecast) Then Read #hJSONWeatherForecast, sBuf, Lof(hJSONWeatherForecast)
+
+  ' return the JSON collection
+  Return JSON.Decode(Replace(sBuf, "&deg;", "deg"))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return the WeatherUG data format
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JsonRpc_WeatherUG_Get(cData As Collection) As Collection
+
+  If cData Then
+  Else
+    ' If nothing supplied, just return the already stored data
+    Return $cWeatherData
+  Endif
+
+End
+

@@ -8,9 +8,18 @@ if [ -d DomotiGaServer3 ]; then
 else
   cd ../DomotiGaServer3/.src/
 fi
+#
 cp Main.module Main.module.back
+#
 rm *.class
 rm *.module
+rm */*.class
+rm */*.module
+mkdir -p JsonRpc
+mkdir -p SmtpClient
+mkdir -p Timers
+mkdir -p XmlRpc
+#
 cp Main.module.back Main.module
 cp ../../DomotiGa3/.src/Astro.module .
 cp ../../DomotiGa3/.src/AVControl.module .
@@ -22,6 +31,7 @@ cp ../../DomotiGa3/.src/CBwiredMap.class .
 cp ../../DomotiGa3/.src/CCTX35.class .
 cp ../../DomotiGa3/.src/CCurrentCost.class .
 cp ../../DomotiGa3/.src/CDenon.class .
+cp ../../DomotiGa3/.src/CDeviceDiscover.class .
 cp ../../DomotiGa3/.src/CDigitemp.class .
 cp ../../DomotiGa3/.src/CDMXPlayer.class .
 cp ../../DomotiGa3/.src/CDomotica.class .
@@ -55,12 +65,12 @@ cp ../../DomotiGa3/.src/CLIRC.class .
 cp ../../DomotiGa3/.src/CNMA.class .
 cp ../../DomotiGa3/.src/COpenTherm.class .
 cp ../../DomotiGa3/.src/COpenZWave.class .
-cp ../../DomotiGa3/.src/COpenZWaveEntry.class .
 cp ../../DomotiGa3/.src/COnkyo.class .
 cp ../../DomotiGa3/.src/COWFS.class .
 cp ../../DomotiGa3/.src/COWW.class .
 cp ../../DomotiGa3/.src/CP2000.class .
 cp ../../DomotiGa3/.src/CPachube.class .
+cp ../../DomotiGa3/.src/CPhilipsHue.class .
 cp ../../DomotiGa3/.src/CPLCBUS.class .
 cp ../../DomotiGa3/.src/CPluginEntry.class .
 cp ../../DomotiGa3/.src/CPlugwise.class .
@@ -89,6 +99,7 @@ cp ../../DomotiGa3/.src/CUPS.class .
 cp ../../DomotiGa3/.src/CVISCA.class .
 cp ../../DomotiGa3/.src/CWeeder.class .
 cp ../../DomotiGa3/.src/CWebSocket.class .
+cp ../../DomotiGa3/.src/CWirelesstags.class .
 cp ../../DomotiGa3/.src/CX10Cmd.class .
 cp ../../DomotiGa3/.src/CXMLRPC.class .
 cp ../../DomotiGa3/.src/CXBMCxPL.class .
@@ -114,12 +125,12 @@ cp ../../DomotiGa3/.src/ServerStats.module .
 cp ../../DomotiGa3/.src/Sounds.module .
 cp ../../DomotiGa3/.src/TVGuide.module .
 cp ../../DomotiGa3/.src/Thermostat.module .
+cp ../../DomotiGa3/.src/Util.module .
 cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
-cp ../../DomotiGa3/.src/WeatherUG.module .
-cp ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class ./JsonRpc/.
-cp ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class ./JsonRpc/.
-cp ../../DomotiGa3/.src/JsonRpc/JsonRpcClient.class ./JsonRpc/.
-cp ../../DomotiGa3/.src/Timers/CTimerDelay.class ./Timers/.
-cp ../../DomotiGa3/.src/Timers/CTimerOnOff.class ./Timers/.
+cp ../../DomotiGa3/.src/CWeatherUG.class .
+cp ../../DomotiGa3/.src/JsonRpc/* ./JsonRpc/
+cp ../../DomotiGa3/.src/SmtpClient/* ./SmtpClient/
+cp ../../DomotiGa3/.src/Timers/* ./Timers/
+cp ../../DomotiGa3/.src/XmlRpc/* ./XmlRpc/
 
