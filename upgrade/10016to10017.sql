@@ -36,7 +36,7 @@ CREATE TABLE `settings_devicediscover` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 LOCK TABLES `settings_devicediscover` WRITE;
 /*!40000 ALTER TABLE `settings_devicediscover` DISABLE KEYS */;
-INSERT INTO `settings_devicediscover` VALUES (0,0,'239.255.255.250',1900,0,60,0),(1,1,'239.255.255.250',1900,0,60,0);
+INSERT INTO `settings_devicediscover` VALUES (0,0,'239.255.255.250',1900,0,60,0),(1,0,'239.255.255.250',1900,0,60,0);
 /*!40000 ALTER TABLE `settings_devicediscover` ENABLE KEYS */;
 UNLOCK TABLES;
 
