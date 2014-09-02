@@ -67,6 +67,7 @@ ln -s ../../DomotiGa3/.src/CPlugwise.class
 ln -s ../../DomotiGa3/.src/CPing.class
 ln -s ../../DomotiGa3/.src/CPioneer.class
 ln -s ../../DomotiGa3/.src/CPushover.class
+ln -s ../../DomotiGa3/.src/CPushbullet.class
 ln -s ../../DomotiGa3/.src/CProwl.class
 ln -s ../../DomotiGa3/.src/CPVoutput.class
 ln -s ../../DomotiGa3/.src/CPwrCtrl.class

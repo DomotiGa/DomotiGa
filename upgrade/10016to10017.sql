@@ -8,7 +8,7 @@ CREATE TABLE settings_pushbullet (
   id int(11) NOT NULL,
   enabled tinyint(1) NOT NULL DEFAULT '0',
   token varchar(64) DEFAULT NULL,
-  device varchar(256) DEFAULT NULL,
+  device varchar(64) DEFAULT NULL,
   debug tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (id)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
