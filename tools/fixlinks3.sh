@@ -24,7 +24,6 @@ ln -s ../../DomotiGa3/.src/CCurrentCost.class
 ln -s ../../DomotiGa3/.src/CDenon.class
 ln -s ../../DomotiGa3/.src/CDeviceDiscover.class
 ln -s ../../DomotiGa3/.src/CDigitemp.class
-ln -s ../../DomotiGa3/.src/CDomotica.class
 ln -s ../../DomotiGa3/.src/CDSC.class
 ln -s ../../DomotiGa3/.src/CELVMAX.class
 ln -s ../../DomotiGa3/.src/CEIB.class
