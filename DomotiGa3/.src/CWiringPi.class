@@ -1,0 +1,312 @@
+' Gambas class file
+
+' Description:
+' WiringPi.module
+' Support for WiringPi devices.
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "WiringPi"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "WiringPi"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Evgeny Pinigin"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[WiringPi] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $iPollTime As Integer
+Private $bWiringPiDebug As Boolean
+
+Public tWiringPi As Timer
+Public hWiringPi As Process
+Private cOutput As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $iPollTime = cPl.Settings["polltime"]
+  $bWiringPiDebug = cPl.Settings["debug"]
+
+  ' Connect/Initialize connection
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tWiringPi.Stop
+  IsRunning = False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Run()
+
+  ' start poll timer for WiringPi
+  tWiringPi = New Timer As "tWiringPi"
+  tWiringPi.Delay = $iPollTime * 1000 ' multiply for seconds
+  tWiringPi.Start
+
+  IsRunning = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tWiringPi_Timer()
+
+  CheckWiringPi()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' split address for extender devices - MCP23017, MCP3428 etc.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub SplitAddress(ByRef sAddress As String, ByRef sxAddress As String)
+
+  Dim axAddress As Array ' extended address for i2c or SPI, eg. mcp23017:100:0x21|1
+
+  If InStr(sAddress, "|") > 0 Then 
+    axAddress = Split(sAddress, "|")
+    sAddress = axAddress[1]
+    sxAddress = axAddress[0]
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find all devices with type WiringPi and get their values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CheckWiringPi()
+
+  Dim rResult As Result
+  Dim sAddress As String
+
+  ' get all devices with this devicetype
+  rResult = Devices.FindDevicesForInterface(Devices.FindInterface("WiringPi Interface"))
+  If rResult Then
+    If rResult.Available Then
+      If rResult.Count >= 1 Then
+        For Each rResult
+          If $bWiringPiDebug Then Main.WriteDebugLog(LogLabel & "Checking device '" & rResult!name & "' with address '" & rResult!address & "'.")
+          sAddress = rResult!address
+          GetWiringPi(rResult!id, sAddress)
+        Next
+      Else
+        Main.WriteLog(LogLabel & "No devices of type 'WiringPi' found in device table!")
+      Endif
+    Endif
+  Else
+    Main.WriteLog(LogLabel & "No devices of type 'WiringPi' found in device table!")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' to switch unit with device control
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sValue As String)
+
+  ' for check active low/high
+  Dim sDeviceType As String = Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(Devices.Find(1, sAddress, Devices.FindInterface("WiringPi Interface"))))
+
+  Select Case sDeviceType
+    Case "RaspberryPi I/O", "WiringPi I/O"
+      Select Case UCase(sValue)
+        Case "ON"
+          SetWiringPi(sAddress, "1")
+        Case "OFF"
+          SetWiringPi(sAddress, "0")
+        Case Else
+          If $bWiringPiDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
+        End Select
+    Case "RaspberryPi I/O Inverted", "WiringPi I/O Inverted"
+      ' invert values
+      Select Case UCase(sValue)
+        Case "ON"
+          SetWiringPi(sAddress, "0")
+        Case "OFF"
+          SetWiringPi(sAddress, "1")
+        Case Else
+          If $bWiringPiDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
+        End Select
+    Case Else
+      If $bWiringPiDebug Then Main.WriteDebugLog(LogLabel & "Unknown devicetype '" & sDeviceType & "'!")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' try to set value of device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub SetWiringPi(sAddress As String, sValue As String)
+
+  Dim sDevice, sWriteMode, sxAddress As String
+
+  If Main.ProgramExist("gpio") Then ' workaround until exec error can be catched
+    SplitAddress(ByRef sAddress, ByRef sxAddress)
+    sDevice = IIf(sxAddress, sxAddress & " pin " & sAddress, "GPIO pin " & sAddress)
+    If $bWiringPiDebug Then Main.WriteDebugLog(LogLabel & "Settings contents of '" & sDevice & "' to '" & sValue & "'")
+
+    If sxAddress = "" Then
+      Exec ["gpio", "write", sAddress, sValue] Wait
+      Exec ["gpio", "mode", sAddress, "out"] Wait  ' write works only in out mode. Starting write before mode prevents on/off bounce
+    Else
+      ' TODO - add other DAC chips
+      sWriteMode = IIf(InStr(sxAddress, "mcp4802") > 0, "awrite", "write")  ' DAC device - analog write
+
+      ' TODO - check sxAddress
+      Exec ["gpio", "-x", sxAddress, sWriteMode, sAddress, sValue] Wait
+      Exec ["gpio", "-x", sxAddress, "mode", sAddress, "out"] Wait ' write works only in out mode. Starting write before mode prevents on/off bounce
+    Endif
+  Else
+    Main.WriteDebugLog(LogLabel & "Failed get command for device, the gpio binary is not installed/found.")
+  Endif
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: Parsing Result: " & Error.Text & " at " & Error.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' try to get value of device(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub GetWiringPi(iId As Integer, sAddress As String)
+
+  Dim sDeviceType, sReadMode, sxAddress As String
+
+  If Main.ProgramExist("gpio") Then ' workaround until exec error can be catched
+    If $bWiringPiDebug Then Main.WriteDebugLog(LogLabel & "Checking contents of device with address '" & sAddress & "'")
+    SplitAddress(ByRef sAddress, ByRef sxAddress)
+    If sxAddress = "" Then
+      hWiringPi = Exec ["gpio", "read", sAddress] For Read As "WiringPiGet"
+    Else
+      sDeviceType = Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(iId))
+      sReadMode = IIf(InStr(sDeviceType, "ADC") > 0, "aread", "read")  ' ADC device - analog read
+      ' TODO  - check sxAddress
+      hWiringPi = Exec ["gpio", "-x", sxAddress, sReadMode, sAddress] For Read As "WiringPiGet"
+    Endif
+    hWiringPi.Tag = iId
+    cOutput.Add("", iId)
+  Else
+    Main.WriteDebugLog(LogLabel & "Failed get command for device, the gpio binary is not installed/found.")
+  Endif
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: Parsing Result: " & Error.Text & " at " & Error.Where)
+
+End
+
+Public Sub hWiringPiGet_Error(sError As String)
+
+  Main.WriteDebugLog(LogLabel & sError)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read WiringPi output and store it in collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WiringPiGet_Read()
+
+  Dim sBuffer As String
+  Dim iId As Integer
+
+  sBuffer = Read #Last, -256
+  iId = Last.Tag
+
+  If cOutput.Exist(iId) Then cOutput[iId] &= sBuffer
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get id and return value, 0 means ok, anything else is not found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WiringPiGet_Kill()
+
+  Dim iDeviceId, iRc As Integer
+  Dim sOutput, sType, sDeviceType As String
+
+  iDeviceId = Last.Tag
+  iRc = Last.Value
+
+  If iDeviceId Then
+    ' save output
+    sOutput = Replace(cOutput[iDeviceId], "\n", "")  ' gpio outs with \n
+    cOutput.Remove(iDeviceId)
+
+    Select Case iRc
+      Case 0
+        ' for check active low/high
+        sDeviceType = Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(iDeviceId))
+
+        sType = Devices.CheckControlDevice(Devices.FindModuleForDevice(iDeviceId), Devices.FindInterfaceForDevice(iDeviceID))
+        Select sType
+          Case "Switch"
+            Select sDeviceType ' a switch device, convert values
+              Case "RaspberryPi I/O", "WiringPi I/O"
+                If sOutput = "1" Then sOutput = "On"
+                If sOutput = "0" Then sOutput = "Off"
+              Case "RaspberryPi I/O Inverted", "WiringPi I/O Inverted"
+                ' invert values
+                If sOutput = "1" Then sOutput = "Off"
+                If sOutput = "0" Then sOutput = "On"
+              Case Else
+                If $bWiringPiDebug Then Main.WriteDebugLog(LogLabel & "Unknown devicetype '" & sDeviceType & "'!")
+            End Select
+        End Select
+
+        ' debug output
+        If $bWiringPiDebug Then Main.WriteDebugLog(LogLabel & "Device with id '" & iDeviceId & "' and devicetype '" & sDeviceType & "' has value '" & sOutput & "'.")
+        ' find and update device
+        Devices.CheckFirstSeen(iDeviceId)
+        Devices.ValueUpdate(iDeviceId, 1, sOutput)
+      Case 255
+        If $bWiringPiDebug Then Main.WriteDebugLog(LogLabel & "Failed command for device with id '" & iDeviceId & "', probably the 'gpio' command is not installed.")
+      Case Else
+        If $bWiringPiDebug Then Main.WriteDebugLog(LogLabel & "Failed command for device with id '" & iDeviceId & "'.")
+    End Select
+  Else
+    Main.WriteDebugLog(LogLabel & "Returned invalid device id!")
+  Endif
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: Parsing Result: " & Error.Text & " at " & Error.Where)
+
+End
