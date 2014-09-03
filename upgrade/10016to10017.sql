@@ -229,13 +229,15 @@ INSERT INTO `settings_philipshue` VALUES (0,0,null,10,0),(1,0,null,10,0);
 /*!40000 ALTER TABLE `settings_philipshue` ENABLE KEYS */;
 UNLOCK TABLES;
 
-
+--
+-- Insert new devicetypes
+--
 INSERT INTO `devicetypes` VALUES (373,'Philips Hue Light Bulb','Light','PhilipsHue','1','','','',-1,-1,0,0,0,0,0);
-
 INSERT INTO `devicetypes` VALUES (374,'RaspberryPi I/O','RaspberryPi I/O','WiringPi','<pin>','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (375,'WiringPi I/O','WiringPi I/O','WiringPi','<wiringpi>:<baseaddr>:<i2caddr>|<pin>','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (376,'WiringPi I/O Inverted','WiringPi I/O Inverted','WiringPi','<wiringpi>:<baseaddr>:<i2caddr>|<pin>','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (377,'RaspberryPi I/O Inverted','RaspberryPi I/O Inverted','WiringPi','<pin>','','','',-1,-1,0,0,0,0,0);
+
 --
 -- Finally update to 1.0.017
 --

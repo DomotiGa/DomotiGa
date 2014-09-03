@@ -1768,32 +1768,6 @@ INSERT INTO `settings_dmxplayer` VALUES (0,0,'/dev/ttyS1','38400',0),(1,0,'/dev/
 UNLOCK TABLES;
 
 --
--- Table structure for table `settings_domotica`
---
-
-DROP TABLE IF EXISTS `settings_domotica`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `settings_domotica` (
-  `id` int(11) NOT NULL,
-  `enabled` tinyint(1) NOT NULL DEFAULT '0',
-  `serialport` varchar(128) DEFAULT NULL,
-  `debug` tinyint(1) NOT NULL DEFAULT '0',
-  PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `settings_domotica`
---
-
-LOCK TABLES `settings_domotica` WRITE;
-/*!40000 ALTER TABLE `settings_domotica` DISABLE KEYS */;
-INSERT INTO `settings_domotica` VALUES (0,0,'/dev/ttyUSB4',0),(1,0,'/dev/ttyUSB4',0);
-/*!40000 ALTER TABLE `settings_domotica` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
 -- Table structure for table `settings_dsc`
 --
 
