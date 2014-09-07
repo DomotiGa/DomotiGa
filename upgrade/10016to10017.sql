@@ -121,6 +121,7 @@ INSERT INTO plugins VALUES (82,'VISCA','','VISCA','class');
 INSERT INTO plugins VALUES (83,'WeatherUnderground','','WeatherUnderground','class');
 INSERT INTO plugins VALUES (84,'OpenWeatherMap','','OpenWeatherMap','class');
 INSERT INTO plugins VALUES (85,'ForecastIo','','ForecastIo','class');
+INSERT INTO plugins VALUES (86,'TVGuide','','TVGuide','class');
 
 UPDATE plugins SET type = 'virtual' WHERE id=17;
 UPDATE plugins SET type = 'module' WHERE id=40;
