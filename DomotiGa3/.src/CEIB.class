@@ -2,7 +2,7 @@
 
 ' Description:
 ' EIB.class
-' Provide support for KNX / EIB using eibd.
+' Provide support for KNX/EIB using eibd.
 
 ' Development Status:
 ' Just started developing this one.
@@ -14,7 +14,8 @@
 ' Copyright (C) Ron Klinkien, The Netherlands.
 
 ' This module is written by Timo Sariwating in 2009.
-
+' Updated by Ron Klinkien in 2014.
+' 
 ' Read file called COPYING for license details.
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -29,7 +30,7 @@ Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
-Public LogLabel As String = "[EIB] "
+Public LogLabel As String = "[KNX/EIB] "
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -127,10 +128,20 @@ Public Sub EIB_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
+  If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Sending command to open a group socket.")
   TX(bCommand)
 
-  ' request status of all devices
-  EIB_GroupRead()
+End
+
+Public Sub EIB_Error()
+
+  Dim sMsg As String
+
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
 
 End
 
@@ -144,16 +155,20 @@ Public Sub EIB_Closed()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Initialize KNX/EIB devicelist
+' get KNX/EIB devicelist and query their status
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub EIB_GroupRead()
+Public Sub GroupRead()
 
-  Dim rEIBDevices As Result
+  Dim rDevices As Result
 
   ' get a list of KNX devices
-  rEIBDevices = Devices.FindDevicesForInterface(Devices.FindInterface("KNX/EIB Interface"))
-  For Each rEIBDevices
-    SendGroup(rEIBDevices!address)
+  rDevices = Devices.FindDevicesForInterface(Devices.FindInterface("KNX/EIB Interface"))
+  If rDevices.Count = 0 Then 
+    If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "No devices found to send group read for.")
+  Endif
+  For Each rDevices
+    If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Sending group read request for device '" & rDevices!name & "' with address '" & rDevices!address & "'.")
+    SendGroup(rDevices!address)
   Next
 
 End
@@ -176,21 +191,24 @@ Private Sub TX(bCommand As Byte[])
   Dim bData As Byte
   Dim iLen As Integer = bCommand.Count
 
-  If hEIB.Status = Net.Connected Then
-    bCommand.Add(&H00, 0)
-    bCommand.Add(Hex(iLen), 1)
-    bCommand.Write(hEIB, 0, bCommand.Length)
-
-    If Not $bEIBDebug Then Return
-    Main.WriteDebugLog(LogLabel & ">", True)
-    For Each bData In bCommand
-      Main.WriteRFXDebugLog(" " & Hex(bData, 2), True)
-    Next
-    Main.WriteRFXDebugLog("\n", True)
+  If hEIB.Status <> Net.Connected Then
+    Main.WriteDebugLog(LogLabel & "Not connected to " & PluginFriendlyName & " gateway: " & ERROR.Text & " at " & ERROR.Where)
+    Return
   Endif
 
+  bCommand.Add(&H00, 0)
+  bCommand.Add(Hex(iLen), 1)
+  bCommand.Write(hEIB, 0, bCommand.Length)
+
+  If Not $bEIBDebug Then Return
+  Main.WriteDebugLog(LogLabel & ">", True)
+  For Each bData In bCommand
+    Main.WriteRFXDebugLog(" " & Hex(bData, 2), True)
+  Next
+  Main.WriteRFXDebugLog("\n", True)
+
 Catch
-  Main.WriteDebugLog(LogLabel & " Error while trying to send: " & ERROR.Text & " at " & ERROR.Where)
+  Main.WriteDebugLog(LogLabel & "Error while trying to send: " & ERROR.Text & " at " & ERROR.Where)
 
 End
 
@@ -218,20 +236,8 @@ Catch
 
 End
 
-Public Sub EIB_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-
-End
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Read EIB/KNX socket
+' Read EIB/KNX socket data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub EIB_Read()
 
@@ -240,7 +246,11 @@ Public Sub EIB_Read()
   Dim sDevice, sAddress As String
   Dim sReceived As New String[0]
 
-  If hEIB.Status <> Net.Connected Then Return
+  If hEIB.Status <> Net.Connected Then
+    Main.WriteDebugLog(LogLabel & "Not connected to " & PluginFriendlyName & " gateway: " & ERROR.Text & " at " & ERROR.Where)
+    Return
+  Endif
+
   bMyBuf[0] = Read #hEIB As Byte ' read the first byte
   Main.ControlLed("EIB", "On")
   If Main.bServer Then tEIB.Start
@@ -253,29 +263,39 @@ Public Sub EIB_Read()
       Next
   End Select
 
+  ' display raw data first
+  If $bEIBDebug Then
+    Main.WriteDebugLog(LogLabel & "<", True)
+    For iCnt = 0 To bMyBuf[1] + 2
+      Main.WriteRFXDebugLog(" " & Hex(bMyBuf[iCnt], 2), True)
+    Next
+    Main.WriteRFXDebugLog("\n", True)
+  Endif
+
   Select Hex$(bMyBuf[3])
     Case 26 ' open group socket reply
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Got a group socket reply.")
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Received a group socket reply packet.")
+
+      ' request status of all known devices
+      GroupRead()
+
     Case 27 ' group packet
       sDevice = Addr2Str((Hex$(bMyBuf[4], 2)) & (Hex(bMyBuf[5], 2)), False)
       sAddress = Addr2Str((Hex$(bMyBuf[6], 2)) & (Hex$(bMyBuf[7], 2)), True)
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Received packet data from '" & sDevice & "' to '" & sAddress & "'")
-      For iCnt = 9 To bMyBuf.Length - 1 ' bMyBuf[1]
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Received packet from physical device address '" & sDevice & "' to '" & sAddress & "'")
+      For iCnt = 9 To bMyBuf.Length - 1
         sReceived.Add(Hex(bMyBuf[iCnt], 2))
       Next
       LookupEIS(sAddress, sReceived)
+      
+      ' TODO: check need for this
       ' also update switch which sends status change
-      If sDevice <> "0.0.0" Then
-        LookupEIS(sDevice, sReceived)
-      Endif
+      ' If InStr(sDevice <> "0.0.0" Then
+      '   LookupEIS(sDevice, sReceived)
+      ' Endif
+      Case Else
+        If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Received unknown packet type '" & Hex$(bMyBuf[3]) & "'")
   End Select
-
-  If Not $bEIBDebug Then Return
-  Main.WriteDebugLog(LogLabel & "<", True)
-  For iCnt = 0 To bMyBuf[1] + 2
-    Main.WriteRFXDebugLog(" " & Hex(bMyBuf[iCnt], 2), True)
-  Next
-  Main.WriteRFXDebugLog("\n", True)
 
 Catch
   Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
@@ -289,94 +309,124 @@ Private Sub LookupEIS(sAddress As String, sReceived As String[])
 
   Dim iDeviceId As Integer = Devices.FindRegExp(sAddress, Devices.FindInterface("KNX/EIB Interface"))
 
+  ' EIB1: DPT 1.001, EIS 1, Switches
+  ' EIB2: NA, EIS 2, Dimmers
+  ' EIB3: DPT 10.000, EIS 3, Time
+  ' EIB4: DPT 11.000, EIS 4, Date
+  ' EIB5: DPT 9.000, EIS 5, Values(weather stations etc)
+  ' EIB6: DPT 5.001, EIS 6, Scaling(0 - 100%)
+  ' EIB7: NA, EIS 7, Motor drives
+  ' EIB8: DPT 2.001, EIS 8, forced control 2 bit
+  ' EIB9: DPT 14.00 x, EIS 9, 32 - bit float
+  ' EIB10: DPT 7.001, EIS 10, 16 - bit unsigned integer
+  ' EIB10_1: DPT 8.001, EIS 10.001, 16 - bit signed integer
+  ' EIB11: DPT 12.001, EIS 11, 32 - bit unsigned integer
+  ' EIB11_1: DPT 13.001, EIS 11.001, 32 - bit signed integer
+  ' EIB14: DPT 6.001, EIS 14, 8 - bit signed integer
+  ' EIB14_1: DPT 5.010, EIS 14.1; 8 - bit unsigned integer
+  ' EIB15: DPT 16.000, EIS 15, 14 byte text messages      
+
   If iDeviceId Then
     Select Case Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(iDeviceId))
-      Case "EIS 1" ' On/Off
-        EIS1(iDeviceId, sReceived)
+      ' TESTED
+      Case "EIS 1" ' 1Bit value (for example on/off)
+        ProcessEIS1(iDeviceId, sReceived)
+
+      ' NOT TESTED
       Case "EIS 2" ' Dim
-        EIS2(iDeviceId, sReceived)
-      Case "EIS 3" ' Time
-        EIS3(iDeviceId, sReceived)
-      Case "EIS 4" ' Date
-        EIS4(iDeviceId, sReceived)
-      Case "EIS 5" ' Values
-        EIS5(iDeviceId, sReceived)
+        ProcessEIS2(iDeviceId, sReceived)
+      Case "EIS 3" ' 3Byte time value
+        ProcessEIS3(iDeviceId, sReceived)
+      Case "EIS 4" ' 3Byte date value
+        ProcessEIS4(iDeviceId, sReceived)
+
+      ' TESTED
+      Case "EIS 5" ' 2Byte float value (for example 8.89V)
+        ProcessEIS5(iDeviceId, sReceived)
+      Case "EIS 6" ' 1Byte relative value (for example 21%)
+        ProcessEIS6(iDeviceId, sReceived)
+      Case "EIS 11" ' 32bit counter value (4Byte) (for example serial no 31442211)
+        ProcessEIS11(iDeviceId, sReceived)
       Case Else
-        Main.WriteDebugLog(LogLabel & "EIS Unknown for address '" & sAddress & "' and data '" & sReceived & "'")
+        Main.WriteDebugLog(LogLabel & "The KNX/EIB devicetype used for device with address '" & sAddress & "' and data '" & sReceived & "' is not yet supported, please report.")
     End Select
   Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' handle received commands for EIB1 devices (switch on/off)
-' tested ok, address format is 0/1/2
+' handle received commands for EIS1 devices (switch on/off)
+' address format is 0/1/2
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub EIS1(iDeviceId As Integer, sReceived As String[])
+Private Sub ProcessEIS1(iDeviceId As Integer, sReceived As String[])
+
+  Dim sCmd As String
 
   Select Case sReceived[0]
-    Case 40, 80
-      Devices.ValueUpdate(iDeviceId, 1, "Off")
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS1: " & Devices.FindNameForDevice(iDeviceId) & " Off")
-    Case 41, 81
-      Devices.ValueUpdate(iDeviceId, 1, "On")
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS1: " & Devices.FindNameForDevice(iDeviceId) & " On")
+    Case "40", "80"
+      sCmd = "Off"
+    Case "41", "81"
+      sCmd = "On"
+    Case Else
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Unknown value '" & sReceived[0] & "' received for EIS1 type data packet!")
+      Return
   End Select
+  Devices.ValueUpdateExt(iDeviceId, 1, sCmd)
+  If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS1 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = '" & sCmd & "'")
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' handle received commands for EIB2 devices (dim)
-' tested ok, address format is 0/1/2|0/1/3|0/1/4
-' first address is used for on/off, second dim, third brighten
+' address format is 0/1/2|0/1/3|0/1/4
+' first address is used for on/off, second start/stop, third dim value
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub EIS2(iDeviceId As Integer, sReceived As String[])
+Private Sub ProcessEIS2(iDeviceId As Integer, sReceived As String[])
 
-  Dim sAddress, sDeviceName As String
   Dim iPercentage As Integer
 
-  sDeviceName = Devices.FindNameForDevice(iDeviceId)
-  sAddress = Devices.FindAddressForDevice(iDeviceId)
-
   Select Case sReceived[0]
-    Case 40
-      Devices.ValueUpdate(iDeviceId, 1, "Off")
+    Case "40"
+      Devices.ValueUpdateExt(iDeviceId, 1, "Off")
       iPercentage = Val("&H" & sReceived[1]) / 255 * 100
       If iPercentage = 0 Then
-        Devices.ValueUpdate(iDeviceId, 1, "Off")
+        Devices.ValueUpdateExt(iDeviceId, 1, "Off")
       Else If iPercentage = 100 Then
-        Devices.ValueUpdate(iDeviceId, 1, "On")
+        Devices.ValueUpdateExt(iDeviceId, 1, "On")
       Else
-        Devices.ValueUpdate(iDeviceId, 1, "Dim " & CStr(iPercentage))
+        Devices.ValueUpdateExt(iDeviceId, 1, "Dim " & CStr(iPercentage))
       Endif
-    Case 41
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " On")
-        Devices.ValueUpdate(iDeviceId, 1, "On")
+    Case "41"
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'On'")
+        Devices.ValueUpdateExt(iDeviceId, 1, "On")
         iPercentage = Val("&H" & sReceived[1]) / 255 * 100
         If iPercentage <> "0" And iPercentage <> "100" Then
-          If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " Dim")
-          Devices.ValueUpdate(iDeviceId, 1, "Dim " & CStr(iPercentage))
+          If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim " & CStr(iPercentage) & "%'")
+          Devices.ValueUpdateExt(iDeviceId, 1, "Dim " & CStr(iPercentage))
       Endif
-    Case 80
+    Case "80"
       If sReceived[1] <> "00" Then
         iPercentage = Val("&H" & sReceived[1]) / 255 * 100
         If iPercentage = 0 Then
-          Devices.ValueUpdate(iDeviceId, 1, "Off")
+          Devices.ValueUpdateExt(iDeviceId, 1, "Off")
         Else If iPercentage = 100 Then
-          Devices.ValueUpdate(iDeviceId, 1, "On")
+          Devices.ValueUpdateExt(iDeviceId, 1, "On")
         Else
-          Devices.ValueUpdate(iDeviceId, 1, "Dim " & CStr(iPercentage))
+          Devices.ValueUpdateExt(iDeviceId, 1, "Dim " & CStr(iPercentage))
         Endif
-        If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " Dim " & iPercentage & "%")
+        If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim " & CStr(iPercentage) & "%'")
       Else
-        If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " Off")
-        Devices.ValueUpdate(iDeviceId, 1, "Off")
+        If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Off'")
+        Devices.ValueUpdateExt(iDeviceId, 1, "Off")
       Endif
-    Case 81
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " On")
-      Devices.ValueUpdate(iDeviceId, 1, "On")
-    Case 89
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2: " & sDeviceName & " Dim")
+    Case "81"
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'On'")
+      Devices.ValueUpdateExt(iDeviceId, 1, "On")
+    Case "89"
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim'")
+    Case Else
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Unknown value '" & sReceived[0] & "' received for EIS2 type data packet!")
+      Return
   End Select
 
 End
@@ -384,18 +434,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' handle received commands for EIB3 devices (time)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub EIS3(iDeviceId As Integer, sReceived As String[])
+Private Sub ProcessEIS3(iDeviceId As Integer, sReceived As String[])
 
   Dim sAddressSplit As String[]
   Dim bCommand As New Byte[9]
   Dim sTime As String
 
   Select Case sReceived[0]
-    Case 80
+    Case "80"
       sTime = DecodeEIS3(sReceived)
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS3: " & Devices.FindNameForDevice(iDeviceId) & " " & sTime)
-      Devices.ValueUpdate(iDeviceId, 1, sTime)
-    Case 00
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS3 decoded for device '" & Devices.FindNameForDevice(iDeviceId) & " Value = '" & sTime & "'")
+      Devices.ValueUpdateExt(iDeviceId, 1, sTime)
+    Case "00"
       sAddressSplit = Split(Devices.FindAddressForDevice(iDeviceId), "/")
       bCommand[0] = &H00
       bCommand[1] = &H27
@@ -407,7 +457,7 @@ Private Sub EIS3(iDeviceId As Integer, sReceived As String[])
       bCommand[7] = Hex$(Minute(Now))
       bCommand[8] = Hex$(Second(Now))
       TX(bCommand)
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS3: Time " & Time(Now) & " send to bus.")
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS3: Time '" & Time(Now) & "' send to the bus.")
   End Select
 
 End
@@ -439,18 +489,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' handle received commands for EIB4 devices (date)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub EIS4(iDeviceId As Integer, sReceived As String[])
+Private Sub ProcessEIS4(iDeviceId As Integer, sReceived As String[])
 
   Dim sAddressSplit As String[]
   Dim bCommand As New Byte[9]
   Dim sDate As String
 
   Select Case sReceived[0]
-    Case 80
+    Case "80"
       sDate = DecodeEIS4(sReceived)
       If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS4: " & Devices.FindNameForDevice(iDeviceId) & " " & sDate)
-      Devices.ValueUpdate(iDeviceId, 1, sDate)
-    Case 00
+      Devices.ValueUpdateExt(iDeviceId, 1, sDate)
+    Case "00"
       sAddressSplit = Split(Devices.FindAddressForDevice(iDeviceId), "/")
       bCommand[0] = &H00
       bCommand[1] = &H27
@@ -462,7 +512,7 @@ Private Sub EIS4(iDeviceId As Integer, sReceived As String[])
       bCommand[7] = Hex$(Month(Now))
       bCommand[8] = Hex$(Right$(CStr(Year(Now)), 2))
       TX(bCommand)
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS4: Date " & Day(Now) & "/" & Month(Now) & "/" & Year(Now) & " send to bus.")
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS4: Date '" & Day(Now) & "/" & Month(Now) & "/" & Year(Now) & "' send to the bus.")
   End Select
 
 End
@@ -491,15 +541,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' handle received for EIB5 devices (values)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub EIS5(iDeviceId As Integer, sReceived As String[])
+Private Sub ProcessEIS5(iDeviceId As Integer, sReceived As String[])
 
   Dim fValue As Float
 
   Select Case sReceived[0] ' receive
-    Case 80, 40
+    Case "80", "40"
       fValue = DecodeEIS5(sReceived[1] & sReceived[2])
-      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS5: " & Devices.FindNameForDevice(iDeviceId) & " " & fValue)
-      Devices.ValueUpdate(iDeviceId, 1, fValue)
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS5 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = '" & fValue & "'")
+      Devices.ValueUpdateExt(iDeviceId, 1, fValue)
+    Case Else
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Unknown value '" & sReceived[0] & "' received for EIS5 type data packet!")
+      Return
   End Select
 
 End
@@ -529,32 +582,85 @@ Public Sub DecodeEIS5(sValue As String) As Float
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' decode and update EIS6 values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessEIS6(iDeviceId As Integer, sReceived As String[])
+
+  Dim iValue As Float
+
+  Select Case sReceived[0] ' receive
+    Case "80", "40"
+      iValue = DecodeEIS6(sReceived[1])
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS6 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = '" & iValue & "'")
+      Devices.ValueUpdateExt(iDeviceId, 1, iValue)
+    Case Else
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Unknown value '" & sReceived[0] & "' received for EIS6 type data packet!")
+      Return
+  End Select
+
+End
+
+Public Sub DecodeEIS6(sValue As String) As Integer
+
+  Return Val("&H" & sValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' decode and update EIS11 values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessEIS11(iDeviceId As Integer, sReceived As String[])
+
+  Dim sValue As String
+
+  Select Case sReceived[0] ' receive
+    Case "80", "40"
+      sValue = DecodeEIS11(sReceived)
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "EIS11 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = '" & sValue & "'")
+      Devices.ValueUpdateExt(iDeviceId, 1, sValue)
+    Case Else
+      If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Unknown value '" & sReceived[0] & "' received for EIS11 type data packet!")
+      Return
+  End Select
+
+End
+
+Public Sub DecodeEIS11(sBuffer As String[]) As Integer
+
+  'Return Val("&H" & sBuffer[1]) & Val("&H" & sBuffer[2]) & Val("&H" & sBuffer[3]) & Val("&H" & sBuffer[4])
+  Return Val(sBuffer[1]) & Val(sBuffer[2]) & Val(sBuffer[3]) & Val(sBuffer[4])
+  'Return sBuffer[1] & sBuffer[2] & sBuffer[3] & sBuffer[4]
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' prepare a command for sending status request to KNX/EIB interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub SendGroup(sAddress As String)
 
   Dim sAddressSplit As String[]
+  Dim sAddr As String
   Dim bCommand As New Byte[5]
 
   If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Requesting status packet for device with address '" & sAddress & "'")
   sAddressSplit = Split(sAddress, "/")
   If sAddressSplit.Count = 3 Then
-    sAddress = Str2Addr(sAddressSplit[0], sAddressSplit[1], sAddressSplit[2])
+    sAddr = Str2Addr(sAddressSplit[0], sAddressSplit[1], sAddressSplit[2])
     bCommand[0] = &H00
     bCommand[1] = &H27
-    bCommand[2] = Val("&H" & Left(sAddress, 2))
-    bCommand[3] = Val("&H" & Right(sAddress, 2))
+    bCommand[2] = Val("&H" & Left(sAddr, 2))
+    bCommand[3] = Val("&H" & Right(sAddr, 2))
     bCommand[4] = &H00
     bCommand.Add(&H00)
     TX(bCommand)
   Else
     sAddressSplit = Split(sAddress, "|" "/")
     If sAddressSplit.Count = 9 Then
-      sAddress = Str2Addr(sAddressSplit[3], sAddressSplit[4], sAddressSplit[5])
+      sAddr = Str2Addr(sAddressSplit[3], sAddressSplit[4], sAddressSplit[5])
       bCommand[0] = &H00
       bCommand[1] = &H27
-      bCommand[2] = Val("&H" & Left(sAddress, 2))
-      bCommand[3] = Val("&H" & Right(sAddress, 2))
+      bCommand[2] = Val("&H" & Left(sAddr, 2))
+      bCommand[3] = Val("&H" & Right(sAddr, 2))
       bCommand[4] = &H00
       bCommand.Add(&H00)
       TX(bCommand)
@@ -563,91 +669,138 @@ Private Sub SendGroup(sAddress As String)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' extract correct address from given string and prepare for sending the KNX/EIB interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CreateAddr(sAddress As String, iMin As Integer, Optional iPos As Integer = 1) As String
+  
+  Dim aAddresses, aAddress As String[]
+  
+  ' did we got the minimum no. of group addresses?
+  aAddresses = Split(sAddress, "|")
+  If aAddresses.Count < (iMin - 1) Then
+    Select Case iMin
+      Case 1
+        Main.WriteDebugLog(LogLabel & "Invalid address format used '" & sAddress & "', should be in format '0/1/2'")
+      Case 2
+        Main.WriteDebugLog(LogLabel & "Invalid address format used '" & sAddress & "', should be in format '0/1/2|0/1/3'")
+      Case 3
+        Main.WriteDebugLog(LogLabel & "Invalid address format used '" & sAddress & "', should be in format '0/1/2|0/1/3|0/1/4'")
+    End Select
+  Else
+    ' extract and convert the one we need
+    aAddress = Split(sAddress, "|" "/")
+    If aAddress.Count >= 3 * iPos Then
+      Select Case iPos
+        Case 1
+          Return Str2Addr(aAddress[0], aAddress[1], aAddress[2])
+        Case 2
+          Return Str2Addr(aAddress[3], aAddress[4], aAddress[5])
+        Case 3
+          Return Str2Addr(aAddress[6], aAddress[7], aAddress[8])
+        Case Else
+          Main.WriteDebugLog(LogLabel & "Invalid address format used '" & sAddress & "', should be in format '0/1/2' or '0/1/2|0/1/3' or '0/1/2|0/1/3|0/1/4'")
+      End Select
+    Else
+      Main.WriteDebugLog(LogLabel & "Invalid address format used '" & sAddress & "', should be in format '0/1/2' or '0/1/2|0/1/3' or '0/1/2|0/1/3|0/1/4'")
+    Endif
+  Endif
+  
+End
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' prepare a command for sending to the KNX/EIB interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sValue As String)
 
-  Dim sModule As String
-  Dim sAddressSplit As String[]
+  Dim sAddr, sModule As String
   Dim iBrightness As Integer
   Dim bCommand As New Byte[5]
 
   sValue = UCase(sValue)
-
   sModule = Devices.FindDescrForDeviceType(Devices.FindModuleForDevice(Devices.Find(Instance, sAddress, Devices.FindInterface("KNX/EIB Interface"))))
+ 
   Select Case sModule
-    Case "EIS 1"
-      ' EIB type 1. On/off switch items.
-      ' One address.
-      sAddressSplit = Split(sAddress, "/")
-      If sAddressSplit.Count = 3 Then
-        sAddress = Str2Addr(sAddressSplit[0], sAddressSplit[1], sAddressSplit[2])
-        bCommand[0] = &H00
-        bCommand[1] = &H27
-        bCommand[2] = Val("&H" & Left(sAddress, 2))
-        bCommand[3] = Val("&H" & Right(sAddress, 2))
-        bCommand[4] = &H00
-        Select Case sValue
-          Case "ON"
-            bCommand.Add(CmdOn)
-            TX(bCommand)
-          Case "OFF"
-            bCommand.Add(CmdOff)
-            TX(bCommand)
-        End Select
-      Else
-        Main.WriteDebugLog(LogLabel & "Invalid address format for EIS1 device: '" & sAddress & "', should be '0/1/2'")
-      Endif
+    Case "EIS 1"  ' EIS1 on/off switch with one or two addresses (control or control|feedback)
+      sAddr = CreateAddr(sAddress, 1, 1)
+      If Len(sAddr) <> 4 Then Return
+      
+      bCommand[0] = &H00
+      bCommand[1] = &H27
+      bCommand[2] = Val("&H" & Left(sAddr, 2))
+      bCommand[3] = Val("&H" & Right(sAddr, 2))
+      bCommand[4] = &H00
+      Select Case sValue
+        Case "ON"
+          bCommand.Add(CmdOn)
+          TX(bCommand)
+        Case "OFF"
+          bCommand.Add(CmdOff)
+          TX(bCommand)
+      End Select 
+
     Case "EIS 2"
-      ' EIB type 2. Dimmer switch items.
-      ' An EIB dimmer consists of three different items, with different addresses: position, control, and value.
-      ' Position is for switching the light on/off (EIB1), control is for starting/stopping
-      ' dimming and brightening, and value for setting a specific brightness level (0-100).
-      ' The "address" is the combination of three addresses: "position"|"control"|"value".
-      sAddressSplit = Split(sAddress, "|" "/")
-      If sAddressSplit.Count = 9 Then
-        sAddress = Str2Addr(sAddressSplit[0], sAddressSplit[1], sAddressSplit[2])
-        bCommand[0] = &H00
-        bCommand[1] = &H27
-        bCommand[2] = Val("&H" & Left(sAddress, 2))
-        bCommand[3] = Val("&H" & Right(sAddress, 2))
-        bCommand[4] = &H00
-        Select Case sValue
-          Case "ON"
-            bCommand.Add(CmdOn)
-            TX(bCommand)
-          Case "OFF"
-            bCommand.Add(CmdOff)
-            TX(bCommand)
-          Case "STOP"
-            sAddress = Str2Addr(sAddressSplit[3], sAddressSplit[4], sAddressSplit[5])
-            bCommand[2] = Val("&H" & Left(sAddress, 2))
-            bCommand[3] = Val("&H" & Right(sAddress, 2))
+      ' EIB type 2. Dimmer switch item
+      ' An EIB dimmer consists of three different items, (command/control/value)
+      ' Command is for switching the light on/off (EIS1), control is for start/stop dimming and brightening
+      ' And value is for setting a specific brightness level(0 - 100)
+      ' If you have a dimmer which doesn't support start/stop specify -/-/- as middle address
+
+      bCommand[0] = &H00
+      bCommand[1] = &H27
+      bCommand[4] = &H00
+      
+      Select Case sValue
+        Case "ON"
+          sAddr = CreateAddr(sAddress, 1, 3)
+          If Len(sAddr) <> 4 Then Return
+
+          bCommand[2] = Val("&H" & Left(sAddr, 2))
+          bCommand[3] = Val("&H" & Right(sAddr, 2))
+          bCommand.Add(CmdOn)
+          TX(bCommand)
+        Case "OFF"
+          sAddr = CreateAddr(sAddress, 1, 3)
+          If Len(sAddr) <> 4 Then Return
+
+          bCommand[2] = Val("&H" & Left(sAddr, 2))
+          bCommand[3] = Val("&H" & Right(sAddr, 2))
+          bCommand.Add(CmdOff)
+          TX(bCommand)
+        Case "STOP"
+          If InStr(sAddress, "-/-/-") Then 
+            If $bEIBDebug Then Main.WriteDebugLog(LogLabel & "Dimmer 'startstop' address of '-/-/-' specified, skipping command.")  
+            Return
+          Endif
+          sAddr = CreateAddr(sAddress, 2, 3)
+          If Len(sAddr) <> 4 Then Return
+
+          bCommand[2] = Val("&H" & Left(sAddr, 2))
+          bCommand[3] = Val("&H" & Right(sAddr, 2))
+          bCommand.Add(&H80)
+          TX(bCommand)
+        Case Else
+          If InStr(sValue, "DIM ") Then ' DIM 0-100
+            iBrightness = Val(Replace(sValue, "DIM ", ""))
+            sAddr = CreateAddr(sAddress, 3, 3)
+            If Len(sAddr) <> 4 Then Return
+
+            bCommand[2] = Val("&H" & Left(sAddr, 2))
+            bCommand[3] = Val("&H" & Right(sAddr, 2))
             bCommand.Add(&H80)
+            bCommand.Add(CInt(iBrightness * 2.55))
             TX(bCommand)
-          Case Else
-            If InStr(sValue, "DIM ") Then ' DIM 0-100
-              iBrightness = Val(Replace(sValue, "DIM ", ""))
-              sAddress = Str2Addr(sAddressSplit[6], sAddressSplit[7], sAddressSplit[8])
-              bCommand[2] = Val("&H" & Left(sAddress, 2))
-              bCommand[3] = Val("&H" & Right(sAddress, 2))
-              bCommand.Add(&H80)
-              bCommand.Add(CInt(iBrightness * 2.55))
-              TX(bCommand)
-            Endif
-        End Select
-      Else
-        Main.WriteDebugLog(LogLabel & "Invalid address format for EIS2 device: '" & sAddress & "', should be '0/1/2|0/3/4|0/5/6'")
-      Endif
+          Endif
+      End Select
+
   End Select
 
 End
 
-Public Function Addr2Str(sAddress As String, bLogical As Boolean) As String
+Public Function Addr2Str(sAddress As String, bGroupAddress As Boolean) As String
 
-  If bLogical Then
-    ' convert to logical address
+  If bGroupAddress Then
+    ' convert to group address
     Return (Lsr((Val("&H" & sAddress)), 11) And &HF) & "/" & (Lsr((Val("&H" & sAddress)), 8) And &H7) & "/" & ((Val("&H" & sAddress)) And &HFF)
   Else
     ' convert to physical address

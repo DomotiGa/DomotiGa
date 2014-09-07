@@ -1,4 +1,12 @@
 --
+-- Missing devicetypes for KNX.EIB
+--
+INSERT INTO `devicetypes` VALUES (378,'KNX/EIB Access Control','EIS 12','KNX/EIB','0/1/2','','','',-1,-1,0,0,0,0,0);
+INSERT INTO `devicetypes` VALUES (379,'KNX/EIB ASCII Char','EIS 13','KNX/EIB','0/1/2','','','',-1,-1,0,0,0,0,0);
+UPDATE devicetypes SET addressformat = '0/1/2|1/2/3' WHERE id=52;
+UPDATE devicetypes SET addressformat = '0/1/2 or 0/1/2|1/2/3' WHERE id=46;
+
+--
 -- Renamed duplicate devicetype
 --
 UPDATE devicetypes SET name = 'Z-Wave Secure Pad' WHERE id=242;
