@@ -1,4 +1,16 @@
 --
+-- Renamed duplicate devicetype
+--
+UPDATE devicetypes SET name = 'Z-Wave Secure Pad' WHERE id=242;
+UPDATE devicetypes SET description = 'Secure Pad' WHERE id=242;
+
+--
+-- Alter field length for Xively channel
+--
+
+ALTER TABLE devices_pachube MODIFY datastreamid varchar(64);
+
+--
 -- Dumping data for table interfaces
 --
 LOCK TABLES interfaces WRITE;
