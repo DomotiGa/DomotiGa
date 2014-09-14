@@ -1,23 +1,10 @@
 --
--- Added temp10 and th12 sensor for RFXComTRX
---
-INSERT INTO `devicetypes` VALUES (380,'TFA Dostmann Temp Sensor','Temp Sensor','TFA','temp10 0x121','','','',-1,-1,0,0,0,0,0);
-INSERT INTO `devicetypes` VALUES (381,'Imagintronix Soil Sensor','Soil Sensor','Imagintrx','th12 0x1','','','',-1,-1,0,0,0,0,0);
-UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagin' WHERE id = 35;
-
---
 -- Missing devicetypes for KNX.EIB
 --
 INSERT INTO `devicetypes` VALUES (378,'KNX/EIB Access Control','EIS 12','KNX/EIB','0/1/2','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (379,'KNX/EIB ASCII Char','EIS 13','KNX/EIB','0/1/2','','','',-1,-1,0,0,0,0,0);
 UPDATE devicetypes SET addressformat = '0/1/2|1/2/3' WHERE id=52;
 UPDATE devicetypes SET addressformat = '0/1/2 or 0/1/2|1/2/3' WHERE id=46;
-
---
--- Renamed duplicate devicetype
---
-UPDATE devicetypes SET name = 'Z-Wave Secure Pad' WHERE id=242;
-UPDATE devicetypes SET description = 'Secure Pad' WHERE id=242;
 
 --
 -- Alter field length for Xively channel
@@ -41,6 +28,8 @@ UNLOCK TABLES;
 RENAME TABLE interfaces to plugins;
 ALTER TABLE plugins CHANGE COLUMN name interface varchar(32);
 ALTER TABLE plugins CHANGE COLUMN mode name varchar(32) NOT NULL;
+ALTER TABLE plugins CHANGE COLUMN type protocols varchar(512) NOT NULL;
+ALTER TABLE plugins ADD COLUMN type varchar(32) NOT NULL DEFAULT 'class' AFTER name;
 UPDATE plugins SET name = 'RFXComRX' WHERE id=1;
 UPDATE plugins SET name = 'CTX35' WHERE id=2;
 UPDATE plugins SET name = 'Temp08' WHERE id=3;
@@ -99,32 +88,30 @@ UPDATE plugins SET name = 'Jerome' WHERE id=56;
 UPDATE plugins SET name = 'Wirelesstags' WHERE id=57;
 UPDATE plugins SET name = 'PhilipsHue' WHERE id=58;
 UPDATE plugins SET name = 'WiringPi' WHERE id=59;
-ALTER TABLE plugins CHANGE COLUMN type protocols varchar(512) NOT NULL;
-ALTER TABLE plugins ADD COLUMN type varchar(32) NOT NULL DEFAULT 'class' AFTER name;
-INSERT INTO plugins VALUES  (60,'Asterisk','','Asterisk','class');
-INSERT INTO plugins VALUES  (61,'BwiredMap','','BwiredMap','class');
-INSERT INTO plugins VALUES  (62,'DeviceDiscover','','DeviceDiscover','class');
-INSERT INTO plugins VALUES  (63,'GMail','','GMail','class');
-INSERT INTO plugins VALUES  (64,'IRMan','','IRMan','class');
-INSERT INTO plugins VALUES  (65,'IRTrans','','IRTrans','class');
-INSERT INTO plugins VALUES  (66,'IViewer','','IViewer','class');
-INSERT INTO plugins VALUES  (67,'JSONRPC','','JSONRPC','class');
-INSERT INTO plugins VALUES  (68,'Ncid','','Ncid','class');
-INSERT INTO plugins VALUES  (69,'NMA','','NMA','class');
-INSERT INTO plugins VALUES  (70,'OWW','','OWW','class');
-INSERT INTO plugins VALUES  (71,'P2000','','P2000','class');
-INSERT INTO plugins VALUES  (72,'Pachube','','Pachube','class');
-INSERT INTO plugins VALUES  (73,'Prowl','','Prowl','class');
-INSERT INTO plugins VALUES  (74,'PVoutput','','PVoutput','class');
-INSERT INTO plugins VALUES  (75,'Pushover','','Pushover','class');
-INSERT INTO plugins VALUES  (76,'Pushbullet','','Pushbullet','class');
-INSERT INTO plugins VALUES  (77,'SmartVISUServer','','SmartVISUServer','class');
-INSERT INTO plugins VALUES  (78,'SMS','','SMS','class');
-INSERT INTO plugins VALUES  (79,'TelnetServer','','TelnetServer','class');
-INSERT INTO plugins VALUES  (80,'TemperaturNu','','TemperaturNu','class');
-INSERT INTO plugins VALUES  (81,'Twitter','','Twitter','class');
-INSERT INTO plugins VALUES  (82,'VISCA','','VISCA','class');
-INSERT INTO plugins VALUES  (83,'WeatherUG','','WeatherUG','class');
+INSERT INTO plugins VALUES (60,'Asterisk','','Asterisk','class');
+INSERT INTO plugins VALUES (61,'BwiredMap','','BwiredMap','class');
+INSERT INTO plugins VALUES (62,'DeviceDiscover','','DeviceDiscover','class');
+INSERT INTO plugins VALUES (63,'GMail','','GMail','class');
+INSERT INTO plugins VALUES (64,'IRMan','','IRMan','class');
+INSERT INTO plugins VALUES (65,'IRTrans','','IRTrans','class');
+INSERT INTO plugins VALUES (66,'IViewer','','IViewer','class');
+INSERT INTO plugins VALUES (67,'JSONRPC','','JSONRPC','class');
+INSERT INTO plugins VALUES (68,'Ncid','','Ncid','class');
+INSERT INTO plugins VALUES (69,'NMA','','NMA','class');
+INSERT INTO plugins VALUES (70,'OWW','','OWW','class');
+INSERT INTO plugins VALUES (71,'P2000','','P2000','class');
+INSERT INTO plugins VALUES (72,'Pachube','','Pachube','class');
+INSERT INTO plugins VALUES (73,'Prowl','','Prowl','class');
+INSERT INTO plugins VALUES (74,'PVoutput','','PVoutput','class');
+INSERT INTO plugins VALUES (75,'Pushover','','Pushover','class');
+INSERT INTO plugins VALUES (76,'Pushbullet','','Pushbullet','class');
+INSERT INTO plugins VALUES (77,'SmartVISUServer','','SmartVISUServer','class');
+INSERT INTO plugins VALUES (78,'SMS','','SMS','class');
+INSERT INTO plugins VALUES (79,'TelnetServer','','TelnetServer','class');
+INSERT INTO plugins VALUES (80,'TemperaturNu','','TemperaturNu','class');
+INSERT INTO plugins VALUES (81,'Twitter','','Twitter','class');
+INSERT INTO plugins VALUES (82,'VISCA','','VISCA','class');
+INSERT INTO plugins VALUES (83,'WeatherUG','','WeatherUG','class');
 
 UPDATE plugins SET type = 'virtual' WHERE id=17;
 UPDATE plugins SET type = 'module' WHERE id=40;
@@ -132,6 +119,13 @@ UPDATE plugins SET type = 'module' WHERE id=45;
 UPDATE plugins SET type = 'module' WHERE id=34;
 UPDATE plugins SET type = 'module' WHERE id=33;
 UPDATE plugins SET type = 'module' WHERE id=52;
+
+--
+-- Added temp10 and th12 sensor for RFXComTRX
+--
+INSERT INTO `devicetypes` VALUES (380,'TFA Dostmann Temp Sensor','Temp Sensor','TFA','temp10 0x121','','','',-1,-1,0,0,0,0,0);
+INSERT INTO `devicetypes` VALUES (381,'Imagintronix Soil Sensor','Soil Sensor','Imagintrx','th12 0x1','','','',-1,-1,0,0,0,0,0);
+UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagin' WHERE id = 35;
 
 --
 -- Remove structure for settings_domotica
@@ -264,6 +258,74 @@ INSERT INTO `devicetypes` VALUES (374,'RaspberryPi I/O','RaspberryPi I/O','Wirin
 INSERT INTO `devicetypes` VALUES (375,'WiringPi I/O','WiringPi I/O','WiringPi','<wiringpi>:<baseaddr>:<i2caddr>|<pin>','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (376,'WiringPi I/O Inverted','WiringPi I/O Inverted','WiringPi','<wiringpi>:<baseaddr>:<i2caddr>|<pin>','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (377,'RaspberryPi I/O Inverted','RaspberryPi I/O Inverted','WiringPi','<pin>','','','',-1,-1,0,0,0,0,0);
+
+--
+-- Cleanup the OpenZWave/RaZberry devicetypes
+--
+UPDATE devices SET module=64 WHERE module=63;
+UPDATE devices SET module=64 WHERE module=304;
+UPDATE devices SET module=64 WHERE module=305;
+UPDATE devices SET module=64 WHERE module=306;
+UPDATE devices SET module=64 WHERE module=307;
+UPDATE devices SET module=64 WHERE module=308;
+UPDATE devices SET module=64 WHERE module=310;
+UPDATE devices SET module=64 WHERE module=312;
+UPDATE devices SET module=64 WHERE module=313;
+UPDATE devices SET module=64 WHERE module=314;
+UPDATE devices SET module=64 WHERE module=316;
+UPDATE devices SET module=64 WHERE module=317;
+UPDATE devices SET module=64 WHERE module=318;
+UPDATE devices SET module=64 WHERE module=323;
+UPDATE devices SET module=64 WHERE module=324;
+UPDATE devices SET module=61 WHERE module=244;
+UPDATE devices SET module=61 WHERE module=319;
+UPDATE devices SET module=61 WHERE module=320;
+UPDATE devices SET module=61 WHERE module=325;
+UPDATE devices SET module=61 WHERE module=326;
+UPDATE devices SET module=61 WHERE module=327;
+UPDATE devices SET module=61 WHERE module=328;
+UPDATE devices SET module=61 WHERE module=330;
+UPDATE devices SET module=61 WHERE module=331;
+UPDATE devices SET module=62 WHERE module=322;
+UPDATE devices SET module=62 WHERE module=329;
+UPDATE devices SET module=62 WHERE module=332;
+UPDATE devices SET module=242 WHERE module=333;
+UPDATE devices SET module=304 WHERE module=311;
+UPDATE devices SET module=304 WHERE module=315;
+UPDATE devices SET module=305 WHERE module=321;
+UPDATE devicetypes SET name='Z-Wave Controller', description='Controller', addressformat='1' WHERE id=63;
+UPDATE devicetypes SET name='Z-Wave Sensor', description='Sensor' WHERE id=64;
+UPDATE devicetypes SET name='Z-Wave Entry Control', description='Entry Control' WHERE id=309;
+UPDATE devicetypes SET name='Z-Wave Generic', description='Generic' WHERE id=304;
+UPDATE devicetypes SET name='Z-Wave Motor Control', description='Motor Control' WHERE id=305;
+UPDATE devicetypes SET name='Z-Wave Remote Switch', description='Remote Switch' WHERE id=306;
+DELETE FROM devicetypes WHERE id=244;
+DELETE FROM devicetypes WHERE id=307;
+DELETE FROM devicetypes WHERE id=308;
+DELETE FROM devicetypes WHERE id=310;
+DELETE FROM devicetypes WHERE id=311;
+DELETE FROM devicetypes WHERE id=312;
+DELETE FROM devicetypes WHERE id=313;
+DELETE FROM devicetypes WHERE id=314;
+DELETE FROM devicetypes WHERE id=315;
+DELETE FROM devicetypes WHERE id=316;
+DELETE FROM devicetypes WHERE id=317;
+DELETE FROM devicetypes WHERE id=318;
+DELETE FROM devicetypes WHERE id=319;
+DELETE FROM devicetypes WHERE id=320;
+DELETE FROM devicetypes WHERE id=321;
+DELETE FROM devicetypes WHERE id=322;
+DELETE FROM devicetypes WHERE id=323;
+DELETE FROM devicetypes WHERE id=324;
+DELETE FROM devicetypes WHERE id=325;
+DELETE FROM devicetypes WHERE id=326;
+DELETE FROM devicetypes WHERE id=327;
+DELETE FROM devicetypes WHERE id=328;
+DELETE FROM devicetypes WHERE id=329;
+DELETE FROM devicetypes WHERE id=330;
+DELETE FROM devicetypes WHERE id=331;
+DELETE FROM devicetypes WHERE id=332;
+DELETE FROM devicetypes WHERE id=333;
 
 --
 -- Finally update to 1.0.017
