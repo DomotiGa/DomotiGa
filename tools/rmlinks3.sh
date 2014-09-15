@@ -75,6 +75,7 @@ cp ../../DomotiGa3/.src/CPluginEntry.class .
 cp ../../DomotiGa3/.src/CPlugwise.class .
 cp ../../DomotiGa3/.src/CPioneer.class .
 cp ../../DomotiGa3/.src/CPing.class .
+cp ../../DomotiGa3/.src/CPushbullet.class .
 cp ../../DomotiGa3/.src/CPushover.class .
 cp ../../DomotiGa3/.src/CProwl.class .
 cp ../../DomotiGa3/.src/CPVoutput.class .
@@ -99,6 +100,7 @@ cp ../../DomotiGa3/.src/CVISCA.class .
 cp ../../DomotiGa3/.src/CWeeder.class .
 cp ../../DomotiGa3/.src/CWebSocket.class .
 cp ../../DomotiGa3/.src/CWirelesstags.class .
+cp ../../DomotiGa3/.src/CWiringPi.class .
 cp ../../DomotiGa3/.src/CX10Cmd.class .
 cp ../../DomotiGa3/.src/CXMLRPC.class .
 cp ../../DomotiGa3/.src/CXBMCxPL.class .
