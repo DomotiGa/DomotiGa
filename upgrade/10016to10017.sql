@@ -328,6 +328,11 @@ DELETE FROM devicetypes WHERE id=332;
 DELETE FROM devicetypes WHERE id=333;
 
 --
+-- Virtual WeatherUnderground device
+--
+INSERT INTO `devicetypes` VALUES (141,'WeatherUnderground','WeatherUnderground','Virtual','WeatherUnderground','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+
+--
 -- Finally update to 1.0.017
 --
 LOCK TABLES version WRITE;
