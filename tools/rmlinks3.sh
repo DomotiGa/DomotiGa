@@ -34,7 +34,6 @@ cp ../../DomotiGa3/.src/CDenon.class .
 cp ../../DomotiGa3/.src/CDeviceDiscover.class .
 cp ../../DomotiGa3/.src/CDigitemp.class .
 cp ../../DomotiGa3/.src/CDMXPlayer.class .
-cp ../../DomotiGa3/.src/CDomotica.class .
 cp ../../DomotiGa3/.src/CDSC.class .
 cp ../../DomotiGa3/.src/CELVMAX.class .
 cp ../../DomotiGa3/.src/CEIB.class .
