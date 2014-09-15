@@ -291,17 +291,28 @@ End
 Public Sub X10CmdMonitor_Read()
 
   Dim sLine As String
+  Dim SingleMessage As String
+  Dim iPosFunc, iPosEOL As Integer
 
   Try sLine = Read #Last, -256
   If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from monitor output-> " & Error.Text)
   If Len(sLine) > 0 Then
     sMonitorBuffer &= sLine
     
-    
-    If InStr(sMonitorBuffer, "func") > 0 And $iType = 0 Then  ' heyu
-      ParseMonitorMessageHeyu(sMonitorBuffer)
-      sMonitorBuffer = Null
-    Endif
+    Do While InStr(sMonitorBuffer, "func") > 0
+      'Read until first "func" is observed & store remainder in sMonitorBuffer
+      '& repeat until sMonitorBuffer contains no more "func" Messages (remainder of incomplete message is kept for next call to X10CmdMonitor)
+      iPosFunc = InStr(sMonitorBuffer, "func")
+      iPosEOL = InStr(sMonitorBuffer, "\n", iPosFunc)
+      If iPosEOL = 0 Then 'We have a func line which is still incomplete
+        Break
+      Else
+        SingleMessage = Left(sMonitorBuffer, iPosEOL)
+        sMonitorBuffer = Right(sMonitorBuffer, Len(sMonitorBuffer) - iPosEOL)
+        'Process Single Function Message
+        ParseMonitorMessageHeyu(SingleMessage)
+      Endif
+    Loop
     
     If InStr(sMonitorBuffer, "PLC-") > 0 And $iType = 1 Then  ' cm15demo
       ParseMonitorMessageCm15demo(sMonitorBuffer)
@@ -320,8 +331,11 @@ Private Sub ParseMonitorMessageHeyu(sMessage As String)
 
   Dim aAddressLine, aFunctionLine, aValueLine As String[]
   Dim sAddress, sFunction, sValue As String
+  Dim aAddress As New String[]
+  Dim sMessageBuffer As String
+  Dim iAddressCount As Integer
 
-  'If $bX10CmdDebug Then Main.WriteDebugLog(LogLabel & "[X10Cmd] Monitor get: " & sMessage)
+  'If $bDebug Then Main.WriteDebugLog(LogLabel & "Monitor get: " & sMessage)
 
   ' Message sample :
     ' 08/28 09:57:34 Monitor started
@@ -362,53 +376,61 @@ Private Sub ParseMonitorMessageHeyu(sMessage As String)
   sFunction = Trim(aFunctionLine[1])
 
   'Find Address (HouseCode or UnitCode)
-  If InStr(sMessage, "addr") Then 'Scan for Address, line does not always exist
+  If InStr(sMessage, "addr") Then           'Scan for Address, line does not always exist
     aAddressLine = Scan(sMessage, "*addr*: hu*(*") 
-    sAddress = Trim(aAddressLine[2])
-    If Len(sAddress) == 2 Then sAddress = Left(sAddress, 1) & "0" & Right(sAddress, 1) 'Creating a double digit UnitCode
-    If InStr(aAddressLine[3], "addr") Then 'Check if it has multiple address's available => must be an AllOn Command
-      sFunction = "AllOn" 
-      sAddress = Left(sAddress, 1) '=> use HouseCode
+    If InStr(aAddressLine[3], "addr") Then  'Check if it has multiple address's available, then collect all "addr"
+      sMessageBuffer = sMessage
+      Do While InStr(sMessageBuffer, "addr") > 0  'Read all "addr" 
+        aAddressLine = Scan(sMessageBuffer, "*addr*: hu*(*") 
+        aAddress.Add(Trim(aAddressLine[2]))
+        sMessageBuffer = aAddressLine[3]
+      Loop
+    Else                                    'Only a single "addr"
+      aAddress.Add(Trim(aAddressLine[2]))
     Endif
-  Else 'Extract Address from function line
+  Else                                      'Extract Address from function line
     aFunctionLine = Scan(sMessage, "*func*: h* * *") 
-    sAddress = Trim(aFunctionLine[3])
-    If Len(sAddress) == 2 Then sAddress = Left(sAddress, 1) & "0" & Right(sAddress, 1) 'Creating a double digit UnitCode
+    aAddress.Add(Trim(aFunctionLine[3]))
   Endif
+  
+  For iAddressCount = 0 To (aAddress.Count - 1)
+    sAddress = aAddress[iAddressCount]
+    If Len(sAddress) == 2 Then sAddress = Left(sAddress, 1) & "0" & Right(sAddress, 1) 'Creating a double digit UnitCode
+    'Find Value for each Function & update Device Values
 
-  'Find Value for each Function & update Device Values
-  Select sFunction
-  Case "AllOn", "AllOff", "LightsOff", "LightsOn"
-    If Comp(sFunction, "AllOn") = 0 Or Comp(sFunction, "LightsOn") = 0 Then sValue = "On"
-    If Comp(sFunction, "AllOff") = 0 Or Comp(sFunction, "LightsOff") = 0 Then sValue = "Off"
-    X10DeviceValueUpdate(sAddress, sFunction, sValue)
-  Case "On", "Off"
-    sValue = sFunction
-    X10DeviceValueUpdate(sAddress, sFunction, sValue)
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Switching device " & sAddress & " " & sValue)
-  Case "xPreset" 'Dimming command for X10 Dimmers with eXtended Functionality
-    aValueLine = Scan(sMessage, "*level*(*")
-    sValue = "Dim " & Round(Trim(aValueLine[1]) * (100 / 63)) 'xPreset takes values from 0...63 (=100%)
-    X10DeviceValueUpdate(sAddress, sFunction, sValue)
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Dimming (extended code X10) device " & sAddress & " to " & sValue & "%")
-  Case "Preset" '"Old" dimming command for X10 Dimmers, allegedly only applicable to Smarthome company devices ??? 
-    aValueLine = Scan(sMessage, "*level*(*")
-    sValue = "Dim " & Round(Max(Trim(aValueLine[1]), 1) * (100 / 32)) 'Preset takes values from 1...32 (=100%), note: not allowed to be zero !
-    X10DeviceValueUpdate(sAddress, sFunction, sValue)
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Dimming (non-extended code X10) device " & sAddress & " to " & sValue & "%")
-  Case "Dim" 
-    'Nasty one: 
-    '- succesive Dim/Bright commands do not have a UnitCode (it uses the last seen unitcode)
-    '- Dim & Bright use relative commands, without the starting point (history) you don't know the absolute intensity/dim level
-    'So we will not update Domotiga with any value for Dim & Bright function
-    aValueLine = Scan(sMessage, "*%* *")
-    sValue = Trim(aValueLine[1])
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Relative Dimming of last selected X10-device by " & sValue & "%")
-  Case "Bright" 'See comments "Dim"
-    aValueLine = Scan(sMessage, "*%* *")
-    sValue = Trim(aValueLine[1])
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Relative Dimming of last selected X10-device by " & sValue & "%")
-  End Select
+    Select sFunction
+      Case "AllOn", "AllOff", "LightsOff", "LightsOn"
+        If Comp(sFunction, "AllOn") = 0 Or Comp(sFunction, "LightsOn") = 0 Then sValue = "On"
+        If Comp(sFunction, "AllOff") = 0 Or Comp(sFunction, "LightsOff") = 0 Then sValue = "Off"
+        X10DeviceValueUpdate(sAddress, sFunction, sValue)
+      Case "On", "Off"
+        sValue = sFunction
+        X10DeviceValueUpdate(sAddress, sFunction, sValue)
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Switching device " & sAddress & " " & sValue)
+      Case "xPreset" 'Dimming command for X10 Dimmers with eXtended Functionality
+        aValueLine = Scan(sMessage, "*level*(*")
+        sValue = "Dim " & Round(Trim(aValueLine[1]) * (100 / 63)) 'xPreset takes values from 0...63 (=100%)
+        X10DeviceValueUpdate(sAddress, sFunction, sValue)
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Dimming (extended code X10) device " & sAddress & " to " & sValue & "%")
+      Case "Preset" '"Old" dimming command for X10 Dimmers, allegedly only applicable to Smarthome company devices ??? 
+        aValueLine = Scan(sMessage, "*level*(*")
+        sValue = "Dim " & Round(Max(Trim(aValueLine[1]), 1) * (100 / 32)) 'Preset takes values from 1...32 (=100%), note: not allowed to be zero !
+        X10DeviceValueUpdate(sAddress, sFunction, sValue)
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Dimming (non-extended code X10) device " & sAddress & " to " & sValue & "%")
+      Case "Dim" 
+        'Nasty one: 
+        '- succesive Dim/Bright commands do not have a UnitCode (it uses the last seen unitcode)
+        '- Dim & Bright use relative commands, without the starting point (history) you don't know the absolute intensity/dim level
+        'So we will not update Domotiga with any value for Dim & Bright function
+        aValueLine = Scan(sMessage, "*%* *")
+        sValue = Trim(aValueLine[1])
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Relative Dimming of last selected X10-device by " & sValue & "%")
+      Case "Bright" 'See comments "Dim"
+        aValueLine = Scan(sMessage, "*%* *")
+        sValue = Trim(aValueLine[1])
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Relative Brightening of last selected X10-device by " & sValue & "%")
+    End Select
+  Next
 
 End
 
