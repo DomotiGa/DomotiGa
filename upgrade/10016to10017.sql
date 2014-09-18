@@ -268,7 +268,7 @@ INSERT INTO `devicetypes` VALUES (383,'WiringPi DAC','WiringPi DAC','WiringPi','
 --
 -- Insert new Toon devicetypes
 --
-INSERT INTO `devicetypes` VALUES (384,'Toon Stekker','Wall Plug','Toon','<Name>','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (384,'Toon Stekker','Wall Plug','Toon','<DevUuid>','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (385,'Toon All On/Off Stekkers','All On/Off Wall Plugs','Toon','Toon','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 
 --
