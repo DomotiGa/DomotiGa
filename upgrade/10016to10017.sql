@@ -121,11 +121,16 @@ UPDATE plugins SET type = 'module' WHERE id=33;
 UPDATE plugins SET type = 'module' WHERE id=52;
 
 --
--- Added temp10 and th12 sensor for RFXComTRX
+-- Added temp10, temp11, th12 sensor and more for RFXComTRX
 --
 INSERT INTO `devicetypes` VALUES (380,'TFA Dostmann Temp Sensor','Temp Sensor','TFA','temp10 0x121','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (381,'Imagintronix Soil Sensor','Soil Sensor','Imagintrx','th12 0x1','','','',-1,-1,0,0,0,0,0);
-UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagin' WHERE id = 35;
+UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX ByronMP SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagin WT TRC022 AOKE EuroDomest' WHERE id = 35;
+INSERT INTO devicetypes VALUES (386,'Byron MP Doorbell','Doorbell','ByronMP','00F4','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (387,'WT Swimming Pool Temp Sensor','Temp Sensor','WT','temp11 0x112','','','',-1,-1,0,0,0,0,0);
+INSERT INTO devicetypes VALUES (388,'RGB Module','Applicance Module','TRC022','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (389,'Aoke Relay','Relay Module','Aoke','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (390,'Eurodomest Module','Appliance Module','Eurodomest','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 
 --
 -- Remove structure for settings_domotica
