@@ -1,4 +1,11 @@
 --
+-- Introduce much higher auto_increment value for devicetypes, renumber manually created ones, if any.
+--
+ALTER TABLE devicetypes AUTO_INCREMENT=2500;
+UPDATE devicetypes SET id = id+2000 WHERE id >= 500 AND id <2500;
+UPDATE devices SET module = module+2000 WHERE module >= 500 AND module <2500;
+
+--
 -- Missing devicetypes for KNX.EIB
 --
 INSERT INTO `devicetypes` VALUES (378,'KNX/EIB Access Control','EIS 12','KNX/EIB','0/1/2','','','',-1,-1,0,0,0,0,0);
