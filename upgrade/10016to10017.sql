@@ -119,6 +119,7 @@ INSERT INTO plugins VALUES (80,'TemperaturNu','','TemperaturNu','class');
 INSERT INTO plugins VALUES (81,'Twitter','','Twitter','class');
 INSERT INTO plugins VALUES (82,'VISCA','','VISCA','class');
 INSERT INTO plugins VALUES (83,'WeatherUG','','WeatherUG','class');
+INSERT INTO plugins VALUES (84,'OpenWeatherMap','','OpenWeatherMap','class');
 
 UPDATE plugins SET type = 'virtual' WHERE id=17;
 UPDATE plugins SET type = 'module' WHERE id=40;
@@ -355,6 +356,40 @@ DELETE FROM devicetypes WHERE id=333;
 -- Virtual WeatherUnderground device
 --
 INSERT INTO `devicetypes` VALUES (141,'WeatherUnderground','WeatherUnderground','Virtual','WeatherUnderground','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+
+--
+-- Table structure for table `settings_openweathermap`
+--
+
+DROP TABLE IF EXISTS `settings_openweathermap`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_openweathermap` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `apikey` varchar(128) DEFAULT NULL,
+  `cityid` varchar(32) DEFAULT NULL,
+  `city` varchar(128) DEFAULT NULL,
+  `polltime` int(11) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_openweathermap`
+--
+
+LOCK TABLES `settings_openweathermap` WRITE;
+/*!40000 ALTER TABLE `settings_openweathermap` DISABLE KEYS */;
+INSERT INTO `settings_openweathermap` VALUES (0,0,'API1234567890','0','Dordrecht',300,0),(1,0,'API1234567890','0','Dordrecht',300,0);
+/*!40000 ALTER TABLE `settings_openweathermap` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Virtual OpenWeatherMap device
+--
+INSERT INTO `devicetypes` VALUES (244,'OpenWeatherMap','OpenWeatherMap','Virtual','OpenWeatherMap','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 
 --
 -- Finally update to 1.0.017
