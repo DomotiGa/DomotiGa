@@ -392,6 +392,41 @@ UNLOCK TABLES;
 INSERT INTO `devicetypes` VALUES (244,'OpenWeatherMap','OpenWeatherMap','Virtual','OpenWeatherMap','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 
 --
+-- Table structure for table `settings_forecastio`
+--
+
+DROP TABLE IF EXISTS `settings_forecastio`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_forecastio` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `apikey` varchar(128) DEFAULT NULL,
+  `latitude` varchar(32) DEFAULT NULL,
+  `longitude` varchar(32) DEFAULT NULL,
+  `city` varchar(128) DEFAULT NULL,
+  `polltime` int(11) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_forecastio`
+--
+
+LOCK TABLES `settings_forecastio` WRITE;
+/*!40000 ALTER TABLE `settings_forecastio` DISABLE KEYS */;
+INSERT INTO `settings_forecastio` VALUES (0,0,'API1234567890','0','0','Dordrecht',300,0),(1,0,'API1234567890','0','0','Dordrecht',300,0);
+/*!40000 ALTER TABLE `settings_forecastio` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Virtual forecast.io device
+--
+INSERT INTO `devicetypes` VALUES (307,'forecast.io','forecast.io','Virtual','forecast.io','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+
+--
 -- Finally update to 1.0.017
 --
 LOCK TABLES version WRITE;
