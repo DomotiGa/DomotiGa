@@ -357,6 +357,11 @@ DELETE FROM devicetypes WHERE id=333;
 INSERT INTO `devicetypes` VALUES (141,'WeatherUnderground','WeatherUnderground','Virtual','WeatherUnderground','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 
 --
+-- Rename row name 'module' so it matches the table name id it links to.
+--
+ALTER TABLE devices CHANGE COLUMN module devicetype_id int(11) NOT NULL DEFAULT '0';
+
+--
 -- Finally update to 1.0.017
 --
 LOCK TABLES version WRITE;

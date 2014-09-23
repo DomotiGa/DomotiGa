@@ -407,7 +407,7 @@ CREATE TABLE `devices` (
   `instance` int(11) NOT NULL DEFAULT '1',
   `name` varchar(64) DEFAULT NULL,
   `address` varchar(64) DEFAULT NULL,
-  `module` int(11) NOT NULL DEFAULT '0',
+  `devicetype_id` int(11) NOT NULL DEFAULT '0',
   `location` int(11) NOT NULL DEFAULT '0',
   `onicon` varchar(32) DEFAULT NULL,
   `officon` varchar(32) DEFAULT NULL,
