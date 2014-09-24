@@ -266,7 +266,7 @@ UNLOCK TABLES;
 --
 -- Insert new devicetypes
 --
-INSERT INTO `devicetypes` VALUES (373,'Philips Hue Light Bulb','Light','PhilipsHue','1','','','',-1,-1,0,0,0,0,0);
+INSERT INTO `devicetypes` VALUES (373,'Philips Hue Light','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
 
 --
 -- Insert new WiringPi devicetypes
@@ -430,6 +430,19 @@ UNLOCK TABLES;
 -- Virtual forecast.io device
 --
 INSERT INTO `devicetypes` VALUES (307,'forecast.io','forecast.io','Virtual','forecast.io','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+
+
+--
+-- Philips Hue 
+--
+INSERT INTO `devicetypes` VALUES (308,'Philips Hue Lux Light','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (310,'Philips Hue Beyond Light','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (311,'Philips Hue Tap','Switch','PhilipsHue','1','','','',0,0,0,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (312,'Philips Hue Friends Bloom LivingColors','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (313,'Philips Hue Friends Iris LivingColors','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (314,'Philips Hue Friends LightStrips','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
+
+
 
 --
 -- Finally update to 1.0.017
