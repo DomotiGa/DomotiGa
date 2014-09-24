@@ -356,7 +356,7 @@ DELETE FROM devicetypes WHERE id=333;
 --
 -- Virtual WeatherUnderground device
 --
-INSERT INTO `devicetypes` VALUES (141,'WeatherUnderground','WeatherUnderground','Virtual','WeatherUnderground','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO `devicetypes` VALUES (141,'Weather','Weather Virtual Device','Virtual','WeatherUnderground, OpenWeatherMap, forecast.io','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 
 --
 -- Rename row name 'module' so it matches the table name id it links to.
@@ -393,11 +393,6 @@ INSERT INTO `settings_openweathermap` VALUES (0,0,'API1234567890','0','Dordrecht
 UNLOCK TABLES;
 
 --
--- Virtual OpenWeatherMap device
---
-INSERT INTO `devicetypes` VALUES (244,'OpenWeatherMap','OpenWeatherMap','Virtual','OpenWeatherMap','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
-
---
 -- Table structure for table `settings_forecastio`
 --
 
@@ -428,12 +423,6 @@ INSERT INTO `settings_forecastio` VALUES (0,0,'API1234567890','0','0','Dordrecht
 UNLOCK TABLES;
 
 --
--- Virtual forecast.io device
---
-INSERT INTO `devicetypes` VALUES (307,'forecast.io','forecast.io','Virtual','forecast.io','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
-
-
---
 -- Philips Hue 
 --
 INSERT INTO `devicetypes` VALUES (308,'Philips Hue Lux Light','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
@@ -442,8 +431,6 @@ INSERT INTO `devicetypes` VALUES (311,'Philips Hue Tap','Switch','PhilipsHue','1
 INSERT INTO `devicetypes` VALUES (312,'Philips Hue Friends Bloom LivingColors','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (313,'Philips Hue Friends Iris LivingColors','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (314,'Philips Hue Friends LightStrips','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
-
-
 
 --
 -- Finally update to 1.0.017
