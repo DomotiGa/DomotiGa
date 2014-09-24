@@ -29,6 +29,7 @@ ln -s ../../DomotiGa3/.src/CDSC.class
 ln -s ../../DomotiGa3/.src/CELVMAX.class
 ln -s ../../DomotiGa3/.src/CEIB.class
 ln -s ../../DomotiGa3/.src/CEZcontrol.class
+ln -s ../../DomotiGa3/.src/CForecastIo.class
 ln -s ../../DomotiGa3/.src/CFritzBox.class
 ln -s ../../DomotiGa3/.src/CGlobalVarEntry.class
 ln -s ../../DomotiGa3/.src/CGMail.class
