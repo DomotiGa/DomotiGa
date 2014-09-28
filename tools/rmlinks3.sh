@@ -131,7 +131,7 @@ cp ../../DomotiGa3/.src/Thermostat.module .
 cp ../../DomotiGa3/.src/Util.module .
 cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
-cp ../../DomotiGa3/.src/CWeatherUG.class .
+cp ../../DomotiGa3/.src/CWeatherUnderground.class .
 cp ../../DomotiGa3/.src/JsonRpc/* ./JsonRpc/
 cp ../../DomotiGa3/.src/SmtpClient/* ./SmtpClient/
 cp ../../DomotiGa3/.src/Timers/* ./Timers/

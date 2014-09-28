@@ -1,0 +1,199 @@
+' Gambas class file
+
+' Description:
+' FOpenWeatherMap.class
+' Form for showing OpenWeatherMap info.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+Public SupportWeatherCitySearch As Boolean = False
+
+Private tWeatherRefresh As New Timer
+Private $Error As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Code to execute when WeatherUnderground form open
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Form_Open()
+
+  ' Check if we can/should show this form
+  If Not Plugin.IsPluginEnabled("OpenWeatherMap", 0) Then
+    Message.Info(("OpenWeatherMap is not enabled"))
+    Try Me.Close
+    Return
+  Endif
+
+  PopulateButtons()
+  GetOpenWeatherMapInfo()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Always stop timer if we close the form
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Form_Close()
+
+  Try tWeatherRefresh.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Resize the tabstrip, when the form is resized
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Form_Resize()
+
+  TabStripOpenWeatherMap.Move(3, 1, Me.ClientWidth - 5, Me.ClientHeight)
+
+End
+
+Public Sub PopulateButtons()
+
+  Dim rFeed As Result
+  Dim hButton As Button
+
+  ' populate feeds toolbutton
+  Try rFeed = Main.hDB.Exec("SELECT * FROM weatherfeeds WHERE enabled is TRUE")
+  If rFeed.count Then
+    For Each rFeed
+    If Not rFeed!name Or rFeed!enabled = False Then Continue
+    hButton = New Button(vbFeeds) As "FeedButton"
+     With hButton
+      .Text = rFeed!name
+      .Height = 28
+      .Width = 84
+      .Tag = rFeed!id
+    End With
+    Next
+  Endif
+
+End
+
+Public Sub FeedButton_Click()
+
+  Dim iFeed As Integer = Last.tag
+  Dim oObject As Object
+
+  ' enable all buttons, then disable selected one
+  For Each oObject In vbFeeds.Children
+    oObject.Enabled = True
+    If oObject.Tag = iFeed Then oObject.Enabled = False
+  Next
+  DisplayFeed(iFeed)
+
+End
+
+Public Sub DisplayFeed(iFeed As Integer)
+
+  Dim rFeed As Result
+
+  Try rFeed = Main.hDB.Exec("SELECT * FROM weatherfeeds where id=" & iFeed)
+  If rFeed Then
+    InitSatelliteImage(rFeed!url)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' when an URL is given, try to fetch the animated satellite image
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub InitSatelliteImage(sUrl As String)
+
+  Dim sFile As String
+  Dim picTemp As Picture
+
+  sFile = Util.DownloadFile(sUrl, True)
+  If Len(sFile) > 0 Then
+    picTemp = Picture.Load(sFile)
+    MvSatImage.Path = sFile
+    MvSatImage.Playing = True
+    MvSatImage.Resize(picTemp.Width, picTemp.Height)
+    MvSatImage.Refresh
+    MvSatImage.Show
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Retrieves the WeatherUnderground information from the plugin and process it
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub GetOpenWeatherMapInfo()
+
+  Dim hOpenWeatherMap As Object
+  Dim cWeatherData As New Collection
+  Dim iCnt As Integer
+
+  ' Reset to blank, we use this variable to detect if an internal error happened
+  $Error = ""
+
+  If Main.bServer Then
+
+    ' Check if the plugin is really enabled
+    If Not Plugin.IsPluginEnabled("OpenWeatherMap", 1) Then
+      Error.Raise("OpenWeatherMap is not enabled")
+    Endif
+
+    hOpenWeatherMap = Plugin.GetPluginObject("OpenWeatherMap", 1).Interface
+    cWeatherData = hOpenWeatherMap.JsonRpc_OpenWeatherMap_Get(Null)
+  Else
+    ' Not YET supported
+    Return
+
+    cWeatherData = Client.WeatherGet(["weather": "openweathermap", "instance_id": 1])
+  Endif
+
+  If cWeatherData = Null Then
+    Error.Raise("The OpenWeathMap Plugin didn't return data")
+  Else
+    If cWeatherData["error"] Then
+      Error.Raise("The OpenWeatherMap Plugin error response: \n" & cWeatherData["error"])
+    Else
+      If cWeatherData.Count = 0 Then
+        Error.Raise("The OpenWeatherMap Plugin didn't return data")
+      Endif
+    Endif
+  Endif
+
+  tWeatherRefresh = New Timer As "tWeatherRefresh"
+  Try tWeatherRefresh.Delay = Plugin.GetPluginObject("OpenWeatherMap", 1).Settings["polltime"] * 1000
+  If Error Then tWeatherRefresh.Delay = 300 * 1000
+  tWeatherRefresh.Start
+
+  ' No Error up to here? Enable the WeatherUnderground Tab strip
+  TabStripOpenWeatherMap.Visible = True
+  TextAreaMsg.Visible = False
+
+  TxtTemp.Text = cWeatherData["current"]["temperature"] & " " & Main.sTemperature
+  TxtRelativeHumidity.Text = cWeatherData["current"]["humidity"] & " %"
+  TxtPressureMb.Text = cWeatherData["current"]["pressure"] & IIf(Main.sTemperature = "°C", " mb", " in")
+  TxtWindDegrees.Text = cWeatherData["current"]["wind_degrees"]
+  TxtStationLocation.Text = cWeatherData["current"]["weatherstation"]
+  TxtTimeUpdate.Text = cWeatherData["current"]["lastupdate"]
+
+  TxtWind.Text = cWeatherData["current"]["wind"] & IIf(Main.sTemperature = "°C", " km/h", " mph")
+  TxtWindMs.Text = cWeatherData["current"]["wind_ms"] & " m/sec"
+  TxtWindBeaufort.Text = cWeatherData["current"]["wind_beaufort"] & " Bft"
+
+  TxtPrecip1hr.Text = cWeatherData["current"]["precip_1h"] & IIf(Main.sTemperature = "°C", " mm", " in")
+  TxtWeather.Text = cWeatherData["current"]["weatherdesc"]
+
+  Try PicCurrentWeather.Picture = Picture.Load(XMLParser.GetFileFromInternet(cWeatherData["current"]["icon_url"]))
+
+Catch
+  TabStripOpenWeatherMap.Visible = False
+  TextAreaMsg.Visible = True
+  TextAreaMsg.Text = "ERROR: " & Error.Text
+  Main.WriteLog("[OpenWeatherMap] ERROR: " & Error.Text & " at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Refresh Timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tWeatherRefresh_Timer()
+
+  GetOpenWeatherMapInfo()
+
+End

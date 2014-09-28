@@ -118,7 +118,7 @@ INSERT INTO plugins VALUES (79,'TelnetServer','','TelnetServer','class');
 INSERT INTO plugins VALUES (80,'TemperaturNu','','TemperaturNu','class');
 INSERT INTO plugins VALUES (81,'Twitter','','Twitter','class');
 INSERT INTO plugins VALUES (82,'VISCA','','VISCA','class');
-INSERT INTO plugins VALUES (83,'WeatherUG','','WeatherUG','class');
+INSERT INTO plugins VALUES (83,'WeatherUnderground','','WeatherUnderground','class');
 INSERT INTO plugins VALUES (84,'OpenWeatherMap','','OpenWeatherMap','class');
 INSERT INTO plugins VALUES (85,'ForecastIo','','ForecastIo','class');
 
