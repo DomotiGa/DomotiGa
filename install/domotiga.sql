@@ -2740,7 +2740,7 @@ CREATE TABLE `settings_opentherm` (
 
 LOCK TABLES `settings_opentherm` WRITE;
 /*!40000 ALTER TABLE `settings_opentherm` DISABLE KEYS */;
-INSERT INTO `settings_opentherm` VALUES (0,'Temporarily',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',1080,'serial',0,50000,0),(1,'Temporarily',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',1080,'serial',0,50000,0);
+INSERT INTO `settings_opentherm` VALUES (0,'Temporarily',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',6202,'serial',0,6203,0),(1,'Temporarily',0,0,'/dev/ttyUSB0',5,'Other','192.168.1.10',6202,'serial',0,6203,0);
 /*!40000 ALTER TABLE `settings_opentherm` ENABLE KEYS */;
 UNLOCK TABLES;
 
