@@ -433,6 +433,14 @@ INSERT INTO `devicetypes` VALUES (313,'Philips Hue Friends Iris LivingColors','L
 INSERT INTO `devicetypes` VALUES (314,'Philips Hue Friends LightStrips','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
 
 --
+-- Update OTGW default port to non-priviledged port
+--
+LOCK TABLES `settings_forecastio` WRITE;
+UPDATE settings_opentherm SET tcpport = 6202 WHERE enabled = 0;
+UPDATE settings_opentherm SET relayport = 6203 WHERE relayenabled = 0;
+UNLOCK TABLES;
+
+--
 -- Finally update to 1.0.017
 --
 LOCK TABLES version WRITE;
