@@ -435,7 +435,7 @@ INSERT INTO `devicetypes` VALUES (314,'Philips Hue Friends LightStrips','Light',
 --
 -- Update OTGW default port to non-priviledged port
 --
-LOCK TABLES `settings_forecastio` WRITE;
+LOCK TABLES `settings_opentherm` WRITE;
 UPDATE settings_opentherm SET tcpport = 6202 WHERE enabled = 0;
 UPDATE settings_opentherm SET relayport = 6203 WHERE relayenabled = 0;
 UNLOCK TABLES;
