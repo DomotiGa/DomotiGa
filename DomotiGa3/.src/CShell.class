@@ -1,7 +1,7 @@
-' Gambas module file
+' Gambas class file
 
 ' Description:
-' Shell.module
+' Shell.class
 ' Support for getting shell script output in device values and calling scripts.
 
 ' Development Status:
@@ -61,6 +61,8 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Initialize
   Run()
 
+  IsRunning = True
+  
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -70,7 +72,7 @@ Public Sub StopPlugin()
 
   Try tShell.Stop
 
-  ' Kill any running processes 
+  ' Kill any running processes
   ' The _Kill event will ignore them
   If cProcess.Count Then
     For Each hShell In cProcess
@@ -79,6 +81,8 @@ Public Sub StopPlugin()
     hShell = Null
   Endif
 
+  IsRunning = False
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -86,11 +90,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Run()
 
-  If Main.iShellPollTime = 0 Then Return ' disabled
-
   ' start poll timer for Shell
   tShell = New Timer As "tShell"
-  tShell.Delay = Main.iShellPollTime * 1000 ' multiply for seconds
+  tShell.Delay = $iPollTime * 1000 ' multiply for seconds
   tShell.Start
 
 End
@@ -116,7 +118,7 @@ Private Sub CheckShell()
   If rResult.Available Then
     If rResult.Count >= 1 Then
       For Each rResult
-        If Main.bShellDebug Then Main.WriteDebugLog(LogLabel & "Getting value(s) for device '" & rResult!name & "' with command '" & rResult!address & "'.")
+        If $bShellDebug Then Main.WriteDebugLog(LogLabel & "Getting value(s) for device '" & rResult!name & "' with command '" & rResult!address & "'.")
         RunShellCommand(rResult!id, rResult!address)
       Next
     Else
@@ -132,13 +134,19 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' run command to get value(s)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub RunShellCommand(iId As Integer, sAddress As String, Optional sArgument As String)
+Public Sub RunShellCommand(iId As Integer, sCmdArgs As String) As Boolean
 
-  If Len(sArgument) Then
-    hShell = Exec [sAddress, sArgument] For Read As "Shell" ' script.sh "on","off" etc.
-  Else
-    hShell = Exec [sAddress] For Read As "Shell"
+  Dim CmdArgs As String[]
+
+  If Not $bEnabled Then
+    Main.WriteDebugLog(LogLabel & PluginFriendlyName & " is disabled")
+    Return False
   Endif
+
+  ' Split in command on spaces into the command and arguments
+  CmdArgs = Split(sCmdArgs, " ")
+
+  hShell = Exec CmdArgs For Read As "Shell" ' ["script.sh"] or ["script", "on", "17"] etc.
   hShell.Tag = iId
   cOutput.Add("", iId)
   cProcess.Add(hShell, iId)
@@ -146,9 +154,24 @@ Public Sub RunShellCommand(iId As Integer, sAddress As String, Optional sArgumen
   ' Set Process to null again, else Gambas can hang and/or cause 100%
   hShell = Null
 
+  Return True
+  
 Catch
-   If Main.bShellDebug Then Main.WriteDebugLog(LogLabel & "Error when trying to run '" & sAddress & "' : " & Error.Text & ".")
+   Main.WriteDebugLog(LogLabel & "Error when trying to run '" & sCmdArgs & "' : " & Error.Text & ".")
+   Return False
 
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' called from devices module to send a command
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim iDeviceId As Integer
+
+  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("Shell Interface"))
+
+  RunShellCommand(iDeviceId, sAddress & " " & sCmd)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -172,7 +195,8 @@ End
 Public Sub Shell_Kill()
 
   Dim iDeviceId, iRc, iCnt As Integer
-  Dim sOutput, sLine, sValue, sValue2, sValue3, sValue4 As String
+  Dim sLines As String[]
+  Dim sOutput, sValue, sDebugVals As String
 
   iDeviceId = Last.Tag
   iRc = Last.Value
@@ -192,27 +216,30 @@ Public Sub Shell_Kill()
 
     Select iRC
       Case 0
-        For Each sLine In Split(sOutput, "\n")
-          Select iCnt
-            Case 0
-              sValue = sLine
-              Devices.ValueUpdate(iDeviceId, 1, sValue)
-            Case 1
-              sValue2 = sLine
-              Devices.ValueUpdate(iDeviceId, 2, sValue2)
-            Case 2
-              sValue3 = sLine
-              Devices.ValueUpdate(iDeviceId, 3, sValue3)
-            Case 3
-              sValue4 = sLine
-              Devices.ValueUpdate(iDeviceId, 4, sValue4)
-          End Select
-          Inc iCnt
-        Next
-        ' debug output
-        If Main.bShellDebug Then
-          Main.WriteDebugLog(LogLabel & "< '" & sOutput & "'")
-          Main.WriteDebugLog(LogLabel & "Device with id '" & iDeviceId & "' returned value(s)" & IIf(sValue, " '" & sValue & "'", "") & IIf(sValue2, " '" & sValue2 & "'", "") & IIf(sValue3, " '" & sValue3 & "'", "") & IIf(sValue4, " '" & sValue4 & "'", "") & ".")
+        sLines = Split(sOutput, "\n")
+
+        If sLines.Count == 0 Or If sLines[0] == "" Then
+          If $bShellDebug Then Main.WriteDebugLog(LogLabel & "No output from device with id '" & iDeviceId & "'")
+        Else
+          ' Remove last line if it is empty
+          If sLines[sLines.Count - 1] == "" Then
+            sLines.Remove(sLines.Count - 1)
+          Endif
+
+          iCnt = 1
+          For Each sValue In sLines
+            Devices.ValueUpdate(iDeviceId, iCnt, sValue)
+            If iCnt > 1 Then
+              sDebugVals &= ", "
+            Endif
+            sDebugVals &= "value" & Str(iCnt) & " = '" & sValue & "'"
+            Inc iCnt
+          Next
+          ' debug output
+          If $bShellDebug Then
+            Main.WriteDebugLog(LogLabel & "< '" & Replace(sOutput, "\n", "\\n") & "'")
+            Main.WriteDebugLog(LogLabel & "Device with id '" & iDeviceId & "' returned " & sDebugVals)
+          Endif
         Endif
         ' find and update device
         Devices.CheckFirstSeen(iDeviceId)
@@ -229,3 +256,4 @@ Catch
   Main.WriteDebugLog(LogLabel & "ERROR: Parsing Shell Result: " & Error.Text & " at " & Error.Where)
 
 End
+

@@ -441,6 +441,11 @@ UPDATE settings_opentherm SET relayport = 6203 WHERE relayenabled = 0;
 UNLOCK TABLES;
 
 --
+-- Change Shell module into a plugin Class
+--
+UPDATE plugins SET type = 'class' WHERE interface = 'Shell Interface';
+
+--
 -- Finally update to 1.0.017
 --
 LOCK TABLES version WRITE;
