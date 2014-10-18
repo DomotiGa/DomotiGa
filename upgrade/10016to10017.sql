@@ -6,10 +6,10 @@ UPDATE devicetypes SET id = id+2000 WHERE id >= 500 AND id <2500;
 UPDATE devices SET module = module+2000 WHERE module >= 500 AND module <2500;
 
 --
--- Missing devicetypes for KNX.EIB
+-- New devicetypes for KNX
 --
-INSERT INTO `devicetypes` VALUES (378,'KNX/EIB Access Control','EIS 12','KNX/EIB','0/1/2','','','',-1,-1,0,0,0,0,0);
-INSERT INTO `devicetypes` VALUES (379,'KNX/EIB ASCII Char','EIS 13','KNX/EIB','0/1/2','','','',-1,-1,0,0,0,0,0);
+INSERT INTO `devicetypes` VALUES (378,'KNX Access Control','EIS 12','KNX','0/1/2','','','',-1,-1,0,0,0,0,0);
+INSERT INTO `devicetypes` VALUES (379,'KNX ASCII Char','EIS 13','KNX','0/1/2','','','',-1,-1,0,0,0,0,0);
 UPDATE devicetypes SET addressformat = '0/1/2|1/2/3' WHERE id=52;
 UPDATE devicetypes SET addressformat = '0/1/2 or 0/1/2|1/2/3' WHERE id=46;
 
@@ -49,7 +49,7 @@ UPDATE plugins SET name = 'Weeder' WHERE id=9;
 UPDATE plugins SET name = 'Plugwise' WHERE id=10;
 UPDATE plugins SET name = 'DSC' WHERE id=11;
 UPDATE plugins SET name = 'RFXComTX' WHERE id=12;
-UPDATE plugins SET name = 'EIB' WHERE id=13;
+UPDATE plugins SET name = 'KNX' WHERE id=13;
 UPDATE plugins SET name = 'Digitemp' WHERE id=14;
 UPDATE plugins SET name = 'OpenZwave' WHERE id=15;
 UPDATE plugins SET name = 'PLCBUS' WHERE id=16;
@@ -129,6 +129,33 @@ UPDATE plugins SET type = 'module' WHERE id=45;
 UPDATE plugins SET type = 'module' WHERE id=34;
 UPDATE plugins SET type = 'module' WHERE id=33;
 UPDATE plugins SET type = 'module' WHERE id=52;
+
+--
+-- Rename KNX/EIB plugin/protocol to KNX
+--
+
+UPDATE plugins SET protocol = 'KNX' WHERE id=13;
+UPDATE plugins SET interface = 'KNX Interface' WHERE id=13;
+
+UPDATE devicetypes SET type = 'KNX' WHERE id=45;
+UPDATE devicetypes SET type = 'KNX' WHERE id=46;
+UPDATE devicetypes SET type = 'KNX' WHERE id=47;
+UPDATE devicetypes SET type = 'KNX' WHERE id=48;
+UPDATE devicetypes SET type = 'KNX' WHERE id=49;
+UPDATE devicetypes SET type = 'KNX' WHERE id=50;
+UPDATE devicetypes SET type = 'KNX' WHERE id=51;
+UPDATE devicetypes SET type = 'KNX' WHERE id=52;
+UPDATE devicetypes SET type = 'KNX' WHERE id=53;
+UPDATE devicetypes SET type = 'KNX' WHERE id=54;
+UPDATE devicetypes SET type = 'KNX' WHERE id=55;
+UPDATE devicetypes SET type = 'KNX' WHERE id=56;
+UPDATE devicetypes SET type = 'KNX' WHERE id=57;
+
+--
+-- Rename KNX settings table
+--
+
+RENAME TABLE settings_eib TO settings_knx;
 
 --
 -- Added temp10, temp11, th12 sensor and more for RFXComTRX

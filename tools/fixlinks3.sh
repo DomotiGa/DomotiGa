@@ -27,7 +27,7 @@ ln -s ../../DomotiGa3/.src/CDigitemp.class
 ln -s ../../DomotiGa3/.src/CDMXPlayer.class
 ln -s ../../DomotiGa3/.src/CDSC.class
 ln -s ../../DomotiGa3/.src/CELVMAX.class
-ln -s ../../DomotiGa3/.src/CEIB.class
+ln -s ../../DomotiGa3/.src/CKNX.class
 ln -s ../../DomotiGa3/.src/CEZcontrol.class
 ln -s ../../DomotiGa3/.src/CForecastIo.class
 ln -s ../../DomotiGa3/.src/CFritzBox.class
