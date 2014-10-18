@@ -1,6 +1,14 @@
 --
+-- Add fields to device_values
+--
+
+ALTER TABLE device_values ADD COLUMN feedback tinyint(1) NOT NULL DEFAULT '0' AFTER type;
+ALTER TABLE device_values ADD COLUMN control tinyint(1) NOT NULL DEFAULT '0' AFTER feedback;
+
+--
 -- Introduce much higher auto_increment value for devicetypes, renumber manually created ones, if any.
 --
+
 ALTER TABLE devicetypes AUTO_INCREMENT=2500;
 UPDATE devicetypes SET id = id+2000 WHERE id >= 500 AND id <2500;
 UPDATE devices SET module = module+2000 WHERE module >= 500 AND module <2500;
@@ -8,6 +16,7 @@ UPDATE devices SET module = module+2000 WHERE module >= 500 AND module <2500;
 --
 -- New devicetypes for KNX
 --
+
 INSERT INTO `devicetypes` VALUES (378,'KNX Access Control','EIS 12','KNX','0/1/2','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (379,'KNX ASCII Char','EIS 13','KNX','0/1/2','','','',-1,-1,0,0,0,0,0);
 UPDATE devicetypes SET addressformat = '0/1/2|1/2/3' WHERE id=52;
@@ -22,6 +31,7 @@ ALTER TABLE devices_pachube MODIFY datastreamid varchar(64);
 --
 -- Dumping data for table interfaces
 --
+
 LOCK TABLES interfaces WRITE;
 /*!40000 ALTER TABLE interfaces DISABLE KEYS */;
 INSERT INTO interfaces VALUES  (58,'Philips Hue Interface','PhilipsHue','Read Write');
@@ -32,6 +42,7 @@ UNLOCK TABLES;
 --
 -- Convert interfaces table for dynamic setdevice via plugin call
 --
+
 RENAME TABLE interfaces to plugins;
 ALTER TABLE plugins CHANGE COLUMN name interface varchar(32);
 ALTER TABLE plugins CHANGE COLUMN mode name varchar(32) NOT NULL;
@@ -160,6 +171,7 @@ RENAME TABLE settings_eib TO settings_knx;
 --
 -- Added temp10, temp11, th12 sensor and more for RFXComTRX
 --
+
 INSERT INTO `devicetypes` VALUES (380,'TFA Dostmann Temp Sensor','Temp Sensor','TFA','temp10 0x121','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (381,'Imagintronix Soil Sensor','Soil Sensor','Imagintrx','th12 0x1','','','',-1,-1,0,0,0,0,0);
 UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX ByronMP SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagintrx WT TRC022 AOKE EuroDomest' WHERE id = 35;
@@ -172,11 +184,13 @@ INSERT INTO devicetypes VALUES (390,'Eurodomest Module','Appliance Module','Euro
 --
 -- Remove structure for settings_domotica
 --
+
 DROP TABLE IF EXISTS settings_domotica;
 
 --
 -- Table structure for settings_wiringpi
 --
+
 DROP TABLE IF EXISTS settings_wiringpi;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
@@ -191,6 +205,7 @@ CREATE TABLE settings_wiringpi (
 --
 -- Dumping data for table `settings_wiringpi`
 --
+
 /*!40101 SET character_set_client = @saved_cs_client */;
 LOCK TABLES settings_wiringpi WRITE;
 /*!40000 ALTER TABLE `settings_wiringpi` DISABLE KEYS */;
@@ -202,6 +217,7 @@ UNLOCK TABLES;
 --
 -- Table structure for settings_pushbullet
 --
+
 DROP TABLE IF EXISTS settings_pushbullet;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
@@ -217,6 +233,7 @@ CREATE TABLE settings_pushbullet (
 --
 -- Dumping data for table `settings_pushbullet`
 --
+
 /*!40101 SET character_set_client = @saved_cs_client */;
 LOCK TABLES settings_pushbullet WRITE;
 /*!40000 ALTER TABLE `settings_pushbullet` DISABLE KEYS */;
@@ -228,21 +245,25 @@ UNLOCK TABLES;
 --
 -- Table structure for table `settings_weatherbug`
 --
+
 DROP TABLE IF EXISTS `settings_weatherbug`;
 
 --
 -- Remove OpenZWave devices table (not used anymore)
 --
+
 DROP TABLE IF EXISTS devices_zwave;
 
 --
 -- Remove Weather table, info stored in virtualdevice
 --
+
 DROP TABLE IF EXISTS weather;
 
 --
 -- Table structure for table `settings_devicediscover`
 --
+
 DROP TABLE IF EXISTS `settings_devicediscover`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
@@ -260,6 +281,7 @@ CREATE TABLE `settings_devicediscover` (
 --
 -- Dumping data for table `settings_devicediscover`
 --
+
 /*!40101 SET character_set_client = @saved_cs_client */;
 LOCK TABLES `settings_devicediscover` WRITE;
 /*!40000 ALTER TABLE `settings_devicediscover` DISABLE KEYS */;
@@ -270,6 +292,7 @@ UNLOCK TABLES;
 --
 -- Table structure for table `settings_philipshue`
 --
+
 DROP TABLE IF EXISTS `settings_philipshue`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
@@ -285,6 +308,7 @@ CREATE TABLE `settings_philipshue` (
 --
 -- Dumping data for table `settings_philipshue`
 --
+
 /*!40101 SET character_set_client = @saved_cs_client */;
 LOCK TABLES `settings_philipshue` WRITE;
 /*!40000 ALTER TABLE `settings_philipshue` DISABLE KEYS */;
@@ -295,11 +319,13 @@ UNLOCK TABLES;
 --
 -- Insert new devicetypes
 --
+
 INSERT INTO `devicetypes` VALUES (373,'Philips Hue Light','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
 
 --
 -- Insert new WiringPi devicetypes
 --
+
 INSERT INTO `devicetypes` VALUES (374,'RaspberryPi I/O','RaspberryPi I/O','WiringPi','<pin>','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (375,'WiringPi I/O','WiringPi I/O','WiringPi','<wiringpi>:<baseaddr>:<i2caddr>|<pin>','','','',-1,-1,0,0,0,0,0);
 INSERT INTO `devicetypes` VALUES (376,'WiringPi I/O Inverted','WiringPi I/O Inverted','WiringPi','<wiringpi>:<baseaddr>:<i2caddr>|<pin>','','','',-1,-1,0,0,0,0,0);
@@ -310,12 +336,14 @@ INSERT INTO `devicetypes` VALUES (383,'WiringPi DAC','WiringPi DAC','WiringPi','
 --
 -- Insert new Toon devicetypes
 --
+
 INSERT INTO `devicetypes` VALUES (384,'Toon Stekker','Wall Plug','Toon','<DevUuid>','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (385,'Toon All On/Off Stekkers','All On/Off Wall Plugs','Toon','Toon','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 
 --
 -- Cleanup the OpenZWave/RaZberry devicetypes
 --
+
 UPDATE devices SET module=64 WHERE module=63;
 UPDATE devices SET module=64 WHERE module=304;
 UPDATE devices SET module=64 WHERE module=305;
@@ -384,11 +412,13 @@ DELETE FROM devicetypes WHERE id=333;
 --
 -- Virtual WeatherUnderground device
 --
+
 INSERT INTO `devicetypes` VALUES (141,'Weather','Weather Virtual Device','Virtual','WeatherUnderground, OpenWeatherMap, forecast.io','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 
 --
 -- Rename row name 'module' so it matches the table name id it links to.
 --
+
 ALTER TABLE devices CHANGE COLUMN module devicetype_id int(11) NOT NULL DEFAULT '0';
 
 --
@@ -453,6 +483,7 @@ UNLOCK TABLES;
 --
 -- Philips Hue 
 --
+
 INSERT INTO `devicetypes` VALUES (308,'Philips Hue Lux Light','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (310,'Philips Hue Beyond Light','Light','PhilipsHue','1','','','',0,-1,0,NULL,NULL,NULL,NULL);
 INSERT INTO `devicetypes` VALUES (311,'Philips Hue Tap','Switch','PhilipsHue','1','','','',0,0,0,NULL,NULL,NULL,NULL);
@@ -463,6 +494,7 @@ INSERT INTO `devicetypes` VALUES (314,'Philips Hue Friends LightStrips','Light',
 --
 -- Update OTGW default port to non-priviledged port
 --
+
 LOCK TABLES `settings_opentherm` WRITE;
 UPDATE settings_opentherm SET tcpport = 6202 WHERE enabled = 0;
 UPDATE settings_opentherm SET relayport = 6203 WHERE relayenabled = 0;
@@ -471,11 +503,13 @@ UNLOCK TABLES;
 --
 -- Change Shell module into a plugin Class
 --
+
 UPDATE plugins SET type = 'class' WHERE interface = 'Shell Interface';
 
 --
 -- Finally update to 1.0.017
 --
+
 LOCK TABLES version WRITE;
 INSERT INTO version VALUES (62,'1.0.017');
 UNLOCK TABLES;
