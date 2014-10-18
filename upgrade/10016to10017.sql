@@ -152,7 +152,7 @@ UPDATE plugins SET type = 'module' WHERE id=52;
 -- Rename KNX/EIB plugin/protocol to KNX
 --
 
-UPDATE plugins SET protocol = 'KNX' WHERE id=13;
+UPDATE plugins SET protocols = 'KNX' WHERE id=13;
 UPDATE plugins SET interface = 'KNX Interface' WHERE id=13;
 
 UPDATE devicetypes SET type = 'KNX' WHERE id=45;
