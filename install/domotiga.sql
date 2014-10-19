@@ -2503,7 +2503,7 @@ CREATE TABLE `settings_main` (
 
 LOCK TABLES `settings_main` WRITE;
 /*!40000 ALTER TABLE `settings_main` DISABLE KEYS */;
-INSERT INTO `settings_main` VALUES (0,250,10000,0,15000,0,'FLogfiles',0,0,0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',0,NULL),(1,250,10000,0,15000,0,'FLogfiles',0,0,0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',0,NULL);
+INSERT INTO `settings_main` VALUES (0,250,10000,0,15000,0,'FLogfiles',1,1,0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',1,NULL),(1,250,10000,0,15000,0,'FLogfiles',1,1,0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',1,NULL);
 /*!40000 ALTER TABLE `settings_main` ENABLE KEYS */;
 UNLOCK TABLES;
 
