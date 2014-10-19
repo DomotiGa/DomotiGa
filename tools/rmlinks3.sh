@@ -36,7 +36,6 @@ cp ../../DomotiGa3/.src/CDigitemp.class .
 cp ../../DomotiGa3/.src/CDMXPlayer.class .
 cp ../../DomotiGa3/.src/CDSC.class .
 cp ../../DomotiGa3/.src/CELVMAX.class .
-cp ../../DomotiGa3/.src/CEIB.class .
 cp ../../DomotiGa3/.src/CEZcontrol.class .
 cp ../../DomotiGa3/.src/CForecastIo.class .
 cp ../../DomotiGa3/.src/CFritzBox.class .
@@ -55,6 +54,7 @@ cp ../../DomotiGa3/.src/CJerome.class .
 cp ../../DomotiGa3/.src/CJSONRPC.class .
 cp ../../DomotiGa3/.src/CK8055.class .
 cp ../../DomotiGa3/.src/CKMTronicUDP.class .
+cp ../../DomotiGa3/.src/CKNX.class .
 cp ../../DomotiGa3/.src/CLEDMatrix.class .
 cp ../../DomotiGa3/.src/CMochad.class .
 cp ../../DomotiGa3/.src/CMQTT.class .
@@ -88,6 +88,7 @@ cp ../../DomotiGa3/.src/CRFXComTX.class .
 cp ../../DomotiGa3/.src/CRFXComTRX.class .
 cp ../../DomotiGa3/.src/CRFXComxPL.class .
 cp ../../DomotiGa3/.src/CSharpTV.class .
+cp ../../DomotiGa3/.src/CShell.class .
 cp ../../DomotiGa3/.src/CSMS.class .
 cp ../../DomotiGa3/.src/CSmartMeter.class .
 cp ../../DomotiGa3/.src/CSmartVISUServer.class .
@@ -119,7 +120,6 @@ cp ../../DomotiGa3/.src/DNS.module .
 cp ../../DomotiGa3/.src/Energy.module .
 cp ../../DomotiGa3/.src/EventLoop.module .
 cp ../../DomotiGa3/.src/Events.module .
-cp ../../DomotiGa3/.src/Shell.module .
 cp ../../DomotiGa3/.src/Log.module .
 cp ../../DomotiGa3/.src/Mail.module .
 cp ../../DomotiGa3/.src/Plugin.module .
