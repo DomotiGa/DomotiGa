@@ -1,4 +1,10 @@
 --
+-- Correct name of old MQTTitude client
+--
+
+UPDATE devicetypes SET name = 'MQTT Owntracks Client', description = 'MQTT Owntracks Client' WHERE id = 302;
+
+--
 -- Delete old KNX device types
 --
 
