@@ -135,6 +135,10 @@ Private Sub CheckJerome()
   If hJerome.Status = Net.Connected Then
     If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Send test poll cmd '" & sCmd & "' to '" & $sTCPHost & ":" & $iTCPPort & "'")
     SendPacket(sCmd)
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Send $KE,ADC,ALL cmd to '" & $sTCPHost & ":" & $iTCPPort & "'")
+    SendPacket("$KE,ADC,ALL")
+    If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "Send $KE,PWM,GET cmd to '" & $sTCPHost & ":" & $iTCPPort & "'")
+    SendPacket("$KE,PWM,GET")
 
   Endif
 
@@ -199,8 +203,8 @@ End
 Private Sub ParseLine(sData As String)
 
   Dim aData As String[]
-  Dim sValue, sLine, sDirection, sCycle, sDevType As String
-  Dim iDeviceId, iCount As Integer
+  Dim sValue, sLine, sCycle As String
+  Dim iDeviceId, iCount, iADC As Integer
 
   If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & " < " & sData)
 
@@ -208,14 +212,12 @@ Private Sub ParseLine(sData As String)
   If aData.Count >= 2 Then
     If aData[0] = "#EVT" Then ' trigger event
       ' #EVT,IN,29188,12,0
-      ' aData[1]=Direction, [2]=Event, [3]=Line, [4]=Value
-      sDirection = aData[1]
+      ' aData[0]=#EVT, aData[1]=IN, [2]=EventTime, [3]=Line, [4]=Value
       sLine = aData[3]
       sValue = aData[4]
-      sDevType = IIf(sDirection == "IN", "Input", "Output")
 
       'find device In database
-      iDeviceId = Devices.Find(Instance, sLine, Devices.FindInterface("Jerome Ethernet Module"), IIf(Val(sLine) > 4, "Jerome IO " & sDevType, "Jerome Pulse Counter"))
+      iDeviceId = Devices.Find(Instance, sLine, Devices.FindInterface("Jerome Ethernet Module"))
       If iDeviceId Then
         Select sLine
           Case "1", "2", "3", "4" ' pulse counter line
@@ -269,6 +271,35 @@ Private Sub ParseLine(sData As String)
         Devices.ValueUpdate(iDeviceId, 2, sValue)
       Endif
     Endif ' end #IO
+    
+    If aData[0] = "#ADC" Then
+      '#ADC,ALL,675,570,555,646
+      'aData[1]=ALL, aData[2]=ADC1_Val, aData[3]=ADC2_Val, aData[4]=ADC3_Val, aData[5]=ADC4_Val
+      iADC = 1
+      While iADC <= 4
+        iDeviceId = Devices.Find(Instance, "ADC" & iADC, Devices.FindInterface("Jerome Ethernet Module"), "Ethernet ADC Port")
+        If iDeviceId Then
+          Devices.ValueUpdate(iDeviceId, 1, aData[iADC + 1])
+          Devices.ValueUpdate(iDeviceId, 2, Round((aData[iADC + 1] / 1023) * 3.3, -2))
+          If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "ADC" & iADC & "= " & aData[iADC + 1])
+        Endif
+        Inc iADC
+      Wend
+    Endif ' end #ADC
+    
+    If aData[0] = "#PWM" Then
+      '#PWM,0  OR  #PWM,SET,OK
+      'aData[0]=PWM, aData[1]=PWM_Value
+      If (aData[1] = "SET") Then
+        If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "PWM SET OK")
+      Else
+         iDeviceId = Devices.Find(Instance, "PWM", Devices.FindInterface("Jerome Ethernet Module"), "PWM Port")
+         If iDeviceId Then
+           Devices.ValueUpdate(iDeviceId, 1, "Dim " & aData[1])
+           If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & "PWM" & "= " & aData[1])
+         Endif
+      Endif
+    Endif
 
   Endif
   sBuffer = Null
@@ -299,16 +330,25 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sCmd As String)
 
-  Dim iLine As Integer
-
-  ' check address
-  iLine = Replace(sAddress, "IO", "")
-  If iLine > 0 And If iLine < 23 And InStr(sAddress, "IO") Then
+  Dim iLevel As Integer
+  
+  If (sAddress = "PWM") Then
+     If sCmd = "On" Then
+       iLevel = 100
+     Else If sCmd = "Off" Then
+       iLevel = 0
+     Else If InStr(sCmd, "Dim ") Then
+       iLevel = Val(Replace(sCmd, "Dim ", ""))
+       If iLevel = 100 Then iLevel = 99
+     Endif
+     If $bJeromeDebug Then Main.WriteDebugLog(LogLabel & " Set PWM=" & iLevel)
+     SendPacket("$KE,PWM,SET," & iLevel)
+  Else If CInteger(sAddress) > 0 And CInteger(sAddress) < 22 Then
     Select Case UCase(sCmd)
       Case "OFF"
-        SendPacket("$KE,WR," & iLine & ",0")
+        SendPacket("$KE,WR," & sAddress & ",0")
       Case "ON"
-        SendPacket("$KE,WR," & iLine & ",1")
+        SendPacket("$KE,WR," & sAddress & ",1")
       Case Else
         Main.WriteDebugLog(LogLabel & "Unknown Jerome command '" & sCmd & "' given!")
         Return
