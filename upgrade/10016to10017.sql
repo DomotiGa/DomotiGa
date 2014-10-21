@@ -7,6 +7,12 @@ UPDATE devicetypes SET id = id+2000 WHERE id >= 500 AND id <2500;
 UPDATE devices SET module = module+2000 WHERE module >= 500 AND module <2500;
 
 --
+-- Rename device_values type field
+--
+
+ALTER TABLE device_values CHANGE COLUMN type type_id int(11) NOT NULL DEFAULT '0';
+
+--
 -- Correct name of old MQTTitude client
 --
 

@@ -323,7 +323,7 @@ CREATE TABLE `device_values` (
   `lastchanged` datetime DEFAULT NULL,
   `lastseen` datetime DEFAULT NULL,
   `description` varchar(32) DEFAULT NULL,
-  `type` int(11) NOT NULL DEFAULT '0',
+  `type_id` int(11) NOT NULL DEFAULT '0',
   `feedback` tinyint(1) NOT NULL DEFAULT '0',
   `control` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
