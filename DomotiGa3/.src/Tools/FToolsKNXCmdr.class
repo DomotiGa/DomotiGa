@@ -614,7 +614,6 @@ Public Sub SelectValuesAndLabel(sSelected As String)
   Dim aDPT, aUnits As String[]
   Dim aFound As New String[]
   Dim sValue, sFound As String
-  Dim iFound As Integer
 
   ' blank field selected
   If Not Len(sSelected) Then
@@ -755,24 +754,65 @@ Public Sub btnCopyDevice_Click()
   If tbvDevicesFound.Row = -1 Then Return
 
   ' copy basic device info
-  cmbDeviceName.Text = tbvDevicesFound[iCurRow, 0].Text
+  txtDeviceName.Text = tbvDevicesFound[iCurRow, 0].Text
   txtDeviceAddress.Text = tbvDevicesFound[iCurRow, 1].Text
-  cmbDeviceType.Text = MapDeviceType(tbvDevicesFound[iCurRow, 2].Text)
+  MapDeviceType(tbvDevicesFound[iCurRow, 2].Text)
   DisplayAddressInfo()
 
 End
 
 Public Sub MapDeviceType(sETStype As String) As String
 
+  Dim rTypes As Result
+
+  cmbDeviceType.Clear
   Select Case sETStype
     Case "EIS 1 'Switching' (1 Bit)"
-      Return "KNX Switch"
+      rTypes = FindDeviceTypesofProtocol("KNX", "DPT 1.")
+      If rTypes Then
+        For Each rTypes
+          cmbDeviceType.Add(rTypes!name, rTypes!id)
+        Next
+      Endif
     Case "EIS 2 'Dimming - control' (4 Bit)"
-      Return "KNX Dimmer"
+      cmbDeviceType.Add("KNX Device Dimmer")
     Case "Uncertain (1 Byte)"
     Case "Uncertain (2 Byte)"
+      rTypes = FindDeviceTypesofProtocol("KNX", "DPT 9.")
+      If rTypes Then
+        For Each rTypes
+          cmbDeviceType.Add(rTypes!name, rTypes!id)
+        Next
+      Endif
     Case "Uncertain (4 Byte)"
+    Case "All"
+      rTypes = FindDeviceTypesofProtocol("KNX", "")
+      If rTypes Then
+        For Each rTypes
+          cmbDeviceType.Add(rTypes!name, rTypes!id)
+        Next
+      Endif
   End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return devicetypes with matching description
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub FindDeviceTypesofProtocol(sProtocol As String, sDescription As String) As Result
+
+  Dim rResult As Result
+
+  Try rResult = Main.hDB.Exec("SELECT * FROM devicetypes WHERE type = &1 AND description LIKE '%" & sDescription & "%'", sProtocol)
+  If rResult Then
+    If rResult.Available Then
+      Return rResult
+    Else
+      Return Null
+    Endif
+  Else
+    Return Null
+  Endif
 
 End
 
@@ -796,12 +836,13 @@ End
 
 Private Sub DisplayAddressInfo()
 
-  ' TODO: hardcoded just for debug/experiment
   Select cmbDeviceType.Text
-    Case "KNX Dimmer"
-      txtAddressFormatInfo.Text = "Minimal 3 Group Addresses, 1st = Position (for On/Off), 2nd = Control (for Bright/Dim/Up/Down), 3rd = Value (for 90%), followed by optional Status Group Address(es)"
+    Case "KNX Device Dimmer"
+      txtAddressFormatInfo.Text = "0/1/2|1/2/3|2/3/4[|1/2/1|..] Minimal 3 Group Addresses, 1st = Position (On/Off), 2nd = Control (Bright/Dim), 3rd = Value (90%), followed by optional Group Address(es) for Status Feedback"
+    Case "KNX Device Blinds"
+      txtAddressFormatInfo.Text = "0/1/2|1/2/3|2/3/4[|1/2/1|..] Minimal 3 Group Addresses, 1st = Position (On/Off), 2nd = Control (Up/Down), 3rd = Value (90%), followed by optional Group Address(es) for Status Feedback"
     Case Else
-      txtAddressFormatInfo.Text = "Minimal 1 Group Address for Control or Value, optional one or more Status Group Addresses"
+      txtAddressFormatInfo.Text = "0/1/2[|1/2/3|..] Minimal 1 Group Address for Control or Value, optional one or more Group Address(es) for Status Feedback"
   End Select
 
 End
@@ -810,5 +851,180 @@ Private Sub AddLog(sText As String)
 
   txtDebug.Text = sText & "\n" & txtDebug.Text
   txtDebug.Pos = 0
+
+End
+
+Public Sub cmbDeviceType_Click()
+
+  txtValueUnits.Text = GetUnitsfromDeviceType(cmbDeviceType.Text)
+
+End
+
+Public Sub btnShowAll_Click()
+
+  MapDeviceType("All")
+
+End
+
+Public Sub CreateDevice(sName As String, sAddress As String, iDeviceTypeId As Integer) As Integer
+
+  Dim rResult As Result
+  Dim sResult As String
+
+  ' create device
+  Main.hDB.Begin()
+  rResult = Main.hDB.Create("devices")
+  rResult!name = sName
+  rResult!devicetype_id = iDeviceTypeId
+  rResult!interface = 13
+  rResult!address = sAddress
+  rResult!enabled = True
+  rResult!onicon = "new.png"
+  rResult!dimicon = "new.png"
+  rResult!officon = "new.png"
+  rResult!hide = False
+  rResult!dimable = False
+  rResult!switchable = False
+  rResult!firstseen = Now()
+  rResult!lastseen = Now()
+  rResult.Update()
+  Main.hDB.Commit()
+
+  sResult = "Imported device '" & sName & "' with address '" & sAddress & "' and device type '" & cmbDeviceType.Text & "'"
+  Message.Info(sResult)
+  Main.WriteDebugLog("[KNX] " & sResult & ".")
+
+  ' try to get id of created device
+  Try rResult = Main.hDB.Exec("SELECT MAX(id) AS lastid FROM devices")
+  If Not Error Then
+    Return rResult!lastid
+  Else
+    Return 0
+  Endif
+
+Catch
+   Main.WriteDebugLog("[KNX] Error trying to import KNX device '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return id for devicetype_id with devicetype name
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub FindDeviceTypeIdForDesc(sDeviceType As String) As Integer
+
+  Dim rDevice As Result
+
+  Try rDevice = Main.hDB.Exec("SELECT id FROM devicetypes WHERE name = &1", sDeviceType)
+  If rDevice.Available Then
+    Return rDevice!id
+  Else
+    Return 0
+  Endif
+
+End
+
+Public Sub btnCreate_Click()
+
+  Dim iDeviceTypeId As Integer = FindDeviceTypeIdForDesc(cmbDeviceType.Text)
+  Dim iDeviceIdCreated As Integer
+
+  If Not Len(txtDeviceName.Text) Then
+    Balloon(("Please enter a name for this device!"), txtDeviceName)
+    Return
+  Endif
+
+  If DeviceNameExist(txtDeviceName.Text) Then
+    Balloon(("Please enter a unique name for this device!"), txtDeviceName)
+    Return
+  Endif
+
+  If DeviceAddressExist(txtDeviceAddress.Text) Then
+    Balloon(("Please enter a unique address for this device!"), txtDeviceAddress)
+    Return
+  Endif
+
+  If Not Len(cmbDeviceType.Text) Then
+    Balloon(("Please select a devicetype for this device!"), cmbDeviceType)
+    Return
+  Endif
+
+  If iDeviceTypeId Then
+    iDeviceIdCreated = CreateDevice(txtDeviceName.Text, txtDeviceAddress.Text, iDeviceTypeId)
+    If iDeviceIdCreated Then
+      CreateValue(iDeviceIdCreated, txtValueNum.Text, GetUnitsfromDeviceType(cmbDeviceType.Text))
+    Endif
+  Else
+    Message.Error("Cannot find devicetype!")
+  Endif
+
+End
+
+Private Sub DeviceNameExist(sName As String, Optional iDeviceId As Integer) As Boolean
+
+  Dim iId As Integer
+
+  iId = Devices.FindIdForDevice(sName)
+  If iId And If iId <> iDeviceId Then Return True
+
+  Return False
+
+End
+
+Private Sub DeviceAddressExist(sAddress As String, Optional iDeviceId As Integer) As Boolean
+
+  Dim rResultDevice As Result
+
+  If Len(sAddress) = 0 Then Return True
+
+  rResultDevice = Main.hDB.Exec("SELECT id, address FROM devices WHERE interface = 13 AND enabled is TRUE")
+  If rResultDevice Then
+    If rResultDevice.Count Then
+      For Each rResultDevice
+        If iDeviceId Then
+          If sAddress = rResultDevice!address And If rResultDevice!id <> iDeviceId Then Return True
+        Else
+          If sAddress = rResultDevice!address Then Return True
+        Endif
+      Next
+    Endif
+  Endif
+  Return False
+
+End
+
+Private Sub GetUnitsfromDeviceType(sSelected As String) As String
+
+  Dim aUnits As String[]
+
+  ' check if unit is specified
+  aUnits = Scan(sSelected, "*(*)")
+  If aUnits.Count = 2 Then
+    Return aUnits[1]
+  Else
+    Return ""
+  Endif
+
+End
+
+Private Sub CreateValue(iDeviceId As Integer, sValueNum As String, sUnits As String)
+
+  Dim rValue, rResult As Result
+
+  ' check for valid valuenum
+  rValue = Devices.GetDevicesAndValues(["device_id": iDeviceId, "value_valuenum": sValueNum])
+  If rValue.Count >= 1 Then
+    Balloon(("This value already exists for this device!"), txtValueNum)
+    Return
+  Endif
+
+  ' create new device value
+  Main.hDB.Begin()
+  rResult = Main.hDB.Create("device_values")
+  rResult!device_id = iDeviceId
+  rResult!valuenum = sValueNum
+  rResult!value = ""
+  If Len(sUnits) Then rResult!units = sUnits
+  rResult.Update()
+  Main.hDB.Commit()
 
 End
