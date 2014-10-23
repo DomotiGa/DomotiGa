@@ -1,0 +1,1154 @@
+' Gambas class file
+
+' Description:
+' CMySensors.class
+' Connect to MySensors gateway via a serial port or Ethernet gateway.
+
+' Development Status:
+' alpha.
+
+' Credits:
+' Thanks to MySensors for the great project.
+
+' Implementation Notes
+' * See http://forum.mysensors.org/topic/506/can-one-child-sensor-id-have-multiple-values,
+'   the assumption is made every variable/type of sensor data, has a different child-sensor-id
+'
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "MySensors"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "MySensors"
+Public PluginVersion As String = "0.1"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[MySensors] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+Const sInterfaceName As String = "MySensors Interface"    ' Must match the interface field in the plugins table
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
+Private $sSerPort As String
+Private $sBaud As String
+Private $bDebug As Boolean
+Private $iRelayPort As Integer
+Private $bRelayEnabled As Boolean
+Private $bUseAck As Boolean
+
+Public hMySensorsEth As New Socket
+Public hMySensorsSer As New SerialPort
+Public hMySensorsRelayServer As New ServerSocket
+Public hMySensorsRelayClient As Object[]
+Public hMySensorsRelaySocket As New Socket
+Public tMySensorsConnect As Timer
+Public tMySensorsBusy As Timer
+Private iConnectRetry As Integer = 0 ' retries
+Private iConnectDelay As Integer = 60000 ' 1 minute
+Private RecBuf As String
+Public bSimulate As Boolean
+Private sTxMsgQueue As New String[]     ' Outgoing message queue
+Private bInterfaceBusy As Boolean       ' waiting for delay timer to finish
+Private bGatewayReady As Boolean        ' Flag to indicate we received the Gateway ready message
+
+Private iInterface As Integer
+
+' counters to prevent logfile to fill up the disk
+Private iReadErrorCount As Integer
+Private dReadErrorSDate As Date
+Private dReadErrorLDate As Date
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Definitions from http://www.mysensors.org/build/serial_api / MyMessage.h
+' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Public Struct MySensorMessage
+  node_id As Byte         ' The unique id Of the node that sends Or should receive the message(address)
+  child_sensor_id As Byte ' Each node can have several sensors attached.This Is The child - sensor - id that uniquely identifies one attached sensor
+  message_type As Byte    ' Type Of message sent - See table below
+  ack As Boolean          ' The ack parameter has the following meaning:
+                          ' - Outgoing: 0 = unacknowledged message, 1 = request ack From destination node
+                          ' - Incoming: 0 = normal message, 1 = this Is An ack message
+  sub_type As Byte        ' Depending On messageType this field has different meaning.See tables below
+  payload As String       ' The payload holds the message coming In From sensors Or instruction going out To actuators.
+End Struct
+
+' Message types
+Const C_PRESENTATION As Byte = 0
+Const C_SET As Byte = 1
+Const C_REQ As Byte = 2
+Const C_INTERNAL As Byte = 3
+Const C_STREAM As Byte = 4
+
+' Type of sensor data (for set/req/ack messages)
+Const V_TEMP As Byte = 0                 ' Temperature
+Const V_HUM As Byte = 1                  ' Humidity
+Const V_LIGHT As Byte = 2                ' Light status.0 = off 1 = On
+Const V_DIMMER As Byte = 3               ' Dimmer value.0 - 100 %
+Const V_PRESSURE As Byte = 4             ' Atmospheric Pressure
+Const V_FORECAST As Byte = 5             ' Whether forecast.One Of "stable", "sunny", "cloudy", "unstable", "thunderstorm" Or "unknown"
+Const V_RAIN As Byte = 6                 ' Amount Of rain
+Const V_RAINRATE As Byte = 7             ' Rate Of rain
+Const V_WIND As Byte = 8                 ' Windspeed
+Const V_GUST As Byte = 9                 ' Gust
+Const V_DIRECTION As Byte = 10           ' Wind direction
+Const V_UV As Byte = 11                  ' UV light level
+Const V_WEIGHT As Byte = 12              ' Weight( For scales etc)
+Const V_DISTANCE As Byte = 13            ' Distance
+Const V_IMPEDANCE As Byte = 14           ' Impedance value
+Const V_ARMED As Byte = 15               ' Armed status Of a security sensor.1 = Armed, 0 = Bypassed
+Const V_TRIPPED As Byte = 16             ' Tripped status Of a security sensor.1 = Tripped, 0 = Untripped
+Const V_WATT As Byte = 17                ' Watt value For power meters
+Const V_KWH As Byte = 18                 ' Accumulated number Of KWH For a power meter
+Const V_SCENE_ON As Byte = 19            ' Turn On a scene
+Const V_SCENE_OFF As Byte = 20           ' Turn Of a scene
+Const V_HEATER As Byte = 21              ' Mode Of header.One Of "Off", "HeatOn", "CoolOn", Or "AutoChangeOver"
+Const V_HEATER_SW As Byte = 22           ' Heater switch power.1 = On , 0 = Off
+Const V_LIGHT_LEVEL As Byte = 23         ' Light level.0 - 100 %
+Const V_VAR1 As Byte = 24                ' Custom value
+Const V_VAR2 As Byte = 25                ' Custom value
+Const V_VAR3 As Byte = 26                ' Custom value
+Const V_VAR4 As Byte = 27                ' Custom value
+Const V_VAR5 As Byte = 28                ' Custom value
+Const V_UP As Byte = 29                  ' Window covering.Up.
+Const V_DOWN As Byte = 30                ' Window covering.Down.
+Const V_STOP As Byte = 31                ' Window covering.Stop.
+Const V_IR_SEND As Byte = 32             ' Send out an IR - command
+Const V_IR_RECEIVE As Byte = 33          ' This message contains a received IR - command
+Const V_FLOW As Byte = 34                ' Flow Of water( In meter)
+Const V_VOLUME As Byte = 35              ' Water volume
+Const V_LOCK_STATUS As Byte = 36         ' Set Or get Lock status.1 = Locked, 0 = Unlocked
+Const V_DUST_LEVEL As Byte = 37          ' Dust level
+Const V_VOLTAGE As Byte = 38             ' Voltage level
+Const V_CURRENT As Byte = 39             ' Current level
+
+' Type of internal messages (for internal messages)
+Const I_BATTERY_LEVEL As Byte = 0        ' Use this To report the battery level( In percent 0 - 100).
+Const I_TIME As Byte = 1                 ' Sensors can request the current Time From the Controller using this message.The Time will be reported As The seconds since 1970
+Const I_VERSION As Byte = 2              ' Sensors report their Library version at startup using this message type
+Const I_ID_REQUEST As Byte = 3           ' Use this To request a unique node id From the controller.
+Const I_ID_RESPONSE As Byte = 4          ' Id response back To sensor.Payload contains sensor id.
+Const I_INCLUSION_MODE As Byte = 5       ' Start / Stop inclusion mode Of the Controller(1 = start, 0 = Stop ).
+Const I_CONFIG As Byte = 6               ' Config request From node.Reply With (M)etric Or (I)mperal back To sensor.
+Const I_FIND_PARENT As Byte = 7          ' When a sensor starts up, it broadcast a search request To all neighbor nodes.They reply With a I_FIND_PARENT_RESPONSE.
+Const I_FIND_PARENT_RESPONSE As Byte = 8 ' Reply message type To I_FIND_PARENT request.
+Const I_LOG_MESSAGE As Byte = 9          ' Sent by the gateway To the Controller To trace - Log a message
+Const I_CHILDREN As Byte = 10            ' A message that can be used To transfer child sensors( From EEPROM routing table) Of a repeating node.
+Const I_SKETCH_NAME As Byte = 11         ' Optional sketch name that can be used To identify sensor In the Controller GUI
+Const I_SKETCH_VERSION As Byte = 12      ' Optional sketch version that can be reported To keep track Of the version Of sensor In the Controller GUI.
+Const I_REBOOT As Byte = 13              ' Used by OTA firmware updates.Request For node To reboot.
+Const I_GATEWAY_READY As Byte = 14       ' Send by gateway To controller when startup Is Complete.
+
+' Type of sensor  (for presentation message)
+Const S_DOOR As Byte = 0                 ' Door And window sensors
+Const S_MOTION As Byte = 1               ' Motion sensors
+Const S_SMOKE As Byte = 2                ' Smoke sensor
+Const S_LIGHT As Byte = 3                ' Light Actuator( On / off)
+Const S_DIMMER As Byte = 4               ' Dimmable device Of some kind
+Const S_COVER As Byte = 5                ' Window covers Or shades
+Const S_TEMP As Byte = 6                 ' Temperature sensor
+Const S_HUM As Byte = 7                  ' Humidity sensor
+Const S_BARO As Byte = 8                 ' Barometer sensor(Pressure)
+Const S_WIND As Byte = 9                 ' Wind sensor
+Const S_RAIN As Byte = 10                ' Rain sensor
+Const S_UV As Byte = 11                  ' UV sensor
+Const S_WEIGHT As Byte = 12              ' Weight sensor For scales etc.
+Const S_POWER As Byte = 13               ' Power measuring device, Like power meters
+Const S_HEATER As Byte = 14              ' Heater device
+Const S_DISTANCE As Byte = 15            ' Distance sensor
+Const S_LIGHT_LEVEL As Byte = 16         ' Light sensor
+Const S_ARDUINO_NODE As Byte = 17        ' Arduino node device
+Const S_ARDUINO_RELAY As Byte = 18       ' Arduino repeating node device
+Const S_LOCK As Byte = 19                ' Lock device
+Const S_IR As Byte = 20                  ' Ir sender / receiver device
+Const S_WATER As Byte = 21               ' Water meter
+Const S_AIR_QUALITY As Byte = 22         ' Air quality sensor e.g.MQ - 2
+Const S_CUSTOM As Byte = 23              ' Use this For custom sensors where no other fits.
+Const S_DUST As Byte = 24                ' Dust level sensor
+Const S_SCENE_CONTROLLER As Byte = 25    ' Scene controller device
+
+Private sTypes As String[] = [
+  "Door/window sensor",
+  "Motion sensor",
+  "Light switch",
+  "Dimmer",
+  "Window cover/shade",
+  "Temperature sensor",
+  "Humidity sensor",
+  "Pressure sensor",
+  "Wind sensor",
+  "Rain sensor",
+  "UV sensor",
+  "Weight sensor",
+  "Power measuring device",
+  "Heater device",
+  "Distance sensor",
+  "Light sensor",
+  "Arduino node device",
+  "Arduino repeating node device",
+  "Lock device",
+  "IR transceiver",
+  "Water meter",
+  "Air quality sensor",
+  "Custom sensor",
+  "Dust sensor",
+  "Scene controller"]
+
+' Type of data stream  (for streamed message)
+Const ST_FIRMWARE_CONFIG_REQUEST As Byte = 0
+Const ST_FIRMWARE_CONFIG_RESPONSE As Byte = 1
+Const ST_FIRMWARE_REQUEST As Byte = 2
+Const ST_FIRMWARE_RESPONSE As Byte = 3
+Const ST_SOUND As Byte = 4
+Const ST_IMAGE As Byte = 5
+
+' Payload types
+Const P_STRING As Byte = 0
+Const P_BYTE As Byte = 1
+Const P_INT16 As Byte = 2
+Const P_UINT16 As Byte = 3
+Const P_LONG32 As Byte = 4
+Const P_ULONG32 As Byte = 5
+Const P_CUSTOM As Byte = 6
+Const P_FLOAT32 As Byte = 7
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sInterface = cPl.Settings["type"]
+  $sSerPort = cPl.Settings["serialport"]
+  $sBaud = cPl.Settings["baudrate"]
+  $bRelayEnabled = cPl.Settings["relayenabled"]
+  $iRelayPort = cPl.Settings["relayport"]
+  $bDebug = cPl.Settings["debug"]
+  $bUseAck = cPl.Settings["useack"]
+
+  ' "Cache" interface ID
+  iInterface = Devices.FindInterface(sInterfaceName)
+  If iInterface == 0 Then
+    Main.WriteLog(LogLabel & "ERROR: No interface ID found for '" & sInterfaceName & "'")
+    Return
+  Endif
+
+  ' Connect/Initialize connection
+  bGatewayReady = False
+  If InStr($sInterface, "tcp") Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
+
+  ' Previously in the code it was check if the MySensorsEth object was created, but
+  ' that was useless for TCP connections (they never fail while the TCP will setup)
+
+  ' Start MySensors Relaying
+  If $bRelayEnabled Then
+    If StartRelay() Then
+      Main.WriteLog(LogLabel & "Relay listening for client on port " & $iRelayPort)
+    Else
+      Main.WriteLog(LogLabel & "ERROR: Relay FAILED to listen on port " & $iRelayPort)
+    Endif
+  Else
+    Main.WriteLog(LogLabel & "Relay disabled.")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Standard sub to handle commands for a plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim bNodeID As Integer
+  Dim iDeviceId As Integer
+  Dim MySenMsg As New MySensorMessage
+  Dim NodeChild As String[]
+  Dim iValue As Integer
+  Dim sValue As String
+  Dim rDim As New RegExp
+  Dim rValues As Result
+  Dim iValSwitch, iValDim As Integer
+  Dim rValue As New RegExp
+
+  ' Address is the node ID
+  bNodeID = Val(sAddress)
+  iDeviceId = Devices.Find(Instance, Str(bNodeID), iInterface)
+  If iDeviceId == 0
+    Main.WriteLog(LogLabel & "ERROR: No node with address " & sAddress)
+    Return
+  Endif
+
+  ' Get all values of the device
+  rValues = Devices.GetValues(["device_id": Str(iDeviceId)])
+  rValue.Compile("V_[A-Z0-9]+)")
+  For Each rValues
+    ' Try to get the sub-type from the description
+    If rValues!description And rValue.Exec(rValues!description) Then
+      sValue = rValue.SubMatches(1)
+      Select sValue
+        Case "V_LIGHT"
+          iValSwitch = rValue!id
+        Case "V_DIMMER"
+          iValDim = rValue!id
+        Case "V_SCENE_ON"
+        Case "V_SCENE_OFF"
+        Case "V_HEATER"
+        Case "V_HEATER_SW"
+          iValSwitch = rValue!id
+        Case "V_UP"
+        Case "V_DOWN"
+        Case "V_STOP"
+        Case "V_IR_SEND"
+        Case "V_LOCK_STATUS"
+          iValSwitch = rValue!id
+      End Select
+    Endif
+  Next
+  ' child-sensor-id is the Value num - 1
+
+  ' Command should be something like "On", "Off", "Dim 50"
+  rDim.Compile("dim\\s+(\\d+)")
+  Select LCase(sCmd)
+    Case "on"
+      iValue = 1
+    Case "off"
+      iValue = 0
+    Case Like rDim
+      iValue = Val(rDim.SubMatches(1))
+  End Select
+
+  ' Address: node (for child = 0) or node.child, for example 5, 10.1, 7.2
+  NodeChild = Split(sAddress, ".")
+  If NodeChild.Length == 1 Then
+    NodeChild.Add("0")
+  Endif
+
+  With MySenMsg
+    .node_id = bNodeID
+    .child_sensor_id = Val(NodeChild[1])
+    .message_type = C_SET
+    .ack = $bUseAck
+    .sub_type = V_TEMP
+    .payload = Str(iValue)
+  End With
+
+  QueuePacket(MySenMsg)
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add packet to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueuePacket(MySenMsg As MySensorMessage)
+
+  Dim sMsgText As String
+
+  sMsgText = Str(MySenMsg.node_id) & ";"
+  sMsgText &= Str(MySenMsg.child_sensor_id) & ";"
+  sMsgText &= Str(MySenMsg.message_type) & ";"
+  sMsgText &= IIf(MySenMsg.ack, "1", "0") & ";"
+  sMsgText &= Str(MySenMsg.sub_type) & ";"
+  sMsgText &= Str(MySenMsg.payload)
+
+  ' add packet to queue
+  sTxMsgQueue.Add(sMsgText & "\n")
+
+  ' if controller is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
+
+  Dim sMsgText As String[]
+
+  If bGatewayReady And sTxMsgQueue.Count > 0 Then
+    ' "Extract" first/oldest entry from the queue
+    sMsgText = sTxMsgQueue.Extract(0, 1)
+    SendMessage(sMsgText[0])
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send a command to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function SendMessage(sMsgText As String)
+
+  WriteMyDebugLog("> " & sMsgText, True)
+
+  If $sInterface = "tcp" Then
+    ' send the message to the tcp stream
+    Try Write #hMySensorsEth, sMsgText, Len(sMsgText)
+    If Error Then WriteMyDebugLog("Unable to write to TCP port! -> " & Error.Text)
+  Else
+    ' send the message to the serial port
+    Try Write #hMySensorsSer, sMsgText, Len(sMsgText)
+    If Error Then WriteMyDebugLog("Unable to write to serial port! -> " & Error.Text)
+  Endif
+
+  tMySensorsBusy.Delay = 10 ' 32 bytes @ 250 kbps is 1 ms
+  tMySensorsBusy.Start
+  bInterfaceBusy = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tMySensorsBusy_Timer()
+
+  bInterfaceBusy = False
+  tMySensorsBusy.Stop
+
+  If sTxMsgQueue.Count Then ' if there are more commands left in queue, send next one
+    WriteMyDebugLog("Sending command from Queue (count = " & sTxMsgQueue.Count & ")")
+    DoQueue()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tMySensorsConnect_Timer()
+
+  If Not ConnectTCP(False) Then
+    Inc iConnectRetry
+    iConnectDelay *= iConnectRetry
+    tMySensorsConnect.Delay = iConnectDelay
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  bGatewayReady = False
+
+  ' try to close the connection
+  Try tMySensorsBusy.Stop
+  Try hMySensorsEth.Close
+  Try hMySensorsSer.Close
+  Try hMySensorsRelayServer.Close
+  Try tMySensorsConnect.Stop
+  Try hMySensorsRelayClient.Remove
+
+  If InStr($sInterface, "tcp") Then
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  Else
+    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  Endif
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' inject packet into parser.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Simulate(sPacket As String)
+
+  Dim iCnt As Integer
+
+  WriteMyDebugLog("MySensor Simulate String: " & sPacket)
+
+  For iCnt = 1 To Len(sPacket) Step 2
+    ProcessReceivedChar(Val("&H" & Mid(sPacket, iCnt, 2)))
+  Next
+  bSimulate = False
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Ethernet socket functions.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+' connect to the host:port
+Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
+
+  ' try to close the connection
+  Try hMySensorsEth.Close
+
+  ' get a new one
+  hMySensorsEth = New Socket As "MySensorsEth"
+  hMySensorsEth.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+
+Public Sub MySensorsEth_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  ' define timer for MySensors reconnect
+  tMySensorsConnect = New Timer As "tMySensorsConnect"
+  tMySensorsConnect.Delay = iConnectRetry
+  tMySensorsConnect.Stop
+
+  ' define timer for Interface busy
+  tMySensorsBusy = New Timer As "tMySensorsBusy"
+  tMySensorsBusy.Stop
+
+End
+
+
+Public Sub MySensorsEth_Closed()
+
+  WriteMyDebugLog("ERROR: TCP socket closed by peer.")
+  If iConnectRetry < 6 Then
+    WriteMyDebugLog("Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
+    tMySensorsConnect.Start
+  Endif
+
+End
+
+Public Sub MySensorsEth_Error()
+
+  Dim sMsg As String
+
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+Public Sub MySensorsEth_Read()
+
+  Dim sData As Byte
+
+  Try sData = Read #hMySensorsEth As Byte
+  If Error Then WriteMyDebugLog("Error reading data from the TCP port! -> " & Error.Text)
+  If bSimulate = False Then ProcessReceivedChar(sData)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Serial port functions.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+' connect to the serial port
+Public Function ConnectSerial() As Boolean
+
+  ' try to close the connection
+  Try hMySensorsSer.Close
+
+  ' Reset error counter
+  iReadErrorCount = 0
+  dReadErrorSDate = 0
+  dReadErrorLDate = 0
+
+  ' get a new one
+  hMySensorsSer = New Serialport As "MySensorsSer"
+  With hMySensorsSer
+    .PortName = $sSerPort
+    .Speed = $sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' define timer for Interface busy
+  tMySensorsBusy = New Timer As "tMySensorsBusy"
+  tMySensorsBusy.Stop
+
+  ' Write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  IsRunning = True
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+Public Sub MySensorsSer_Read()
+
+  Dim sData As Byte
+  Dim iStart As Integer
+  Dim iLast As Integer
+  Dim bWriteToLog As Boolean
+
+  Try sData = Read #hMySensorsSer As Byte
+  If Error Then
+    bWriteToLog = False
+    iReadErrorCount = iReadErrorCount + 1
+    If iReadErrorCount = 1 Then
+      dReadErrorSDate = Now
+      bWriteToLog = True
+    Else
+      iStart = DateDiff(dReadErrorSDate, Now, gb.Second)
+      iLast = DateDiff(dReadErrorLDate, Now, gb.Second)
+
+      ' First minute we report every second
+      If iStart < 60 And iLast >= 1 Then bWriteToLog = True
+      ' First hour we report every 5 seconds
+      If iStart >= 60 And iStart < 3600 And iLast >= 5 Then bWriteToLog = True
+      ' After first hour, we only report every minute
+      If iStart >= 3600 And iLast >= 60 Then bWriteToLog = True
+    Endif
+
+    If bWriteToLog Then
+      dReadErrorLDate = Now
+      WriteMyDebugLog("Error reading data from the serial port! -> " & Error.Text & " (Count: " & iReadErrorCount & ")")
+    Endif
+
+  Else If iReadErrorCount > 0 Then
+    iReadErrorCount = 0
+    dReadErrorSDate = 0
+    dReadErrorLDate = 0
+  Endif
+
+  If bSimulate = False Then ProcessReceivedChar(sData)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Message receive functions.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+' Process a character received by MySensorsEth_Read or MySensorsSer_Read
+Private Sub ProcessReceivedChar(bTemp As Byte)
+
+  ' relay incoming data to relay port
+  If $bRelayEnabled Then Try Write #hMySensorsRelaySocket, bTemp As Byte
+
+  If bTemp == &H0A Then ' \n --> all bytes of the packet received
+    If Len(RecBuf) > 0 Then
+      Decode_Messages(RecBuf)
+      RecBuf = ""
+    Endif
+  Else
+    RecBuf &= Chr(bTemp) ' store received char
+    If Len(RecBuf) > 128 Then
+      RecBuf = ""
+      If bGatewayReady
+        Main.WriteLog(LogLabel & "Buffer overflow, received until now '" & RecBuf & "'")
+      Endif
+    Endif
+  Endif
+
+End
+
+' function called when a complete message is received
+' Does do basic message parsing and calls other subs for the different message - types
+Private Sub Decode_Messages(sMsgText As String)
+
+  Dim MySenMsg As New MySensorMessage
+  Dim Elt As String[]
+
+  WriteMyDebugLog("< " & RecBuf)
+
+  Elt = Split(sMsgText, ";")
+  With MySenMsg
+    .node_id = Val(Elt[0])
+    .child_sensor_id = Val(Elt[1])
+    .message_type = Val(Elt[2])
+    .ack = (Elt[3] <> "0")
+    .sub_type = Val(Elt[4])
+    .payload = Elt[5]
+  End With
+
+  ' WriteMyDebugLog("Node:" & Str(MySenMsg.node_id) & "; sensor-id:" & Str(MySenMsg.child_sensor_id) & "; message-type:" & Str(MySenMsg.message_type) & "; ack:" & IIf(MySenMsg.ack, "1", "0") & "; sub-type:" & Str(MySenMsg.sub_type) & "; payload:" & MySenMsg.payload)
+
+  Select Case MySenMsg.message_type
+    Case C_PRESENTATION
+      HandlePresentation(MySenMsg)
+    Case C_SET
+      HandleSet(MySenMsg)
+    Case C_REQ
+      HandleReq(MySenMsg)
+    Case C_INTERNAL
+      HandleInternal(MySenMsg)
+    Case C_STREAM
+      HandleStream(MySenMsg)
+    Case Else
+      Main.WriteLog(LogLabel & "ERROR: Unknown message type: " & Str(MySenMsg.message_type))
+      Return
+  End Select
+
+  Catch
+    Main.WriteLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+    WriteMyDebugLog("Ignore: " & sMsgText)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle Presentation message-type
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub HandlePresentation(MySenMsg As MySensorMessage)
+
+  Dim iDeviceId, iValueNum As Integer
+  Dim sAddress As String
+  Dim sType As String
+  Dim rDevice As Result
+  Dim sName, sNewName As String
+
+  ' Address is NodeId
+  sAddress = Str(MySenMsg.node_id)
+
+  ' Get the type
+  Try sType = sTypes[MySenMsg.sub_type]
+  If Error Then
+    WriteMyDebugLog("ERROR: Node " & sAddress & ", sensor " & MySenMsg.child_sensor_id & " is presenting itself as unknown type (sub_type = " & MySenMsg.sub_type & ")")
+    Return
+  Endif
+  WriteMyDebugLog("Node " & sAddress & ", sensor " & MySenMsg.child_sensor_id & " is presenting itself as " & sType)
+
+  ' Find device. Will call Devices.AutoCreateDevice if not found and auto-create enabled
+  iDeviceId = Devices.Find(Instance, sAddress, iInterface, PluginFriendlyName)
+  If iDeviceId Then
+    iValueNum = MySenMsg.child_sensor_id + 1
+    Devices.ValueUpdate(iDeviceId, iValueNum, Null)   ' Create value if needed and update last changed
+    ' TODO: Do something with the presentation/sub-type info
+  Endif
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle Set message-type: save received values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub HandleSet(MySenMsg As MySensorMessage)
+
+  Dim iDeviceId As Integer
+  Dim iValueNum As Integer
+  Dim sAddress As String
+
+  ' For child-sensor 0 use the node-id as address, for others node-id.child-sensor
+  sAddress = Str(MySenMsg.node_id)
+  If MySenMsg.child_sensor_id <> 0 Then
+    sAddress &= "." & Str(MySenMsg.child_sensor_id)
+  Endif
+  WriteMyDebugLog("Set value '" & MySenMsg.payload & "' for node " & sAddress)
+
+  ' Find device. Will call Devices.AutoCreateDevice if not found and auto-create enabled
+  iDeviceId = Devices.Find(Instance, sAddress, iInterface, PluginFriendlyName)
+
+  ' if found then update it's value
+  If iDeviceId Then
+    iValueNum = MySenMsg.child_sensor_id + 1
+    Devices.ValueUpdate(iDeviceId, iValueNum, MySenMsg.payload)
+    ' TODO: Do something with the value type/sub_type info
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle Request message-type
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub HandleReq(MySenMsg As MySensorMessage)
+
+  Dim iDeviceId As Integer
+  Dim sAddress As String
+  Dim sValue As String
+
+  ' For child-sensor 0 use the node-id as address, for others node-id.child-sensor
+  sAddress = Str(MySenMsg.node_id)
+  If MySenMsg.child_sensor_id <> 0 Then
+    sAddress &= "." & Str(MySenMsg.child_sensor_id)
+  Endif
+  WriteMyDebugLog("Set value '" & MySenMsg.payload & "' for node " & sAddress)
+
+  ' Find device. Will call Devices.AutoCreateDevice if not found and auto-create enabled
+  iDeviceId = Devices.Find(Instance, sAddress, iInterface, PluginFriendlyName, PluginFriendlyName & " device")
+
+  ' if found, check if we have the value
+  If iDeviceId Then
+    sValue = Devices.GetCurrentValueForDevice(iDeviceId, MySenMsg.sub_type + 1)
+    If sValue == Null Then
+      WriteMyDebugLog("Node " & sAddress & " requested variable with sub-type " & MySenMsg.sub_type & " but device with id " & iDeviceId & " has no value " & MySenMsg.sub_type + 1)
+    Else
+      ' Reuse message, only update payload (and Ack)
+      MySenMsg.payload = sValue
+      MySenMsg.ack = $bUseAck
+      WriteMyDebugLog("Node " & sAddress & " requested variable with sub-type " & MySenMsg.sub_type & ", returning " & sValue & " (value " & MySenMsg.sub_type + 1 & " from device with id " & iDeviceId & ")")
+      QueuePacket(MySenMsg)
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle Internal message-type
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub HandleInternal(MySenMsg As MySensorMessage)
+
+  Select Case MySenMsg.sub_type
+    Case I_BATTERY_LEVEL         ' 0 -  Use this To report the battery level( In percent 0 - 100).
+      Devices.Battery(Devices.Find(Instance, Str(MySenMsg.node_id), iInterface, PluginFriendlyName), MySenMsg.payload)
+    Case I_TIME                  ' 1 -  Sensors can request the current Time From the Controller using this message.The Time will be reported As The seconds since 1970
+      ProvideTime(MySenMsg.node_id, MySenMsg.child_sensor_id)
+    Case I_VERSION               ' 2 -  Sensors report their Library version at startup using this message type
+      HandleVersion(MySenMsg)
+    Case I_ID_REQUEST            ' 3 -  Use this To request a unique node id From the controller.
+      ProvideNodeID()
+    Case I_ID_RESPONSE           ' 4 -  Id response back To sensor.Payload contains sensor id.
+      Main.WriteLog(LogLabel & "ERROR: Received unexpected I_ID_RESPONSE message")
+    Case I_INCLUSION_MODE        ' 5 -  Start / Stop inclusion mode Of the Controller(1 = start, 0 = Stop ).
+      Main.WriteLog(LogLabel & "ERROR: Received unexpected I_INCLUSION_MODE message")
+    Case I_CONFIG                ' 6 -  Config request From node.Reply With (M)etric Or (I)mperal back To sensor.
+      ProvideConfig(MySenMsg.node_id, MySenMsg.child_sensor_id)
+    Case I_FIND_PARENT           ' 7 -  When a sensor starts up, it broadcast a search request To all neighbor nodes.They reply With a I_FIND_PARENT_RESPONSE.
+      Main.WriteLog(LogLabel & "ERROR: Received unexpected I_FIND_PARENT message")
+    Case I_FIND_PARENT_RESPONSE  ' 8 -  Reply message type To I_FIND_PARENT request.
+      Main.WriteLog(LogLabel & "ERROR: Received unexpected I_FIND_PARENT_RESPONSE message")
+    Case I_LOG_MESSAGE           ' 9 -  Sent by the gateway To the Controller To trace - Log a message
+      WriteMyDebugLog("Gateway log message: " & MySenMsg.payload)
+    Case I_CHILDREN              ' 10 -  A message that can be used To transfer child sensors( From EEPROM routing table) Of a repeating node.
+      Main.WriteLog(LogLabel & "ERROR: Received unexpected I_FIND_PARENT_RESPONSE message")
+    Case I_SKETCH_NAME           ' 11 -  Optional sketch name that can be used To identify sensor In the Controller GUI
+      HandleSketchName(MySenMsg)
+    Case I_SKETCH_VERSION        ' 12 -  Optional sketch version that can be reported To keep track Of the version Of sensor In the Controller GUI.
+      HandleSketchVersion(MySenMsg)
+    Case I_REBOOT                ' 13 -  Used by OTA firmware updates.Request For node To reboot.
+      Main.WriteLog(LogLabel & "ERROR: Received unexpected I_REBOOT message")
+    Case I_GATEWAY_READY         ' 14 -  Send by gateway To controller when startup Is Complete.
+      HandleGatewayReady(MySenMsg)
+    Case Else
+      Main.WriteLog(LogLabel & "ERROR: Unknown internal message type: " & Str(MySenMsg.sub_type))
+  End Select
+
+End
+
+' Handle I_TIME Internal message
+Private Sub ProvideTime(bNodeID As Byte, bChildID As Byte)
+
+  Dim MySenMsg As New MySensorMessage
+  Dim iSeconds As Integer
+
+  iSeconds = DateDiff("1/1/1970", Now(), gb.Second)
+
+  With MySenMsg
+    .node_id = bNodeID
+    .child_sensor_id = bChildID
+    .message_type = C_INTERNAL
+    .ack = $bUseAck
+    .sub_type = I_TIME
+    .payload = Str(iSeconds)
+  End With
+
+  WriteMyDebugLog("Providing node " & Str(bNodeID) & "." & Str(bChildID) & " time: " & MySenMsg.payload)
+  QueuePacket(MySenMsg)
+
+End
+
+' Handle I_VERSION Internal message
+Private Sub HandleVersion(MySenMsg As MySensorMessage)
+
+  WriteMyDebugLog("No support for I_VERSION Internal message yet.")
+
+End
+
+' Handle I_ID_REQUEST Internal message
+Private Sub ProvideNodeID()
+
+  Dim MySenMsg As New MySensorMessage
+  Dim bNodeID As Byte
+  Dim bAvailable As New Boolean[256]
+  Dim rMySensDevices As Result
+
+  ' Check which Id's are still available
+  For bNodeID = 1 To 254
+    bAvailable[bNodeID] = True
+  Next
+  rMySensDevices = Main.hDB.Exec("SELECT address FROM devices WHERE interface = " & iInterface)
+  If rMySensDevices.Available Then
+    For Each rMySensDevices
+      bNodeID = Val(rMySensDevices!address)
+      bAvailable[bNodeID] = False
+    Next
+  Endif
+
+  ' Take the first NodeID available
+  For bNodeID = 1 To 255
+    If bAvailable[bNodeID] Then
+      Break
+    Endif
+  Next
+
+  With MySenMsg
+    .node_id = 255
+    .child_sensor_id = 255
+    .message_type = C_INTERNAL
+    .ack = $bUseAck
+    .sub_type = I_ID_RESPONSE
+    .payload = Str(bNodeID)
+  End With
+
+  WriteMyDebugLog("Providing node id " & Str(bNodeID))
+  QueuePacket(MySenMsg)
+
+End
+
+' Handle I_CONFIG Internal message
+Private Sub ProvideConfig(bNodeID As Byte, bChildID As Byte)
+
+  ' Config request From node.Reply With (M)etric Or (I)mperal back To sensor.
+   Dim MySenMsg As New MySensorMessage
+
+     With MySenMsg
+    .node_id = bNodeID
+    .child_sensor_id = bChildID
+    .message_type = C_INTERNAL
+    .ack = $bUseAck
+    .sub_type = I_TIME
+    .payload = "M"      ' TODO: Make this configurable
+  End With
+
+  WriteMyDebugLog("Providing node " & Str(bNodeID) & "." & Str(bChildID) & " config: " & MySenMsg.payload)
+  QueuePacket(MySenMsg)
+
+End
+
+' Handle I_SKETCH_NAME Internal message
+Private Sub HandleSketchName(MySenMsg As MySensorMessage)
+
+  ' Optional sketch name that can be used To identify sensor In the Controller GUI
+  WriteMyDebugLog("No support for I_SKETCH_NAME Internal message yet.")
+
+End
+
+' Handle I_SKETCH_VERSION Internal message
+Private Sub HandleSketchVersion(MySenMsg As MySensorMessage)
+
+  ' Optional sketch version that can be reported To keep track Of the version Of sensor In the Controller GUI.
+  WriteMyDebugLog("No support for I_SKETCH_VERSION Internal message yet.")
+
+End
+
+' Handle I_GATEWAY_READY Internal message
+Private Sub HandleGatewayReady(MySenMsg As MySensorMessage)
+
+  Dim MySenReq As New MySensorMessage
+
+  ' Send by gateway To controller when startup Is Complete.
+  bGatewayReady = True
+  WriteMyDebugLog("Gateway ready: \"" & MySenMsg.payload & "\"")
+
+  ' Ask the gateway for it's version
+  With MySenReq
+    .node_id = 0
+    .child_sensor_id = 0
+    .message_type = C_INTERNAL
+    .sub_type = I_VERSION
+    .payload = ""
+  End With
+
+  WriteMyDebugLog("Ask gateway for it's version")
+  QueuePacket(MySenReq)
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle Stream message-type
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub HandleStream(MySenMsg As MySensorMessage)
+
+  WriteMyDebugLog("Handling Stream messages not implemented yet")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Relay server functions
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function StartRelay() As Boolean
+
+  hMySensorsRelayServer = New ServerSocket As "MySensorsRelayServer"
+  hMySensorsRelayServer.Type = Net.Internet
+  hMySensorsRelayServer.Port = $iRelayPort
+  ' we start listening for max 1 connection
+  hMySensorsRelayServer.Listen(1)
+
+  If hMySensorsRelayServer.Status = Net.Active Then
+    hMySensorsRelayClient = New Object[]
+    ' all ok
+    Return True
+  Else
+    Return False
+  Endif
+
+End
+
+
+Public Sub MySensorsRelayServer_Connection(sHost As String)
+
+  hMySensorsRelaySocket = New Socket As "MySensorsRelaySocket"
+  ' accept client
+  If hMySensorsRelayServer.Status <= Net.Inactive Then Return
+  WriteMyDebugLog("Relay connection request from client " & sHost)
+
+  hMySensorsRelaySocket = hMySensorsRelayServer.Accept()
+  hMySensorsRelayClient.Add(hMySensorsRelaySocket)
+  If $bDebug Then
+    If hMySensorsRelaySocket.Status = Net.Connected Then Main.WriteLog(LogLabel & "Relay client connection from ip address " & hMySensorsRelaySocket.RemoteHost & " (" & DNS.ResolveHost(hMySensorsRelaySocket.RemoteHost) & " ) accepted.")
+  Endif
+
+End
+
+Public Sub MySensorsRelayServer_Read()
+
+  Dim sBuf As Byte
+
+  If Last.Status <> Net.Connected Then Return
+  Try sBuf = Read #Last, Lof(Last)
+
+End
+
+Public Sub MySensorsRelayServer_Error()
+
+  ' handle error
+  Select Case hMySensorsRelayServer.Status
+    Case Net.CannotCreateSocket
+      WriteMyDebugLog("Relay the system does not allow to create a socket.")
+    Case Net.CannotBindSocket
+      WriteMyDebugLog("Relay cannot bind socket.")
+    Case Net.CannotListen
+      WriteMyDebugLog("Relay cannot listen on port.")
+  End Select
+
+End
+
+Public Sub MySensorsRelayServer_Closed()
+
+  Main.WriteLog(LogLabel & "Relay client connection closed.")
+  hMySensorsRelayClient.Remove(hMySensorsRelayClient.Find(Last))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Utility functions
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+' Write to the debug log with our log label if bDebug is enabled
+Private Sub WriteMyDebugLog(sText As String, Optional bStrip As Boolean)
+
+  If Not $bDebug Then Return
+
+  Main.WriteDebugLog(LogLabel & sText, bStrip)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Retrieves the MySensors instance information for JSON-RPC and MySensors Commander
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JsonRpc_Tools_MySensors_Get(cData As Collection) As Collection
+
+  Dim cResult As New Collection
+
+  If cData = Null Then Return Null
+
+  Select cData["command"]
+
+    ' Get controller information. If working, ReceiverType, ReceiverName, etc
+    Case "controller"
+      cResult["instance_id"] = Instance
+      cResult["running"] = IsRunning
+      If Not IsRunning Then
+        cResult["errortext"] = Util.JSON_AddEmpty(ErrorText)
+      Else
+        cResult["interface"] = $sInterface
+        cResult["host"] = $sTCPHost & ":" & $iTCPPort
+        cResult["serialport"] = $sSerPort
+        cResult["baudrate"] = $sBaud
+        cResult["relayenabled"] = $bRelayEnabled
+        cResult["relayport"] = $iRelayPort
+      Endif
+      cResult["rfxcom"] = "rfxcomtrx"
+
+    Default
+      Return Null
+
+  End Select
+
+  Return cResult
+
+End
