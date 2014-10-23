@@ -10,7 +10,7 @@ UPDATE devices SET module = module+2000 WHERE module >= 500 AND module <2500;
 -- Rename device_values type field
 --
 
-ALTER TABLE device_values CHANGE COLUMN type type_id int(11) NOT NULL DEFAULT '0';
+ALTER TABLE device_values CHANGE COLUMN `type` `type_id` int(11) NOT NULL DEFAULT '0';
 
 --
 -- Correct name of old MQTTitude client
@@ -333,7 +333,7 @@ INSERT INTO `devicetypes` VALUES (659,'KNX DPT 241.800 Status SAB','DPT 241.800'
 -- Add fields to device_values
 --
 
-ALTER TABLE device_values ADD COLUMN feedback tinyint(1) NOT NULL DEFAULT '0' AFTER type;
+ALTER TABLE device_values ADD COLUMN feedback tinyint(1) NOT NULL DEFAULT '0' AFTER type_id;
 ALTER TABLE device_values ADD COLUMN control tinyint(1) NOT NULL DEFAULT '0' AFTER feedback;
 
 --
