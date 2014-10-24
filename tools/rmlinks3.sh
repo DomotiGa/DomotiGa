@@ -59,6 +59,7 @@ cp ../../DomotiGa3/.src/CLEDMatrix.class .
 cp ../../DomotiGa3/.src/CMochad.class .
 cp ../../DomotiGa3/.src/CMQTT.class .
 cp ../../DomotiGa3/.src/CMeteohub.class .
+cp ../../DomotiGa3/.src/CMySensors.class .
 cp ../../DomotiGa3/.src/CNcid.class .
 cp ../../DomotiGa3/.src/CLGTV.class .
 cp ../../DomotiGa3/.src/CLIRC.class .
