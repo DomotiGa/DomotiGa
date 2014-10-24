@@ -19,6 +19,9 @@ Public hReadJson As HttpClient
 Public hPostJson As HttpClient
 Public cJsonData As New Collection
 
+Private oSoftDimmingTimers As New Object[]
+Public tSoftDimmingTimer As CTimerSoftDimming
+
 ' trigger database table
 ' description        | type | param1   | param2  | param3  | param4 | param5  | param6 | param7
 ' time now           |   1  | crontab
@@ -492,6 +495,7 @@ End
 ' send NMA          | 18                 | nma message to send
 ' send Pushover     | 19                 | pushover message to send  | optional priority    | optional sound       | Devices list
 ' send Pushbullet   | 20                 | pushbullet message to send| optional title (default 'DomotiGa') | optional deviceid ('all' for all devices)
+' soft dimming      | 21                 | deviceid                  | minutes              | value
 
 ' Action to be run. If iAction=0 then cData has to be applied and it will be a "manual" action.
 ' Returns action type and raises Error if something goes wrong
@@ -674,6 +678,17 @@ Public Sub RunAction(iAction As Integer, iOrder As Integer, iEventId As Integer,
         Plugin.GetPluginObject("Pushbullet", 1).Interface.PostPushBullet(sParam3, ParseText(sParam1), sParam2)
       Else
         Error.Raise("Pushover support is disabled!")
+      Endif
+    Case 21 ' soft dimming
+       If Devices.CheckIfDeviceExists(sParam1) Then
+        SoftDimming(sParam1, sParam2, sParam3)
+        If iAction >= 1 Then
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Action with id ") & iAction & (" started soft dimming"))
+        Else
+          If Main.bEventsDebug Then Main.WriteDebugLog(("[Events] 3b. Manual action started soft dimming"))
+        Endif
+      Else
+        Error.Raise("Device with id " & sParam1 & " doesn't exists!")
       Endif
     Case Else
       Error.Raise("Unsupported action type " & iType & "!")
@@ -1170,4 +1185,95 @@ Public Sub GetActionList() As Result
 
 End
 
+Public Function SoftDimming(iDeviceId As Integer, iMinutes As Integer, iResultValue As Integer) As String
 
+  Dim oObject As Object
+  Dim sValue As String
+  Dim aDim As String[]
+  Dim iDim As Integer = 0
+
+  If Not Devices.CheckIfDimable(iDeviceId) Then
+     If Main.bEventsDebug Then Main.WriteDebugLog("[Events] 3b. soft dimming, device is not dimable!")
+     Return
+  Endif
+  
+  If iMinutes <= 0 Then
+     If Main.bEventsDebug Then Main.WriteDebugLog("[Events] 3b. soft dimming, amount of minutes is invalid!")
+     Return
+  Endif
+
+  
+
+  For Each oObject In oSoftDimmingTimers
+    If oObject.DeviceId = iDeviceId Then
+      If Main.bEventsDebug Then Main.WriteDebugLog("[Events] 3b. Soft dimming timer for device id " & iDeviceId & ", canceling previous one.")
+      oObject.Stop
+      oSoftDimmingTimers.Remove(oObject)
+      Break
+    Endif
+  Next
+
+  tSoftDimmingTimer = New CTimerSoftDimming As "tSoftDimmerTimer"
+  oSoftDimmingTimers.Add(tSoftDimmingTimer)
+  tSoftDimmingTimer.Delay = 1000
+  tSoftDimmingTimer.DeviceId = iDeviceId
+  tSoftDimmingTimer.ResultValue = iResultValue
+  tSoftDimmingTimer.Ended = DateAdd(Now(), gb.Minute, iMinutes)
+  tSoftDimmingTimer.Start
+
+  Main.WriteDebugLog("[Events] 3b. soft dimming, started!")
+
+End
+
+' timer is finished, run next soft dim step
+Public Sub tSoftDimmerTimer_Timer()
+
+  Dim sValue As String
+  Dim iDim, iDiff, iDeviceId, iResultValue, iDelay As Integer
+  Dim aDim As String[]
+  Dim dEnded As Date
+
+  iDeviceId = Last.DeviceId
+  iResultValue = Last.ResultValue
+  dEnded = Last.Ended
+  Last.Stop
+
+  sValue = Devices.GetCurrentValueForDevice(iDeviceId, 1)
+  sValue = UCase(sValue)
+  If InStr(sValue, "DIM ") Then
+    aDim = Split(sValue, " ")
+    If aDim.Count = 2 Then
+      iDim = Val(aDim[1])
+    Endif 
+  Else If InStr(sValue, "ON") Then
+    iDim = 100
+  Else
+    iDim = 0
+  Endif
+
+  If iDim < iResultValue Then
+    iDim += 1
+    iDiff = iResultValue - iDim
+  Else If iDim > iResultValue Then
+    iDim -= 1
+    iDiff = iDim - iResultValue
+  Endif
+
+  If iDiff > 0 Then
+    iDelay = (DateDiff(Now(), dEnded, gb.Second) / iDiff) * 1000
+  Else
+    iDelay = 0
+  Endif
+
+  If iDim == iResultValue Or If iDelay <= 0 Then
+    Devices.SetDevice(iDeviceId, "Dim " & iResultValue)
+    oSoftDimmingTimers.Remove(oSoftDimmingTimers.Find(Last))
+    Return
+  Endif
+
+  Devices.SetDevice(iDeviceId, "Dim " & iDim)
+
+  Last.Delay = iDelay
+  Last.Start
+
+End
