@@ -487,7 +487,7 @@ INSERT INTO devicetypes VALUES (387,'WT Swimming Pool Temp Sensor','Temp Sensor'
 INSERT INTO devicetypes VALUES (388,'RGB Module','Applicance Module','TRC022','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO devicetypes VALUES (389,'Aoke Relay','Relay Module','Aoke','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO devicetypes VALUES (390,'Eurodomest Module','Appliance Module','Eurodomest','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
-INSERT INTO devicetypes VALUES (3000,'MySensors Node','Generic MySensors Node','MySensors','<node-id>','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
+INSERT INTO devicetypes VALUES (315,'MySensors Node','Generic MySensors Node','MySensors','<node-id>','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 --
 -- Remove structure for settings_domotica
 --
