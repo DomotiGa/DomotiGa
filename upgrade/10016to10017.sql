@@ -447,6 +447,7 @@ INSERT INTO plugins VALUES (83,'WeatherUnderground','','WeatherUnderground','cla
 INSERT INTO plugins VALUES (84,'OpenWeatherMap','','OpenWeatherMap','class');
 INSERT INTO plugins VALUES (85,'ForecastIo','','ForecastIo','class');
 INSERT INTO plugins VALUES (86,'TVGuide','','TVGuide','class');
+INSERT INTO plugins VALUES (87,'MySensors Interface','MySensors','MySensors','class');
 
 UPDATE plugins SET type = 'virtual' WHERE id=17;
 UPDATE plugins SET type = 'module' WHERE id=40;
@@ -486,7 +487,7 @@ INSERT INTO devicetypes VALUES (387,'WT Swimming Pool Temp Sensor','Temp Sensor'
 INSERT INTO devicetypes VALUES (388,'RGB Module','Applicance Module','TRC022','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO devicetypes VALUES (389,'Aoke Relay','Relay Module','Aoke','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 INSERT INTO devicetypes VALUES (390,'Eurodomest Module','Appliance Module','Eurodomest','010203 or 0x010203','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
-
+INSERT INTO devicetypes VALUES (3000,'MySensors Node','Generic MySensors Node','MySensors','<node-id>','','','',NULL,NULL,NULL,NULL,NULL,NULL,NULL);
 --
 -- Remove structure for settings_domotica
 --
@@ -784,6 +785,39 @@ LOCK TABLES `settings_forecastio` WRITE;
 /*!40000 ALTER TABLE `settings_forecastio` DISABLE KEYS */;
 INSERT INTO `settings_forecastio` VALUES (0,0,'API1234567890','0','0','Dordrecht',300,0),(1,0,'API1234567890','0','0','Dordrecht',300,0);
 /*!40000 ALTER TABLE `settings_forecastio` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `settings_mysensors`
+--
+
+DROP TABLE IF EXISTS `settings_mysensors`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_mysensors` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `type` varchar(32) DEFAULT NULL,
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `serialport` varchar(128) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
+  `relayenabled` tinyint(1) DEFAULT NULL,
+  `relayport` int(11) DEFAULT NULL,
+  `useack` tinyint(1) NOT NULL DEFAULT '0',
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_mysensors`
+--
+
+LOCK TABLES `settings_mysensors` WRITE;
+/*!40000 ALTER TABLE `settings_mysensors` DISABLE KEYS */;
+INSERT INTO `settings_mysensors` VALUES (0,0,'serial','192.168.100.7',5003,'/dev/ttyUSB1','115200',0,5004,-1,-1),(1,0,'serial','192.168.100.7',5003,'/dev/ttyUSB1','115200',0,5004,-1,-1);
+/*!40000 ALTER TABLE `settings_mysensors` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
