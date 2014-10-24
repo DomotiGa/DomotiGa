@@ -1,150 +1,142 @@
-================================================================================
+DomotiGa - Open Source Home Automation for Linux
+================================================
 
-  DomotiGa - Open Source Home Automation for Linux
-  Copyright (C) Ron Klinkien, The Netherlands.
+Thank you for your interest in DomotiGa!
+DomotiGa is Home Automation software for Linux written in [Gambas Basic](http://gambas.sourceforge.net/en/main.html), an excellent programming language and IDE for Linux.
 
-================================================================================
+DomotiGa has grown over the years from a tool to monitor sensors with via RFXCom interface, but nowadays you can use it to read and log data from all kind of interfaces, let it detect motion and schedule lights or appliances at certain times.
+Or get events triggered by actions of other hardware and/or software modules, called 'plugins'.
+Sending push messages via Twitter, Pushbullet, Pushover and NMA are also possible.
 
-DISCLAIMER:
-DomotiGa comes with ABSOLUTELY NO WARRANTY, to the extent permitted by applicable law.
+DomotiGa supports a long and growing [list](https://domotiga.nl/projects/domotiga/wiki/Modules) of various plugins to support for example the versatile RFXComTRX transceiver, a Razberry board on your Pi or the AEON Labs Open-Zwave dongle, Smartmeter P1 port, Plugwise dongle and more...
 
-Make sure you have read the license file called COPYING, or the programs About window contents.
-If you do not agree with it please remove this program from your computer.
+DIRECTORY STRUCTURE
+-------------------
 
-How to get DomotiGa up and running:
+```
+README.md        you are reading it now
+CHANGELOG        contains a [link](https://domotiga.nl/projects/domotiga/wiki/changelog) where to find changes between versions
+COPYING          the GPL license
+AUTHORS          the author(s)
+TODO             things to do
 
-Login as the user you want to run DomotiGa as.
-Unpack this archive, I guess you already did...
+DomotiGa3/       the Gambas3 source code for client/standalone
+DomotiGaServer3/ the Gambas3 source code for server
+rrd/             rrd databases and graphs are stored here
+logs/            this is where DomotiGa stores it's logfiles
+icons/           icons used for devices
+install/         files needed for fresh database install
+	domotiga.sql        example database layout and contents
+	domotiga-empty.sql  empty database layout and contents
+floorplans/      store your floorplan images here
+tvguide/         directory for xml tvguide related files
+upgrade/         files needed for upgrading the database
+sounds/          sounds to play
+tools/           stores startup scripts and other tooling
+wrappers/        3rd party library wrappers
+webclients       web and smartphone clients
+```
 
-Move or copy it to your home directory. (no root!)
-Check permissions/ownership of the directories tvguide, rrd and logs, they need to be writeable by the user.
+REQUIREMENTS
+------------
 
-So you have for example:
-/home/ron/domotiga
+Depends on which setup U want to use (see below) you want to use, but minimum is Gambas 3.6.0 for the server/client GUI.
+To use one of the web clients you need to install a webserver like nginx or Apache, with PHP.
 
-Inside you will find this:
+CLIENTS AND SERVER
+------------------
 
-readme.md            - you are reading it now
-CHANGELOG            - notes about changes between versions
-COPYING              - the GPL license
-AUTHORS              - the author(s)
-TODO                 - things to do
-
-<dir> DomotiGa3      - the Gambas3 source code for client/standalone
-<dir> DomotiGaServer3- the Gambas3 source code for server
-<dir> rrd            - rrd databases and graphs are stored here
-<dir> logs           - this is where DomotiGa stores it's logfiles
-<dir> icons          - icons used for devices
-<dir> install        - files needed for fresh database install
-       domotiga.sql  - example database layout and contents
-       domotiga-empty.sql  - empty database layout and contents
-<dir> floorplans     - store your floorplan images here
-<dir> tvguide        - directory for xml tvguide related files
-<dir> upgrade        - files needed for upgrading the database
-<dir> sounds         - sounds to play
-<dir> tools          - stores startup scripts and other tooling
-<dir> wrappers       - 3rd party library wrappers
-<dir> webclients     - web and smartphone clients
-
-DomotiGa3.gambas      - a precompiled executable for client/standalone
-DomotiGaServer3.gambas- a precompiled executable for server
-domotiga.conf.default        - default config file for client/standalone
-server-domotiga.conf.default - default config file for server
-(rest of the settings are stored inside the database)
-
-You need a working Gambas environment, either runtime, or development.
-Gambas should be version 3.5.2 or higher.
-Preferably the latest revision available from svn.
-
-Look on the website http://domotiga.nl for an how-to describing the installation.
-
-Next step, you need to setup an MySQL database for Domotiga.
-The version you have now does this for you when you start it.
-
-Note: if you want to change the default db user and/or password,
-you have to edit install/domotiga.sql and domotiga.conf too.
-
-If you already have an older version of DomotiGa running, just make
-sure you have copied over latest code and the upgrade directory.
-And it will upgrade the database automatically upon start.
-
-You have a few choices on how you want the basics to run:
+You have a few choices on how you want DomotiGa to setup:
 
 * Standalone
-You can have a standlone GUI (DomotiGa) as server and only client.
-(apart from any webclients)
+You can have a standlone GUI (DomotiGa3) as server and client.
 You do this by setting the Mode to 'server' in the config file.
 This is the default and will talk to all enabled hardware.
+You need server hardware with XWindows installed with a monitor or working VNC setup.
 
 * GUI client(s) and CLI server
-You can run the DomotiGaServer as server to talk to the hardware and DomotiGa as
+You can run the DomotiGaServer3 as server to talk to the hardware and DomotiGa3 as
 clients, you have to change the Mode parameter in domotiga.conf from
-server to client.
+server to client on the machines you run DomotiGa3 on.
 
 * GUI client(s) and GUI server
 You can use the standalone version as server, but with more DomotiGa instances as clients.
 So you configure on with server as Mode parameter, and the others as client, make sure the mysql host, xmlrpc and udp broadcast settings are set correctly for this.
 
-Create shortcut on Desktop
+* Web client(s)
+On low performance hardware is often better to only run the CLI server (DomotiGaServer3)
+Together with nginx or Apache as webserver and DomotiYii as the webclient.
 
-Right click on desktop and create laucher or goto menu editor
-(in Preferences on Ubuntu)
+DomotiYii is still under development, so if it doesn't do what you want right now, give us a poke!
 
-New item
-Name: DomotiGa
-Command: /home/<youruser>/domotiga/DomotiGa3.gambas
-Icon: /home/<youruser>/domotiga/icons/logo.png
+HARDWARE
+--------
 
-If you want to change/look at the source code, start the Gambas's IDE
-by clicking the icon, or by typing gambas3 inside a terminal window.
+Gambas and thus DomotiGa can run on a variety of server hardware, read more info [here](https://domotiga.nl/projects/domotiga/wiki/DomotiGa_Server_Hardware)
+Popular are the Cubieboard 2 or Cubietruck (with SSD), for a very small/test setup the Rasberry Pi can just handle it.
 
-Then select open project and browse to ~/domotiga/DomotiGa3
+INSTALL DOCUMENTATION
+---------------------
 
-If you want to start DomotiGa from within editor click on the run icon
-to start DomotiGa.
+You can find all information on our website [domotiga.nl](https://domotiga.nl)
 
-If Authentication is enabled (menu Setup->Main) you can login with:
+A draft version of the [User Guide](https://domotiga.nl/attachments/download/1167/DomotiGa-Manual-2014-January.pdf) is also available.
 
-User: admin
-Password: admin
-Can create, edit and view.
+Some more reading material:
 
-User: user
-Password: user
-Can only view.
+[Introduction](https://domotiga.nl/projects/domotiga/wiki/DomotiGa_Introduction)
 
-You can add or change user logins under menu Edit->Users
+[How to Start](https://domotiga.nl/projects/domotiga/wiki/DomotiGa_How_To_Start)
 
-================================================================================
+[Installation](https://domotiga.nl/projects/domotiga/wiki/DomotiGa_Installation)
 
-NOTES:
-I repeat; You should not run DomotiGa as 'root'!
-It's too much of a security risk.
-Use a normal user account with limited privileges.
+SCREENSHOTS
+-----------
 
-But make sure that your user account has enough permissions to read
-from/write to your serial ports and run commands needed for DomotiGa,
-like for example; hcitool (bluetooth) and rrdtool (for graphing) etc.
+https://domotiga.nl/projects/domotiga/wiki/DomotiGa_Screenshots
 
-Add the user to the group 'dialout' for serial port access if not already done.
-All hardware and software modules are disabled by default, goto the
-Setup menu to configure and enable them.
+LICENSE
+-------
 
-Read the documentation on the website for more information.
+DomotiGa is released under the GNU GPL V3 License [Full Text Version](http://domotiga.nl/projects/domotiga/repository/revisions/master/entry/COPYING).
 
-If things don't work correctly enable debug information for this module and
+Copyright (C) Ron Klinkien, The Netherlands.
+
+DISCLAIMER
+----------
+
+DomotiGa comes with ABSOLUTELY NO WARRANTY, to the extent permitted by applicable law.
+
+Make sure you have read the license file called COPYING, or the programs About window contents.
+If you do not agree with it please remove this program from your computer.
+
+DEBUGGING
+---------
+
+If things don't work correctly enable debug information for the part or plugin you have trouble with and
 examine the debug log.
 
-================================================================================
+You can post your issues or ask questions on the [forum](https://domotiga.nl/projects/domotiga/boards), open a [bug report](https://domotiga.nl/projects/domotiga/issues) or just send me a message via the [Contact form](https://domotiga.nl/contact) on the site.
 
-If you want to have suppport for your home automation hardware, you can donate  a sample, lend it to me, or send me the specs and I see what I can do. ;-)
+DEVELOPMENT
+-----------
 
-Thanks to the guys at www.domoticaforum.eu, www.rfxcom.com and www.ezhome.nl!
+If you have written some code, or want to help make DomotiGa better, please contact us, or fork this project and submit a Pull Request on GitHub.
+Gambas is a great (and free) programming language and it comes with a very nice IDE to develop with.
+If your not familiar with Gambas visit the [website](http://gambas.sourceforge.net) and/or [wiki](http://gambaswiki.org) for more information.
+
+DONATE
+------
+
+If you want to have suppport for your home automation hardware, you can donate a sample, lend it to me, or send me the specs and I see what I can do. ;-)
+You can also use [PayPal](https://domotiga.nl/#Donate-to-DomotiGa) if you like the project.
+
+Thanks to the guys at www.domoticaforum.eu, www.rfxcom.com, www.ezhome.nl and www.domotica-shop.nl!
+
 
 HAVE FUN NOW!
 
 Regards,
 Ron Klinkien aka RDNZL
-
 support@domotiga.nl
 Dordrecht, The Netherlands
