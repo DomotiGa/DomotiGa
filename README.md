@@ -15,7 +15,7 @@ DIRECTORY STRUCTURE
 
 ```
 README.md        you are reading it now
-CHANGELOG        contains a [link](https://domotiga.nl/projects/domotiga/wiki/changelog) where to find changes between versions
+CHANGELOG        contains a link to where to find changes between versions
 COPYING          the GPL license
 AUTHORS          the author(s)
 TODO             things to do
@@ -89,6 +89,8 @@ Some more reading material:
 [How to Start](https://domotiga.nl/projects/domotiga/wiki/DomotiGa_How_To_Start)
 
 [Installation](https://domotiga.nl/projects/domotiga/wiki/DomotiGa_Installation)
+
+[Changelog](https://domotiga.nl/projects/domotiga/wiki/changelog)
 
 SCREENSHOTS
 -----------
