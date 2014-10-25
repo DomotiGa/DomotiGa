@@ -17,7 +17,6 @@ rm */*.class
 rm */*.module
 mkdir -p JsonRpc
 mkdir -p Timers
-mkdir -p XmlRpc
 #
 cp Main.module.back Main.module
 cp ../../DomotiGa3/.src/Astro.module .
@@ -133,5 +132,3 @@ cp ../../DomotiGa3/.src/VoiceText.module .
 cp ../../DomotiGa3/.src/CWeatherUnderground.class .
 cp ../../DomotiGa3/.src/JsonRpc/* ./JsonRpc/
 cp ../../DomotiGa3/.src/Timers/* ./Timers/
-cp ../../DomotiGa3/.src/XmlRpc/* ./XmlRpc/
-
