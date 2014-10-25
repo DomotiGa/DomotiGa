@@ -5,7 +5,7 @@
 ' Support for creating and edit all device values parameters.
 
 ' Development Status:
-' Starting ...
+' Working.
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -72,6 +72,10 @@ Public Sub LoadDevice()
       Try chkLogDisplay.Value = rResult!device_value_logdisplay
       Try chkLogSpeak.Value = rResult!device_value_logspeak
 
+      ' control settings
+      Try chkControllable.Value = rResult!device_value_control
+      Try chkFeedback.Value = rResult!device_value_feedback
+
       ' rrdtool graph stuff
       Try chkRRD.Value = rResult!device_value_rrd
       chkRRD_Click()
@@ -81,7 +85,7 @@ Public Sub LoadDevice()
       sRRDValueType = rResult!device_value_valuerrdtype
       sValueDS = rResult!device_value_valuerrddsname
     Else
-      Message(("Couldn't load device value record!"))
+      Message("Error occurred loading device value record!")
       Me.Close
     Endif
   Else
@@ -100,6 +104,219 @@ End
 Public Sub FillCorrectionFields()
 
   tbResult.Text = Devices.CorrectValue(rResult!device_value_value, tbCorrection.Text, rResult!device_id)
+
+End
+
+Public Sub btnDeleteDevice_Click()
+
+  Select Message.Question(("Are you sure that you want to delete this device value?"), ("Yes"), ("No"))
+    Case 1
+      Devices.DeleteDeviceValue($iDeviceId, $iValueNum)
+      Me.Close
+      FDeviceValues.GetDeviceValueList()
+  End Select
+
+End
+
+Public Sub btnNewValue_Click()
+
+  Dim rValue As Result
+
+  ' check for valid valuenum
+  If Not Len(vbValueNum.Text) Then
+    Balloon.Warning("Please specify device value number.", vbValueNum)
+    Return
+  Else
+    rValue = Devices.GetDevicesAndValues(["device_id": $iDeviceId, "value_valuenum": vbValueNum.Text])
+    If rValue.Count >= 1 Then
+      Balloon(("This valuenum already exists for this device!"), vbValueNum)
+      Return
+    Endif
+  Endif
+
+  ' create new device value
+  Main.hDB.Begin()
+  rResult = Main.hDB.Create("device_values")
+  rResult!device_id = $iDeviceId
+  rResult!valuenum = vbValueNum.Text
+  rResult!value = tbValue.Text
+  rResult!correction = tbCorrection.Text
+  rResult!units = cmbUnits.Text
+  rResult!log = chkLog.Value
+  rResult!logdisplay = chkLogDisplay.Value
+  rResult!logspeak = chkLogSpeak.Value
+  rResult!rrd = chkRRD.Value
+  rResult!graph = chkGraph.Value
+  rResult!control = chkControllable.Value
+  rResult!feedback = chkFeedback.Value
+  rResult!valuerrddsname = LCase(tbValueDS.Text)
+  rResult!valuerrdtype = cmbValueType.Text
+  rResult.Update()
+  Main.hDB.Commit()
+
+  ' create RRDs if needed
+  If chkRRD.Value Then CreateRRDs($iDeviceId)
+
+  RefreshStuff()
+  Me.Close
+
+End
+
+Private Sub RefreshStuff()
+
+  ' update views
+  If FDevices.Visible Then FDevices.GetDeviceList()
+  If FControl.Visible Then FControl.ReloadPage()
+  If FDeviceValues.Visible Then FDeviceValues.GetDeviceValueList()
+  If FDeviceEditor.Visible Then FDeviceEditor.GetValueList()
+
+End
+
+Private Sub CreateRRDs(iId As Integer)
+
+  If Main.bServer Then
+    RRDTool.CreateRRD(iId)
+  Else
+    Client.CreateRRDs(iId)
+  Endif
+
+End
+
+Public Sub btnSave_Click()
+
+  Dim rResultUpdate As Result
+  Dim sSql As String
+
+  ' Check if we got a valid device id
+  If Not $iDeviceId Then
+    Message(("No valid device id supplied!"))
+    Return
+  Endif
+
+  If Main.bRRDToolEnabled = False And If chkRRD.Value = True Then
+    Message(("You also need to enable the RRDTool module!"))
+  Endif
+
+  ' check if one or more datasource names are specified if RRD is enabled
+  If chkRRD.Value Then
+    If Not tbValueDS.Text Then
+      tabDevice.Index = 2
+      Balloon(("Please define Source name!"), Frame8)
+      Return
+    Endif
+  Endif
+
+  If Not bDeletedRRD Then
+    ' check for changed RRD datasource types
+    If (Len(sRRDValueType) And sRRDValueType <> cmbValueType.Text) Or (Len(tbValueDS.Text) And sValueDS <> tbValueDS.Text) Then
+      tabDevice.Index = 2
+      Select Message.Question(("Because you change the Value RRD DS type or name,\nthe RRD database has to be deleted."), ("Delete"), ("Cancel"), ("Ignore"))
+        Case 1
+          btnDeleteRRD_Click()
+        Case 2
+          Return
+        Case 3
+      End Select
+    Endif
+  Endif
+
+  ' check for valid RRD datasource names
+  If Len(tbValueDS.Text) And If Len(CheckValidDSName(tbValueDS.Text)) Then
+    tabDevice.Index = 2
+    Balloon.Warning("A ds-name must be 1 to 19 characters long using only the characters [a-zA-Z0-9_].", tbValueDS)
+    Return
+  Endif
+
+  If $iValueNum = -1 Then
+    btnNewValue_Click()
+    Return
+  Endif
+
+  ' update value
+  sSql = "UPDATE device_values SET value = &1, correction = &2, units = &3, log = &4, logdisplay = &5, logspeak = &6, rrd = &7, "
+  sSql &= "graph = &8, valuerrddsname = &9, valuerrdtype = &{10}, control = &{11}, feedback = &{12} WHERE device_id = &{13} And valuenum = &{14}"
+
+  rResultUpdate = Main.hDB.Exec(sSql, tbValue.Text, tbCorrection.Text, cmbUnits.Text, chkLog.Value, chkLogDisplay.Value, chkLogSpeak.Value, chkRRD.Value, chkGraph.Value, LCase(tbValueDS.Text), cmbValueType.Text, chkControllable.Value, chkFeedback.Value, $iDeviceId, rResult!device_value_valuenum)
+
+  ' create RRDs if needed
+  If chkRRD.Value Then CreateRRDs($iDeviceId)
+
+  RefreshStuff()
+  Me.Close
+
+End
+
+Private Sub CheckValidDSName(sText As String) As String
+
+  Dim iCnt, iCheck As Integer
+  Dim sCheck As String
+
+  For iCnt = 1 To Len(sText)
+    sCheck = Mid(sText, iCnt, 1)
+    iCheck = Asc(sCheck)
+    If iCheck > 47 And If iCheck < 58 Then
+      Continue
+    Else If iCheck > 64 And If iCheck < 91 Then
+      Continue
+    Else If iCheck > 96 And If iCheck < 123 Then
+      Continue
+    Else If iCheck = 95 Then
+      Continue
+    Else
+      Return sCheck
+    Endif
+  Next
+
+End
+
+Public Sub btnDeleteRRD_Click()
+
+  If Main.bServer Then
+    RRDTool.DeleteRRD(rResult!device_id)
+  Else
+    Client.DeleteRRD(rResult!device_id)
+  Endif
+  bDeletedRRD = True
+
+End
+
+Public Sub btnDeleteLogValue_Click()
+
+  Select Message.Question(("Are you sure that you want to delete the selected value and for this device?"), ("Yes"), ("No"))
+    Case 1
+      Devices.EraseLog(rResult!device_id, $iValueNum)
+      DataSourceLog.Refresh
+      DataBrowserLog.Refresh
+  End Select
+
+End
+
+Public Sub btnDeleteLog_Click()
+
+  Select Message.Question(("Are you sure that you want to delete all logged values for this device?"), ("Yes"), ("No"))
+    Case 1
+      Devices.EraseLog(rResult!device_id)
+      DataSourceLog.Refresh
+      DataBrowserLog.Refresh
+  End Select
+
+End
+
+Public Sub tbCorrection_Change()
+
+  FillCorrectionFields()
+
+End
+
+Public Sub chkControllable_Click()
+
+  btnSave.Enabled = True
+
+End
+
+Public Sub chkFeedback_Click()
+
+  btnSave.Enabled = True
 
 End
 
@@ -175,179 +392,6 @@ Public Sub btnCancel_Click()
 
 End
 
-Public Sub btnDeleteDevice_Click()
-
-  Select Message.Question(("Are you sure that you want to delete this device value?"), ("Yes"), ("No"))
-    Case 1
-      Devices.DeleteDeviceValue($iDeviceId, $iValueNum)
-      Me.Close
-      FDeviceValues.GetDeviceValueList()
-  End Select
-
-End
-
-Public Sub btnNewValue_Click()
-
-  Dim rValue As Result
-
-  ' check for valid valuenum
-  If Not Len(vbValueNum.Text) Then
-    Balloon.Warning("Please specify device value number.", vbValueNum)
-    Return
-  Else
-    rValue = Devices.GetDevicesAndValues(["device_id": $iDeviceId, "value_valuenum": vbValueNum.Text])
-    If rValue.Count >= 1 Then
-      Balloon(("This valuenum already exists for this device!"), vbValueNum)
-      Return
-    Endif
-  Endif
-
-  ' create new device value
-  Main.hDB.Begin()
-  rResult = Main.hDB.Create("device_values")
-  rResult!device_id = $iDeviceId
-  rResult!valuenum = vbValueNum.Text
-  rResult!value = tbValue.Text
-  rResult!correction = tbCorrection.Text
-  rResult!units = cmbUnits.Text
-  rResult!log = chkLog.Value
-  rResult!logdisplay = chkLogDisplay.Value
-  rResult!logspeak = chkLogSpeak.Value
-  rResult!rrd = chkRRD.Value
-  rResult!graph = chkGraph.Value
-  rResult!valuerrddsname = LCase(tbValueDS.Text)
-  rResult!valuerrdtype = cmbValueType.Text
-  rResult.Update()
-  Main.hDB.Commit()
-
-  ' create RRDs if needed
-  If chkRRD.Value Then CreateRRDs($iDeviceId)
-
-  RefreshStuff()
-  Me.Close
-
-End
-
-Private Sub RefreshStuff()
-
-  ' update views
-  If FDevices.Visible Then FDevices.GetDeviceList()
-  If FControl.Visible Then FControl.ReloadPage()
-  If FDeviceValues.Visible Then FDeviceValues.GetDeviceValueList()
-  If FDeviceEditor.Visible Then FDeviceEditor.GetValueList()
-
-End
-
-Private Sub GetNewValueNum(iId As Integer) As Integer
-
-  Dim rValue As Result
-
-  rValue = Main.hDB.Exec("SELECT MAX(valuenum) AS lastvaluenum FROM device_values WHERE device_id = &1", iId)
-  If rValue Then
-    Return rValue!lastvaluenum + 1
-  Else
-    Return 1
-  Endif
-
-End
-
-Private Sub CreateRRDs(iId As Integer)
-
-  If Main.bServer Then
-    RRDTool.CreateRRD(iId)
-  Else
-    Client.CreateRRDs(iId)
-  Endif
-
-End
-
-Public Sub btnSave_Click()
-
-  Dim rResultUpdate As Result
-  Dim sSql As String
-
-  ' Check if we got a valid device id
-  If Not $iDeviceId Then
-    Message(("No valid device id supplied!"))
-    Return
-  Endif
-
-  If Main.bRRDToolEnabled = False And If chkRRD.Value = True Then
-    Message(("You also need to enable the RRDTool module!"))
-  Endif
-
-  ' check if one or more datasource names are specified if RRD is enabled
-  If chkRRD.Value Then
-    If Not tbValueDS.Text Then
-      tabDevice.Index = 2
-      Balloon(("Please define Source name!"), Frame8)
-      Return
-    Endif
-  Endif
-
-  If Not bDeletedRRD Then
-    ' check for changed RRD datasource types
-    If (Len(sRRDValueType) And sRRDValueType <> cmbValueType.Text) Or (Len(tbValueDS.Text) And sValueDS <> tbValueDS.Text) Then
-      tabDevice.Index = 2
-      Select Message.Question(("Because you change the Value RRD DS type or name,\nthe RRD database has to be deleted."), ("Delete"), ("Cancel"), ("Ignore"))
-        Case 1
-          btnDeleteRRD_Click()
-        Case 2
-          Return
-        Case 3
-      End Select
-    Endif
-  Endif
-
-  ' check for valid RRD datasource names
-  If Len(tbValueDS.Text) And If Len(CheckValidDSName(tbValueDS.Text)) Then
-    tabDevice.Index = 2
-    Balloon.Warning("A ds-name must be 1 to 19 characters long using only the characters [a-zA-Z0-9_].", tbValueDS)
-    Return
-  Endif
-
-  If $iValueNum = -1 Then
-    btnNewValue_Click()
-    Return
-  Endif
-
-  ' update value
-  sSql = "UPDATE device_values SET value = &1, correction = &2, units = &3, log = &4, logdisplay = &5, logspeak = &6, rrd = &7, "
-  sSql &= "graph = &8, valuerrddsname = &9, valuerrdtype = &{10} WHERE device_id = &{11} And valuenum = &{12}"
-
-  rResultUpdate = Main.hDB.Exec(sSql, tbValue.Text, tbCorrection.Text, cmbUnits.Text, chkLog.Value, chkLogDisplay.Value, chkLogSpeak.Value, chkRRD.Value, chkGraph.Value, LCase(tbValueDS.Text), cmbValueType.Text, $iDeviceId, rResult!device_value_valuenum)
-
-  ' create RRDs if needed
-  If chkRRD.Value Then CreateRRDs($iDeviceId)
-
-  RefreshStuff()
-  Me.Close
-
-End
-
-Private Sub CheckValidDSName(sText As String) As String
-
-  Dim iCnt, iCheck As Integer
-  Dim sCheck As String
-
-  For iCnt = 1 To Len(sText)
-    sCheck = Mid(sText, iCnt, 1)
-    iCheck = Asc(sCheck)
-    If iCheck > 47 And If iCheck < 58 Then
-      Continue
-    Else If iCheck > 64 And If iCheck < 91 Then
-      Continue
-    Else If iCheck > 96 And If iCheck < 123 Then
-      Continue
-    Else If iCheck = 95 Then
-      Continue
-    Else
-      Return sCheck
-    Endif
-  Next
-
-End
-
 Public Sub chkHide_Click()
 
   btnSave.Enabled = True
@@ -396,13 +440,6 @@ Public Sub cmbUnits_Click()
 
 End
 
-Public Sub btnDeleteRRD_Click()
-
-  RRDTool.DeleteRRD(rResult!device_id)
-  bDeletedRRD = True
-
-End
-
 Public Sub chkExtended_Click()
 
   btnSave.Enabled = True
@@ -415,36 +452,8 @@ Public Sub chkRRD_Click()
 
 End
 
-Public Sub btnDeleteLogValue_Click()
-
-  Select Message.Question(("Are you sure that you want to delete all logged entries for this value and for this device?"), ("Yes"), ("No"))
-    Case 1
-      Devices.EraseLog(rResult!device_id, $iValueNum)
-      DataSourceLog.Refresh
-      DataBrowserLog.Refresh
-  End Select
-
-End
-
-Public Sub tbCorrection_Change()
-
-  FillCorrectionFields()
-
-End
-
 Public Sub vbValueNum_KeyPress()
 
   btnSave.Enabled = True
-
-End
-
-Public Sub btnDeleteLog_Click()
-
-  Select Message.Question(("Are you sure that you want to delete all logged values for this device?"), ("Yes"), ("No"))
-    Case 1
-      Devices.EraseLog(rResult!device_id)
-      DataSourceLog.Refresh
-      DataBrowserLog.Refresh
-  End Select
 
 End

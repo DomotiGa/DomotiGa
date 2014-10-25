@@ -2,7 +2,7 @@
 
 ' Description:
 ' CPachube.class
-' Support for Pachube (pronounce: patch-bay) sensors network.
+' Support for Xively Legacy Pachube (pronounce: patch-bay) sensors network.
 
 ' Development Status:
 ' Just build, so possible bugs around.
@@ -21,7 +21,7 @@
 Public PluginName As String = "Pachube"
 Public PluginType As Integer = Plugin.Type_Module
 Public PluginFriendlyName As String = "Pachube"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "1.01"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -42,7 +42,7 @@ Private $iPushTime As Integer
 Private $sAPIKey As String
 Private $bDebug As Boolean
 
-Public hPost As New HttpClient As "hPost"
+Public hPut As New HttpClient As "hPut"
 Public tPachube As Timer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -52,11 +52,11 @@ Public tPachube As Timer
 ' - Any other code per Class
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry, Optional bRun As Boolean = True)
-  
+
   KeyName = cPl.KeyName
   Instance = cPl.Instance
   If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
-  
+
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $iFeed = cPl.Settings["feed"]
@@ -64,7 +64,7 @@ Public Sub StartPlugin(cPl As CPluginEntry, Optional bRun As Boolean = True)
   $sAPIKey = cPl.Settings["apikey"]
   $bDebug = cPl.Settings["debug"]
 
-  ' Initialize 
+  ' Initialize
   If bRun Then Run()
 
 End
@@ -100,28 +100,42 @@ Public Sub tPachube_Timer()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' create xml data and upload it to the service
+' create xml data and upload it to xively
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub UploadPachubeData()
 
-  Dim sContent As String
+  Dim sURL, sContent As String
+  Dim aHeaders As New String[]
 
   ' if we are already uploading return
-  If hPost.Status > 0 Then
-    Main.WriteLog(LogLabel & "I'm already uploading sensor data to Pachube, skipping.")
+  If hPut.Status > 0 Then
+    Main.WriteLog(LogLabel & "I'm already uploading sensor data to Pachube/Xively, skipping.")
     Return
   Endif
 
-  ' create xml string
+  ' create url with feed id and xml type
+  sURL = "https://api.xively.com/v2/feeds/" & $iFeed & ".xml"
+
+  ' get device data to upload
   sContent = CreatePachubeData()
 
-  ' use httpclient to post xml to service
-  hPost.URL = "https://www.pachube.com/api/feeds/" & $iFeed & ".xml?_method=put&key=" & $sAPIKey
-  hPost.TimeOut = 10
-  hPost.Async = True
-  hPost.Post("text/xml", sContent)
+  ' set api header for authentication
+  aHeaders.Add("X-ApiKey:" & $sAPIKey)
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & sContent)
+  ' suppress 'Continue: 100' reply
+  aHeaders.Add("Expect:")
+
+  ' use httpclient put to send data to xively
+  hPut.URL = sURL
+  hPut.TimeOut = 10
+  hPut.Async = True
+  hPut.Put("text/xml", sContent, aHeaders)
+
+  If $bDebug Then
+    Main.WriteDebugLog(LogLabel & "Posting data to feed url '" & sURL & "'.")
+    Main.WriteDebugLog(LogLabel & "Using header \"X-ApiKey: " & $sAPIKey & "\".")
+    Main.WriteDebugLog(LogLabel & sContent)
+  Endif
 
 End
 
@@ -143,27 +157,21 @@ Public Function CreatePachubeData() As String
 
   ' build header
   sXml = "<?xml version='1.0' encoding='UTF-8'?>\n"
-  sXml &= "<eeml xmlns='http://www.eeml.org/xsd/005' xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance' xsi:schemaLocation='http://www.eeml.org/xsd/005 http://www.eeml.org/xsd/005/005.xsd'>\n"
+  sXml &= "<eeml>\n"
   sXml &= "<environment>\n"
 
   ' create device entries
   If rResult.Count Then
     For Each rResult
       sXml &= "<data id='" & rResult!datastreamid & "'>\n"
-      aTags = Split(rResult!tags, ",")
-      If aTags.Count > 0 Then
-        For Each sTag In aTags
-          sXml &= "<tag>" & LTrim(sTag) & "</tag>\n"
-        Next
-      Else
-        sXml &= "<tag>" & rResult!tags & "</tag>\n"
-      Endif
+      sXml &= "<tag>" & rResult!tags & "</tag>\n"
       sValue = Devices.GetCurrentValueForDevice(rResult!deviceid, rResult!value)
-      sXml &= "<value>" & sValue & "</value>\n"
+      sXml &= "<current_value>" & sValue & "</current_value>\n"
       sXml &= "<unit symbol='" & rResult!devicelabel & "' type='" & rResult!unittype & "'>" & rResult!units & "</unit>\n"
       sXml &= "</data>\n"
     Next
   Endif
+
   ' close document
   sXml &= "</environment>\n"
   sXml &= "</eeml>\n"
@@ -175,48 +183,52 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' catch error
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub hPost_Error()
+Public Sub hPut_Error()
 
-  Log.Plugin_CURL_Error(LogLabel, "www.pachube.com", Last.Status)
+  Dim sStatus As String = Last.Status
+
+  Log.Plugin_CURL_Error(LogLabel, "api.xively.com", sStatus)
+
+  If Not $bDebug Then Return
+  Main.WriteDebugLog(LogLabel & "Error while posting to feed on xively Status: ", Last.Status)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' check http return code
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub hPost_Finished()
+Public Sub hPut_Finished()
 
   Dim iCount As Integer
 
   ' select on http result code and display message
-  Select hPost.Code
+  Select hPut.Code
     Case 0
-      If InStr(hPost.Headers[0], "HTTP/1.1 200") Or If InStr(hPost.Headers[0], "HTTP/1.1 100") Then
-        Main.WriteLog(LogLabel & "Uploaded sensor data to Pachube.")
+      If InStr(hPut.Headers[0], "HTTP/1.1 200") Or If InStr(hPut.Headers[0], "HTTP/1.1 100") Then
+        Main.WriteLog(LogLabel & "Uploaded sensor data to Pachube/Xively.")
       Else
-        Main.WriteLog(LogLabel & "Unknown error occured while uploading sensor data to Pachube!")
+        Main.WriteLog(LogLabel & "Unknown error occured while uploading sensor data to Pachube/Xively!")
       Endif
     Case 200
-      Main.WriteLog(LogLabel & "Uploaded sensor data to Pachube.")
+      Main.WriteLog(LogLabel & "Uploaded sensor data to Pachube/Xively.")
     Case 401
-      Main.WriteLog(LogLabel & "Error authenticating while uploading sensor data to Pachube!")
+      Main.WriteLog(LogLabel & "Error authenticating while uploading sensor data to Pachube/Xively!")
     Case 403
-      Main.WriteLog(LogLabel & "Error forbidden to upload sensor data to Pachube!")
+      Main.WriteLog(LogLabel & "Error forbidden to upload sensor data to Pachube/Xively!")
     Case 404
-      Main.WriteLog(LogLabel & "Error page not found while uploading sensor data to Pachube!")
+      Main.WriteLog(LogLabel & "Error page not found while uploading sensor data to Pachube/Xively!")
     Case 422
-      Main.WriteLog(LogLabel & "Error sensor data is not valid after uploading to Pachube!")
+      Main.WriteLog(LogLabel & "Error sensor data is not valid after uploading to Pachube/Xively!")
     Case 503
-      Main.WriteLog(LogLabel & "Error rate limit exceeded while uploading sensor data to Pachube!")
+      Main.WriteLog(LogLabel & "Error rate limit exceeded while uploading sensor data to Pachube/Xively!")
     Case Else
-      Main.WriteLog(LogLabel & "Unknown error occured while uploading sensor data to Pachube! (" & hPost.Code & ") " & hPost.Reason)
+      Main.WriteLog(LogLabel & "Unknown error occured while uploading sensor data to Pachube/Xively! (" & hPut.Code & ") " & hPut.Reason)
   End Select
 
   ' if debug is on print all http headers
   If Not $bDebug Then Return
-  For iCount = 0 To hPost.Headers.Count - 1
-    Main.WriteDebugLog(LogLabel & Left(hPost.Headers[iCount], Len(hPost.Headers[iCount])))
+  For iCount = 0 To hPut.Headers.Count - 1
+    Main.WriteDebugLog(LogLabel & Left(hPut.Headers[iCount], Len(hPut.Headers[iCount])))
   Next
 
 End
-

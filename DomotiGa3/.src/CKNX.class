@@ -1,0 +1,1004 @@
+' Gambas class file
+
+' Description:
+' CKNX.class
+' Provide support for KNX using eibd.
+
+' Development Status:
+' Just started developing this one.
+
+' Links:
+' http://www.auto.tuwien.ac.at/~mkoegler/index.php/eibd
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' This module is written by Timo Sariwating in 2009.
+' Updated by Ron Klinkien in 2014.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "KNX"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "KNX"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Timo Sariwating, Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[KNX] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $bKNXDebug As Boolean
+
+Public hKNX As New Socket
+Public tKNX As Timer
+
+Private Const CmdOn As Byte = &H81
+Private Const CmdOff As Byte = &H80
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $bKNXDebug = cPl.Settings["debug"]
+
+  ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Connect to the IP interface/eibd daemon
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Connect() As Boolean
+
+  ' try to close the connection
+  Try hKNX.Close
+
+  ' get a new one
+  hKNX = New Socket As "KNX"
+  hKNX.Connect($sTCPHost, $iTCPPort)
+
+  ' start timer for KNX status LED
+  tKNX = New Timer As "tKNXLED"
+  tKNX.Delay = 250
+  tKNX.Stop
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & "TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' after connecting open a group socket for group communication
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub KNX_Ready()
+
+  Dim bCommand As Byte[] = [CByte(&H00), CByte(&H26), CByte(&H00), CByte(&H00), CByte(&H00)]
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Sending the command to open a Group Socket.")
+  TransmitData(bCommand)
+
+End
+
+Public Sub KNX_Error()
+
+  Dim sMsg As String
+
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' remote end closed socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub KNX_Closed()
+
+  Main.WriteLog(LogLabel & "TCP socket closed.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get list of KNX devices and query their status
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GroupRead()
+
+  Dim rDevices As Result
+
+  ' get a list of KNX devices
+  rDevices = Devices.FindDevicesForInterface(Devices.FindInterface("KNX Interface"))
+  If rDevices.Count = 0 Then
+    If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "No devices found to send Group Read request to.")
+    Return
+  Endif
+  For Each rDevices
+    If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Sending Group Read request to device '" & rDevices!name & "' with address '" & rDevices!address & "'.")
+    SendGroup(rDevices!address)
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' blink led
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tKNXLED_Timer()
+
+  Main.ControlLed("KNX", "Off")
+  tKNX.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send a packet to the KNX interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub TransmitData(bCommand As Byte[])
+
+  Dim bData As Byte
+  Dim iLen As Integer = bCommand.Count
+
+  If hKNX.Status <> Net.Connected Then
+    Main.WriteDebugLog(LogLabel & "ERROR: " & PluginFriendlyName & " Not connected to gateway: '" & Error.Text & "' at '" & Error.Where & "'!")
+    Return
+  Endif
+
+  bCommand.Add(&H00, 0)
+  bCommand.Add(Hex(iLen), 1)
+  bCommand.Write(hKNX, 0, bCommand.Length)
+
+  If Not $bKNXDebug Then Return
+  Main.WriteDebugLog(LogLabel & ">", True)
+  For Each bData In bCommand
+    Main.WriteDebugLogChars(" " & Hex(bData, 2), True)
+  Next
+  Main.WriteDebugLogChars("\n", True)
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hKNX.Close
+
+  Main.WriteLog(LogLabel & "TCP Server closed.")
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read KNX socket data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub KNX_Read()
+
+  Dim aBuffer As New Byte[512]
+  Dim iCnt As Integer
+  Dim sDevice, sAddress As String
+  Dim aReceived As New String[0]
+
+  If hKNX.Status <> Net.Connected Then
+    Main.WriteDebugLog(LogLabel & "Not connected to " & PluginFriendlyName & " gateway: '" & ERROR.Text & "' at '" & ERROR.Where & "'")
+    Return
+  Endif
+
+  aBuffer[0] = Read #hKNX As Byte ' read the first byte
+  Main.ControlLed("KNX", "On")
+  If Main.bServer Then tKNX.Start
+
+  Select aBuffer[0]
+    Case 0
+      aBuffer[1] = Read #hKNX As Byte ' read the length byte
+      For iCnt = 0 To aBuffer[1] - 1 ' read the rest of the frame
+        aBuffer[2 + iCnt] = Read #hKNX As Byte
+      Next
+  End Select
+
+  ' display raw data first
+  If $bKNXDebug Then
+    Main.WriteDebugLog(LogLabel & "<", True)
+    For iCnt = 0 To aBuffer[1] + 2
+      Main.WriteDebugLogChars(" " & Hex(aBuffer[iCnt], 2), True)
+    Next
+    Main.WriteDebugLogChars("\n", True)
+  Endif
+
+  Select Hex$(aBuffer[3])
+    Case 26 ' open group socket reply
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Received a Group Socket reply packet.")
+
+      ' request status of all known devices
+      GroupRead()
+
+    Case 27 ' group packet
+      sDevice = Addr2Str((Hex$(aBuffer[4], 2)) & (Hex(aBuffer[5], 2)), False)
+      sAddress = Addr2Str((Hex$(aBuffer[6], 2)) & (Hex$(aBuffer[7], 2)), True)
+
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Received packet from physical device with address '" & sDevice & "' to '" & sAddress & "'")
+      For iCnt = 9 To aBuffer.Length - 1
+        aReceived.Add(Hex(aBuffer[iCnt], 2))
+      Next
+
+      ' FIXME: not parsing packets from 0.0.0 also blocks scripts sending data to bus
+      ' parse data for target addresses (group)
+      ' don't parse messages we have sent
+      If sDevice <> "0.0.0" Then
+        ProcessData(sAddress, aReceived, aBuffer)
+      Endif
+
+      ' parse data for source devices (physical)
+      ' don't parse messages we have sent
+      If sDevice <> "0.0.0" Then
+        ProcessData(sDevice, aReceived, aBuffer)
+      Endif
+
+      Case Else
+        If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Received unknown packet type '" & Hex$(aBuffer[3]) & "'")
+  End Select
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' lookup the KNX devicetype and process received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessData(sAddress As String, aReceived As String[], aBuffer As String[])
+
+  Dim iDeviceId As Integer = Devices.FindRegExp(sAddress, Devices.FindInterface("KNX Interface"))
+  Dim sDeviceTypeDesc As String
+  Dim aDeviceTypeDesc As String[]
+  Dim iCnt As Integer
+
+  If iDeviceId Then
+    sDeviceTypeDesc = Devices.FindDescrForDeviceType(Devices.FindDeviceTypeForDevice(iDeviceId))
+
+    aDeviceTypeDesc = Scan(sDeviceTypeDesc, "DPT *.*")
+    If aDeviceTypeDesc.Count = 2 Then
+      Select aDeviceTypeDesc[0]
+        Case "1" ' DPT 1.* 1-Bit value, raw 0,1 -> Off,On
+          ProcessDPT1(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "5" ' DPT 5.* 1-Byte relative value, raw 00 -> 0%
+          ProcessDPT5(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "9" ' DPT 9.* 2-Byte floating point value, raw 0C 97 -> 23.5 C
+          ProcessDPT9(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "10" ' DPT 10.001 3-Byte time of day, raw 54 32 11 -> Tu 20:50:17
+          ProcessDPT10(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "11" ' DPT 11.001 3-Byte date, raw 15 0A 0E -> 21 10 14
+          ProcessDPT11(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "12" ' DPT 12.001 4-Byte unsigned value, raw 13 24 52 60 ->
+          ProcessDPT12(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "14" ' DPT 14.* 4-Byte 32-bit counter, raw  13 24 52 60 ->
+          ProcessDPT14(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case Else
+          Main.WriteDebugLog(LogLabel & "The KNX devicetype used for device with address '" & sAddress & "' is not yet supported, please report.")
+          Main.WriteDebugLog(LogLabel & "Data received: '", True)
+          For iCnt = 0 To aBuffer[1] + 2
+            Main.WriteDebugLogChars(" " & Hex(aBuffer[iCnt], 2), True)
+          Next
+          Main.WriteDebugLogChars("\n", True)
+      End Select
+    Else If sDeviceTypeDesc = "KNX Device Dimmer"
+      ' TODO: implement dimmer feedback responses
+      ' physical address dimmer to group address feedback
+    Else If sDeviceTypeDesc = "KNX Device Blinds"
+      ' TODO: implement blinds feedback responses
+      ' physical address blinds to group address feedback
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse DPT type an return converted value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ProcessDPTs(aReceived As String[], sDPT As String) As String
+
+  Dim aDPT As String[]
+  Dim iCnt As Integer
+
+  aDPT = Scan(sDPT, "*.*")
+  If aDPT.Count = 2 Then
+    Select aDPT[0]
+      Case "1" ' DPT 1.* 1-Bit value, raw 0,1 -> Off,On
+        Return ConvertDPT1(aReceived, sDPT)
+
+      Case "5" ' DPT 5.* 1-Byte relative value, raw 00 -> 0%
+        Return ConvertDPT5(aReceived, sDPT)
+
+      Case "9" ' DPT 9.* 2-Byte floating point value, raw 0C 97 -> 23.5 C
+        Return ConvertDPT9(aReceived, sDPT)
+
+      Case "10" ' DPT 10.001 3-Byte time of day, raw 54 32 11 -> Tu 20:50:17
+        Return ConvertDPT10(aReceived, sDPT)
+
+      Case "11" ' DPT 11.001 3-Byte date, raw 15 0A 0E -> 21 10 14
+        Return ConvertDPT11(aReceived, sDPT)
+
+      Case "12" ' DPT 12.001 4-Byte unsigned value, raw 13 24 52 60 ->
+        Return ConvertDPT12(aReceived, sDPT)
+
+      Case "14" ' DPT 14.* 4-Byte 32-bit counter, raw  13 24 52 60 ->
+        Return ConvertDPT14(aReceived, sDPT)
+
+      Case Else
+        Main.WriteDebugLog(LogLabel & "The DPT " & sDPT & " is not yet supported, please report.")
+        Main.WriteDebugLog(LogLabel & "Data received: '", True)
+        For iCnt = 0 To aReceived[1] + 2
+          Main.WriteDebugLogChars(" " & Hex(aReceived[iCnt], 2), True)
+        Next
+        Main.WriteDebugLogChars("\n", True)
+    End Select
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 1.* values, 1-Bit
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT1(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim sValue As String
+
+  Select Case aReceived[0]
+    Case "40", "80" ' receive/parse
+      sValue = ConvertDPT1(0, sDPT)
+    Case "41", "81" ' receive/parse
+      sValue = ConvertDPT1(1, sDPT)
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+  ' update device
+  Devices.ValueUpdate(iDeviceId, 1, sValue)
+  If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return cmd string for DPT 1.* values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT1(iRawValue As Integer, sDPT As String) As String
+
+  Dim sValue As String
+
+  Select Case sDPT
+    Case "1.001"
+      sValue = IIf(iRawValue, "On", "Off")
+    Case "1.002"
+      sValue = IIf(iRawValue, "True", "False")
+    Case "1.003"
+      sValue = IIf(iRawValue, "Enable", "Disable")
+    Case "1.004"
+      sValue = IIf(iRawValue, "Ramp", "No Ramp")
+    Case "1.005"
+      sValue = IIf(iRawValue, "Alarm", "No Alarm")
+    Case "1.006"
+      sValue = IIf(iRawValue, "High", "Low")
+    Case "1.007"
+      sValue = IIf(iRawValue, "Increase", "Decrease")
+    Case "1.008"
+      sValue = IIf(iRawValue, "Down", "Up")
+    Case "1.009"
+      sValue = IIf(iRawValue, "Start", "Stop")
+    Case "1.010"
+      sValue = IIf(iRawValue, "Active", "Inactive")
+    Case "1.011"
+      sValue = IIf(iRawValue, "Inverted", "Not Inverted")
+    Case "1.013"
+      sValue = IIf(iRawValue, "Cyclically", "Start/Stop")
+    Case "1.014"
+      sValue = IIf(iRawValue, "Calculated", "Fixed")
+    Case "1.015"
+      sValue = IIf(iRawValue, "Reset Cmd", "No Action")
+    Case "1.016"
+      sValue = IIf(iRawValue, "Ack Cmd", "No Action")
+    Case "1.017"
+      sValue = IIf(iRawValue, "Trigger 1", "Trigger 2")
+    Case "1.018"
+      sValue = IIf(iRawValue, "Occupied", "Not Occupied")
+    Case "1.019"
+      sValue = IIf(iRawValue, "Open Door", "Open Window")
+    Case "1.021"
+      sValue = IIf(iRawValue, "Or", "And")
+    Case "1.022"
+      sValue = IIf(iRawValue, "Scene B", "Scene A")
+    Case "1.100"
+      sValue = IIf(iRawValue, "Heating", "Cooling")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 1.* packet!")
+      sValue = "?"
+  End Select
+  Return sValue
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 9.* values, 2-Byte floating point
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT9(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim fValue As Float
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      fValue = ConvertDPT9(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, fValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & fValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' 2 Byte Float            E Exponent (0..15)
+' SEEEEMMM MMMMMMMM       M Mantisse (-2048...2047)
+' S Sign (0/1)            7FFFH means invalid data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ConvertDPT9(aReceived As String[], sDPT As String) As Float
+
+  Dim iExp, iMant As Integer
+  Dim iVal As Integer = Val("&H" & aReceived[1] & aReceived[2])
+
+  iMant = iVal And &H07FF
+  If (iVal And &H08000&) Then
+    iMant = iMant Or &HFFFFF800&
+    iMant = - iMant
+  Endif
+  iExp = Lsr((iVal And &H07800&), 11)
+  If (iVal And &H08000&) Then iMant = - iMant
+  Return (iMant * Lsl(1, iExp) / 100)
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 5.* values, 1-Byte relative
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT5(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim iValue As Float
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      iValue = ConvertDPT5(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, iValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' convert from hex to int
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ConvertDPT5(aReceived As String[], sDPT As String) As Integer
+
+  Return Val("&H" & aReceived[1])
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data or send for DPT 10.001 values, 3-Byte time of day
+' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT10(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim sValue As String
+  Dim aAddress As String[]
+  Dim bCommand As New Byte[9]
+
+  Select Case aReceived[0]
+    Case "80" ' receive/parse
+      sValue = ConvertDPT10(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, sValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+    Case "00" ' requested response
+      aAddress = Split(Devices.FindAddressForDevice(iDeviceId), "/")
+      bCommand[0] = &H00
+      bCommand[1] = &H27
+      bCommand[2] = Hex$(Val(aAddress[0]) & Val(aAddress[1]))
+      bCommand[3] = Val(aAddress[2])
+      bCommand[4] = &H00
+      bCommand[5] = &H80
+      bCommand[6] = Hex$(Hour(Now))
+      bCommand[7] = Hex$(Minute(Now))
+      bCommand[8] = Hex$(Second(Now))
+      TransmitData(bCommand)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & " DPT 10.001 time '" & Time(Now) & "' send to the bus.")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' 3 Byte Time
+' DDDHHHHH RRMMMMMM RRSSSSSS  H Hour
+' R Reserved                  M Minutes
+' D WeekDay                   S Seconds
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ConvertDPT10(aReceived As String[], sDPT As String) As String
+
+  Dim aWeekDays As String[] = ["", "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+  Dim iWeekDay As Integer = Lsr((aReceived[1] And &HE0), 5)
+  Dim iHour, iMin, iSec As Integer
+
+  ' FIXME: wrong weekday decoded
+
+  iHour = Val("&H" & aReceived[1]) And &H1F
+  iMin = Val("&H" & aReceived[2])
+  iSec = Val("&H" & aReceived[3])
+
+  Return aWeekdays[iWeekday] & " " & Format(iHour, "00") & ":" & Format(iMin, "00") & ":" & Format(iSec, "00")
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data or send for DPT 11.001 values, 3-Byte date
+' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT11(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim sValue As String
+  Dim aAddress As String[]
+  Dim bCommand As New Byte[9]
+
+  Select Case aReceived[0]
+    Case "80" ' receive/parse
+      sValue = ConvertDPT11(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, sValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+    Case "00" ' requested response
+      aAddress = Split(Devices.FindAddressForDevice(iDeviceId), "/")
+      bCommand[0] = &H00
+      bCommand[1] = &H27
+      bCommand[2] = Hex$(Val(aAddress[0]) & Val(aAddress[1]))
+      bCommand[3] = Val(aAddress[2])
+      bCommand[4] = &H00
+      bCommand[5] = &H80
+      bCommand[6] = Hex$(Day(Now))
+      bCommand[7] = Hex$(Month(Now))
+      bCommand[8] = Hex$(Right$(CStr(Year(Now)), 2))
+      TransmitData(bCommand)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & " DPT 11.001 date '" & Day(Now) & "/" & Month(Now) & "/" & Year(Now) & "' send to the bus.")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' 3 byte Date
+' RRRDDDDD RRRRMMMM RYYYYYYY  M Month
+' R Reserved                  Y Year
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ConvertDPT11(aReceived As String[], sDPT As String) As String
+
+  Dim iDay, iMonth, iYear As Integer
+
+  iDay = Val("&H" & aReceived[1])
+  iMonth = Val("&H" & aReceived[2])
+  iYear = Val("&H" & aReceived[3]) + 2000
+
+  Return Format(iDay, "00") & "-" & Format(iMonth, "00") & "-" & Format(iYear, "####")
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 12.001 values, 4-Byte unsigned
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT12(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim iValue As Integer
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      iValue = ConvertDPT12(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, iValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' convert from hex to 4 byte unsigned
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ConvertDPT12(aReceived As String[], sDPT As String) As Integer
+
+  Dim iValue As Integer
+
+  iValue = Val(aReceived[1] & aReceived[2] & aReceived[3] & aReceived[4]) Mod &HFFFFFFFF&
+  'Return Val("&H" & aReceived[1]) & Val("&H" & aReceived[2]) & Val("&H" & aReceived[3]) & Val("&H" & aReceived[4])
+  'Return Val(aReceived[1]), 24)) & Hex(Lsl(Val(aReceived[2]), 16)) & Hex(Lsl(Val(aReceived[3]), 8)) & Hex(aReceived[4])
+  'Return Val("&H" & aReceived[1] & aReceived[2] & aReceived[3] & aReceived[4] & "&")
+  Return iValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 14.* values, 4-Byte 32-bit counter
+' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT14(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim sValue As String
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      sValue = Format(ConvertDPT14(aReceived, sDPT), "#.###")
+      Devices.ValueUpdate(iDeviceId, 1, sValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 14 - 4 Byte Float
+' SEEEEEEE EFFFFFFF FFFFFFFF FFFFFFFF
+' S(Sign) = {0,1}
+' Exponent = [0...255]
+' Fraction = [0..8 388 607]
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ConvertDPT14(aReceived As String[], sDPT As String) As Float
+
+  Dim iSign As Integer
+  Dim fExponent, fMant As Float
+  Dim sHex As String = aReceived[1] & aReceived[2] & aReceived[3] & aReceived[4]
+
+  ' sign
+  iSign = IIf((Val("&H" & Mid(sHex, 1, 2)) And &H80) = 128, -1, 1)
+  ' exponent
+  fExponent = (Val("&H" & Mid(sHex, 1, 3)) And &H7F8) / 2 ^ 3 - 127
+  ' mantissa
+  fMant = (Val("&H" & Mid(sHex, 3, 6)) And &H7FFFFF) / 2 ^ 23 + 1
+  Return iSign * fMant * 2 ^ fExponent
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' handle received commands for EIS2 devices (dim)
+' address format is 0/1/2|0/1/3|0/1/4
+' first address is used for on/off, second start/stop, third dim value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessEIS2(iDeviceId As Integer, sReceived As String[])
+
+  Dim iPercentage As Integer
+
+  Select Case sReceived[0]
+    Case "40"
+      Devices.ValueUpdate(iDeviceId, 1, "Off")
+      iPercentage = Val("&H" & sReceived[1]) / 255 * 100
+      If iPercentage = 0 Then
+        Devices.ValueUpdate(iDeviceId, 1, "Off")
+      Else If iPercentage = 100 Then
+        Devices.ValueUpdate(iDeviceId, 1, "On")
+      Else
+        Devices.ValueUpdate(iDeviceId, 1, "Dim " & CStr(iPercentage))
+      Endif
+    Case "41"
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'On'")
+        Devices.ValueUpdate(iDeviceId, 1, "On")
+        iPercentage = Val("&H" & sReceived[1]) / 255 * 100
+        If iPercentage <> "0" And iPercentage <> "100" Then
+          If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim " & CStr(iPercentage) & "%'")
+          Devices.ValueUpdate(iDeviceId, 1, "Dim " & CStr(iPercentage))
+      Endif
+    Case "80"
+      If sReceived[1] <> "00" Then
+        iPercentage = Val("&H" & sReceived[1]) / 255 * 100
+        If iPercentage = 0 Then
+          Devices.ValueUpdate(iDeviceId, 1, "Off")
+        Else If iPercentage = 100 Then
+          Devices.ValueUpdate(iDeviceId, 1, "On")
+        Else
+          Devices.ValueUpdate(iDeviceId, 1, "Dim " & CStr(iPercentage))
+        Endif
+        If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim " & CStr(iPercentage) & "%'")
+      Else
+        If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Off'")
+        Devices.ValueUpdate(iDeviceId, 1, "Off")
+      Endif
+    Case "81"
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'On'")
+      Devices.ValueUpdate(iDeviceId, 1, "On")
+    Case "89"
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown value '" & sReceived[0] & "' received for EIS2 type data packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' prepare a command for sending status request to KNX interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub SendGroup(sAddress As String)
+
+  Dim sAddressSplit As String[]
+  Dim sAddr As String
+  Dim bCommand As New Byte[5]
+
+  If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Requesting status packet for device with address '" & sAddress & "'")
+  sAddressSplit = Split(sAddress, "/")
+  If sAddressSplit.Count = 3 Then
+    sAddr = Str2Addr(sAddressSplit[0], sAddressSplit[1], sAddressSplit[2])
+    bCommand[0] = &H00
+    bCommand[1] = &H27
+    bCommand[2] = Val("&H" & Left(sAddr, 2))
+    bCommand[3] = Val("&H" & Right(sAddr, 2))
+    bCommand[4] = &H00
+    bCommand.Add(&H00)
+    TransmitData(bCommand)
+  Else
+    sAddressSplit = Split(sAddress, "|" "/")
+    If sAddressSplit.Count = 9 Then
+      sAddr = Str2Addr(sAddressSplit[3], sAddressSplit[4], sAddressSplit[5])
+      bCommand[0] = &H00
+      bCommand[1] = &H27
+      bCommand[2] = Val("&H" & Left(sAddr, 2))
+      bCommand[3] = Val("&H" & Right(sAddr, 2))
+      bCommand[4] = &H00
+      bCommand.Add(&H00)
+      TransmitData(bCommand)
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' extract address from given string and prepare for sending the KNX interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CreateControlAddress(sAddress As String, Optional iPos As Integer = 1) As String
+
+  Dim aAddress As String[]
+
+  ' split group addresses and extract to convert the one we need
+  aAddress = Split(sAddress, "|" "/")
+  If aAddress.Count >= 3 * iPos Then
+    Select Case iPos
+      Case 1
+        Return Str2Addr(aAddress[0], aAddress[1], aAddress[2])
+      Case 2
+        Return Str2Addr(aAddress[3], aAddress[4], aAddress[5])
+      Case 3
+        Return Str2Addr(aAddress[6], aAddress[7], aAddress[8])
+      Case Else
+        Main.WriteDebugLog(LogLabel & "Invalid address format used for '" & sAddress & "', should be in format '0/1/2' or '0/1/2|0/1/3' or '0/1/2|0/1/3|0/1/4'")
+    End Select
+  Else
+    Main.WriteDebugLog(LogLabel & "Invalid address format used for '" & sAddress & "', should be in format '0/1/2' or '0/1/2|0/1/3' or '0/1/2|0/1/3|0/1/4'")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' prepare a command for sending to the KNX bus
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sValue As String)
+
+  Dim sAddr, sDeviceTypeDesc As String
+  Dim aDeviceTypeDesc As String[]
+  Dim iBrightness As Integer
+  Dim bCommand As New Byte[5]
+
+  sValue = UCase(sValue)
+  sDeviceTypeDesc = Devices.FindDescrForDeviceType(Devices.FindDeviceTypeForDevice(Devices.Find(Instance, sAddress, Devices.FindInterface("KNX Interface"))))
+
+  aDeviceTypeDesc = Scan(sDeviceTypeDesc, "DPT *.*")
+  If aDeviceTypeDesc.Count = 2 Then
+    Select aDeviceTypeDesc[0]
+      Case "1"
+        ' DPT 1.* 1-Bit
+        ' 0/1/2[|0/1/3|...] control and feedback address(es)
+
+        ' extract first address and convert it to knx format
+        sAddr = CreateControlAddress(sAddress)
+
+        ' check if we have 2 bytes
+        If Len(sAddr) <> 4 Then Return
+        bCommand[0] = &H00
+        bCommand[1] = &H27
+        bCommand[2] = Val("&H" & Left(sAddr, 2))
+        bCommand[3] = Val("&H" & Right(sAddr, 2))
+        bCommand[4] = &H00
+        Select Case sValue
+          Case "OFF", "DISABLE", "NO ALARM", "LOW", "DECREASE", "UP", "STOP", "INACTIVE", "TRIGGER 0", "SCENE A", "COOLING"
+            bCommand.Add(CmdOff)
+            TransmitData(bCommand)
+          Case "ON", "ENABLE", "ALARM", "HIGH", "INCREASE", "DOWN", "START", "ACTIVE", "TRIGGER 1", "SCENE B", "HEATING"
+            bCommand.Add(CmdOn)
+            TransmitData(bCommand)
+        End Select
+
+    End Select
+  Else If UCase(sDeviceTypeDesc) = "KNX DEVICE DIMMER"
+
+    ' KNX Device Actuator Basic is using three different object for control (command/control/value)
+    ' Command is for switching the light on/off (DPT 1.001 1-Bit)
+    ' Control is for start/stop dimming and brightening (4 Bit)
+    ' Value is for setting a specific brightness level(0 - 100) 1-Byte
+    ' If you have a dimmer which doesn't support start/stop specify -/-/- as middle address
+
+    bCommand[0] = &H00
+    bCommand[1] = &H27
+    bCommand[4] = &H00
+
+    Select Case sValue
+      Case "ON"
+        sAddr = CreateControlAddress(sAddress)
+        If Len(sAddr) <> 4 Then Return
+
+        bCommand[2] = Val("&H" & Left(sAddr, 2))
+        bCommand[3] = Val("&H" & Right(sAddr, 2))
+        bCommand.Add(CmdOn)
+        TransmitData(bCommand)
+      Case "OFF"
+        sAddr = CreateControlAddress(sAddress)
+        If Len(sAddr) <> 4 Then Return
+
+        bCommand[2] = Val("&H" & Left(sAddr, 2))
+        bCommand[3] = Val("&H" & Right(sAddr, 2))
+        bCommand.Add(CmdOff)
+        TransmitData(bCommand)
+      Case "STOP"
+        If InStr(sAddress, "-/-/-") Then
+          If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Dimmer 'startstop' address of '-/-/-' specified, skipping command.")  
+          Return
+        Endif
+
+        ' extract second address and convert it to knx format
+        sAddr = CreateControlAddress(sAddress, 2)
+        If Len(sAddr) <> 4 Then Return
+
+        bCommand[2] = Val("&H" & Left(sAddr, 2))
+        bCommand[3] = Val("&H" & Right(sAddr, 2))
+        bCommand.Add(&H80)
+        TransmitData(bCommand)
+      Case Else
+        If InStr(sValue, "DIM ") Then ' DIM 0-100
+          iBrightness = Val(Replace(sValue, "DIM ", ""))
+
+          ' extract third address and convert it to knx format
+          sAddr = CreateControlAddress(sAddress, 3)
+          If Len(sAddr) <> 4 Then Return
+
+          bCommand[2] = Val("&H" & Left(sAddr, 2))
+          bCommand[3] = Val("&H" & Right(sAddr, 2))
+          bCommand.Add(&H80)
+          bCommand.Add(CInt(iBrightness * 2.55))
+          TransmitData(bCommand)
+        Endif
+    End Select
+  Else If UCase(sDeviceTypeDesc) = "KNX DEVICE BLINDS"
+    ' TODO: add blinds control
+    Main.WriteDebugLog(LogLabel & "Not yet supported devicetype '" & sDeviceTypeDesc & "'!")
+  Else
+    Main.WriteDebugLog(LogLabel & "Unknown KNX devicetype '" & sDeviceTypeDesc & "'!")
+  Endif
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+Public Function Addr2Str(sAddress As String, bGroupAddress As Boolean) As String
+
+  If bGroupAddress Then
+    ' convert to group address
+    Return (Lsr((Val("&H" & sAddress)), 11) And &HF) & "/" & (Lsr((Val("&H" & sAddress)), 8) And &H7) & "/" & ((Val("&H" & sAddress)) And &HFF)
+  Else
+    ' convert to physical address
+    Return (Lsr((Val("&H" & sAddress)), 12)) & "." & (Lsr((Val("&H" & sAddress)), 8) And &HF) & "." & ((Val("&H" & sAddress)) And &HFF)
+  Endif
+
+End
+
+Public Function Str2Addr(sA1 As String, sA2 As String, sA3 As String) As String
+
+  Dim sString As String = Lsl(Val(sA1), 11) Or Lsl(Val(sA2), 8) Or Val(sA3)
+
+  Return Hex$(sString, 4)
+
+End
+

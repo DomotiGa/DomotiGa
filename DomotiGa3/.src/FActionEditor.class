@@ -18,6 +18,7 @@ Private rResult As Result
 Private iActionTab As Integer
 Private cActionTypeNames As New Collection
 Private $cDevices As New Collection
+Private vResponse As Variant
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Code which will be executed when the form opens
@@ -58,9 +59,10 @@ Public Sub Form_Open()
   ' fill combo with available devices
   cmbDevices.Add("")
   cmbDevicesJson.Add("")
+  cmbSoftDimmingDevice.Add("")
+
 
   rResultDevices = Devices.GetDevicesAndValues(["sortOrder": "name", "enabled": True, "inc_device_values": True])
-
   If rResultDevices Then
     If rResultDevices.Count Then
       For Each rResultDevices
@@ -92,6 +94,7 @@ Public Sub Form_Open()
   For Each $cDevices
     cmbDevices.Add($cDevices.Key)
     cmbDevicesJson.Add($cDevices.Key)
+    cmbSoftDimmingDevice.Add($cDevices.key)
   Next
 
    ' fill combo with json post or get
@@ -99,8 +102,13 @@ Public Sub Form_Open()
   cmbJsonMethod.Add("Post")
   cmbJsonMethod.Add("Get")
 
-  If Not bAddAction Then
-    ' fetch action details
+  If bAddAction Then
+    If Not Main.bServer Then
+      ' Only saved actions can be executed from the Client
+      btnRun.Enabled = False
+    Endif
+  Else
+    ' Existing action - fetch action details
     If bActionEdit Then
       Try rResult = Main.hDB.Exec("SELECT * FROM actions WHERE id = &1", FEvents.txtCurEvent)
     Else
@@ -121,7 +129,7 @@ Public Sub Form_Open()
       Select rResult!type
         Case 1 ' set device value
           If rResult!param1 Then cmbDevices.Text = Devices.FindNameForDevice(rResult!param1)
-          cmbValue.Index = rResult!param2
+          cmbValue.Text = "value" & rResult!param2
           txtDeviceValue.Text = rResult!param3
         Case 2 ' set global var
           cmbVariables.Text = rResult!param1
@@ -201,6 +209,16 @@ Public Sub Form_Open()
           Else
             cmbPushoverSound.Text = rResult!param3
           Endif
+          ' Destination Devices
+          txtPushoverDevices.Text = rResult!param4
+        Case 20 ' send pushbullet
+          txtPushbulletMsg.Text = rResult!param1
+          txtPushbulletTitle.Text = rResult!param2
+          txtPushbulletDeviceId.Text = rResult!param3
+        Case 21 ' soft dimming
+          If rResult!param1 Then cmbSoftDimmingDevice.Text = Devices.FindNameForDevice(rResult!param1)
+          If rResult!param2 Then vbSoftDimmingSeconds.Value = rResult!param2
+          If rResult!param3 Then vbSoftDimmingResultValue.Value = rResult!param3
       End Select
 
       tabActionTypes.SetFocus()
@@ -217,7 +235,7 @@ Public Sub Form_Open()
   For iCount = 1 To tabActionTypes.Count
     tabActionTypes[iCount - 1].Visible = False
   Next
-  
+
   ' If the number is out-of-range, set it to default
   If iActionTab < 1 Or iActionTab > tabActionTypes.Count Then
     iActionTab = 1
@@ -238,6 +256,19 @@ End
 
 Public Sub tabActionTypes_Click()
 
+  Dim iType As Integer
+
+  iType = cActionTypeNames[cmbActionTypes.Text]
+  Select iType
+    Case 13 ' delay timer
+      btnRun.Enabled = False
+      chkRandom_Click()
+    Case Else
+      If Not Main.sRPCType = "JSONRPC" Then
+        btnRun.Enabled = False
+      Endif
+  End Select
+
   EnableButtons()
 
 End
@@ -248,14 +279,10 @@ Private Sub EnableButtons()
   btnDeleteAction.Enabled = True
   btnNewAction.Enabled = True
 
-  If Not Main.sRPCType = "JSONRPC" Then
-    btnRun.Enabled = False
-  Endif
-
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Check if all fields are invalid in correctly, before we Save or Execute
+' Check if all mandatory fields are filled in, before we Save or Execute
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub CheckTypeValues() As Collection
 
@@ -431,7 +458,6 @@ Private Sub CheckTypeValues() As Collection
         Return Null
       Endif
       sParam1 = Devices.FindIdForDevice(cmbDevicesJson.Text)
-      
       If Not cmbJsonMethod.Text Then
         Balloon(("Please select a method!"), cmbJsonMethod)
         Return Null
@@ -478,6 +504,30 @@ Private Sub CheckTypeValues() As Collection
       ' Select sounds
       sParam3 = cmbPushoverSound[cmbPushoverSound.Index].Text
       If sParam3 = "pushover (default)" Then sParam3 = ""
+      
+      ' Select destination devices
+      sParam4 = txtPushoverDevices.Text
+      
+    Case 20 ' send pushbullet message
+      If Not txtPushbulletMsg.Text Then
+        Balloon(("Please enter a Pushbullet message!"), txtPushbulletMsg)
+        Return Null
+      Endif
+      sParam1 = txtPushbulletMsg.Text
+      sParam2 = txtPushbulletTitle.Text
+      sParam3 = txtPushbulletDeviceId.Text
+    Case 21 ' soft dimming
+      If Not cmbSoftDimmingDevice.Text Then
+        Balloon(("Please select a device!"), cmbSoftDimmingDevice)
+        Return Null
+      Endif
+      sParam1 = Devices.FindIdForDevice(cmbSoftDimmingDevice.Text)
+      If vbSoftDimmingSeconds.Text = 0 Then
+        Balloon("Please enter amounnt of seconds", vbSoftDimmingSeconds)
+        Return Null
+      Endif
+      sParam2 = vbSoftDimmingSeconds.Text
+      sParam3 = vbSoftDimmingResultValue.Text
   End Select
 
   ' Passed all check, return the values
@@ -813,28 +863,34 @@ End
 Public Sub btnRun_Click()
 
   Dim cData As New Collection
-  Dim bOk As Boolean
+  Dim sMessage As String
 
   If Main.bServer Then
     cData = CheckTypeValues()
     If Not cData Then Return
-    bOk = Events.RunAction(0, 0, 0, cData)
+    Try Events.RunAction(0, 0, 0, cData)
+    If Error Then
+      sMessage = "ERROR: '" & Error.Text & "' at '" & Error.Where & "' when running action!"
+    Else
+      sMessage = "Action executed"
+    Endif
   Else
     If Main.sRPCType = "JSONRPC" Then
       cData = CheckTypeValues()
       If Not cData Then Return
-      bOk = Client.RunAction(cData)
+      Try Client.RunAction(cData)
     Else
-      bOk = Client.RunAction(rResult!id)
+      cData["action_id"] = rResult!id
+      Try Client.RunAction(cData)
     Endif
-    bOk = True
+    If Error Then
+      sMessage = "Failed to execute action on the server"
+    Else
+      sMessage = "Action executed on the server"
+    Endif
   Endif
 
-  If bOk Then
-    Balloon("Action executed", btnRun)
-  Else
-    Balloon("Action failed to execute", btnRun)
-  Endif
+  Balloon(sMessage, btnRun)
 
 End
 
@@ -1031,17 +1087,15 @@ End
 
 Public Sub TextBoxJsonUrl_KeyPress()
 
-    EnableButtons()
+  EnableButtons()
 
 End
 
 Public Sub cmbJsonMethod_Click()
-  
+
   EnableButtons()
-  
+
 End
-
-
 
 Public Sub cmbActionTypes_Click()
 
@@ -1054,12 +1108,79 @@ Public Sub cmbActionTypes_Click()
   For iCount = 1 To tabActionTypes.Count
     tabActionTypes[iCount - 1].Visible = False
   Next
-  
+
   ' If the number is out-of-range, set it to default
   If iActionTab < 1 Or iActionTab > tabActionTypes.Count Then
     iActionTab = 1
   Endif
 
   tabActionTypes[iActionTab - 1].Visible = True
-  
+
+End
+
+Public Sub btnPushbulletFetchDevices_Click()
+
+  Dim vDevices As Variant
+
+  If Not Plugin.IsPluginEnabled("Pushbullet", 0) Then 
+    Message.Error("Pushbullet Plugin is not enabled!")
+    Return
+  Endif
+
+  vResponse = Plugin.GetPluginObject("Pushbullet", 1).Interface.GetDevices("", False)
+  If TypeOf(vResponse) = gb.String Then
+    Message.Error("Error:\n" & vResponse)
+  Else
+    If vResponse.Count Then
+      cmbPushbulletDevice.Clear
+      cmbPushbulletDevice.Add("")
+      cmbPushbulletDevice.Add("All")
+      For Each vDevices In vResponse
+        If vDevices["extras"]["nickname"] Then
+          cmbPushbulletDevice.Add(vDevices["extras"]["nickname"])
+        Else
+          cmbPushbulletDevice.Add(vDevices["extras"]["manufacturer"] & " " & vDevices["extras"]["model"])
+        Endif
+      Next
+    Endif
+  Endif
+
+End
+
+Public Sub cmbPushbulletDevice_Change()
+
+  btnSave.Enabled = True
+
+  If cmbPushbulletDevice.Index = 1 Then
+    txtPushbulletDeviceId.Text = "All"
+  Else If cmbPushbulletDevice.Index > 1 Then ' skip empty first line
+    Try txtPushbulletDeviceId.Text = vResponse[cmbPushbulletDevice.Index - 2]["iden"]
+  Else
+    txtPushbulletDeviceId.Text = ""
+  Endif
+
+End
+
+Public Sub txtPushoverDevices_Change()
+
+  EnableButtons()
+
+End
+
+Public Sub cmbSoftDimmingDevice_Click()
+
+   EnableButtons()
+
+End
+
+Public Sub vbSoftDimmingSeconds_Change()
+
+   EnableButtons()
+
+End
+
+Public Sub vbSoftDimmingResultValue_Change()
+
+   EnableButtons()
+
 End

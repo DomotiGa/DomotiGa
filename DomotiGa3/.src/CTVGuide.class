@@ -1,0 +1,294 @@
+' Gambas class file
+
+' Description:
+' TVGuide.module
+' Download and parse XMLTV files.
+
+' Development Status:
+' Just started, lots of things to build!
+' Only fetching channel icons and tvguide.xml is finished.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Almost all of this code is written by Kris Wauters on February, 14th - 2010
+' For more info or help: kris@digitalplayground.be
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "TVGuide"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "TVGuide"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Byte = 1
+
+Public KeyName As String
+Public LogLabel As String = "[TVGuide] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sXMLGrabCommand As String
+Private $sXMLFile As String
+Private $bDebug As Boolean
+
+Private hTVProcess As Process
+Private sMC2XMLLog As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+  
+  KeyName = cPl.KeyName
+  Instance = 1 ' Module can only have 1 instance 
+  
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sXMLGrabCommand = cPl.Settings["xmlgrabcmd"]
+  $sXMLFile = cPl.Settings["xmlfile"]
+  $bDebug = cPl.Settings["debug"]
+
+  ' Nothing to initialize 
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' grab XML with grab command string
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ImportGuide()
+
+  If Not $bEnabled Then Return
+  sMC2XMLLog = ""
+  hTVProcess = Shell ($sXMLGrabCommand) For Read Write As "hTVProcess"
+  If $bDebug Then
+    Main.WriteDebugLog(LogLabel & "Started grabbing XML with '" & $sXMLGrabCommand & "'.")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' save grab command output
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hTVProcess_Read()
+
+  '--- declare variables ---
+  Dim sLine As String
+
+  sLine = Read #hTVProcess, Lof(hTVProcess)
+  sMC2XMLLog = sMC2XMLLog & sLine
+
+End
+
+Public Sub hTVProcess_Kill()
+
+  '--- declare variables ---
+  Dim sFile As String = Temp()
+
+  '--- command not found etc. ---
+  If hTVProcess.Value Then Main.WriteDebugLog(LogLabel & "Error return value: " & hTVProcess.Value)
+  
+  ' TODO: Check if the modification date is later then the XML grab command started
+  
+  If $bDebug Then
+    File.Save(sFile, sMC2XMLLog)
+    Main.WriteDebugLog(LogLabel & "Output of '" & $sXMLGrabCommand & "' dumped to " & sFile)
+  Endif
+  
+  PushTVGuideXMLToDB()
+    
+End
+
+' get the value from a sub node of given parent with given name
+Private Function GetNamedChildValue(XmlParent As XmlNode, sName As String) As String
+  
+  Dim XmlChildNode As XmlNode
+  Dim sValue As String
+  
+  sValue = Null
+  For Each XmlChildNode In XmlParent.Children
+    If Comp(XmlChildNode.Name, sName, gb.IgnoreCase) = 0 Then
+      sValue = XmlChildNode.TextContent
+    Endif
+  Next
+  
+  Return sValue
+End
+
+' push the retrieved xml file to the DB
+' See http://wiki.xmltv.org/index.php/XMLTVFormat for the format spec
+Private Function PushTVGuideXMLToDB()
+  
+  ' declare variables
+  Dim XmlDoc As New XmlDocument
+  Dim XmlTV, XmlNode As XmlNode
+  Dim rRes As Result
+  Dim sId, sChannelName As String
+  Dim sSql As String
+  Dim sNow As String
+  Dim sStart, sStop, sChannel As String
+  Dim sTitle, sSubTitle, sDesc, sCategory As String
+  Dim iChannelCount, iProgramCount, iCategoriesCount As Integer
+        
+  sNow = Format(Now(), "yyyymmddhhnn")
+  iChannelCount = 0
+  iProgramCount = 0
+ 
+  ' read XML data into DOM object
+  XmlDoc.Open($sXMLFile)
+  XmlTV = XmlDoc.Root
+  If Comp(XmlTV.Name, "tv", gb.IgnoreCase) <> 0 Then
+    Main.WriteDebugLog(LogLabel & "Error parsing XML file: no tv xml root node found")
+    Return
+  Endif
+
+  Main.hDB.Exec("UPDATE tv_channels SET isupdated = 0")
+  Main.hDB.Exec("UPDATE tv_categories SET isupdated = 0")
+  Main.hDB.Exec("UPDATE tv_subcategories SET isupdated = 0")
+  Main.hDB.Exec("DELETE FROM tv_programs")
+    
+  For Each XmlNode In XmlTV.Children
+   
+    ' Channels
+    If Comp(XmlNode.Name, "channel", gb.IgnoreCase) = 0 Then
+     
+      ' id attribute
+      sId = XmlNode.Attributes["id"]
+      
+      ' display-name subnode
+      sChannelName = GetNamedChildValue(XmlNode, "display-name")
+      
+      ' create SQL strings; escape single quote by double quotes
+      sId = "'" & Replace(sId, "'", "''") & "'"
+      sChannelName = "'" & Replace(sChannelName, "'", "''") & "'"
+     
+      ' TODO: BLOBlogo/EXTlogo based on icon element?
+
+      ' Common things to be set
+      sSql = "SET IsUpdated = 1, ModificationDate = " & sNow & ", FK_Users = " & Main.sActiveUserID
+
+      rRes = Main.hDB.Exec("SELECT * FROM tv_channels WHERE ChannelName = " & sChannelName & " AND ChannelID = " & sId)
+      If rRes.Count Then
+        ' channel found, update modification info, and set IsUpdated
+        sSql = "UPDATE tv_channels " & sSql
+        sSql &= " WHERE ChannelName = " & sChannelName & " AND ChannelID = " & sId
+      Else
+        sSql = "INSERT INTO tv_channels " & sSql
+        sSql &= ", ChannelName = " & sChannelName & ", ChannelID = " & sId & ", CreationDate = " & sNow & ", IsUsed = 0"
+      Endif
+      Main.hDB.Exec(sSql)
+      Inc iChannelCount
+    Endif
+   
+    ' Programme's
+    If Comp(XmlNode.Name, "programme", gb.IgnoreCase) = 0 Then
+     
+      ' start, stop and channel attributes
+      sStart = XmlNode.Attributes["start"]
+      sStop = XmlNode.Attributes["stop"]
+      sChannel = XmlNode.Attributes["channel"]
+     
+      ' title/sub-title, desc, category
+      sTitle = GetNamedChildValue(XmlNode, "title")
+      sSubTitle = GetNamedChildValue(XmlNode, "sub-title")
+      If sSubTitle Then
+          sTitle &= " - " & sSubTitle
+      Endif
+      sDesc = GetNamedChildValue(XmlNode, "desc")
+      sCategory = GetNamedChildValue(XmlNode, "category")
+     
+      ' create SQL strings; escape single quote by double quotes
+      sStart = "'" & Replace(sStart, "'", "''") & "'"
+      sStop = "'" & Replace(sStop, "'", "''") & "'"
+      sChannel = "'" & Replace(sChannel, "'", "''") & "'"
+      sTitle = "'" & Replace(sTitle, "'", "''") & "'"
+      sDesc = "'" & Replace(sDesc, "'", "''") & "'"
+      sCategory = "'" & Replace(sCategory, "'", "''") & "'"
+     
+      ' TODO: First word/two words of desc for tv_grab_nl_py seems to be SubCategory
+     
+      sSql = "INSERT INTO tv_programs SET StartPoint = " & sStart & ", EndPoint = " & sStop & ", ChannelID = " & sChannel & ", "
+      sSql &= "ProgramName = " & sTitle & ", ProgramDescription = " & sDesc & ", CategoryName = " & sCategory & ", SubCategoryName = '', "
+      sSql &= "CreationDate = " & sNow & ", FK_Users = " & Main.sActiveUserID
+      Main.hDB.Exec(sSql)
+      
+      ' Can take some time so service pending events
+      If $bDebug And If (iProgramCount % 500 = 0) Then
+        Main.WriteDebugLog(LogLabel & CStr(iProgramCount) & " programs processed")
+        Wait
+      Endif
+      Inc iProgramCount
+    Endif
+  Next
+  
+  ' do a little cleanup in the channels
+  Main.hDB.Exec("DELETE FROM tv_channels WHERE IsUpdated = 0")
+  Main.hDB.Exec("DELETE FROM tv_categories WHERE IsUpdated = 0")
+  Main.hDB.Exec("DELETE FROM tv_subcategories WHERE IsUpdated = 0")
+ 
+  ' we converted all channels and programs, now update category/subcategory tables
+  iCategoriesCount = UpdateTVCategories(Main.sActiveUserID)
+  
+  Main.WriteLog(LogLabel & "Finished: " & CStr(iChannelCount) & " channels " & ", " & CStr(iCategoriesCount) & " categories and " & CStr(iProgramCount) & " programs processed!")
+
+Catch
+  Main.WriteLog(LogLabel & "Error parsing XML file: " & Error.Text & " at " & Error.Where)
+   
+End
+
+' update the categories/categories table, based on contents of the tv_programs table
+Private Sub UpdateTVCategories(sUserID As String) As Integer
+
+  ' declare variables
+  Dim rCategories, rCat As Result
+  
+  If $bDebug Then
+    Main.WriteDebugLog(LogLabel & "Processing Categories ...")
+  Endif
+  
+  rCategories = Main.hDB.Exec("SELECT DISTINCT CategoryName FROM tv_programs ORDER BY CategoryName")
+  If rCategories Then
+    For Each rCategories
+      ' first check if category exists
+      rCat = Main.hDB.Exec("SELECT * FROM tv_categories WHERE CategoryName = &1", rCategories!CategoryName)
+      If rCat And If (rCat.Count > 0) Then
+        ' category found, update it
+        Main.hDB.Exec("UPDATE tv_categories SET IsUpdated = 1, ModificationDate = &1, FK_Users = &2 WHERE CategoryName = &3", Format(Now, "yyyymmddhhnn"), sUserID, rCategories!CategoryName)
+      Else
+        ' when category not yet found, add it to database
+        Main.hDB.Exec("INSERT INTO tv_categories (CategoryName, CreationDate, ModificationDate, FK_Users, IsUpdated) VALUES(&1,&2,&3,&4,&5)", rCategories!CategoryName, Format(Now, "yyyymmddhhnn"), Format(Now, "yyyymmddhhnn"), sUserID, 1)
+      Endif
+    Next
+  Endif
+  
+  ' return count of categories
+  rCategories = Main.hDB.Exec("SELECT * FROM tv_categories")
+  If rCategories Then
+    Return rCategories.Count
+  Else
+    Return 0
+  Endif
+
+End

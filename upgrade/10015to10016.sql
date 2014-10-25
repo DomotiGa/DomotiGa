@@ -1,4 +1,3 @@
-
 --
 -- Add new protocols to RFXtrx interface
 --

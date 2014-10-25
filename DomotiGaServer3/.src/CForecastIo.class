@@ -1,0 +1,336 @@
+' Gambas class file
+
+' Description:
+' CForecastIo.class
+' Provides various weather related functions.
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "ForecastIo"
+Public PluginFriendlyName As String = "ForecastIo"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Alexander Kuiper"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[forecast.io] "
+Public InterfaceId As Integer = 0
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sApiKey As String
+Private $sCity As String
+Private $sLatitude As String
+Private $sLongitude As String
+Private $iRefresh As Integer
+Private $bDebug As Boolean
+
+Public hForecastIo As New HttpClient
+Public tForecastIo As New Timer
+Public $sBuffer As String
+
+Private $cWeatherData As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+  
+  KeyName = cPl.KeyName
+  Instance = 1 ' Module can only have 1 instance 
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sApiKey = cPl.Settings["apikey"]
+  $sCity = cPl.Settings["city"]
+  $sLatitude = cPl.Settings["latitude"]
+  $sLongitude = cPl.Settings["longitude"]
+  $iRefresh = cPl.Settings["polltime"]
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("Virtual Interface")
+  If InterfaceId = 0 Then
+    Main.WriteLog(LogLabel & "ERROR: Required InterfaceId for 'Virtual Interface' can't be retrieved from the database")
+
+    IsRunning = False
+    ErrorText = "Required InterfaceId for 'Virtual Interface' can't be retrieved from the database"
+    Return
+  Endif
+
+  ' Initialize 
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tForecastIo.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Run()
+
+  ' Fetch the initial data
+  GetWeather()
+  Try tForecastIo.Stop
+
+  ' create refresh timer
+  tForecastIo = New Timer As "tForecastIo"
+  tForecastIo.Delay = $iRefresh * 1000
+  tForecastIo.Start
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Started refresh timer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tForecastIo_Timer()
+
+  GetWeather()
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Updating data.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a GET call to forecast.io and store the info
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetWeather()
+
+  Dim sURL As String
+  Dim sUnits As String
+  Dim sLanguage As String
+
+  ' Don't start a new session if one is already active
+  If hForecastIo.Status > 0 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Fetching data is already in progress")
+    Return
+  Endif
+
+  $sBuffer = ""
+
+  If Main.sTemperature = "°C" Then
+    sUnits = "si"
+  Else
+    sUnits = "us"
+  Endif
+
+  ' en_US.UTF-8 = default for forecast.io
+  ' ru_RU.UTF-8, nb_NO.UTF-8 = not yet supported by forecast.io
+  sLanguage = ""
+  Select Main.sLanguage
+    Case "nl_NL.UTF-8"
+      sLanguage = "nl"
+    Case "fr_FR.UTF-8"
+      sLanguage = "fr"
+    Case "de_DE.UTF-8"
+      sLanguage = "de"
+    Case "it_IT.UTF-8"
+      sLanguage = "it"
+  End Select
+
+  ' Build up the GET Url, we retrieve current conditions only
+  sURL = "https://api.forecast.io/forecast/" & $sApiKey & "/" & $sLatitude & "," & $sLongitude & "?units=" & sUnits & IIf(sLanguage, "&lang=" & sLanguage, "")
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching data for Country/City '" & $sCity & "' with request '" & sURL & "'")
+
+  hForecastIo = New HttpClient As "hForecastIo"
+  hForecastIo.URL = sURL
+  hForecastIo.Async = True
+  hForecastIo.TimeOut = 5
+  hForecastIo.Tag = $sCity
+  hForecastIo.Get
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle data reading
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hForecastIo_Read()
+
+  IsRunning = True
+  If Lof(Last) Then $sBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle read errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hForecastIo_Error()
+
+  isRunning = False
+  ErrorText = "Error retrieving forecast.io URL. Code=" & hForecastIo.Status
+  Main.WriteLog(LogLabel & "ERROR: Retrieving forecast.io URL. Code=" & hForecastIo.Status)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle finish request and start parsing the data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hForecastIo_Finished()
+
+  Dim sMsg As String
+  Dim cData As Collection
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received '" & $sBuffer & "'")
+      DecodeForecastIo(JSON.Decode(Replace($sBuffer, "&deg;", "deg")), hForecastIo.Tag, True)
+    Default
+      IsRunning = False
+      ErrorText = "Unknown HTTP Code=" & Last.Code
+      Try cData = JSON.Decode($sBuffer)
+      If Not Error And If cData.Exist("error") Then sMsg = cData["error"]
+      Main.WriteLog(LogLabel & "ERROR: Unknown HTTP Code=" & Last.Code & ", while fetching weather data!" & IIf(sMsg, " Msg=" & sMsg, ""))
+  End Select
+
+  Try Last.Close
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Progress WeatherUnderground data and store it in a virtualdevice and Collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DecodeForecastIo(cData As Collection, sLocation As String, Optional bStore As Boolean = False) As Collection
+
+  Dim cResult As New Collection
+  Dim cCurrent As New Collection
+  Dim iDeviceId As Integer
+
+  ' Reinitialise the WeatherData info
+  If bStore Then
+    $cWeatherData = New Collection
+  Endif
+
+  ' lastupdate = ["currently"]["time"] - UTC time
+  ' weatherstation = sLocation
+  ' temperature = ["currently"]["temperature"]
+  ' weatherdesc = ["currently"]["summary"]
+  ' humidity = ["currently"]["humidity"]
+  ' wind_degrees = ["currently"]["windBearing"]
+  ' wind = ["currently"]["windSpeed"]
+  ' pressure = ["currently"]["pressure"]
+  ' dewpoint = ["currently"]["dewPoint"]
+  ' feelslike = ["currently"]["apparentTemperature"]
+  ' icon_name = ["currently"]["icon"]
+  ' visibility = ["currently"]["visibility"]
+
+  If Not cData Then
+    Main.WriteLog(LogLabel & "ERROR: No data received")
+    cResult["error"] = "No data received"
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  ' Cod(e) field can exist in the data - problem
+  If cData.Exist("code") Then
+    Main.WriteLog(LogLabel & "ERROR: Code=" & cData["code"] & ", Message=" & cData["error"])
+    cResult["error"] = "Code=" & cData["code"] & ", Message=" & cData["error"]
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  ' Currently has to exist, else the data is invalid
+  If Not cData.Exist("currently") Then
+    Main.WriteLog(LogLabel & "ERROR: Data looks to be invalid \"currently\" missing")
+    cResult["error"] = "Data looks to be invalid \"currently\" missing"
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  cCurrent["lastupdate"] = Util.TimeSinceEpoch(cData["currently"]["time"], True)
+  cCurrent["weatherstation"] = sLocation
+  cCurrent["temperature"] = cData["currently"]["temperature"]
+  cCurrent["weatherdesc"] = cData["currently"]["summary"]
+  Try cCurrent["humidity"] = cData["currently"]["humidity"]
+  Try cCurrent["wind_degrees"] = cData["currently"]["windBearing"]
+  Try cCurrent["wind"] = cData["currently"]["windSpeed"]
+  Try cCurrent["pressure"] = cData["currently"]["pressure"]
+  Try cCurrent["visibility"] = cData["currently"]["visibility"]
+  Try cCurrent["dewpoint"] = cData["currently"]["dewPoint"]
+  Try cCurrent["feelslike"] = cData["currently"]["apparentTemperature"]
+  Try cCurrent["icon_name"] = cData["currently"]["icon"]
+
+  If $bDebug Then
+    Main.WriteDebugLog(LogLabel & "Description: " & cCurrent["weatherdesc"])
+    Main.WriteDebugLog(LogLabel & "Temperature: " & cCurrent["temperature"] & Main.sTemperature)
+    Main.WriteDebugLog(LogLabel & "Humidity: " & cCurrent["humidity"])
+    Main.WriteDebugLog(LogLabel & "Visibility: " & cCurrent["visibility"] & IIf(Main.sTemperature = "°C", "km", "Miles"))
+    Main.WriteDebugLog(LogLabel & "Wind: " & cCurrent["wind"] & IIf(Main.sTemperature = "°C", "kph", "mph"))
+    Main.WriteDebugLog(LogLabel & "WindChill: " & cCurrent["windchill"] & Main.sTemperature)
+    Main.WriteDebugLog(LogLabel & "DewPoint: " & cCurrent["dewpoint"] & Main.sTemperature)
+    Main.WriteDebugLog(LogLabel & "FeelsLike: " & cCurrent["feelslike"] & Main.sTemperature)
+    Main.WriteDebugLog(LogLabel & "Pressure: " & cCurrent["pressure"] & IIf(Main.sTemperature = "°C", "mb", "in"))
+    Main.WriteDebugLog(LogLabel & "Weather Station: " & cCurrent["weatherstation"])
+    Main.WriteDebugLog(LogLabel & "Last Update: " & cCurrent["lastupdate"])
+  Endif
+
+  cResult["current"] = cCurrent
+
+  If bStore Then
+    $cWeatherData = cResult
+
+    ' Everything is success, we will store the value in a Virtual Device
+    iDeviceId = Devices.Find(Instance, "forecast.io", InterfaceId, "Weather", "forecast.io")
+
+    ' if found then update it's values
+    If iDeviceId Then
+      Devices.ValueUpdate(iDeviceId, 1, cCurrent["temperature"], Devices.ValueType_Temperature)
+      Devices.ValueUpdate(iDeviceId, 2, cCurrent["humidity"], Devices.ValueType_Humidity)
+      Devices.ValueUpdate(iDeviceId, 3, cCurrent["wind"], Devices.ValueType_WindSpeed)
+      Devices.ValueUpdate(iDeviceId, 6, cCurrent["weatherdesc"])
+    Endif
+  Endif
+
+  Return cResult
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.text & " at " & Error.where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return full pathname to the icon of ForecastIo
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub IconFullName(sIcon As String) As String
+
+  Return "http://xxx.xxx/img/w/" & sIcon & ".png"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return the ForecastIo data format
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JsonRpc_ForecastIo_Get(cData As Collection) As Collection
+
+  If cData Then
+  Else
+    ' If nothing supplied, just return the already stored data
+    Return $cWeatherData
+  Endif
+
+End

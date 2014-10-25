@@ -1,0 +1,435 @@
+' Gambas class file
+
+' Description:
+' COpenWeatherMap.class
+' Provides various weather related functions.
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "OpenWeatherMap"
+Public PluginFriendlyName As String = "OpenWeatherMap"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Alexander Kuiper"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[OpenWeatherMap] "
+Public InterfaceId As Integer = 0
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sApiKey As String
+Private $sCity As String
+Private $sCityId As String
+Private $iRefresh As Integer
+Private $bDebug As Boolean
+
+Public hOpenWeatherMap As New HttpClient
+Public tOpenWeatherMap As New Timer
+Public $sBuffer As String
+
+Private $cWeatherData As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+  
+  KeyName = cPl.KeyName
+  Instance = 1 ' Module can only have 1 instance 
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sApiKey = cPl.Settings["apikey"]
+  $sCity = cPl.Settings["city"]
+  $sCityId = cPl.Settings["cityid"]
+  $iRefresh = cPl.Settings["polltime"]
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("Virtual Interface")
+  If InterfaceId = 0 Then
+    Main.WriteLog(LogLabel & "ERROR: Required InterfaceId for 'Virtual Interface' can't be retrieved from the database")
+
+    IsRunning = False
+    ErrorText = "Required InterfaceId for 'Virtual Interface' can't be retrieved from the database"
+    Return
+  Endif
+
+  ' Initialize 
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tOpenWeatherMap.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Run()
+
+  ' Fetch the initial data
+  GetWeather()
+  Try tOpenWeatherMap.Stop
+
+  ' create refresh timer
+  tOpenWeatherMap = New Timer As "tOpenWeatherMap"
+  tOpenWeatherMap.Delay = $iRefresh * 1000
+  tOpenWeatherMap.Start
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Started refresh timer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tOpenWeatherMap_Timer()
+
+  GetWeather()
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Updating data.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a GET call to Wunderground and returns a JSON collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub WeatherGetCity(sApiKey As String, sCity As String) As Collection
+
+  Dim hWeatherCity As HttpClient
+  Dim sURL As String
+  Dim sBuffer As String
+  Dim cCityList As New Collection[]
+  Dim cCity As Collection
+  Dim cWeather As New Collection
+  Dim cResult As New Collection
+  Dim cListEntry As Collection
+
+  ' If no city is supplied, try with lon and lat supplied in Astro information
+  If sCity = "" Then
+    sCity = "lat=" & Main.iAstroLatitude & "lon=" & Main.iAstroLongitude
+  Else
+    sCity = "q=" & Replace(Replace(sCity, ".", "%2E"), " ", "%20") & "&type=like"
+  Endif
+
+  sURL = "http://api.openweathermap.org/data/2.5/find?" & sCity & "&APPID=" & sApiKey & "&type=json"
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching data for Country/City with request '" & sURL & "'")
+
+  hWeatherCity = New HttpClient As "JSONWeatherGetCity"
+  hWeatherCity.URL = sURL
+  hWeatherCity.Async = False
+  hWeatherCity.TimeOut = 5
+  hWeatherCity.Get
+ 
+  If hWeatherCity.Status < 0 Then
+    ' Failure fetching data or apikey has failed
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: searching for Country/City, Code=" & hWeatherCity.Status & " HTTP=" & hWeatherCity.Code)
+    cResult["error"] = "HTTP GET Failed, Code=" & hWeatherCity.Status & ". Most likely there is a network or internet issue"
+  Else
+    Select hWeatherCity.Code
+      Case 200
+        ' success
+        If Lof(hWeatherCity) Then sBuffer = Read #hWeatherCity, Lof(hWeatherCity)
+        cWeather = JSON.Decode(sBuffer)
+
+        ' Check if get a valid response
+        If cWeather.Exist("cod") Then
+
+          ' Only with a 200 we got a successfull response
+          ' We can also get 404, this is a not found - ignoring it!
+          If cWeather["cod"] = "200" Then
+
+            ' Check if we got all required fields
+            If cWeather.Exist("count") And cWeather.Exist("list") Then
+
+              If cWeather["count"] > 0 Then
+                For Each cListEntry In cWeather["list"]
+                  cCity = New Collection
+
+                  cCity["cityid"] = cListEntry["id"]
+                  cCity["cityname"] = cListEntry["name"]
+                  If cListEntry["sys"]["country"] Then
+                    cCity["cityname"] &= ", " & cListEntry["sys"]["country"]
+                  Endif
+
+                  cCityList.Add(cCity)
+                Next
+              Endif
+
+              cResult["city"] = cCityList
+
+            Else
+              cResult["error"] = "Unknown JSON Response (missing 'count' and 'list'). Data=" & sBuffer
+            Endif
+
+          Endif
+        Else
+          cResult["error"] = "Unknown JSON Response. Data=" & sBuffer
+        Endif
+
+      Default
+      ' Something else then expected HTTP 200 returned
+        cResult["error"] = "Unknown HTTP Code=" & hWeatherCity.Code
+    End Select
+  Endif
+
+  Return cResult
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a GET call to OpenWeatherMap and returns a JSON collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetWeatherCustom(sCity As String) As Collection
+
+  ' TBD
+  If sCity Then
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a GET call to OpenWeatherMap and store the info
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetWeather()
+
+  Dim sURL As String
+  Dim sUnits As String
+  Dim sLanguage As String
+
+  ' Don't start a new session if one is already active
+  If hOpenWeatherMap.Status > 0 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Fetching data is already in progress")
+    Return
+  Endif
+
+  $sBuffer = ""
+
+  If Main.sTemperature = "°C" Then
+    sUnits = "metric"
+  Else
+    sUnits = "imperial"
+  Endif
+
+  ' http://bugs.openweathermap.org/projects/api/wiki/Api_2_5_weather
+  ' en_US.UTF-8 = default for OpenWeatherMap
+  ' nb_NO.UTF-8 = not supported
+  sLanguage = ""
+  Select Main.sLanguage
+    Case "nl_NL.UTF-8"
+      sLanguage = "nl"
+    Case "fr_FR.UTF-8"
+      sLanguage = "fr"
+    Case "de_DE.UTF-8"
+      sLanguage = "de"
+    Case "it_IT.UTF-8"
+      sLanguage = "it"
+    Case "ru_RU.UTF-8"
+      sLanguage = "ru"
+  End Select
+
+  ' Build up the GET Url, we retrieve current conditions only
+  sURL = "http://api.openweathermap.org/data/2.5/weather?id=" & $sCityId & "&units=" & sUnits & IIf(sLanguage, "&lang=" & sLanguage, "") & "&APPID=" & $sApiKey & "&type=json"
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching data for Country/City '" & $sCity & "' with request '" & sURL & "'")
+
+  hOpenWeatherMap = New HttpClient As "hOpenWeatherMap"
+  hOpenWeatherMap.URL = sURL
+  hOpenWeatherMap.Async = True
+  hOpenWeatherMap.TimeOut = 5
+  hOpenWeatherMap.Get
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle data reading
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hOpenWeatherMap_Read()
+
+  IsRunning = True
+  If Lof(Last) Then $sBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle read errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hOpenWeatherMap_Error()
+
+  isRunning = False
+  ErrorText = "Error retrieving OpenWeatherMap URL. Code=" & hOpenWeatherMap.Status
+  Main.WriteLog(LogLabel & "ERROR: Retrieving OpenWeatherMap URL. Code=" & hOpenWeatherMap.Status)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle finish request and start parsing the data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hOpenWeatherMap_Finished()
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received '" & $sBuffer & "'")
+      DecodeOpenWeatherMap(JSON.Decode(Replace($sBuffer, "&deg;", "deg")), True)
+    Default
+      IsRunning = False
+      ErrorText = "Unknown HTTP Code=" & Last.Code
+      Main.WriteLog(LogLabel & "ERROR: Unknown HTTP Code=" & Last.Code & ", while fetching weather data!")
+  End Select
+
+  Try Last.Close
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Progress OpenWeatherMap data and store it in a virtualdevice and Collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DecodeOpenWeatherMap(cData As Collection, Optional bStore As Boolean = False) As Collection
+
+  Dim cResult As New Collection
+  Dim cCurrent As New Collection
+  Dim iDeviceId As Integer
+
+  ' Reinitialise the WeatherData info
+  If bStore Then
+    $cWeatherData = New Collection
+  Endif
+
+  ' lastupdate = ["dt"]
+  ' weatherstation = ["name"] & ", " & ["sys"]["country"] 
+  ' temperature = ["main"]["temp"]
+  ' weatherdesc = ["weather"]["description"]
+  ' humidity = ["main"]["humidity"]
+  ' wind_degrees = ["wind"]["deg"]
+  ' wind = ["wind"]["speed"]
+  ' pressure = ["main"]["pressure"]
+  ' precip_1h = ["rain"]["1h"]
+  ' icon_url = "http://openweathermap.org/img/w/" & ["weather"]["icon"] & ".png"
+  ' icon_name = ["weather"]["icon"]
+
+  If Not cData Then
+    Main.WriteLog(LogLabel & "ERROR: No data received")
+    cResult["error"] = "No data received"
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  ' Cod(e) field has to exist in the data
+  If Not cData.Exist("cod") Then
+    Main.WriteLog(LogLabel & "ERROR: Data looks to be invalid \"cod\" missing")
+    cResult["error"] = "Data looks to be invalid \"cod\" missing"
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  ' cod=200 is good, anything else is an error
+  If cData["cod"] <> 200 Then
+    Main.WriteLog(LogLabel & "ERROR: Code=" & cData["cod"] & ", Message=" & cData["message"])
+    cResult["error"] = "Code=" & cData["cod"] & ", Message=" & cData["message"]
+    If bStore Then $cWeatherData = cResult
+    Return cResult
+  Endif
+
+  cCurrent["lastupdate"] = Util.TimeSinceEpoch(cData["dt"], True)
+  cCurrent["weatherstation"] = cData["name"] & ", " & cData["sys"]["country"]
+  cCurrent["temperature"] = cData["main"]["temp"]
+  cCurrent["weatherdesc"] = cData["weather"][0]["description"]
+  Try cCurrent["humidity"] = cData["main"]["humidity"]
+  Try cCurrent["wind_degrees"] = cData["wind"]["deg"]
+  Try cCurrent["wind_ms"] = cData["wind"]["speed"] ' always m/sec?
+  If Error Then cCurrent["wind_ms"] = 0
+  cCurrent["wind_beaufort"] = Util.WindBeaufort(CFloat(cCurrent["wind_ms"]) * 2.23693629)
+
+  If Main.sTemperature = "°C" Then
+    cCurrent["wind"] = Round(CFloat(cCurrent["wind_ms"]) * 3.6, -2)
+  Else
+    cCurrent["wind"] = Round(CFloat(cCurrent["wind_ms"]) * 2.23693629, -2)
+  Endif
+
+  Try cCurrent["pressure"] = cData["main"]["pressure"]
+  Try cCurrent["precip_1h"] = cData["rain"]["1h"]
+  If Error Then cCurrent["precip_1h"] = "0"
+  Try cCurrent["icon_url"] = IconFullName(cData["weather"][0]["icon"])
+  Try cCurrent["icon_name"] = cData["weather"][0]["icon"]
+
+  If $bDebug Then
+    Main.WriteDebugLog(LogLabel & "Description: " & cCurrent["weatherdesc"])
+    Main.WriteDebugLog(LogLabel & "Temperature: " & cCurrent["temperature"] & Main.sTemperature)
+    Main.WriteDebugLog(LogLabel & "Humidity: " & cCurrent["humidity"])
+    Main.WriteDebugLog(LogLabel & "Visibility: " & cCurrent["visibility"] & IIf(Main.sTemperature = "°C", "km", "Miles"))
+    Main.WriteDebugLog(LogLabel & "Wind: " & cCurrent["wind"] & IIf(Main.sTemperature = "°C", "kph", "mph"))
+    Main.WriteDebugLog(LogLabel & "Pressure: " & cCurrent["pressure"] & IIf(Main.sTemperature = "°C", "mb", "in"))
+    Main.WriteDebugLog(LogLabel & "Precip 1h: " & cCurrent["precip_1h"])
+    Main.WriteDebugLog(LogLabel & "Weather Station: " & cCurrent["weatherstation"])
+    Main.WriteDebugLog(LogLabel & "Last Update: " & cCurrent["lastupdate"])
+  Endif
+
+  cResult["current"] = cCurrent
+
+  If bStore Then
+    $cWeatherData = cResult
+
+    ' Everything is success, we will store the value in a Virtual Device
+    iDeviceId = Devices.Find(Instance, "OpenWeatherMap", InterfaceId, "Weather", "OpenWeatherMap")
+
+    ' if found then update it's values
+    If iDeviceId Then
+      Devices.ValueUpdate(iDeviceId, 1, cCurrent["temperature"], Devices.ValueType_Temperature)
+      Devices.ValueUpdate(iDeviceId, 2, cCurrent["humidity"], Devices.ValueType_Humidity)
+      Devices.ValueUpdate(iDeviceId, 3, cCurrent["wind"], Devices.ValueType_WindSpeed)
+      Devices.ValueUpdate(iDeviceId, 5, cCurrent["precip_1h"], Devices.ValueType_RainRate)
+      Devices.ValueUpdate(iDeviceId, 6, cCurrent["weatherdesc"])
+    Endif
+  Endif
+
+  Return cResult
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.text & " at " & Error.where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return full pathname to the icon of OpenWeatherMap
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub IconFullName(sIcon As String) As String
+
+  Return "http://openweathermap.org/img/w/" & sIcon & ".png"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return the OpenWeatherMap data format
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JsonRpc_OpenWeatherMap_Get(cData As Collection) As Collection
+
+  If cData Then
+  Else
+    ' If nothing supplied, just return the already stored data
+    Return $cWeatherData
+  Endif
+
+End
