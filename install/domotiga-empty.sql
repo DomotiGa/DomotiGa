@@ -504,20 +504,19 @@ LOCK TABLES `devices_camera` WRITE;
 UNLOCK TABLES;
 
 --
--- Table structure for table `devices_pachube`
+-- Table structure for table `devices_xively`
 --
 
-DROP TABLE IF EXISTS `devices_pachube`;
+DROP TABLE IF EXISTS `devices_xively`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `devices_pachube` (
+CREATE TABLE `devices_xively` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `datastreamid` varchar(64) DEFAULT NULL,
   `tags` varchar(32) DEFAULT NULL,
   `devicename` varchar(32) DEFAULT NULL,
   `deviceid` int(11) DEFAULT NULL,
   `devicelabel` varchar(16) DEFAULT NULL,
-  `devicelabelshort` varchar(8) DEFAULT NULL,
   `units` varchar(32) DEFAULT NULL,
   `unittype` varchar(16) DEFAULT NULL,
   `value` text,
@@ -526,12 +525,12 @@ CREATE TABLE `devices_pachube` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `devices_pachube`
+-- Dumping data for table `devices_xively`
 --
 
-LOCK TABLES `devices_pachube` WRITE;
-/*!40000 ALTER TABLE `devices_pachube` DISABLE KEYS */;
-/*!40000 ALTER TABLE `devices_pachube` ENABLE KEYS */;
+LOCK TABLES `devices_xively` WRITE;
+/*!40000 ALTER TABLE `devices_xively` DISABLE KEYS */;
+/*!40000 ALTER TABLE `devices_xively` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -1103,7 +1102,7 @@ CREATE TABLE `plugins` (
 
 LOCK TABLES `plugins` WRITE;
 /*!40000 ALTER TABLE `plugins` DISABLE KEYS */;
-INSERT INTO `plugins` VALUES (1,'RFXCom Receiver','X10 X10Security Oregon KAKU RFXCom HEUK ATI Digimax ARC AC HEEU X10SecDW X10SecMotion X10SecRemote','RFXComRX','class'),(2,'Xanura CTX35','X10','CTX35','class'),(3,'Midon TEMP08','1-Wire','Temp08','class'),(4,'HDDTemp Socket','HDDTemp','HDDTemp','class'),(5,'Ping Socket','Ping','Ping','class'),(6,'UPS Socket','UPS','UPS','class'),(7,'X10Cmd Interface','X10','X10Cmd','class'),(8,'Bluetooth Dongle','Bluetooth','Bluetooth','class'),(9,'Weeder I/O Bus','Weeder','Weeder','class'),(10,'Plugwise Stick','Plugwise','Plugwise','class'),(11,'DSC Interface','DSC','DSC','class'),(12,'RFXCom Transmitter','X10 ARC AC RFXCom X10Security HEEU HEUK Digimax Harrison Koppla Waveman Flamingo KAKU','RFXComTX','class'),(13,'KNX Interface','KNX','KNX','class'),(14,'Digitemp','1-Wire','Digitemp','class'),(15,'Z-Wave Controller','Z-Wave','OpenZwave','class'),(16,'PLCBUS Interface','PLCBUS','PLCBUS','class'),(17,'Virtual Interface','Virtual','Virtual','virtual'),(18,'SqueezeServer Interface','Squeeze','SqueezeServer','class'),(19,'Current Cost Receiver','CurrentCost','CurrentCost','class'),(20,'EZcontrol T10 Interface','T10-Preset FS10 FS20 RS200 AB400 AB601 IT REV BS-QU MARMI OA-FM KO-FC RS862','EZcontrol','class'),(21,'LIRC Interface','LIRC','LIRC','class'),(22,'PwrCtrl Interface','PwrCtrl','PwrCtrl','class'),(23,'Denon Interface','Denon','Denon','class'),(24,'Onkyo Interface','Onkyo','Onkyo','class'),(25,'SharpTV Interface','SharpTV','SharpTV','class'),(26,'LGTV Interface','LGTV','LGTV','class'),(27,'iPort Interface','iPort','IPort','class'),(29,'JeeLabs Interface','JeeLabs ARC KAKU','JeeLabs','class'),(30,'Velleman K8055','K8055','K8055','class'),(31,'OWFS Interface','1-Wire','OWFS','class'),(32,'CUL Interface','FS20 EM1000 FHT S300 HMS','CUL','class'),(33,'RFXCom xPL','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison RFXLanIO X10SecDW X10SecMotion X10SecRemote','RFXComxPL','module'),(34,'Shell Interface','Shell','Shell','class'),(35,'RFXCom Transceiver','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX ByronMP SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagintrx WT TRC022 AOKE EuroDomest','RFXComTRX','class'),(36,'HomeMatic LAN Adapter','HomeMatic','HomeMatic','class'),(37,'OpenTherm Gateway','OpenTherm','OpenTherm','class'),(38,'SmartMeter Interface','NTA8130','SmartMeter','class'),(39,'Pioneer Interface','Pioneer','Pioneer','class'),(40,'XBMC xPL Interface','media.basic media.mptrnsp media.mpmedia osd.basic','XBMCxPL','module'),(41,'Meteohub Interface','Meteohub','Meteohub','class'),(42,'ELV MAX! Interface','ELVMAX','ELVMAX','class'),(43,'YouLess Interface','YouLess','YouLess','class'),(44,'Mochad Interface','X10 X10Security','Mochad','class'),(45,'Omniksol Interface','Omniksol','Omniksol','module'),(46,'Visonic Interface','Visonic','Visonic','class'),(47,'KMTronicUDP Interface','KMTronicUDP','KMTronicUDP','class'),(48,'DMXPlayer Interface','DMX','DMXPlayer','class'),(49,'GenericIO Interface','GenericIO','GenericIO','class'),(50,'MQTT Interface','MQTT','MQTT','class'),(51,'RaZBerry Z-Wave Interface','Z-Wave','RazBerry','class'),(52,'Arduino Interface','Arduino','Arduino','module'),(53,'Velbus Interface','Velbus','Velbus','class'),(54,'Viera Interface','Viera','Viera','class'),(55,'Toon Interface','Toon','Toon','class'),(56,'Jerome Ethernet Module','KernelChip','Jerome','class'),(57,'Wirelesstags Interface','Wirelesstags','Wirelesstags','class'),(58,'Philips Hue Interface','PhilipsHue','PhilipsHue','class'),(59,'WiringPi Interface','WiringPi','WiringPi','class'),(60,'Asterisk','','Asterisk','class'),(61,'BwiredMap','','BwiredMap','class'),(62,'DeviceDiscover','','DeviceDiscover','class'),(63,'GMail','','GMail','class'),(64,'IRMan','','IRMan','class'),(65,'IRTrans','','IRTrans','class'),(66,'IViewer','','IViewer','class'),(67,'JSONRPC','','JSONRPC','class'),(68,'Ncid','','Ncid','class'),(69,'NMA','','NMA','class'),(70,'OWW','','OWW','class'),(71,'P2000','','P2000','class'),(72,'Pachube','','Pachube','class'),(73,'Prowl','','Prowl','class'),(74,'PVoutput','','PVoutput','class'),(75,'Pushover','','Pushover','class'),(76,'Pushbullet','','Pushbullet','class'),(77,'SmartVISUServer','','SmartVISUServer','class'),(78,'SMS','','SMS','class'),(79,'TelnetServer','','TelnetServer','class'),(80,'TemperaturNu','','TemperaturNu','class'),(81,'Twitter','','Twitter','class'),(82,'VISCA','','VISCA','class'),(83,'WeatherUnderground','','WeatherUnderground','class'),(84,'OpenWeatherMap','','OpenWeatherMap','class'),(85,'ForecastIo','','ForecastIo','class'),(86,'TVGuide','','TVGuide','class'),(87,'MySensors Interface','MySensors','MySensors','class');
+INSERT INTO `plugins` VALUES (1,'RFXCom Receiver','X10 X10Security Oregon KAKU RFXCom HEUK ATI Digimax ARC AC HEEU X10SecDW X10SecMotion X10SecRemote','RFXComRX','class'),(2,'Xanura CTX35','X10','CTX35','class'),(3,'Midon TEMP08','1-Wire','Temp08','class'),(4,'HDDTemp Socket','HDDTemp','HDDTemp','class'),(5,'Ping Socket','Ping','Ping','class'),(6,'UPS Socket','UPS','UPS','class'),(7,'X10Cmd Interface','X10','X10Cmd','class'),(8,'Bluetooth Dongle','Bluetooth','Bluetooth','class'),(9,'Weeder I/O Bus','Weeder','Weeder','class'),(10,'Plugwise Stick','Plugwise','Plugwise','class'),(11,'DSC Interface','DSC','DSC','class'),(12,'RFXCom Transmitter','X10 ARC AC RFXCom X10Security HEEU HEUK Digimax Harrison Koppla Waveman Flamingo KAKU','RFXComTX','class'),(13,'KNX Interface','KNX','KNX','class'),(14,'Digitemp','1-Wire','Digitemp','class'),(15,'Z-Wave Controller','Z-Wave','OpenZwave','class'),(16,'PLCBUS Interface','PLCBUS','PLCBUS','class'),(17,'Virtual Interface','Virtual','Virtual','virtual'),(18,'SqueezeServer Interface','Squeeze','SqueezeServer','class'),(19,'Current Cost Receiver','CurrentCost','CurrentCost','class'),(20,'EZcontrol T10 Interface','T10-Preset FS10 FS20 RS200 AB400 AB601 IT REV BS-QU MARMI OA-FM KO-FC RS862','EZcontrol','class'),(21,'LIRC Interface','LIRC','LIRC','class'),(22,'PwrCtrl Interface','PwrCtrl','PwrCtrl','class'),(23,'Denon Interface','Denon','Denon','class'),(24,'Onkyo Interface','Onkyo','Onkyo','class'),(25,'SharpTV Interface','SharpTV','SharpTV','class'),(26,'LGTV Interface','LGTV','LGTV','class'),(27,'iPort Interface','iPort','IPort','class'),(29,'JeeLabs Interface','JeeLabs ARC KAKU','JeeLabs','class'),(30,'Velleman K8055','K8055','K8055','class'),(31,'OWFS Interface','1-Wire','OWFS','class'),(32,'CUL Interface','FS20 EM1000 FHT S300 HMS','CUL','class'),(33,'RFXCom xPL','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison RFXLanIO X10SecDW X10SecMotion X10SecRemote','RFXComxPL','module'),(34,'Shell Interface','Shell','Shell','class'),(35,'RFXCom Transceiver','X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX ByronMP SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagintrx WT TRC022 AOKE EuroDomest','RFXComTRX','class'),(36,'HomeMatic LAN Adapter','HomeMatic','HomeMatic','class'),(37,'OpenTherm Gateway','OpenTherm','OpenTherm','class'),(38,'SmartMeter Interface','NTA8130','SmartMeter','class'),(39,'Pioneer Interface','Pioneer','Pioneer','class'),(40,'XBMC xPL Interface','media.basic media.mptrnsp media.mpmedia osd.basic','XBMCxPL','module'),(41,'Meteohub Interface','Meteohub','Meteohub','class'),(42,'ELV MAX! Interface','ELVMAX','ELVMAX','class'),(43,'YouLess Interface','YouLess','YouLess','class'),(44,'Mochad Interface','X10 X10Security','Mochad','class'),(45,'Omniksol Interface','Omniksol','Omniksol','module'),(46,'Visonic Interface','Visonic','Visonic','class'),(47,'KMTronicUDP Interface','KMTronicUDP','KMTronicUDP','class'),(48,'DMXPlayer Interface','DMX','DMXPlayer','class'),(49,'GenericIO Interface','GenericIO','GenericIO','class'),(50,'MQTT Interface','MQTT','MQTT','class'),(51,'RaZBerry Z-Wave Interface','Z-Wave','RazBerry','class'),(52,'Arduino Interface','Arduino','Arduino','module'),(53,'Velbus Interface','Velbus','Velbus','class'),(54,'Viera Interface','Viera','Viera','class'),(55,'Toon Interface','Toon','Toon','class'),(56,'Jerome Ethernet Module','KernelChip','Jerome','class'),(57,'Wirelesstags Interface','Wirelesstags','Wirelesstags','class'),(58,'Philips Hue Interface','PhilipsHue','PhilipsHue','class'),(59,'WiringPi Interface','WiringPi','WiringPi','class'),(60,'Asterisk','','Asterisk','class'),(61,'BwiredMap','','BwiredMap','class'),(62,'DeviceDiscover','','DeviceDiscover','class'),(63,'GMail','','GMail','class'),(64,'IRMan','','IRMan','class'),(65,'IRTrans','','IRTrans','class'),(66,'IViewer','','IViewer','class'),(67,'JSONRPC','','JSONRPC','class'),(68,'Ncid','','Ncid','class'),(69,'NMA','','NMA','class'),(70,'OWW','','OWW','class'),(71,'P2000','','P2000','class'),(72,'Xively','','Xively','class'),(73,'Prowl','','Prowl','class'),(74,'PVoutput','','PVoutput','class'),(75,'Pushover','','Pushover','class'),(76,'Pushbullet','','Pushbullet','class'),(77,'SmartVISUServer','','SmartVISUServer','class'),(78,'SMS','','SMS','class'),(79,'TelnetServer','','TelnetServer','class'),(80,'TemperaturNu','','TemperaturNu','class'),(81,'Twitter','','Twitter','class'),(82,'VISCA','','VISCA','class'),(83,'WeatherUnderground','','WeatherUnderground','class'),(84,'OpenWeatherMap','','OpenWeatherMap','class'),(85,'ForecastIo','','ForecastIo','class'),(86,'TVGuide','','TVGuide','class'),(87,'MySensors Interface','MySensors','MySensors','class');
 /*!40000 ALTER TABLE `plugins` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2917,13 +2916,13 @@ INSERT INTO `settings_p2000` VALUES (0,0,'18',5,'0','A1',500,0,0,300,0),(1,0,'18
 UNLOCK TABLES;
 
 --
--- Table structure for table `settings_pachube`
+-- Table structure for table `settings_xively`
 --
 
-DROP TABLE IF EXISTS `settings_pachube`;
+DROP TABLE IF EXISTS `settings_xively`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `settings_pachube` (
+CREATE TABLE `settings_xively` (
   `id` int(11) NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `feed` int(11) DEFAULT NULL,
@@ -2935,13 +2934,13 @@ CREATE TABLE `settings_pachube` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `settings_pachube`
+-- Dumping data for table `settings_xively`
 --
 
-LOCK TABLES `settings_pachube` WRITE;
-/*!40000 ALTER TABLE `settings_pachube` DISABLE KEYS */;
-INSERT INTO `settings_pachube` VALUES (0,0,3711,NULL,10,0),(1,0,3711,NULL,10,0);
-/*!40000 ALTER TABLE `settings_pachube` ENABLE KEYS */;
+LOCK TABLES `settings_xively` WRITE;
+/*!40000 ALTER TABLE `settings_xively` DISABLE KEYS */;
+INSERT INTO `settings_xively` VALUES (0,0,3711,NULL,10,0),(1,0,3711,NULL,10,0);
+/*!40000 ALTER TABLE `settings_xively` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
