@@ -1,4 +1,11 @@
 --
+-- Correct description of some KNX devicetypes.
+--
+
+UPDATE devicetypes SET name = 'KNX DPT 5.003 Angle (0..360°)' WHERE id = 429;
+UPDATE devicetypes SET name = 'KNX DPT 5.006 Tariff (0..254)' WHERE id = 432;
+
+--
 -- Delete old KNX/EIB devicetype
 --
 

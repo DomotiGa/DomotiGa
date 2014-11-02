@@ -54,7 +54,7 @@ Private $sGenericIODelimiter As String
 
 Private sBuffer As String
 Private iConnectRetry As Integer = 0 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
+Private aConnectDelay As Integer[] = [0, 1000, 5000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -114,7 +114,14 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   hGenericIOTCP.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect - if first start
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  If bFirstStart Then
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+    ' define timer for GenericIO reconnect
+    tGenericIOTCPConnect = New Timer As "tGenericIOTCPConnect"
+    tGenericIOTCPConnect.Delay = iConnectRetry
+    tGenericIOTCPConnect.Stop
+  Endif
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
   IsRunning = False
@@ -135,23 +142,29 @@ End
 
 Public Sub GenericIOTCP_Ready()
 
-  ' define timer for GenericIO reconnect
-  tGenericIOTCPConnect = New Timer As "tGenericIOTCPConnect"
-  tGenericIOTCPConnect.Delay = iConnectRetry
-  tGenericIOTCPConnect.Stop
-
   Main.WriteLog(LogLabel & "TCP interface connected.")
+  iConnectRetry = 0
   IsRunning = True
+
+End
+
+Public Sub RetryConnect()
+
+  Inc iConnectRetry
+  If iConnectRetry < 11 Then
+    Main.WriteDebugLog(LogLabel & "Retry to connect in " & (aConnectDelay[iConnectRetry] / 1000) & " seconds.")
+    tGenericIOTCPConnect.Delay = aConnectDelay[iConnectRetry]
+    tGenericIOTCPConnect.Start
+  Else
+    tGenericIOTCPConnect.Stop
+  Endif
 
 End
 
 Public Sub GenericIOTCP_Closed()
 
   Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  If iConnectRetry < 6 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
-    tGenericIOTCPConnect.Start
-  Endif
+  RetryConnect()
 
 End
 
@@ -164,6 +177,7 @@ Public Sub GenericIOTCP_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  RetryConnect()
 
 End
 
@@ -171,13 +185,8 @@ End
 ' reconnect routine
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tGenericIOTCPConnect_Timer()
-    Inc iConnectRetry
-  If Not ConnectTCP(False) Then
 
-    iConnectDelay *= iConnectRetry
-    tGenericIOTCPConnect.Delay = iConnectDelay
-    Print iConnectDelay
-  Endif
+  ConnectTCP(False)
 
 End
 
@@ -294,9 +303,8 @@ Private Sub ParseLine(sData As String)
 
   Dim aScan, aValueToUpdate As String[]
   Dim sLine, sAddress, sRegexExpression, sAddressToChange, sValueFields As String
-  Dim iDeviceId, iValueToUpdate As Integer
+  Dim iDeviceId, iValueToUpdate, iAddressPosition As Integer
   Dim rRegex As Regexp
-  Dim iAddressPosition As Integer
 
   If $bGenericIODebug Then Main.WriteDebugLog(LogLabel & "Raw Data read '" & sData & "'")
   'If sData = "." Then Return ' A single "." is a heartbeat message sent every few seconds and does not have any action at the moment.
@@ -373,7 +381,8 @@ Private Sub ParseLine(sData As String)
    Endif
 
 Catch
-  If $bGenericIODebug Then Main.WriteDebugLog(LogLabel & "ERROR: Parsing data packet: '" & sLine & "' " & Error.Text & " at " & Error.Where)
+  If $bGenericIODebug Then Main.WriteDebugLog(LogLabel & "ERROR: Parsing data packet: '" & sLine & "' '" & Error.Text & "' at '" & Error.Where & "'")
+  
 Next
 
 End
@@ -383,32 +392,23 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sCmd As String)
 
-  Dim iDeviceId As Integer
-  Dim sType As String
-  Dim sCleanCmd As String
-
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("GenericIO Interface"))
-  If iDeviceId Then
-    sType = Devices.FindTypeForDevice(iDeviceId)
-  Else
-    Return
-  Endif
+  Dim sRawCmd As String
 
   ' Replace control characters in the string if present with actual values
-  sCleanCmd = Replace$(sCmd, "\\r", Chr$(13))
-  sCleanCmd = Replace$(sCleanCmd, "\\n", Chr$(10))
-  
+  sRawCmd = Replace$(sCmd, "\\r", Chr$(13))
+  sRawCmd = Replace$(sRawCmd, "\\n", Chr$(10))
+  sRawCmd = Replace$(sAddress, "|", "") & sRawCmd
+
   If $sInterface = "tcp" Then
     ' send the message to the tcp stream
-    If $bGenericIODebug Then Main.WriteDebugLog(LogLabel & "SendCommand '" & sCmd & "' to " & $sTCPHost & ":" & $iTCPPort)
-    Try Write #hGenericIOTCP, sCleanCmd, Len(sCleanCmd)
+    If $bGenericIODebug Then Main.WriteDebugLog(LogLabel & "SendCommand '" & sCmd & "' to " & $sTCPHost & ":" & $iTCPPort & " as '" & sRawCmd & "'")
+    Try Write #hGenericIOTCP, sRawCmd, Len(sRawCmd)
     If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to TCP port! -> " & Error.Text)
   Else
     ' send the message to the serial port
-    If $bGenericIODebug Then Main.WriteDebugLog(LogLabel & "SendCommand '" & sCmd & "' to " & $sSerPort)
-    Try Print #hGenericIOSer, sCleanCmd
+    If $bGenericIODebug Then Main.WriteDebugLog(LogLabel & "SendCommand '" & sCmd & "' to " & $sSerPort & " as '" & sRawCmd & "'")
+    Try Print #hGenericIOSer, sRawCmd
     If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! -> " & Error.Text)
   Endif
 
 End
-
