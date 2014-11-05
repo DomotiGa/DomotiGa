@@ -37,7 +37,6 @@ Public ErrorWhere As String
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public hGenericIOSer As New SerialPort
 Public hGenericIOTCP As New Socket
-Public tGenericIOTCPConnect As Timer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Private Variables
@@ -53,8 +52,10 @@ Private $sGenericIORegex As String
 Private $sGenericIODelimiter As String
 
 Private sBuffer As String
-Private iConnectRetry As Integer = 0 ' retries
-Private aConnectDelay As Integer[] = [0, 1000, 5000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 20sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -82,6 +83,11 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
+
+    ' Define timer for TCP reconnect
+    tReConnect = New Timer As "tReConnect"
+    tReConnect.Delay = iReConnectRetry
+    tReConnect.Stop
   Else
     Connect()
   Endif
@@ -104,7 +110,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
+Public Function ConnectTCP() As Boolean
 
   ' try to close the connection
   Try hGenericIOTCP.Close
@@ -114,14 +120,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   hGenericIOTCP.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect - if first start
-  If bFirstStart Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
-
-    ' define timer for GenericIO reconnect
-    tGenericIOTCPConnect = New Timer As "tGenericIOTCPConnect"
-    tGenericIOTCPConnect.Delay = iConnectRetry
-    tGenericIOTCPConnect.Stop
-  Endif
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
   IsRunning = False
@@ -143,20 +142,23 @@ End
 Public Sub GenericIOTCP_Ready()
 
   Main.WriteLog(LogLabel & "TCP interface connected.")
-  iConnectRetry = 0
+  iReConnectRetry = 0
   IsRunning = True
 
 End
 
-Public Sub RetryConnect()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ReConnect()
 
-  Inc iConnectRetry
-  If iConnectRetry < 11 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect in " & (aConnectDelay[iConnectRetry] / 1000) & " seconds.")
-    tGenericIOTCPConnect.Delay = aConnectDelay[iConnectRetry]
-    tGenericIOTCPConnect.Start
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
   Else
-    tGenericIOTCPConnect.Stop
+    tReConnect.Stop
   Endif
 
 End
@@ -164,7 +166,7 @@ End
 Public Sub GenericIOTCP_Closed()
 
   Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  RetryConnect()
+  ReConnect()
 
 End
 
@@ -177,16 +179,16 @@ Public Sub GenericIOTCP_Error()
 
   IsRunning = False
   ErrorText = sMsg
-  RetryConnect()
+  ReConnect()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' reconnect routine
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tGenericIOTCPConnect_Timer()
+Public Sub tReConnect_Timer()
 
-  ConnectTCP(False)
+  ConnectTCP()
 
 End
 
@@ -256,11 +258,10 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
+  Try tReConnect.Stop
   Try hGenericIOSer.Close
   Try hGenericIOTCP.Close
-  Try tGenericIOTCPConnect.Stop
 
-  
   If InStr($sInterface, "tcp") Then
     Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
   Else
