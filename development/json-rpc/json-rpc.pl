@@ -6,7 +6,7 @@ use strict;
 system("which curl >/dev/null 2>/dev/null") == 0 or die("Can't find the curl binary in path");
 
 my $JSONHOST="http://localhost:9090/";
-my $INFILE="json-rpc.txt";
+my $INFILE="json-rpc.cmds";
 
 my $ERRFILE="json-rpc.$$.err";
 
