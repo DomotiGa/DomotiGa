@@ -1,0 +1,249 @@
+' Gambas class file
+
+' Description:
+' CXively.class
+' Support for Xively (pronounce: patch-bay) sensors network.
+
+' Development Status:
+' Just build, so possible bugs around.
+
+' Links:
+' http://www.xively.com
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Xively"
+Public PluginType As Integer = Plugin.Type_Module
+Public PluginFriendlyName As String = "Xively"
+Public PluginVersion As String = "1.01"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[Xively] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $iFeed As Integer
+Private $iPushTime As Integer
+Private $sAPIKey As String
+Private $bDebug As Boolean
+
+Public hPut As New HttpClient As "hPut"
+Public tXively As Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry, Optional bRun As Boolean = True)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $iFeed = cPl.Settings["feed"]
+  $iPushTime = cPl.Settings["pushtime"]
+  $sAPIKey = cPl.Settings["apikey"]
+  $bDebug = cPl.Settings["debug"]
+
+  ' Initialize
+  If bRun Then Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tXively.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Run()
+
+  ' start poll timer for Xively
+  tXively = New Timer As "tXively"
+  tXively.Delay = $iPushTime * 1000 * 60 ' multiply for minutes
+  tXively.Start
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tXively_Timer()
+
+  UploadXivelyData()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' create xml data and upload it to xively
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub UploadXivelyData()
+
+  Dim sURL, sContent As String
+  Dim aHeaders As New String[]
+
+  ' if we are already uploading return
+  If hPut.Status > 0 Then
+    Main.WriteLog(LogLabel & "I'm already uploading sensor data to Xively, skipping.")
+    Return
+  Endif
+
+  ' create url with feed id and type
+  sURL = "https://api.xively.com/v2/feeds/" & $iFeed & ".json"
+
+  ' get device data to upload
+  sContent = CreateXivelyData()
+
+  ' set api header for authentication
+  aHeaders.Add("X-ApiKey:" & $sAPIKey)
+
+  ' suppress 'Continue: 100' reply
+  aHeaders.Add("Expect:")
+
+  ' use httpclient put to send data to xively
+  hPut.URL = sURL
+  hPut.TimeOut = 10
+  hPut.Async = True
+  hPut.Put("application/x-www-form-urlencoded", sContent, aHeaders)
+
+  If $bDebug Then
+    Main.WriteDebugLog(LogLabel & "Posting data to feed url '" & sURL & "'.")
+    Main.WriteDebugLog(LogLabel & "Using header \"X-ApiKey: " & $sAPIKey & "\".")
+    Main.WriteDebugLog(LogLabel & sContent)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' scan Xively devices table and create xml document
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function CreateXivelyData() As String
+
+  Dim rResult As Result
+  Dim sValue, sTag As String
+  Dim cJson As Collection = ["version": "1.0.0"]
+  Dim cJsonData, cJsonUnit As Collection
+  Dim aData As New Variant[]
+
+  ' scan device table
+  rResult = Main.hDB.Exec("SELECT * FROM devices_xively")
+  If Not rResult Then
+    Main.WriteLog(LogLabel & "ERROR: table 'devices_xively' not found!")
+    Return
+  Endif
+
+  ' {
+  '   "version": "1.0.0",
+  '   "datastreams": [
+  '     {
+  '       "id": "test",
+  '       "current_value": 25,
+  '       "unit": {
+  '         "symbol": "°C",
+  '         "label": "Celsius"
+  '       }
+  '     }
+  '   ]
+  ' }
+
+  ' create json datastream
+  If rResult.Count Then
+    For Each rResult
+      cJsonData = New Collection
+      cJsonData.Add(rResult!datastreamid, "id")
+      sValue = Devices.GetCurrentValueForDevice(rResult!deviceid, rResult!value)
+      cJsonData.Add(sValue, "current_value")
+      cJsonData.Add(rResult!tags, "tags")
+
+      cJsonUnit = New Collection
+      cJsonUnit.Add(rResult!units, "label")
+      cJsonUnit.Add(rResult!devicelabel, "symbol")
+      cJsonUnit.Add(rResult!unittype, "type")
+      cJsonData.Add(cJsonUnit, "unit")
+
+      aData.Add(cJsonData)
+    Next
+  Endif
+
+  cJson.Add(aData, "datastreams")
+  Return JSON.Encode(cJson)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' catch error
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hPut_Error()
+
+  Dim sStatus As String = Last.Status
+
+  Log.Plugin_CURL_Error(LogLabel, "api.xively.com", sStatus)
+
+  If Not $bDebug Then Return
+  Main.WriteDebugLog(LogLabel & "Error while posting to feed on Xively Status: ", Last.Status)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' check http return code
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hPut_Finished()
+
+  Dim iCount As Integer
+
+  ' select on http result code and display message
+  Select hPut.Code
+    Case 0
+      If InStr(hPut.Headers[0], "HTTP/1.1 200") Or If InStr(hPut.Headers[0], "HTTP/1.1 100") Then
+        Main.WriteLog(LogLabel & "Uploaded sensor data to Xively.")
+      Else
+        Main.WriteLog(LogLabel & "Unknown error occured while uploading sensor data to Xively!")
+      Endif
+    Case 200
+      Main.WriteLog(LogLabel & "Uploaded sensor data to Xively. (" & hPut.Code & ")")
+    Case 401
+      Main.WriteLog(LogLabel & "Error authenticating while uploading sensor data to Xively! (" & hPut.Code & ")")
+    Case 403
+      Main.WriteLog(LogLabel & "Error forbidden to upload sensor data to Xively! (" & hPut.Code & ")")
+    Case 404
+      Main.WriteLog(LogLabel & "Error page not found while uploading sensor data to Xively! (" & hPut.Code & ")")
+    Case 422
+      Main.WriteLog(LogLabel & "Error sensor data is not valid after uploading to Xively! (" & hPut.Code & ")")
+    Case 503
+      Main.WriteLog(LogLabel & "Error rate limit exceeded while uploading sensor data to Xively! (" & hPut.Code & ")")
+    Case Else
+      Main.WriteLog(LogLabel & "Unknown error occured while uploading sensor data to Xively! (" & hPut.Code & ") " & hPut.Reason)
+  End Select
+
+  ' if debug is on print all http headers
+  If Not $bDebug Then Return
+  For iCount = 0 To hPut.Headers.Count - 1
+    Main.WriteDebugLog(LogLabel & Left(hPut.Headers[iCount], Len(hPut.Headers[iCount])))
+  Next
+
+End

@@ -41,9 +41,10 @@ Private $bFritzBoxDebug As Boolean
 
 Private hFritzBox As New Socket
 Private sBuffer As String
-Public tFritzBoxConnect As Timer
-Private iConnectRetry As Integer = 0 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -61,7 +62,12 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnabled = cPl.Settings["enabled"]
   $sTCPHost = cPl.Settings["tcphost"]
   $bFritzBoxDebug = cPl.Settings["debug"]
- 
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
   ' Connect/Initialize connection
   Connect()
 
@@ -79,7 +85,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect(Optional bFirstStart As Boolean = True) As Boolean
+Public Function Connect() As Boolean
 
   ' try to close the connection
   Try hFritzBox.Close
@@ -89,7 +95,7 @@ Public Function Connect(Optional bFirstStart As Boolean = True) As Boolean
   hFritzBox.Connect($sTCPHost, 1012)
 
   ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":1012")
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":1012")
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -107,37 +113,48 @@ Catch ' some errors
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket ready
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FritzBox_Ready()
 
-  ' define timer for FritzBox reconnect
-  tFritzBoxConnect = New Timer As "FritzBoxConnect"
-  tFritzBoxConnect.Delay = iConnectRetry
-  tFritzBoxConnect.Stop
-
   Main.WriteLog(LogLabel & "TCP interface connected.")
+  iReConnectRetry = 0
   IsRunning = True
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FritzBox_Closed()
 
-  Main.WriteLog(LogLabel & "ERROR: Fritz!Box TCP socket connection is lost.")
-  If iConnectRetry < 6 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
-    tFritzBoxConnect.Start
-  Endif
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' reconnect routine
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tFritzBoxConnect_Timer()
+Public Sub tReConnect_Timer()
 
-  If Not Connect(False) Then
-    Inc iConnectRetry
-    iConnectDelay *= iConnectRetry
-    tFritzBoxConnect.Delay = iConnectDelay
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
   Endif
 
 End
@@ -154,7 +171,7 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
-  Try tFritzBoxConnect.Stop
+  Try tReConnect.Stop
   Try hFritzBox.Close
 
   Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
@@ -184,6 +201,19 @@ Public Sub FritzBox_Read()
   Else
     sBuffer &= sData
   Endif
+
+End
+
+Public Sub FritzBox_Error()
+
+  Dim sMsg As String
+
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+  ReConnect()
 
 End
 
@@ -283,16 +313,3 @@ Private Sub ParseLine(sStr As String)
   Endif
 
 End
-
-Public Sub FritzBox_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-
-End
-
