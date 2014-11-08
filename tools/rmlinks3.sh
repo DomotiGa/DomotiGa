@@ -16,9 +16,7 @@ rm *.module
 rm */*.class
 rm */*.module
 mkdir -p JsonRpc
-mkdir -p SmtpClient
 mkdir -p Timers
-mkdir -p XmlRpc
 #
 cp Main.module.back Main.module
 cp ../../DomotiGa3/.src/Astro.module .
@@ -70,7 +68,6 @@ cp ../../DomotiGa3/.src/COnkyo.class .
 cp ../../DomotiGa3/.src/COWFS.class .
 cp ../../DomotiGa3/.src/COWW.class .
 cp ../../DomotiGa3/.src/CP2000.class .
-cp ../../DomotiGa3/.src/CPachube.class .
 cp ../../DomotiGa3/.src/CPhilipsHue.class .
 cp ../../DomotiGa3/.src/CPLCBUS.class .
 cp ../../DomotiGa3/.src/CPluginEntry.class .
@@ -110,6 +107,7 @@ cp ../../DomotiGa3/.src/CXMLRPC.class .
 cp ../../DomotiGa3/.src/CXBMCxPL.class .
 cp ../../DomotiGa3/.src/CxPL.class .
 cp ../../DomotiGa3/.src/CxPLMsg.class .
+cp ../../DomotiGa3/.src/CXively.class .
 cp ../../DomotiGa3/.src/CVelbus.class .
 cp ../../DomotiGa3/.src/CViera.class .
 cp ../../DomotiGa3/.src/CVisonic.class .
@@ -133,7 +131,4 @@ cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
 cp ../../DomotiGa3/.src/CWeatherUnderground.class .
 cp ../../DomotiGa3/.src/JsonRpc/* ./JsonRpc/
-cp ../../DomotiGa3/.src/SmtpClient/* ./SmtpClient/
 cp ../../DomotiGa3/.src/Timers/* ./Timers/
-cp ../../DomotiGa3/.src/XmlRpc/* ./XmlRpc/
-

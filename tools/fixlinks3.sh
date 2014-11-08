@@ -61,7 +61,6 @@ ln -s ../../DomotiGa3/.src/COnkyo.class
 ln -s ../../DomotiGa3/.src/COWFS.class
 ln -s ../../DomotiGa3/.src/COWW.class
 ln -s ../../DomotiGa3/.src/CP2000.class
-ln -s ../../DomotiGa3/.src/CPachube.class
 ln -s ../../DomotiGa3/.src/CPhilipsHue.class
 ln -s ../../DomotiGa3/.src/CPLCBUS.class
 ln -s ../../DomotiGa3/.src/CPluginEntry.class
@@ -101,6 +100,7 @@ ln -s ../../DomotiGa3/.src/CXMLRPC.class
 ln -s ../../DomotiGa3/.src/CXBMCxPL.class
 ln -s ../../DomotiGa3/.src/CxPL.class
 ln -s ../../DomotiGa3/.src/CxPLMsg.class
+ln -s ../../DomotiGa3/.src/CXively.class
 ln -s ../../DomotiGa3/.src/CVelbus.class
 ln -s ../../DomotiGa3/.src/CViera.class
 ln -s ../../DomotiGa3/.src/CVisonic.class
