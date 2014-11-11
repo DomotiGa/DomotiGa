@@ -1,11 +1,8 @@
-
 --
--- Database Engine changes 
+-- Rename WeatherUG table
 --
 
-ALTER TABLE macros ENGINE = MyISAM; 
-ALTER TABLE temperature_profile ENGINE = MyISAM; 
-ALTER TABLE thermostat ENGINE = MyISAM; 
+RENAME TABLE settings_weatherug to settings_weatherunderground;
 
 --
 -- Table structure for table `device_valuetypes`
