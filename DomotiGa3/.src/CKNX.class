@@ -31,6 +31,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[KNX] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -50,6 +51,10 @@ Public tKNX As Timer
 Private Const CmdOn As Byte = &H81
 Private Const CmdOff As Byte = &H80
 
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
@@ -67,6 +72,19 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sTCPHost = cPl.Settings["tcphost"]
   $iTCPPort = cPl.Settings["tcpport"]
   $bKNXDebug = cPl.Settings["debug"]
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
+  InterfaceId = Devices.FindInterface("KNX Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
 
   ' Connect/Initialize connection
   Connect()
@@ -118,15 +136,27 @@ Catch ' some errors
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' after connecting open a group socket for group communication
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket ready
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub KNX_Ready()
-
-  Dim bCommand As Byte[] = [CByte(&H00), CByte(&H26), CByte(&H00), CByte(&H00), CByte(&H00)]
 
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
+
+  ' connected so reset retry counter
+  iReConnectRetry = 0
+
+  OpenGroupSocket()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' open a group socket for group communication
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub OpenGroupSocket()
+
+  Dim bCommand As Byte[] = [CByte(&H00), CByte(&H26), CByte(&H00), CByte(&H00), CByte(&H00)]
 
   If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Sending the command to open a Group Socket.")
   TransmitData(bCommand)
@@ -142,6 +172,16 @@ Public Sub KNX_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  Connect()
 
 End
 
@@ -151,6 +191,20 @@ End
 Public Sub KNX_Closed()
 
   Main.WriteLog(LogLabel & "TCP socket closed.")
+  ReConnect()
+
+End
+
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
 
 End
 
@@ -162,7 +216,7 @@ Public Sub GroupRead()
   Dim rDevices As Result
 
   ' get a list of KNX devices
-  rDevices = Devices.FindDevicesForInterface(Devices.FindInterface("KNX Interface"))
+  rDevices = Devices.FindDevicesForInterface(InterfaceId)
   If rDevices.Count = 0 Then
     If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "No devices found to send Group Read request to.")
     Return
@@ -218,7 +272,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Disconnect() As Boolean
 
-  ' try to close the connection
+  ' try to stop timer and close the connection
+  Try tReConnect.Stop
   Try hKNX.Close
 
   Main.WriteLog(LogLabel & "TCP Server closed.")
@@ -316,13 +371,13 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessData(sAddress As String, aReceived As String[], aBuffer As String[])
 
-  Dim iDeviceId As Integer = Devices.FindRegExp(sAddress, Devices.FindInterface("KNX Interface"))
+  Dim iDeviceId As Integer = Devices.FindRegExp(sAddress, InterfaceId)
   Dim sDeviceTypeDesc As String
   Dim aDeviceTypeDesc As String[]
   Dim iCnt As Integer
 
   If iDeviceId Then
-    sDeviceTypeDesc = Devices.FindDescrForDeviceType(Devices.FindDeviceTypeForDevice(iDeviceId))
+    sDeviceTypeDesc = Devices.FindDeviceTypeDescriptionForDeviceId(iDeviceId)
 
     aDeviceTypeDesc = Scan(sDeviceTypeDesc, "DPT *.*")
     If aDeviceTypeDesc.Count = 2 Then
@@ -330,8 +385,28 @@ Private Sub ProcessData(sAddress As String, aReceived As String[], aBuffer As St
         Case "1" ' DPT 1.* 1-Bit value, raw 0,1 -> Off,On
           ProcessDPT1(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
 
+        ' FIXME: return correct values for control part
+        Case "2" ' DPT 2.* 1-Bit value controlled/forced, raw 0,1 -> Off,On
+          ProcessDPT2(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        ' FIXME: return correct values and implement steps
+        Case "3" ' DPT 3.* 4-Bit control, raw
+          ProcessDPT3(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "4" ' DPT 4.* 1-Byte character, raw A9 -> © (iso-8859-1), raw 24 -> E (ascii)
+          ProcessDPT4(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
         Case "5" ' DPT 5.* 1-Byte relative value, raw 00 -> 0%
           ProcessDPT5(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "6" ' DPT 6.* 1-Byte signed value, raw 00 B4-> -76
+          ProcessDPT6(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "7" ' DPT 7.* 2-Byte unsigned value, raw 12 12 -> 3084
+          ProcessDPT7(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "8" ' DPT 8.* 2-Byte signed value, raw
+          ProcessDPT8(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
 
         Case "9" ' DPT 9.* 2-Byte floating point value, raw 0C 97 -> 23.5 C
           ProcessDPT9(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
@@ -342,8 +417,31 @@ Private Sub ProcessData(sAddress As String, aReceived As String[], aBuffer As St
         Case "11" ' DPT 11.001 3-Byte date, raw 15 0A 0E -> 21 10 14
           ProcessDPT11(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
 
-        Case "14" ' DPT 14.* 4-Byte 32-bit counter, raw  13 24 52 60 ->
+        Case "12" ' DPT 12.001 4-Byte unsigned value, raw 13 24 52 60 -> 219690044
+          ProcessDPT12(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        ' FIXME: doesn't work correctly yet
+        Case "13" ' DPT 13.* 4-Byte signed value, raw 13 24 52 60 -> 219690044
+          ProcessDPT13(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        ' FIXME: doesn't work correctly yet
+        Case "14" ' DPT 14.* 4-Byte 32-bit counter, raw 
           ProcessDPT14(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "16" ' DPT 16.* string, raw 13 24 52 60 -> #L:
+          ProcessDPT16(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "17" ' DPT 17.001 1-Byte scene number, raw
+          ProcessDPT18(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "18" ' DPT 18.001 1-Byte scene control, raw
+          ProcessDPT18(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "19" ' DPT 19.001 8-Byte datetime, raw
+          ProcessDPT19(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
+
+        Case "232" ' DPT 232.600 3-Byte rgb, raw
+          ProcessDPT232(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
 
         Case Else
           Main.WriteDebugLog(LogLabel & "The KNX devicetype used for device with address '" & sAddress & "' is not yet supported, please report.")
@@ -365,6 +463,89 @@ Private Sub ProcessData(sAddress As String, aReceived As String[], aBuffer As St
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse DPT type and return converted value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ProcessDPTs(aReceived As String[], sDPT As String) As String
+
+  Dim aDPT As String[]
+  Dim iCnt As Integer
+
+  aDPT = Scan(sDPT, "*.*")
+  If aDPT.Count = 2 Then
+    Select aDPT[0]
+      Case "1" ' DPT 1.* 1-Bit value, raw 00 -> Off
+        Return ConvertDPT1(aReceived, sDPT)
+
+      ' FIXME: return correct values for control part
+      Case "2" ' DPT 1.* 1-Bit controlled/forced value, raw 00 -> Off
+        Return ConvertDPT2(aReceived, sDPT)
+
+      ' FIXME: return correct values and implement steps
+      Case "3" ' DPT 3.* 4-Bit control, raw
+        Return ConvertDPT3(aReceived, sDPT)
+
+      Case "4" ' DPT 4.* 1-Byte character, raw A9 -> © (iso-8859-1), raw 24 -> E (ascii)
+        Return ConvertDPT4(aReceived, sDPT)
+
+      Case "5" ' DPT 5.* 1-Byte relative value, raw 00 -> 0%, or raw FF -> 255
+        Return ConvertDPT5(aReceived, sDPT)
+
+      Case "6" ' DPT 6.* 1-Byte signed value, raw 00 B4-> -76
+        Return ConvertDPT6(aReceived, sDPT)
+
+      Case "7" ' DPT 7.* 2-Byte unsigned value, raw 12 12 -> 3084
+        Return ConvertDPT7(aReceived, sDPT)
+
+      ' FIXME: return correct values
+      Case "8" ' DPT 8.* 2-Byte signed value, raw 
+        Return ConvertDPT8(aReceived, sDPT)
+
+      Case "9" ' DPT 9.* 2-Byte floating point value, raw 0C 97 -> 23.5 C
+        Return ConvertDPT9(aReceived, sDPT)
+
+      Case "10" ' DPT 10.001 3-Byte time of day, raw 54 32 11 -> Tue 20:50:17
+        Return ConvertDPT10(aReceived, sDPT)
+
+      Case "11" ' DPT 11.001 3-Byte date, raw 15 0A 0E -> 21-10-2014
+        Return ConvertDPT11(aReceived, sDPT)
+
+      Case "12" ' DPT 12.001 4-Byte unsigned counter value, raw 13 24 52 60 -> 219690044
+        Return ConvertDPT12(aReceived, sDPT)
+
+      Case "13" ' DPT 13.* 4-Byte signed counter value, raw 
+        Return ConvertDPT13(aReceived, sDPT)
+
+      Case "14" ' DPT 14.* 4-Byte/32-bit float, raw 
+        Return ConvertDPT14(aReceived, sDPT)
+
+      Case "16" ' DPT 16.* string, raw 13 24 52 60 -> #L:
+        Return ConvertDPT16(aReceived, sDPT)
+
+      Case "17" ' DPT 17.001 1-Byte scene number, raw
+        Return ConvertDPT17(aReceived, sDPT)
+
+      Case "18" ' DPT 18.001 1-Byte scene control, raw
+        Return ConvertDPT18(aReceived, sDPT)
+
+      Case "19" ' DPT 19.001 8-Byte datetime, raw
+        Return ConvertDPT19(aReceived, sDPT)
+
+      Case "232" ' DPT 232.600 3-Byte rgb, raw
+        Return ConvertDPT232(aReceived, sDPT)
+
+      Case Else
+        Main.WriteDebugLog(LogLabel & "The DPT " & sDPT & " is not yet supported, please report.")
+        Main.WriteDebugLog(LogLabel & "Data received: '", True)
+        For iCnt = 0 To aReceived[1] + 2
+          Main.WriteDebugLogChars(" " & Hex(aReceived[iCnt], 2), True)
+        Next
+        Main.WriteDebugLogChars("\n", True)
+    End Select
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' process received data for DPT 1.* values, 1-Bit
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessDPT1(iDeviceId As Integer, aReceived As String[], sDPT As String)
@@ -372,10 +553,8 @@ Private Sub ProcessDPT1(iDeviceId As Integer, aReceived As String[], sDPT As Str
   Dim sValue As String
 
   Select Case aReceived[0]
-    Case "40", "80" ' receive/parse
-      sValue = ConvertDPT1(0, sDPT)
-    Case "41", "81" ' receive/parse
-      sValue = ConvertDPT1(1, sDPT)
+    Case "40", "80", "41", "81" ' receive/parse
+      sValue = ConvertDPT1(aReceived, sDPT)
     Case Else
       If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
@@ -388,75 +567,218 @@ Private Sub ProcessDPT1(iDeviceId As Integer, aReceived As String[], sDPT As Str
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 1
 ' return cmd string for DPT 1.* values
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ConvertDPT1(iRawValue As Integer, sDPT As String) As String
+Private Sub ConvertDPT1(aReceived As String[], sDPT As String) As String
 
   Dim sValue As String
+  Dim bValue As Boolean = BTst(Val(aReceived[0]), 0)
 
   Select Case sDPT
     Case "1.001"
-      sValue = IIf(iRawValue, "On", "Off")
+      sValue = IIf(bValue, "On", "Off")
     Case "1.002"
-      sValue = IIf(iRawValue, "True", "False")
+      sValue = IIf(bValue, "True", "False")
     Case "1.003"
-      sValue = IIf(iRawValue, "Enable", "Disable")
+      sValue = IIf(bValue, "Enable", "Disable")
     Case "1.004"
-      sValue = IIf(iRawValue, "Ramp", "No Ramp")
+      sValue = IIf(bValue, "Ramp", "No Ramp")
     Case "1.005"
-      sValue = IIf(iRawValue, "Alarm", "No Alarm")
+      sValue = IIf(bValue, "Alarm", "No Alarm")
     Case "1.006"
-      sValue = IIf(iRawValue, "High", "Low")
+      sValue = IIf(bValue, "High", "Low")
     Case "1.007"
-      sValue = IIf(iRawValue, "Increase", "Decrease")
+      sValue = IIf(bValue, "Increase", "Decrease")
     Case "1.008"
-      sValue = IIf(iRawValue, "Down", "Up")
+      sValue = IIf(bValue, "Down", "Up")
     Case "1.009"
-      sValue = IIf(iRawValue, "Start", "Stop")
+      sValue = IIf(bValue, "Close", "Open")
     Case "1.010"
-      sValue = IIf(iRawValue, "Active", "Inactive")
+      sValue = IIf(bValue, "Start", "Stop")
     Case "1.011"
-      sValue = IIf(iRawValue, "Inverted", "Not Inverted")
+      sValue = IIf(bValue, "Active", "Inactive")
+    Case "1.012"
+      sValue = IIf(bValue, "Inverted", "Not Inverted")
     Case "1.013"
-      sValue = IIf(iRawValue, "Cyclically", "Start/Stop")
+      sValue = IIf(bValue, "Cyclically", "Start/Stop")
     Case "1.014"
-      sValue = IIf(iRawValue, "Calculated", "Fixed")
+      sValue = IIf(bValue, "Calculated", "Fixed")
     Case "1.015"
-      sValue = IIf(iRawValue, "Reset Cmd", "No Action")
+      sValue = IIf(bValue, "Reset", "No Action")
     Case "1.016"
-      sValue = IIf(iRawValue, "Ack Cmd", "No Action")
+      sValue = IIf(bValue, "Ack", "No Action")
     Case "1.017"
-      sValue = IIf(iRawValue, "Trigger 1", "Trigger 2")
+      sValue = IIf(bValue, "Trigger1", "Trigger2")
     Case "1.018"
-      sValue = IIf(iRawValue, "Occupied", "Not Occupied")
+      sValue = IIf(bValue, "Occupied", "Not Occupied")
     Case "1.019"
-      sValue = IIf(iRawValue, "Open Door", "Open Window")
+      sValue = IIf(bValue, "Open", "Closed")
     Case "1.021"
-      sValue = IIf(iRawValue, "Or", "And")
+      sValue = IIf(bValue, "And", "Or")
     Case "1.022"
-      sValue = IIf(iRawValue, "Scene B", "Scene A")
+      sValue = IIf(bValue, "Scene B", "Scene A")
+    Case "1.023"
+      sValue = IIf(bValue, "Move Up/Down + StepStop Mode", "Only Move Up/Down Mode")
     Case "1.100"
-      sValue = IIf(iRawValue, "Heating", "Cooling")
+      sValue = IIf(bValue, "Heating", "Cooling")
     Case Else
       If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 1.* packet!")
       sValue = "?"
   End Select
   Return sValue
 
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 2.* values, 1-Bit
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT2(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim sValue As String
+
+  Select Case aReceived[0]
+    Case "40", "80", "41", "81" ' receive/parse
+      sValue = ConvertDPT2(aReceived, sDPT)
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+  ' update device
+  Devices.ValueUpdate(iDeviceId, 1, sValue)
+  If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT2(aReceived As String[], sDPT As String) As String
+
+  Dim sValue, sControl As String
+  Dim bValue As Boolean = BTst(Val(aReceived[0]), 0)
+  Dim bControl As Boolean = BTst(Val(aReceived[0]), 1)
+
+  ' control bit set?
+  sControl = IIf(bControl, "Control", "No Control")
+
+  ' value bit set?
+  Select Case sDPT
+    Case "2.001"
+      sValue = IIf(bValue, "On", "Off")
+    Case "2.002"
+      sValue = IIf(bValue, "True", "False")
+    Case "2.003"
+      sValue = IIf(bValue, "Enable", "Disable")
+    Case "2.004"
+      sValue = IIf(bValue, "Ramp", "No Ramp")
+    Case "2.005"
+      sValue = IIf(bValue, "Alarm", "No Alarm")
+    Case "2.006"
+      sValue = IIf(bValue, "High", "Low")
+    Case "2.007"
+      sValue = IIf(bValue, "Increase", "Decrease")
+    Case "2.008"
+      sValue = IIf(bValue, "Down", "Up")
+    Case "2.009"
+      sValue = IIf(bValue, "Close", "Open")
+    Case "2.010"
+      sValue = IIf(bValue, "Start", "Stop")
+    Case "2.011"
+      sValue = IIf(bValue, "Active", "Inactive")
+    Case "2.012"
+      sValue = IIf(bValue, "Inverted", "Not Inverted")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 2.* packet!")
+      sValue = "?"
+  End Select
+  Return sValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 3.* values, 4-Bit control
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT3(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim sValue As String
+
+  Select Case aReceived[0]
+    Case "40", "80", "41", "81" ' receive/parse
+      sValue = ConvertDPT3(aReceived, sDPT)
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+  ' update device
+  Devices.ValueUpdate(iDeviceId, 1, sValue)
+  If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 3
+' 4 bit Dim (DPT 3.007)
+' 4 bit Blind (DPT 3.008)
+' RRRRDSSS
+' R Reserved
+' D Direction 0 = Decrease / 1 = Increase
+' S Step (1-7) 0 = Break
+' return cmd string for DPT 3.* values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT3(aReceived As String[], sDPT As String) As String
+
+  Dim sValue As String
+  Dim bValue As Boolean = BTst(Val(aReceived[1]), 3)
+  Dim iSteps As Integer = Val("&H" & aReceived[1]) And &H07
+
+  ' FIXME: return correct values and implement steps
+  Select Case sDPT
+    Case "3.007" ' dimming
+      sValue = IIf(bValue = 1, "Brighten", "Dim")
+      If iSteps = 0 Then
+        sValue = "Stop"
+      Else
+        sValue &= " " & iSteps & " steps"
+      Endif
+    Case "3.008" ' blinds
+      sValue = IIf(bValue = 1, "Down", "Up")
+      If iSteps = 0 Then
+        sValue = "Stop"
+      Else
+        sValue &= " " & iSteps & " steps"
+      Endif
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 3.* packet!")
+      sValue = "?"
+  End Select
+  Return sValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' process received data for DPT 9.* values, 2-Byte floating point
+' process received data for DPT 4.* values, 1-Byte character
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ProcessDPT9(iDeviceId As Integer, aReceived As String[], sDPT As String)
+Private Sub ProcessDPT4(iDeviceId As Integer, aReceived As String[], sDPT As String)
 
-  Dim fValue As Float
+  Dim iValue As Float
 
   Select Case aReceived[0]
     Case "80", "40" ' receive/parse
-      fValue = ConvertDPT9(aReceived[1] & aReceived[2])
-      Devices.ValueUpdate(iDeviceId, 1, fValue)
-      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & fValue & "'")
+      iValue = ConvertDPT5(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, iValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
     Case Else
       If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
@@ -464,23 +786,27 @@ Private Sub ProcessDPT9(iDeviceId As Integer, aReceived As String[], sDPT As Str
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' 2 Byte Float            E Exponent (0..15)
-' SEEEEMMM MMMMMMMM       M Mantisse (-2048...2047)
-' S Sign (0/1)            7FFFH means invalid data
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ConvertDPT9(sValue As String) As Float
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 4
+' convert from hex to character
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT4(aReceived As String[], sDPT As String) As String
 
-  Dim iExp, iMant, iVal As Integer = Val("&H" & sValue)
+  Dim sValue As String
 
-  iMant = iVal And &H07FF
-  If (iVal And &H08000&) Then
-    iMant = iMant Or &HFFFFF800&
-    iMant = - iMant
-  Endif
-  iExp = Lsr((iVal And &H07800&), 11)
-  If (iVal And &H08000&) Then iMant = - iMant
-  Return (iMant * Lsl(1, iExp) / 100)
+  Select Case sDPT
+    Case "4.001" ' character ASCII
+      sValue = Chr(Val("&H" & aReceived[1]))
+    Case "4.002" ' character ISO 8859-1
+      sValue = String.Chr(Val("&H" & aReceived[1]))
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 4.* packet!")
+      sValue = ""
+  End Select
+  Return sValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -493,8 +819,9 @@ Private Sub ProcessDPT5(iDeviceId As Integer, aReceived As String[], sDPT As Str
 
   Select Case aReceived[0]
     Case "80", "40" ' receive/parse
-      iValue = ConvertDPT5(aReceived[1])
+      iValue = ConvertDPT5(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, iValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
     Case Else
       If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
@@ -503,11 +830,217 @@ Private Sub ProcessDPT5(iDeviceId As Integer, aReceived As String[], sDPT As Str
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' convert from hex to int
+' DPT 5
+' convert from hex to int with 100, 255 or 360 max
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ConvertDPT5(sValue As String) As Integer
+Private Sub ConvertDPT5(aReceived As String[], sDPT As String) As Integer
 
-  Return Val("&H" & sValue)
+  Dim iValue As Integer
+
+  Select Case sDPT
+    Case "5.xxx", "5.001" ' Relative Value (0..100%)
+      iValue = Val("&H" & aReceived[1]) * 100 / 255
+    Case "5.003" ' Angle (0..360°)
+      iValue = Val("&H" & aReceived[1]) * 360 / 255
+    Case "5.004" ' Decimal (0..255)
+      iValue = Val("&H" & aReceived[1])
+    Case "5.005", "5.006", "5.010" ' Decimal (0..255)
+      iValue = Val("&H" & aReceived[1])
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 5.* packet!")
+      iValue = 0
+  End Select
+  Return iValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 6.* values, 1-Byte signed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT6(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim iValue As Float
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      iValue = ConvertDPT6(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, iValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 6
+' convert from hex to int with value -127 - 127
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT6(aReceived As String[], sDPT As String) As Integer
+
+  Dim iValue As Integer
+
+  Select Case sDPT
+    Case "6.001", "6.010" ' (-128..127)
+      iValue = Val("&H" & aReceived[1])
+    Case "6.020" ' status with mode FIXME: unsure if correct
+      iValue = Val("&H" & aReceived[1])
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 6.* packet!")
+      iValue = 0
+  End Select
+  If iValue > 128 Then iValue -= 256
+  Return iValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 7.* values, 2-Byte unsigned
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT7(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim iValue As Float
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      iValue = ConvertDPT7(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, iValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 7
+' convert from hex to int 0..65535
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT7(aReceived As String[], sDPT As String) As Integer
+
+  Dim iValue As Integer
+
+  Select Case sDPT
+    Case "7.xxx", "7.001", "7.002", "7.005", "7.006", "7.007", "7.010", "7.011", "7.012", "7.013" ' unsigned (0..65535)
+      iValue = Lsl(Val("&H" & aReceived[1]), 8) Or Val("&H" & aReceived[2])
+    Case "7.003" ' 10 mS signed (0..655350)
+      iValue = 10 * (Lsl(Val("&H" & aReceived[1]), 8) Or Val("&H" & aReceived[2]))
+    Case "7.004" ' 100 mS signed (0..6553500)
+      iValue = 100 * (Lsl(Val("&H" & aReceived[1]), 8) Or Val("&H" & aReceived[2]))
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 7.* packet!")
+      iValue = 0
+  End Select
+  Return iValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 8.* values, 2-Byte signed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT8(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim iValue As Float
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      iValue = ConvertDPT8(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, iValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 8
+' convert from hex to int -32768..32767
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT8(aReceived As String[], sDPT As String) As Integer
+
+  Dim iValue As Integer
+
+  Select Case sDPT
+    Case "8.xxx", "8.001", "8.002", "8.005", "8.006", "8.007", "8.010" ' signed (-32768..32767)
+     ' iValue = Lsl(Val(aReceived[1]), 8) Or Val(aReceived[2])
+      iValue = Lsl(Val(aReceived[1]), 8) Or Val(aReceived[2])
+    Case "8.003" ' 10 mS signed (-327680..327670)
+      iValue = 10 * (Lsl(Val(aReceived[1]), 8) Or Val(aReceived[2]))
+    Case "8.004" ' 100 mS signed (-3276800..3276700)
+      iValue = 100 * (Lsl(Val(aReceived[1]), 8) Or Val(aReceived[2]))
+    Case "8.010" ' %
+      iValue = 100 * (Lsl(Val(aReceived[1]), 8) Or Val(aReceived[2])) / 100
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 8.* packet!")
+      iValue = 0
+  End Select
+  If iValue > 32768 Then iValue -= 65535
+  Return iValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 9.* values, 2-Byte floating point
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT9(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim fValue As Float
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      fValue = ConvertDPT9(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, Format(fValue, "0.00"))
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & fValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 9
+' 2 Byte Float E Exponent(0..15)
+' SEEEEMMM MMMMMMMM       M Mantisse (-2048...2047)
+' S Sign (0/1)            7FFFH means invalid data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT9(aReceived As String[], sDPT As String) As Float
+
+  Dim iExp, iMant As Integer
+  Dim iVal As Integer = Val("&H" & aReceived[1] & aReceived[2])
+
+  Select Case sDPT
+    Case "9.001", "9.002", "9.003", "9.004", "9.005", "9.006", "9.007", "9.008", "9.009", "9.010", "9.011", "9.020", "9.021", "9.022", "9.023", "9.024", "9.025", "9.026", "9.027", "9.028"
+      iMant = iVal And &H07FF
+      If (iVal And &H08000&) Then
+        iMant = iMant Or &HFFFFF800&
+        iMant = - iMant
+      Endif
+      iExp = Lsr((iVal And &H07800&), 11)
+      If (iVal And &H08000&) Then iMant = - iMant
+      Return (iMant * Lsl(1, iExp) / 100)
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 9.* packet!")
+  End Select
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -522,7 +1055,7 @@ Private Sub ProcessDPT10(iDeviceId As Integer, aReceived As String[], sDPT As St
 
   Select Case aReceived[0]
     Case "80" ' receive/parse
-      sValue = ConvertDPT10(aReceived)
+      sValue = ConvertDPT10(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, sValue)
       If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
     Case "00" ' requested response
@@ -543,24 +1076,33 @@ Private Sub ProcessDPT10(iDeviceId As Integer, aReceived As String[], sDPT As St
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 10
 ' 3 Byte Time
 ' DDDHHHHH RRMMMMMM RRSSSSSS  H Hour
 ' R Reserved                  M Minutes
 ' D WeekDay                   S Seconds
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ConvertDPT10(aReceived As String[]) As String
+Private Sub ConvertDPT10(aReceived As String[], sDPT As String) As String
 
-  Dim aWeekDays As String[] = ["", "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
-  Dim iWeekDay As Integer = Lsr((aReceived[1] And &HE), 5)
-  Dim iHour, iMin, iSec As Integer
+  Dim aWeekDays As String[] = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+  Dim iWeekDay, iHour, iMin, iSec As Integer
+  Dim sValue As String
 
-  ' FIXME: wrong weekday decoded
+ Select Case sDPT
+    Case "10.001"
+      iWeekday = Lsr(Val("&H" & aReceived[1]), 5)
+      iHour = Val("&H" & aReceived[1]) And &H1F
+      iMin = Val("&H" & aReceived[2])
+      iSec = Val("&H" & aReceived[3])
+      If Len(aWeekdays[iWeekday]) Then sValue = aWeekdays[iWeekday] & " "
+      Return sValue & Format(iHour, "00") & ":" & Format(iMin, "00") & ":" & Format(iSec, "00")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 10.* packet!")
+      Return ""
+  End Select
 
-  iHour = Val("&H" & aReceived[1]) And &H1F
-  iMin = Val("&H" & aReceived[2])
-  iSec = Val("&H" & aReceived[3])
-
-  Return aWeekdays[iWeekday] & " " & Format(iHour, "00") & ":" & Format(iMin, "00") & ":" & Format(iSec, "00")
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -575,7 +1117,7 @@ Private Sub ProcessDPT11(iDeviceId As Integer, aReceived As String[], sDPT As St
 
   Select Case aReceived[0]
     Case "80" ' receive/parse
-      sValue = ConvertDPT11(aReceived)
+      sValue = ConvertDPT11(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, sValue)
       If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
     Case "00" ' requested response
@@ -596,24 +1138,112 @@ Private Sub ProcessDPT11(iDeviceId As Integer, aReceived As String[], sDPT As St
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 11
 ' 3 byte Date
 ' RRRDDDDD RRRRMMMM RYYYYYYY  M Month
 ' R Reserved                  Y Year
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ConvertDPT11(aReceived As String[]) As String
+Private Sub ConvertDPT11(aReceived As String[], sDPT As String) As String
 
   Dim iDay, iMonth, iYear As Integer
 
-  iDay = Val("&H" & aReceived[1])
-  iMonth = Val("&H" & aReceived[2])
-  iYear = Val("&H" & aReceived[3]) + 2000
+ Select Case sDPT
+    Case "11.001"
+      iDay = Val("&H" & aReceived[1])
+      iMonth = Val("&H" & aReceived[2])
+      iYear = Val("&H" & aReceived[3])
+      If iYear > 90 Then iYear += 1900
+      If iYear < 90 Then iYear += 2000
+      Return Format(iYear, "####") & "-" & Format(iMonth, "00") & "-" & Format(iDay, "00")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 11.* packet!")
+      Return ""
+  End Select
 
-  Return Format(iDay, "00") & "-" & Format(iMonth, "00") & "-" & Format(iYear, "####")
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 12.001 values, 4-Byte unsigned
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT12(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim iValue As Integer
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      iValue = ConvertDPT12(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, iValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 12
+' convert from hex to 4 byte unsigned
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT12(aReceived As String[], sDPT As String) As Long
+
+  Dim lValue As Long
+
+  lValue = Val("&H" & aReceived[1] & aReceived[2] & aReceived[3] & aReceived[4] & "&")
+  Return lValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 13.* values, 4-Byte signed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT13(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim iValue As Integer
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      iValue = ConvertDPT13(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, iValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 13
+' convert from hex to 4 byte signed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT13(aReceived As String[], sDPT As String) As Long
+
+  Dim lValue As Long
+
+ Select Case sDPT
+    Case "13.001", "13.002", "13.010", "13.011", "13.012", "13.013", "13.014", "13.015", "13.100" ' signed (-2147483648..2147483647)
+      lValue = Val("&H" & aReceived[1] & aReceived[2] & aReceived[3] & aReceived[4])
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 13.* packet!")
+      lValue = 0
+  End Select
+  If lValue > 2147483647 Then lValue -= 2147483648
+  Return lValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' process received data for DPT 14.* values, 4-Byte 32-bit counter
+' process received data for DPT 14.* values, 4-Byte float
 ' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessDPT14(iDeviceId As Integer, aReceived As String[], sDPT As String)
 
@@ -621,7 +1251,7 @@ Private Sub ProcessDPT14(iDeviceId As Integer, aReceived As String[], sDPT As St
 
   Select Case aReceived[0]
     Case "80", "40" ' receive/parse
-      sValue = DecodeDPT14(aReceived)
+      sValue = Format(ConvertDPT14(aReceived, sDPT), "#.###")
       Devices.ValueUpdate(iDeviceId, 1, sValue)
       If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
     Case Else
@@ -631,11 +1261,326 @@ Private Sub ProcessDPT14(iDeviceId As Integer, aReceived As String[], sDPT As St
 
 End
 
-Public Sub DecodeDPT14(aReceived As String[]) As Integer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 14
+' 4 Byte Float
+' SEEEEEEE EFFFFFFF FFFFFFFF FFFFFFFF
+' S(Sign) = {0,1}
+' Exponent = [0...255]
+' Fraction = [0..8 388 607]
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT14(aReceived As String[], sDPT As String) As Float
 
-  ' FIXME: correct output
-  Return Val("&H" & aReceived[1]) & Val("&H" & aReceived[2]) & Val("&H" & aReceived[3]) & Val("&H" & aReceived[4])
-  'Return Val(aReceived[1]) & Val(aReceived[2]) & Val(aReceived[3]) & Val(aReceived[4])
+  Dim sHex As String = aReceived[1] & aReceived[2] & aReceived[3] & aReceived[4]
+  Dim sTemp As String
+  Dim iSign As Integer
+  Dim fExponent, fMant As Float
+  
+' Sub decode_dpt14 { #4byte float
+'     #Perls unpack For float Is Somehow strange broken
+'     my@Val = Split(" ", shift);
+'     my $val2 = (Hex($val[0]) < < 24) + (Hex($val[1]) < < 16) + (Hex($val[2]) < < 8) + Hex($val[3]);
+'     my $sign = ($val2 & 0 x80000000) Print -1: 1;
+'     my $expo = (($val2 & 0 x7F800000) > > 23) - 127;
+'     my $mant = ($val2 & 0 x007FFFFF | 0x00800000);
+'     my $num = $sign * (2 * * $expo) * ($mant / (1 < < 23));
+'     Return sprintf("%.4f", $num);
+' }
+
+  ' sign
+  iSign = IIf((Val("&H" & Mid(sHex, 1, 2)) And &H80) = 128, -1, 1)
+  ' exponent
+  fExponent = (Val("&H" & Mid(sHex, 1, 3)) And &H7F8) / 2 ^ 3 - 127
+  ' mantissa
+  fMant = (Val("&H" & Mid(sHex, 3, 6)) And &H7FFFFF) / 2 ^ 23 + 1
+
+  Return iSign * fMant * 2 ^ fExponent 
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 16.* values, strings
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT16(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim iValue As Float
+
+  Select Case aReceived[0]
+    Case "80", "40" ' receive/parse
+      iValue = ConvertDPT16(aReceived, sDPT)
+      Devices.ValueUpdate(iDeviceId, 1, iValue)
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 16
+' convert from hex to character
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT16(aReceived As String[], sDPT As String) As String
+
+  Dim sValue As String
+  Dim iValue, iCnt As Integer
+
+  Select Case sDPT
+    Case "16.000" ' character ASCII
+      For iCnt = 1 To aReceived.Count - 1
+        If iCnt = 15 Then Break ' Max 14 chars
+        iValue = Val("&H" & aReceived[iCnt])
+        If iValue = 0 Then Break
+        sValue &= Chr(iValue)
+      Next
+    Case "16.001" ' character ISO 8859-1
+      For iCnt = 1 To aReceived.Count - 1
+        If iCnt = 15 Then Break ' Max 14 chars
+        iValue = Val("&H" & aReceived[iCnt])
+        If iValue = 0 Then Break
+        sValue &= String.Chr(iValue)
+      Next
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 16.* packet!")
+      sValue = ""
+  End Select
+  Return sValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 17.001 1-Byte scene number
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT17(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim sValue As String
+
+  Select Case aReceived[0]
+    Case "40", "80", "41", "81" ' receive/parse
+      sValue = ConvertDPT17(aReceived, sDPT)
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+  ' update device
+  Devices.ValueUpdate(iDeviceId, 1, sValue)
+  If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 17
+' return cmd strings for DPT 17.* values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT17(aReceived As String[], sDPT As String) As String
+
+  Dim iScene As Integer
+
+  Select Case sDPT
+    Case "17.001" ' scene
+      iScene = Val("&H" & aReceived[1]) And &H3F
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 17.* packet!")
+      iScene = 0
+  End Select
+  Return iScene
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 18.001 1-Byte scene control
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT18(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim sValue As String
+
+  Select Case aReceived[0]
+    Case "40", "80", "41", "81" ' receive/parse
+      sValue = ConvertDPT18(aReceived, sDPT)
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+  ' update device
+  Devices.ValueUpdate(iDeviceId, 1, sValue)
+  If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 18
+' return cmd strings for DPT 18.* values
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT18(aReceived As String[], sDPT As String) As String
+
+  Dim sValue As String
+  Dim iControl As Integer = Val("&H" & aReceived[1]) And &H80
+  Dim iScene As Integer = Val("&H" & aReceived[1]) And &H3F ' scene 0 - 63
+
+  Select Case sDPT
+    Case "18.001" ' scene
+      If iControl = 128 Then
+        sValue = "learn"
+      Else
+        sValue = "activate"
+      Endif
+      sValue &= " " & iScene
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 18.* packet!")
+      sValue = "?"
+  End Select
+  Return sValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 19.001 8-Byte datetime
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT19(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim sValue As String
+
+  Select Case aReceived[0]
+    Case "40", "80", "41", "81" ' receive/parse
+      sValue = ConvertDPT19(aReceived, sDPT)
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+  ' update device
+  Devices.ValueUpdate(iDeviceId, 1, sValue)
+  If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 19
+' return cmd strings for DPT 19.* datetime
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT19(aReceived As String[], sDPT As String) As String
+
+  Dim aWeekDays As String[] = ["Any day", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+  Dim iWeekDay, iHour, iMin, iSec As Integer
+  Dim sValue As String
+  Dim bExtended As Boolean = True ' by default output extended format
+
+  ' bit masks
+  Dim DST As Byte = &H01
+  Dim NO_TIME As Byte = &H02
+  Dim NO_DOW As Byte = &H04
+  Dim NO_DATE As Byte = &H08
+  Dim NO_YEAR As Byte = &H10
+  Dim NO_WD As Byte = &H20
+  Dim WD As Byte = &H40
+  Dim FAULT As Byte = &H80
+  ' extended field bit masks
+  Dim QUALITY As Byte = &H80
+
+  Select Case sDPT
+    Case "19.001" ' datetime
+      ' time faulty
+      If (Val("&H" & aReceived[7]) And FAULT) Then Return "Corrupted date/time!"
+      ' year
+      If Not (Val("&H" & aReceived[7]) And NO_YEAR) Then
+        sValue = Val("&H" & aReceived[1]) + 1900
+      Endif
+      ' month, day
+      If Not (Val("&H" & aReceived[7]) And NO_DATE) Then
+        sValue &= "-" & Format(Val("&H" & aReceived[2]), "0#") & "-" & Format(Val("&H" & aReceived[3]), "0#")
+      Endif
+      If bExtended Then
+        ' day of week
+        If Not (Val("&H" & aReceived[7]) And NO_DOW) Then
+          sValue &= " " & aWeekDays[Lsr(Val("&H" & aReceived[4]), 5)]
+        Endif
+        ' workday yes/no
+        If Not (Val("&H" & aReceived[7]) And NO_WD) Then
+          sValue &= " (" & IIf(Val("&H" & aReceived[7]) And WD, "workday", "no workday") & ")"
+        Endif
+      Endif
+      ' time hr:min:sec
+      If Not (Val("&H" & aReceived[7]) And NO_TIME) Then
+        sValue &= " " & Format(Val("&H" & aReceived[4]) And &H1F, "0#")
+        sValue &= ":" & Format(Val("&H" & aReceived[5]), "0#")
+        sValue &= ":" & Format(Val("&H" & aReceived[6]), "0#")
+        If bExtended And (Val("&H" & aReceived[7]) And DST) Then
+          sValue &= " DST"
+        Endif
+      Endif
+      ' clock quality
+      If bExtended Then
+        sValue &= ", " & IIf(Val("&H" & aReceived[8]) And QUALITY, "in sync", "no sync")
+      Endif
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 19.* packet!")
+      sValue = "?"
+  End Select
+  Return sValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process received data for DPT 232.* values, RGB
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessDPT232(iDeviceId As Integer, aReceived As String[], sDPT As String)
+
+  Dim sValue As String
+
+  Select Case aReceived[0]
+    Case "40", "80", "41", "81" ' receive/parse
+      sValue = ConvertDPT232(aReceived, sDPT)
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      Return
+  End Select
+
+  ' update device
+  Devices.ValueUpdate(iDeviceId, 1, sValue)
+  If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' DPT 232.600
+' return cmd string for DPT 232.* values 0-255,0-255,0-255
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDPT232(aReceived As String[], sDPT As String) As String
+
+  Dim sValue As String
+  Dim iRed As Integer = Val("&H" & aReceived[1])
+  Dim iGreen As Integer = Val("&H" & aReceived[2])
+  Dim iBlue As Integer = Val("&H" & aReceived[3])
+
+  Select Case sDPT
+    Case "232.600" ' rgb
+      sValue = "r:" & iRed & " g:" & iGreen & " b:" & iBlue
+    Case Else
+      If $bKNXDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 232.* packet!")
+      sValue = "?"
+  End Select
+  Return sValue
+
+Catch
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -767,7 +1712,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
   Dim bCommand As New Byte[5]
 
   sValue = UCase(sValue)
-  sDeviceTypeDesc = Devices.FindDescrForDeviceType(Devices.FindDeviceTypeForDevice(Devices.Find(Instance, sAddress, Devices.FindInterface("KNX Interface"))))
+  sDeviceTypeDesc = Devices.FindDeviceTypeDescriptionForDeviceId(Devices.Find(Instance, sAddress, InterfaceId))
 
   aDeviceTypeDesc = Scan(sDeviceTypeDesc, "DPT *.*")
   If aDeviceTypeDesc.Count = 2 Then

@@ -1,0 +1,442 @@
+' Gambas class file
+
+' Description:
+' CPluginFoo.class
+' Provide a template to build your own plugin.
+
+' Development Status:
+' Unstable.
+
+' Links:
+' https://domotiga.nl/projects/domotiga/wiki/Plugin_Coding
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "PluginFoo"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "PluginFoo"
+Public PluginVersion As String = "1.01"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[PluginFoo] "
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
+Private $sSerPort As String
+Private $sBaud As String
+Private $bPluginFooDebug As Boolean
+
+Public hPluginFoo As New Socket
+Public hPluginFooSer As New SerialPort
+Private sBuffer As String
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 20sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' cmd queue stuff, only needed if you need to send data back to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private cQueue As New Collection    ' command buffer
+Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
+Public tPluginFooBusy As Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sInterface = cPl.Settings["type"]
+  $sSerPort = cPl.Settings["serialport"]
+  $sBaud = cPl.Settings["baudrate"]
+  $bPluginFooDebug = cPl.Settings["debug"]
+
+  ' Connect/Initialize connection
+  If InStr($sInterface, "tcp") Then
+    ' Define timer for TCP reconnect
+    tReConnect = New Timer As "tReConnect"
+    tReConnect.Delay = iReConnectRetry
+    tReConnect.Stop
+
+    ConnectTCP()
+
+  Else
+    ConnectSerial()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectTCP() As Boolean
+
+  ' try to close the connection
+  Try hPluginFoo.Close
+
+  ' get a new one
+  hPluginFoo = New Socket As "PluginFoo"
+  hPluginFoo.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectSerial() As Boolean
+
+  ' try to close the connection
+  Try hPluginFooSer.Close
+
+  ' get a new one
+  hPluginFooSer = New Serialport As "PluginFooSer"
+  With hPluginFooSer
+    .PortName = $sSerPort
+    .Speed = $sBaud
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' Write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  IsRunning = True
+
+  ' define timer for interface busy
+  tPluginFooBusy = New Timer As "tPluginFooBusy"
+  tPluginFooBusy.Stop
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PluginFoo_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PluginFoo_Error()
+
+  Dim sMsg As String
+
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PluginFoo_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  ' define timer for interface busy
+  tPluginFooBusy = New Timer As "tPluginFooBusy"
+  tPluginFooBusy.Stop
+
+  ' connected so reset retry counter
+  iReConnectRetry = 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PluginFoo_Closed()
+
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host/close serial port, close plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try tReConnect.Stop
+  Try tPluginFooBusy.Stop
+  Try hPluginFoo.Close
+  Try hPluginFooSer.Close
+
+  If InStr($sInterface, "tcp") Then
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  Else
+    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  Endif
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the serialport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PluginFooSer_Read()
+
+  Dim sData As String
+
+  Try sData = Read #hPluginFooSer, 1
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from serial port! -> " & Error.Text)
+  If sData = "!" Then ' buffer until end of record
+    sBuffer &= sData
+    ProcessData(sBuffer)
+    sBuffer = Null
+  Else
+    sBuffer &= sData
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub PluginFoo_Read()
+
+  Dim sData As String
+
+  Try sData = Read #hPluginFoo, 1
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from tcp port! -> " & Error.Text)
+  If sData = "!" Then ' buffer until end of record
+    sBuffer &= sData
+    ProcessData(sBuffer)
+    sBuffer = Null
+  Else
+    sBuffer &= sData
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessData(sData As String)
+
+  Dim aData As String[]
+  Dim sLine, sAddress, sCurrentTariff As String
+  Dim fCurrentPowerUsage, fReadingPowerLow, fReadingPowerNormal As Float
+  Dim iDeviceId As Integer
+
+  ' parse incoming data here, extract values, identification/addresses
+  ' you can ofcourse also feed bytes from _Read to ProcessData(bByte as byte)
+  ' it depends on type of data received
+  aData = Split(sData, "\r\n")
+  For Each sLine In aData
+
+  Next
+
+  ' store values into a device
+  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("PluginFoo Interface"), "PluginFooDevice")
+  If iDeviceId Then
+    Devices.ValueUpdate(iDeviceId, 1, CStr(fCurrentPowerUsage))
+    Devices.ValueUpdate(iDeviceId, 2, CStr(fReadingPowerLow))
+    Devices.ValueUpdate(iDeviceId, 3, CStr(fReadingPowerNormal))
+    Devices.ValueUpdate(iDeviceId, 4, sCurrentTariff)
+  Endif
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data " & ERROR.Text & " at " & ERROR.Where)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' domotiga want to control a device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim bBuf As New Byte[8]
+
+  ' create data packet to send, use supplied address and cmd
+
+
+  ' and send it to cmdbuffer
+  QueueCommand(bBuf)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(aPacket As Byte[])
+
+  ' add command to queue
+  cQueue.Add(aPacket, Rnd)
+
+  ' if controller is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
+
+  Dim aPacket As Byte[] = Null
+
+  For Each aPacket In cQueue
+    WriteCommand(aPacket, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tPluginFooBusy_Timer()
+
+  bInterfaceBusy = False
+  tPluginFooBusy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If $bPluginFooDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    DoQueue()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send commands to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function WriteCommand(bBuffer As Byte[], sKey As String)
+
+  Dim iCnt As Integer
+  Dim sMessage As String
+
+  For iCnt = 0 To bBuffer[0]
+    sMessage &= Hex(bBuffer[iCnt], 2)
+  Next
+  If $bPluginFooDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
+
+  If $sInterface = "tcp" Then
+    ' send the message to the tcp stream
+    Try bBuffer.Write(hPluginFoo, 0, bBuffer.Length)
+    If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to TCP port! -> " & Error.Text)
+  Else
+    ' send the message to the serial port
+    Try bBuffer.Write(hPluginFooSer, 0, bBuffer.Length)
+    If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to serial port! -> " & Error.Text)
+  Endif
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  tPluginFooBusy.Delay = 50 ' 50mS (initial test value)
+  tPluginFooBusy.Start
+  bInterfaceBusy = True
+
+End

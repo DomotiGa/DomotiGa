@@ -32,12 +32,11 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[MySensors] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
 Public ErrorWhere As String
-
-Const sInterfaceName As String = "MySensors Interface"    ' Must match the interface field in the plugins table
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Private Variables
@@ -67,8 +66,6 @@ Public bSimulate As Boolean
 Private sTxMsgQueue As New String[]     ' Outgoing message queue
 Private bInterfaceBusy As Boolean       ' waiting for delay timer to finish
 Private bGatewayReady As Boolean        ' Flag to indicate we received the Gateway ready message
-
-Private iInterface As Integer
 
 ' counters to prevent logfile to fill up the disk
 Private iReadErrorCount As Integer
@@ -253,10 +250,11 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bDebug = cPl.Settings["debug"]
   $bUseAck = cPl.Settings["useack"]
 
-  ' "Cache" interface ID
-  iInterface = Devices.FindInterface(sInterfaceName)
-  If iInterface == 0 Then
-    Main.WriteLog(LogLabel & "ERROR: No interface ID found for '" & sInterfaceName & "'")
+  InterfaceId = Devices.FindInterface("MySensors Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
     Return
   Endif
 
@@ -301,21 +299,26 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   Dim bNodeID As Integer
   Dim iDeviceId As Integer
   Dim MySenMsg As New MySensorMessage
-  Dim NodeChild As String[]
   Dim iValue As Integer
   Dim sValue As String
   Dim rDim As New RegExp
   Dim rValues As Result
   Dim iValSwitch, iValDim As Integer
   Dim rValue As New RegExp
+  Dim bChildID As Byte
+  Dim bSubType As Byte
 
   ' Address is the node ID
   bNodeID = Val(sAddress)
-  iDeviceId = Devices.Find(Instance, Str(bNodeID), iInterface)
+  iDeviceId = Devices.Find(Instance, Str(bNodeID), InterfaceId)
   If iDeviceId == 0
     Main.WriteLog(LogLabel & "ERROR: No node with address " & sAddress)
     Return
   Endif
+
+  ' We need to know the MySensors sub-type and search for it below
+  ' Set here the sub-type to V_TEMP as you can not set that so we can check if the search was not succesfull
+  bSubType = 0
 
   ' Get all values of the device
   rValues = Devices.GetValues(["device_id": Str(iDeviceId)])
@@ -340,10 +343,22 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
         Case "V_IR_SEND"
         Case "V_LOCK_STATUS"
           iValSwitch = rValue!id
+        Default
+          Main.WriteLog(LogLabel & "ERROR: Unknown sub-type '" & sValue & "' for device '" & iDeviceId & "', Value '" & rValues!valuenum & "', cannot set value")
+          Return
       End Select
+
+      ' child-sensor-id is the Value num - 1
+      bChildID = Val(rValues!valuenum) - 1
+
+      Try bSubType = Eval(sValue)
     Endif
   Next
-  ' child-sensor-id is the Value num - 1
+
+  If bSubType = 0 Then
+    Main.WriteLog(LogLabel & "ERROR: Can not resolve sub-type for C_SET for device " & iDeviceId & ", try adding V_LIGHT, V_DIMMER, ... to the description of the value you want to set")
+    Return
+  Endif
 
   ' Command should be something like "On", "Off", "Dim 50"
   rDim.Compile("dim\\s+(\\d+)")
@@ -356,15 +371,9 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
       iValue = Val(rDim.SubMatches(1))
   End Select
 
-  ' Address: node (for child = 0) or node.child, for example 5, 10.1, 7.2
-  NodeChild = Split(sAddress, ".")
-  If NodeChild.Length == 1 Then
-    NodeChild.Add("0")
-  Endif
-
   With MySenMsg
     .node_id = bNodeID
-    .child_sensor_id = Val(NodeChild[1])
+    .child_sensor_id = bChildID
     .message_type = C_SET
     .ack = $bUseAck
     .sub_type = V_TEMP
@@ -730,6 +739,10 @@ Private Sub Decode_Messages(sMsgText As String)
   WriteMyDebugLog("< " & RecBuf)
 
   Elt = Split(sMsgText, ";")
+  If Elt.Count < 5 Then
+    WriteMyDebugLog("Ignore: " & sMsgText)
+    Return
+  Endif
   With MySenMsg
     .node_id = Val(Elt[0])
     .child_sensor_id = Val(Elt[1])
@@ -771,8 +784,6 @@ Private Sub HandlePresentation(MySenMsg As MySensorMessage)
   Dim iDeviceId, iValueNum As Integer
   Dim sAddress As String
   Dim sType As String
-  Dim rDevice As Result
-  Dim sName, sNewName As String
 
   ' Address is NodeId
   sAddress = Str(MySenMsg.node_id)
@@ -780,13 +791,13 @@ Private Sub HandlePresentation(MySenMsg As MySensorMessage)
   ' Get the type
   Try sType = sTypes[MySenMsg.sub_type]
   If Error Then
-    WriteMyDebugLog("ERROR: Node " & sAddress & ", sensor " & MySenMsg.child_sensor_id & " is presenting itself as unknown type (sub_type = " & MySenMsg.sub_type & ")")
+    WriteMyDebugLog("ERROR: Node '" & sAddress & "', sensor '" & MySenMsg.child_sensor_id & "' is presenting itself as unknown type (sub_type = '" & MySenMsg.sub_type & "')")
     Return
   Endif
   WriteMyDebugLog("Node " & sAddress & ", sensor " & MySenMsg.child_sensor_id & " is presenting itself as " & sType)
 
   ' Find device. Will call Devices.AutoCreateDevice if not found and auto-create enabled
-  iDeviceId = Devices.Find(Instance, sAddress, iInterface, PluginFriendlyName)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, PluginFriendlyName)
   If iDeviceId Then
     iValueNum = MySenMsg.child_sensor_id + 1
     Devices.ValueUpdate(iDeviceId, iValueNum, Null)   ' Create value if needed and update last changed
@@ -811,7 +822,7 @@ Private Sub HandleSet(MySenMsg As MySensorMessage)
   WriteMyDebugLog("Set value '" & MySenMsg.payload & "' for node " & sAddress)
 
   ' Find device. Will call Devices.AutoCreateDevice if not found and auto-create enabled
-  iDeviceId = Devices.Find(Instance, sAddress, iInterface, PluginFriendlyName)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, PluginFriendlyName)
 
   ' if found then update it's value
   If iDeviceId Then
@@ -839,7 +850,7 @@ Private Sub HandleReq(MySenMsg As MySensorMessage)
   WriteMyDebugLog("Set value '" & MySenMsg.payload & "' for node " & sAddress)
 
   ' Find device. Will call Devices.AutoCreateDevice if not found and auto-create enabled
-  iDeviceId = Devices.Find(Instance, sAddress, iInterface, PluginFriendlyName, PluginFriendlyName & " device")
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, PluginFriendlyName, PluginFriendlyName & " device")
 
   ' if found, check if we have the value
   If iDeviceId Then
@@ -864,7 +875,7 @@ Private Sub HandleInternal(MySenMsg As MySensorMessage)
 
   Select Case MySenMsg.sub_type
     Case I_BATTERY_LEVEL         ' 0 -  Use this To report the battery level( In percent 0 - 100).
-      Devices.Battery(Devices.Find(Instance, Str(MySenMsg.node_id), iInterface, PluginFriendlyName), MySenMsg.payload)
+      Devices.Battery(Devices.Find(Instance, Str(MySenMsg.node_id), InterfaceId, PluginFriendlyName), MySenMsg.payload)
     Case I_TIME                  ' 1 -  Sensors can request the current Time From the Controller using this message.The Time will be reported As The seconds since 1970
       ProvideTime(MySenMsg.node_id, MySenMsg.child_sensor_id)
     Case I_VERSION               ' 2 -  Sensors report their Library version at startup using this message type
@@ -940,7 +951,7 @@ Private Sub ProvideNodeID()
   For bNodeID = 1 To 254
     bAvailable[bNodeID] = True
   Next
-  rMySensDevices = Main.hDB.Exec("SELECT address FROM devices WHERE interface = " & iInterface)
+  rMySensDevices = Main.hDB.Exec("SELECT address FROM devices WHERE interface = " & InterfaceId)
   If rMySensDevices.Available Then
     For Each rMySensDevices
       bNodeID = Val(rMySensDevices!address)

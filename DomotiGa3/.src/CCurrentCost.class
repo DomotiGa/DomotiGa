@@ -10,7 +10,7 @@
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
 
-' This module was written by Renaud in 2010.
+' This module was written by Alan Gray in 2014 and is a major rewrite of Renaud's in 2010.
 
 ' Read file called COPYING for license details.
 
@@ -27,6 +27,7 @@ Public PluginMaxInstances As Byte = 1
 
 Public KeyName As String
 Public LogLabel As String = "[CurrentCost] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -62,7 +63,15 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sSerPort = cPl.Settings["serialport"]
   $sBaud = cPl.Settings["baudrate"]
   $bCurrentCostDebug = cPl.Settings["debug"]
- 
+
+  InterfaceId = Devices.FindInterface("Current Cost Receiver")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Connect/Initialize connection
   Connect()
 
@@ -116,64 +125,6 @@ Catch ' some errors
 
 End
 
-Public Sub CurrentCost_Read()
-
-  Dim sData As String
-
-  Try sData = Read #hCurrentCost, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from serial port! -> " & Error.Text)
-  If sData = Chr(10) Or If sData = Chr(13) Then ' buffer until newline or cr then parse
-    If Right(sBuffer, 6) = "</msg>" Then ParseMessage(sBuffer)
-    sBuffer = Null
-  Else
-    sBuffer &= sData
-  Endif
-
-End
-
-Public Sub ParseMessage(sStr As String)
-
-  Dim iDeviceId As Integer
-  Dim aScan As String[]
-  Dim sValue, sMaxValue As String
-
-  If $bCurrentCostDebug Then Main.WriteDebugLog(LogLabel & sStr)
-
-  ' scan message
-  aScan = Scan(sStr, "*<id>*</id>*<watts>*</watts>*")
-  ' scan again with different pattern
-  If aScan.Count <> 5 Then aScan = Scan(sStr, "*<sensor>*</sensor>*<watts>*</watts>*")
-  ' here we have instantaneous data logging
-  If aScan.Count = 5 Then
-    sValue = aScan[3]
-    sAddress = aScan[1]
-    ' try to find device with address, and correct interface type.
-    iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("Current Cost Receiver"), "CCOST")
-    ' if found then update it's value
-    If iDeviceId Then
-      Devices.ValueUpdate(iDeviceId, 2, sValue)
-      sMaxValue = Devices.GetCurrentValueForDevice(iDeviceId, 3)
-      If sValue > sMaxValue Then
-        Main.WriteLog((LogLabel & "Max electrical consumption reached ") & sValue & (" Watts"))
-        Devices.ValueUpdate(iDeviceId, 3, sValue)
-      Endif
-    Endif
-    aScan = Scan(sStr, "*<h004>*</h004>*")
-    ' here we have real time data
-    If aScan.Count = 3 Then
-      ' if found then update it's value
-      If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, aScan[1])
-    Endif
-    aScan = Scan(sStr, "*<tmpr>*</tmpr>*")
-    ' here we have temperature data
-    If aScan.Count = 3 Then
-      ' if found then update it's value
-      If iDeviceId Then Devices.ValueUpdate(iDeviceId, 4, Trim(aScan[1]))
-    Endif
-  Endif
-
-End
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' close port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -195,6 +146,277 @@ Finally
 Catch
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read incoming serial data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CurrentCost_Read()
+
+  Dim sData As String
+
+  Try sData = Read #hCurrentCost, 1
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from serial port! -> " & Error.Text)
+  If sData = Chr(10) Or If sData = Chr(13) Then ' buffer until newline or cr then parse
+    If Right(sBuffer, 6) = "</msg>" Then ProcessMessage(sBuffer)
+    sBuffer = Null
+  Else
+    sBuffer &= sData
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Process data read by serial port
+' Decides if data is History, Real-time value or Real-Time pulse
+' and sends to appropriate "getput.." routine. 
+' It gets the ID for the device from the system and the device type) from the data.
+' (1=electric value,' 2=electric pulse, 3=gas, 4=water.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ProcessMessage(sStr As String)
+
+  Dim iDeviceId As Integer
+  Dim aScan As String[]
+  Dim bHistory As Boolean
+  Dim sType, sId As String
+
+  If $bCurrentCostDebug Then Main.WriteDebugLog(LogLabel & sStr)
+  aScan = Scan(sStr, "*<hist>*</hist>*")
+  If aScan.count = 0 Then bHistory = False Else bHistory = True
+
+  aScan = Scan(sStr, "*<type>*</type>*")
+  sType = aScan[1]
+  If bHistory Then
+    GetPutHistoryData(sStr)
+  Else
+    aScan = Scan(sStr, "*<id>*</id>*")
+    sId = aScan[1]
+    iDeviceId = Devices.Find(Instance, sId, InterfaceId, "CCOST")
+    Select Case sType
+      Case 1  'electric watt meter ie direct values
+        GetPutRealTimeValueData(iDeviceId, sType, sStr)
+      Case 2, 3, 4  ' pulse data 2 is electric, 3 is gas, 4 is water
+        GetPutRealTimePulseData(iDeviceId, sType, sStr)
+    End Select
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' This is just a stub that receives that type of data, but does nothing.
+' Needs to be implemented.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetPutHistoryData(sStr As String)
+
+  ' Two hourly history
+  '<msg> start Of message
+  ' <src> CC128 - v0.19</src> [ As For Real - Time]
+  ' <uid> 161 A582015AA09B</uid> [ As For Real - Time]
+  ' <dsb> 00089</dsb> [ As For Real - Time]
+  ' <Time> 13: 10: 50</Time> [ As For Real - Time]
+  ' <hist> start Of history
+  ' <dsw> 00032</dsw> days since wipe Of history
+  ' <type> 1</type> sensor Type, "1" = electricity
+  ' <units> kwhr</units> units Of data eg KWHr
+  ' <data> start Of data burst
+  ' <sensor> 0</sensor> historic Appliance Number
+  ' <h024> 001.1</h024> h = "hours", 24 = "22 to 24 hrs ago"
+  ' <h022> 000.9</h022> h = "hours", 22 = "20 to 22 hrs ago"
+  ' <h020> 000.3</h020> h = "hours", 18 = "18 to 20 hrs ago"
+  ' <h018> 000.4</h018> h = "hours", 22 = "16 to 18 hrs ago"
+  '</data>
+  ' ...[Sensor 1 To 8 data here]
+  ' <data>
+  ' <sensor> 9</sensor>
+  ' <units> kwhr</units>
+  ' <h024> 000.0</h024>
+  ' <h022> 000.0</h022>
+  ' <h020> 000.0</h020>
+  ' <h018> 000.0</h018>
+  '</data>
+  '</hist>
+  '</msg> End Of Message
+
+  ' Daily history
+  '<msg>
+  ' <src> CC128 - v0.19</src>
+  ' <uid> 161 A582015AA09B</uid>
+  ' <dsb> 00089</dsb>
+  ' <Time> 13: 10: 50</Time>
+  ' <hist>
+  ' <dsw> 00032</dsw>
+  ' <type> 1</type>
+  ' <units> kwhr</units>
+  ' <data>
+  ' <sensor> 0</sensor>
+  ' <units> kwhr</units>
+  ' <d055> 012.9</d055> d = "days", 055 = "55 days ago"
+  ' <d054> 011.0</d054>
+  ' <d053> 014.3</d053>
+  ' <d052> 019.5</d052>
+  '</data>
+  ' ...[Sensor 1 To 8 data here]
+  ' <data>
+  ' <sensor> 9</sensor>
+  ' <units> kwhr</units>
+  ' <d055> 000.0</d055>
+  ' <d054> 000.0</d054>
+  ' <d053> 000.0</d053>
+  ' <d052> 000.0</d052>
+  '</data>
+  '</hist>
+  '</msg>
+
+  ' Monthly history
+  '<msg>
+  ' <src> CC128 - v0.19</src>
+  ' <uid> 161 A582015AA09B</uid>
+  ' <dsb> 00089</dsb>
+  ' <Time> 13: 10: 50</Time>
+  ' <hist>
+  ' <dsw> 00032</dsw>
+  ' <type> 1</type>
+  ' <units> kwhr</units>
+  ' <data>
+  ' <sensor> 0</sensor>
+  ' <units> kwhr</units>
+  ' <m002> 257.0</m002> m = "month", 002 = "2 months ago"
+  ' <m001> 340.0</m001>
+  '</data>
+  ' ...[Sensor 1 To 8 data here]
+  ' <data>
+  ' <sensor> 9</sensor>
+  ' <units> kwhr</units>
+  ' <m002> 000.0</m002>
+  ' <m001> 000.0</m001>
+  '</data>
+  '</hist>
+  '</msg>
+
+  If $bCurrentCostDebug Then Main.WriteDebugLog(LogLabel & " received history data.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse realtime data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetPutRealTimeValueData(iDeviceId As Integer, sType As String, sStr As String)
+
+  Dim bValid As Boolean
+  Dim sValue, sTarget As String
+  Dim iValueNum As Integer = 0
+  Dim sTargetList As String[]
+
+  '<msg> start Of message
+  ' <src> CC128 - v1.29 </src> source And software version * *
+  ' <uid> 161 A582015AA09B </uid> unique ID * (see text †)
+  ' <dsb> 00089 </dsb> days since birth, ie days run
+  ' <Time> 13: 02: 39 </Time> 24 Hour clock Time *
+  ' <tmpr> 18.7 </tmpr> temperature As Measured In degC * #
+  ' <tmprF> 72.3 </tmprF> temperature As Measured In degF *
+  ' <sensor> 1 </sensor> Appliance Number As Displayed
+  ' <id> 01234 </id> radio ID received From the sensor
+  ' <type> 1 </type> sensor Type, "1" = electricity
+  ' <ch1> sensor channel *
+  '   <watts> 00345 </watts> data And units
+  ' </ch1>
+  ' <ch2> sensor channel *
+  '   <watts> 02151 </watts>
+  ' </ch2>
+  ' <ch3> sensor channel *
+  '   <watts> 00000 </watts>
+  ' </ch3>
+  '</msg> End Of message
+
+  sTargetList = ["*<ch1><watts>*</watts></ch1>*", "*<ch2><watts>*</watts></ch2>*", "*<ch3><watts>*</watts></ch3>*", "*<tmpr>*</tmpr>*"]
+  For Each sTarget In sTargetList
+    Inc iValueNum
+    sValue = ExtractValue(sStr, sTarget)
+    If sValue = "" Then
+      CurrentCostUpdateError(iDeviceId, " Could not read ", iValueNum)
+    Else
+      bValid = InsertCurrentCostData(iDeviceId, iValueNum, sValue)
+      If Not bValid Then CurrentCostUpdateError(iDeviceId, " Could not write ", iValueNum)
+    Endif
+  Next 'sTarget
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Extract specified values and place them in consecutive device "Value" stores.
+' Current Cost warn that software must be tolerant of the absence of individual data-fields
+' as this will vary by device. Thus the fields chosen and the order in which they are
+' placed in Value1, Value2 etc are set by the programmer.
+' sStr is the raw data
+' iDeviceId is the Current Cost device ID
+' sType is the Current Cost device type
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetPutRealTimePulseData(iDeviceId As Integer, sType As String, sStr As String)
+
+  Dim sTarget, sValue As String
+  Dim iValueNum As Integer = 0
+  Dim bValid As Boolean
+  Dim sTargetList As String[]
+
+  '<msg> start Of message
+  ' <src> CC128 - v1.29 </src> source And software version * *
+  ' <uid> 161 A582015AA09B </uid> unique ID * (see previous text †)
+  ' <dsb> 00089 </dsb> days since birth, ie days run
+  ' <Time> 13: 02: 39 </Time> 24 Hour clock Time *
+  ' <tmpr> 18.7 </tmpr> temperature As Measured In degC *
+  ' <tmprF> 72.3 </tmprF> temperature As Measured In degF *
+  ' <sensor> 9 </sensor> Appliance Number As Displayed
+  ' <id> 01234 </id> radio ID received From the sensor
+  ' <type> 2 </type> sensor Type, 2 = electric impulse
+  ' <imp> 0000089466 </imp> Meter Impulse Count
+  ' <ipu> 1000 </ipu> Meter Impulses Per Unit
+  '</msg> End Of message
+
+  sTargetList = ["*<imp>*</*imp>", "*<ipu>*</ipu>*", "*<tmpr>*</tmpr>*"]
+  If $bCurrentCostDebug Then Main.WriteDebugLog(LogLabel & " received pulse data.")
+  For Each sTarget In sTargetList
+    Inc iValueNum
+    sValue = ExtractValue(sStr, sTarget)
+    If sValue = "" Then
+      CurrentCostUpdateError(iDeviceId, " Could not read ", iValueNum)
+    Else
+      bValid = InsertCurrentCostData(iDeviceId, iValueNum, sValue)
+      If Not bValid Then CurrentCostUpdateError(iDeviceId, " Could not write ", iValueNum)    
+    Endif
+  Next 'sTarget
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Returns value of "Target" in string Str or "" (empty string) if not found.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ExtractValue(sStr As String, sTarget As String) As String
+
+  Dim sValue As String
+  Dim sExtracted As String[]
+
+  sExtracted = Scan(sStr, sTarget)
+  If sExtracted.count > 0 Then sValue = sExtracted[1] Else sValue = ""
+  Return sValue
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Inserts "Value" in device value store number "ValueNum". Returns true/false according to success
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub InsertCurrentCostData(iDeviceId As Integer, iValueNum As Integer, sValue As String) As String
+
+   Return Devices.ValueUpdate(iDeviceId, iValueNum, sValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Puts entry in debug log "Could not read"/"Could not write" value numberX DeviceY
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub CurrentCostUpdateError(iDeviceId As Integer, sError As String, iValueNum As Integer)
+
+  If $bCurrentCostDebug Then Main.WriteDebugLog(LogLabel & sError & " Value '" & iValueNum & "' Device '" & iDeviceId & "'")
 
 End
 

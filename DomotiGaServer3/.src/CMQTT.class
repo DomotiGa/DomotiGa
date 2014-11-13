@@ -20,7 +20,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "MQTT"
 Public PluginType As Integer = Plugin.Type_Class
-Public PluginFriendlyName As String = "MQTT Client"
+Public PluginFriendlyName As String = "MQTT Client/Server"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
@@ -28,6 +28,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[MQTT] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -75,6 +76,10 @@ Const MQTT_PUBACK As Integer = 4
 Const MQTT_SUBACK As Integer = 9
 Const MQTT_PINGRESP As Integer = 13
 
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 20sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
@@ -100,7 +105,20 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bRetain = cPl.Settings["retain"]
   $iQoS = cPl.Settings["qos"]
   $bMQTTDebug = cPl.Settings["debug"]
- 
+
+  ' Define timer for reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
+  InterfaceId = Devices.FindInterface("MQTT Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Connect/Initialize connection
   Connect()
 
@@ -155,6 +173,7 @@ Public Function Disconnect() As Boolean
   ClientDisconnect()
 
   ' try stop running timers
+  Try tReConnect.Stop
   Try tMQTTPing.Stop
   Try tMQTTBusy.Stop
 
@@ -186,6 +205,26 @@ Public Sub MQTT_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MQTT_Closed()
+
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
 
 End
 
@@ -194,8 +233,7 @@ Public Sub MQTT_Read()
   Dim bByte As Byte
 
   Try bByte = Read #hMQTT As Byte
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from network socket! -> " & Error.Text & (" at ") & Error.Where)
-
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from network socket! -> '" & Error.Text & "' at '" & Error.Where & "'")
   ParseMessage(bByte)
 
 End
@@ -214,8 +252,27 @@ Public Sub MQTT_Ready()
   tMQTTBusy = New Timer As "tMQTTBusy"
   tMQTTBusy.Stop
 
+  ' connected so reset retry counter
+  iReConnectRetry = 0
+
   ClientConnect($sClientname)
   SubscribeTopic($sSubTopic)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
 
 End
 
@@ -368,7 +425,7 @@ Public Sub PublishMsg(sTopic As String, sMsg As String)
   Else
     bBuf[0] = MQTTPUBLISH
   Endif
-  
+
   ' set chosen QoS
   Select Case $iQoS
     Case 0
@@ -464,20 +521,20 @@ Private Sub WriteCommand(bBuffer As Byte[], sKey As String)
   ' remove sent command from queue
   cQueue.Remove(sKey)
 
-  tMQTTBusy.Delay = 50 ' 50mS (initial test value)
+  tMQTTBusy.Delay = 10 ' 10mS (initial test value)
   tMQTTBusy.Start
   If bBusy = False Then bBusy = True
 
 Catch
    Main.WriteDebugLog(LogLabel & "Not connected to MQTT Broker, cannot Publish! ")
-   'Connect()
+   Connect()
 
 End
 
 Private Sub ParseMessage(bByte As Byte)
 
   Dim iType As Integer
-  
+
   If RecBytes = 0 Then ' 1st byte of a packet received
     ' clear
     RecBuf[0] = 0
@@ -488,7 +545,6 @@ Private Sub ParseMessage(bByte As Byte)
   Endif
 
   iType = Lsr(Val(RecBuf[0]), 4)
-
 
   Try RecBuf[RecBytes] = bByte ' store received byte
   Inc RecBytes  ' increment byte counter
@@ -521,7 +577,7 @@ Private Sub ParseMessage(bByte As Byte)
       Main.WriteDebugLog(LogLabel & "Subscription ack packet.")
     Endif
     RecBytes = 0  ' set to zero to receive next message
-  Else If iType = MQTT_PUBLISH And If RecBytes = RecBuf[1] + 2 Then
+  Else If iType = MQTT_PUBLISH And If RecBytes = RecBuf[1] + 3 Then
     If $bMQTTDebug Then
        Main.WriteDebugLogChars(Hex(bByte, 2) & "\n", 1)
        Main.WriteDebugLog(LogLabel & "Received published data.")
@@ -531,35 +587,86 @@ Private Sub ParseMessage(bByte As Byte)
   Else
     If $bMQTTDebug Then Main.WriteDebugLogChars(Hex(bByte, 2) & " ", 1) ' write the output to the screen
   Endif
-  
-  If Error Then
-    Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at " & Error.Where)
-  Endif
+
+  If Error Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 Private Sub DecodePublish(bBuffer As String[])
 
-  Dim iCnt As Integer
-  Dim sAddress, sMessage As String
-  Dim iDeviceId As Integer
+  Dim iCnt, iDeviceId As Integer
+  Dim sTopic, sPayload, sDeviceTypeDescr, sLat, sLon, sAcc, sBatt, sEvent, sAlt, sCog, sVel, sTst As String
+  Dim cPayload As Collection
 
-  For iCnt = 4 To 3 + bBuffer[3] 
-    sAddress &= Chr(bBuffer[iCnt])
+  ' extract topic
+  For iCnt = 5 To 4 + bBuffer[4]
+    sTopic &= Chr(bBuffer[iCnt])
   Next
-  If $bMQTTDebug Then Main.WriteDebugLog(LogLabel & "Received topic : " & sAddress) 
+  If $bMQTTDebug Then Main.WriteDebugLog(LogLabel & "Received topic : '" & sTopic & "'")
 
-  For iCnt = 4 + bBuffer[3] To RecBytes - 1
-    sMessage &= Chr(bBuffer[iCnt])
+  ' extract payload
+  For iCnt = 5 + bBuffer[4] To RecBytes - 1
+    sPayload &= Chr(bBuffer[iCnt])
   Next
-  If $bMQTTDebug Then Main.WriteDebugLog(LogLabel & "Received message : " & sMessage) 
-  
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("MQTT Interface"))
-  If Not iDeviceId Then
-    Return
+  If $bMQTTDebug Then Main.WriteDebugLog(LogLabel & "Received payload : '" & sPayload & "'")
+
+  ' lookup device
+  iDeviceId = Devices.Find(Instance, sTopic, InterfaceId)
+  If iDeviceId Then
+    ' what kind of mqtt devicetype is this device set to?
+    sDeviceTypeDescr = Devices.FindDeviceTypeDescriptionForDeviceId(iDeviceId)
+    Select Case sDeviceTypeDescr
+      Case "MQTT Owntracks Client"
+        Try cPayload = JSON.Decode(sPayload)
+        If cPayload.Count Then
+          If cPayload["_type"] = "location" Then
+            sLat = cPayload["lat"]
+            sLon = cPayload["lon"]
+            sAcc = cPayload["acc"]
+            sBatt = cPayload["batt"]
+            sEvent = cPayload["event"]
+            sTst = Util.TimeSinceEpoch(cPayload["tst"])
+            If cPayload["alt"] <> Null Then
+              sAlt = cPayload["alt"]
+            Endif
+            If cPayload["cog"] <> Null Then
+              sCog = cPayload["cog"]
+            Endif
+            ' speed in km/hr
+            If cPayload["vel"] <> Null Then
+              sVel = cPayload["vel"]
+            Endif
+            If $bMQTTDebug Then
+              Main.WriteDebugLog(LogLabel & "Received Owntracks client data:")
+              Main.WriteDebugLog(LogLabel & "Latitude: " & sLat)
+              Main.WriteDebugLog(LogLabel & "Longitude: " & sLon)
+              Main.WriteDebugLog(LogLabel & "Accuracy: " & sAcc)
+              Main.WriteDebugLog(LogLabel & "Battery: " & sBatt & "%")
+              Main.WriteDebugLog(LogLabel & "Event: " & sEvent)
+              Main.WriteDebugLog(LogLabel & "Timestamp: " & sTst)
+              If sAlt Then Main.WriteDebugLog(LogLabel & "Altitude: " & sAlt)
+              If sCog Then Main.WriteDebugLog(LogLabel & "Heading: " & sCog)
+              If sVel Then Main.WriteDebugLog(LogLabel & "Speed: " & sVel)
+            Endif
+            Devices.ValueUpdate(iDeviceId, 1, sLat)
+            Devices.ValueUpdate(iDeviceId, 2, sLon)
+            Devices.ValueUpdate(iDeviceId, 3, sEvent)
+            Devices.ValueUpdate(iDeviceId, 4, sAcc)
+            Devices.ValueUpdate(iDeviceId, 5, sTst)
+            If sAlt Then Devices.ValueUpdate(iDeviceId, 6, sAlt)
+            If sCog Then Devices.ValueUpdate(iDeviceId, 7, sCog)
+            If sVel Then Devices.ValueUpdate(iDeviceId, 8, sVel)
+            Devices.Battery(iDeviceId, sBatt)
+          Else
+            If $bMQTTDebug Then Main.WriteDebugLog(LogLabel & "Owntracks payload type '" & cPayload["_type"] & "' not supported.")
+          Endif
+        Else
+          If $bMQTTDebug Then Main.WriteDebugLog(LogLabel & "Received payload is not using Owntracks location format '" & sPayload & "'!")
+        Endif
+      Case "MQTT Generic Device"
+        Devices.ValueUpdate(iDeviceId, 1, sPayload)
+    End Select
   Endif
-
-  Devices.ValueUpdate(iDeviceId, 1, sMessage)
 
 End
 
