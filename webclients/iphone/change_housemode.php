@@ -16,50 +16,21 @@
 // You should have received a copy of the GNU General PUBLIC License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-$configfile = 'config.php';
-if (file_exists($configfile)) {
-   include "config.php";
-} else {
-   echo "<h3>Check contents of config.php.example first, then rename it to config.php!</h3>";
-   exit;
-}
-if (!extension_loaded('xmlrpc')) {
-   echo "<h3>PHP xmlrpc module is not found, check your apache/php server setup!</h3>";
-   exit;
-}
+include "config.php";
 include "functions.php";
-$housemode=$_GET["housemode"];
+$mode=$_GET["mode"];
+$mute=$_GET["mute"];
 
-if ($housemode == "mute") {
-   $request = xmlrpc_encode_request("set.mutemode",true);
-   $response = do_xmlrpc($request);
-   if (is_array($response) && xmlrpc_is_fault($response)) {
-     trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
-} else if ( $housemode == "unmute" )  {
-   $request = xmlrpc_encode_request("set.mutemode",false);
-   $response = do_xmlrpc($request);
-   if (is_array($response) && xmlrpc_is_fault($response)) {
-     trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
-} else if ( $housemode == "normal" )  {
-   $request = xmlrpc_encode_request("set.housemode",$housemode);
-   $response = do_xmlrpc($request);
-   if (is_array($response) && xmlrpc_is_fault($response)) {
-     trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
-} else if ( $housemode == "work" )  {
-   $request = xmlrpc_encode_request("set.housemode",$housemode);
-   $response = do_xmlrpc($request);
-   if (is_array($response) && xmlrpc_is_fault($response)) {
-     trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
-} else if ( $housemode == "away" )  {
-   $request = xmlrpc_encode_request("set.housemode",$housemode);
-   $response = do_xmlrpc($request);
-   if (is_array($response) && xmlrpc_is_fault($response)) {
-     trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
-} else if ( $housemode == "vacation" )  {
-   $request = xmlrpc_encode_request("set.housemode",$housemode);
-   $response = do_xmlrpc($request);
-   if (is_array($response) && xmlrpc_is_fault($response)) {
-     trigger_error("xmlrpc: $response[faultString] ($response[faultCode])");}
+if (isset($mute)) {
+  if ($mute == "true") {
+    $response = do_jsonrpc("housemode.set", array("mute" => true));
+  } else if ( $mute == "false" )  {
+    $response = do_jsonrpc("housemode.set", array("mute" => false));
+  }
+}
+
+if (isset($mode)) {
+  $response = do_jsonrpc("housemode.set", array("mode" => $mode));
 }
 header('Location: index.php'); 
 ?>

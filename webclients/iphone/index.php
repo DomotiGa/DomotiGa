@@ -25,8 +25,8 @@ if (file_exists($configfile)) {
    echo "<h3>Check contents of config.php.example first, then rename it to config.php!</h3>";
    exit;
 }
-if (!extension_loaded('xmlrpc')) {
-   echo "<h3>PHP xmlrpc module is not found, check your apache/php server setup!</h3>";
+if (!extension_loaded('curl')) {
+   echo "<h3>PHP curl module is not found, check your apache/php server setup!</h3>";
    exit;
 }
 include "functions.php";
@@ -84,11 +84,11 @@ $status=get_status();
 echo "<ul>\n";	
 
 echo "	<li><small>".$status['house_mode']."</small> <a href=\"#\" onclick=\"showhide('optionpanel');\">House Mode</a></li>\n";
-echo "	<li><small>".$status['mute_mode']."</small> <a href=\"change_housemode.php?housemode=";
+echo "	<li><small>".$status['mute_mode']."</small> <a href=\"change_housemode.php?mute=";
 if ($status['mute_mode'] == "<img src='images/icons/sound.png' height='16' width='16' alt='icon' />") {
-	echo "mute";
+	echo "true";
 	} else {
-	echo "unmute";
+	echo "false";
 	}
 echo "\">Sound Mode</a></li>\n";
 echo "</ul>\n";
@@ -108,7 +108,7 @@ echo "</ul>\n";
 
 <div id="optionpanel" style="display: none">
 	
-<p><a class="white button" href="change_housemode.php?housemode=normal">Normal</a> <a href="change_housemode.php?housemode=work" class="white button">Work</a> <a href="change_housemode.php?housemode=away" class="white button">Away</a> <a href="change_housemode.php?housemode=vacation" class="white button">Vacation</a> <a href="#" class="black button" onclick="showhide('optionpanel');">Cancel</a></p> 
+<p><a class="white button" href="change_housemode.php?mode=normal">Normal</a> <a href="change_housemode.php?mode=work" class="white button">Work</a> <a href="change_housemode.php?mode=away" class="white button">Away</a> <a href="change_housemode.php?mode=vacation" class="white button">Vacation</a> <a href="#" class="black button" onclick="showhide('optionpanel');">Cancel</a></p> 
 
 </div>
 </body>
