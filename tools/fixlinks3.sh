@@ -58,6 +58,7 @@ ln -s ../../DomotiGa3/.src/CNMA.class
 ln -s ../../DomotiGa3/.src/COpenTherm.class
 ln -s ../../DomotiGa3/.src/COpenWeatherMap.class
 ln -s ../../DomotiGa3/.src/COpenZWave.class
+ln -s ../../DomotiGa3/.src/COmniksol.class
 ln -s ../../DomotiGa3/.src/COnkyo.class
 ln -s ../../DomotiGa3/.src/COWFS.class
 ln -s ../../DomotiGa3/.src/COWW.class

@@ -1,4 +1,55 @@
 --
+-- Table structure for table `settings_omniksol`
+--
+
+DROP TABLE IF EXISTS `settings_omniksol`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_omniksol` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `serial` varchar(16) DEFAULT NULL,
+  `cron` varchar(16) DEFAULT NULL,
+  `discover` tinyint(1) NOT NULL DEFAULT '0',
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_omniksol`
+--
+
+LOCK TABLES `settings_omniksol` WRITE;
+/*!40000 ALTER TABLE `settings_omniksol` DISABLE KEYS */;
+INSERT INTO `settings_omniksol` VALUES (0,0,'192.168.178.9',8899,'602123456','* 5-23 * * *',0,0),(1,0,'192.168.178.9',8899,'602123456','* 5-23 * * *',0,0);
+/*!40000 ALTER TABLE `settings_omniksol` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Update data for table `plugins`
+--
+
+UPDATE plugins SET type = 'class' WHERE id=45;
+
+--
+-- Update Omniksol data for table `devicetypes`
+--
+
+UPDATE devicetypes SET name = 'Omniksol Inverter Main' WHERE id=286;
+UPDATE devicetypes SET addressformat = 'Omniksol Main' WHERE id=286;
+UPDATE devicetypes SET description = 'Solar Inverter' WHERE id=286;
+
+--
+-- Insert Omniksol data for table `devicetypes`
+--
+
+INSERT INTO `devicetypes` VALUES (660,'Omniksol Inverter String','Solar Inverter DC Input','Omniksol','Omniksol String #1');
+INSERT INTO `devicetypes` VALUES (661,'Omniksol Inverter Output','Solar Inverter AC Output','Omniksol','Omniksol Output #1');
+
+--
 -- Rename WeatherUG table
 --
 

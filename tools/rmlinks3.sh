@@ -65,6 +65,7 @@ cp ../../DomotiGa3/.src/CNMA.class .
 cp ../../DomotiGa3/.src/COpenTherm.class .
 cp ../../DomotiGa3/.src/COpenWeatherMap.class .
 cp ../../DomotiGa3/.src/COpenZWave.class .
+cp ../../DomotiGa3/.src/COmniksol.class .
 cp ../../DomotiGa3/.src/COnkyo.class .
 cp ../../DomotiGa3/.src/COWFS.class .
 cp ../../DomotiGa3/.src/COWW.class .
