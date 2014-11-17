@@ -4090,13 +4090,13 @@ INSERT INTO `settings_voicetext` VALUES (0,0,'cepstral','/usr/bin/padsp','','lin
 UNLOCK TABLES;
 
 --
--- Table structure for table `settings_weatherug`
+-- Table structure for table `settings_weatherunderground`
 --
 
-DROP TABLE IF EXISTS `settings_weatherug`;
+DROP TABLE IF EXISTS `settings_weatherunderground`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `settings_weatherug` (
+CREATE TABLE `settings_weatherunderground` (
   `id` int(11) NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `apikey` varchar(128) DEFAULT NULL,
@@ -4108,13 +4108,13 @@ CREATE TABLE `settings_weatherug` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `settings_weatherug`
+-- Dumping data for table `settings_weatherunderground`
 --
 
-LOCK TABLES `settings_weatherug` WRITE;
-/*!40000 ALTER TABLE `settings_weatherug` DISABLE KEYS */;
-INSERT INTO `settings_weatherug` VALUES (0,0,'API1234567890','Dordrecht',300,0),(1,0,'API1234567890','Dordrecht',300,0);
-/*!40000 ALTER TABLE `settings_weatherug` ENABLE KEYS */;
+LOCK TABLES `settings_weatherunderground` WRITE;
+/*!40000 ALTER TABLE `settings_weatherunderground` DISABLE KEYS */;
+INSERT INTO `settings_weatherunderground` VALUES (0,0,'API1234567890','Dordrecht',300,0),(1,0,'API1234567890','Dordrecht',300,0);
+/*!40000 ALTER TABLE `settings_weatherunderground` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
