@@ -1,0 +1,590 @@
+' Gambas class file
+
+' Description:
+' COmniksol.class
+' Read data from Omniksol inverter with Wifi module.
+
+' Development Status:
+' In Development.
+
+' Links:
+'
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Omniksol"
+Public PluginType As Integer = Plugin.Type_Class
+Public PluginFriendlyName As String = "Omniksol"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+Public PluginRunTask As Boolean = True
+
+Public KeyName As String
+Public LogLabel As String = "[Omniksol] "
+Public InterfaceId As Integer
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $bDiscover As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sSerial As Integer
+Private $sCron As String
+Private $bOmniksolDebug As Boolean
+
+Public tOmniksol As Timer
+Public hOmniksol As New Socket
+Private sBuffer As String
+Private RecBuf As New Byte[200]
+Private RecBytes As Byte
+
+Public aStrings As String[]
+Public iStrings As Integer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sSerial = cPl.Settings["serial"]
+  $sCron = cPl.Settings["cron"]
+  $bDiscover = cPl.Settings["discover"]
+  $bOmniksolDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("Omniksol Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Initialize
+  ' Runtask will be called.
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' run crontask
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RunTask()
+
+  If Events.TimeCron($sCron) = True Then
+    Connect()
+  Else
+    If $bOmniksolDebug Then Main.WriteDebugLog(LogLabel & "Not inside crontab range, skipping conenct.")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Connect() As Boolean
+
+  ' try to close the connection
+  Try hOmniksol.Close
+
+  ' get a new one
+  hOmniksol = New Socket As "Omniksol"
+  hOmniksol.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Omniksol_Found()
+
+ Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Omniksol_Error()
+
+  Dim sMsg As String
+
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Omniksol_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  SendMagic(MagicPacket($sSerial))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Omniksol_Closed()
+
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host/close serial port, close plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hOmniksol.Close
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send data to inverter upon connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function SendMagic(bBuffer As Byte[])
+
+  Dim iCnt As Integer
+  Dim sMessage As String
+
+  For iCnt = 0 To 15
+    sMessage &= Hex(bBuffer[iCnt], 2)
+  Next
+  If $bOmniksolDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
+
+  ' send the message to the tcp stream
+  Try bBuffer.Write(hOmniksol, 0, 16)
+  If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to TCP port! -> " & Error.Text)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Omniksol_Read()
+
+  Dim bData As Byte
+
+  Try bData = Read #hOmniksol As Byte
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
+  ProcessReceivedByte(bData)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' store received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedByte(bData As Byte)
+
+  ' If RecBytes = 0 Then ' 1st byte of a packet received
+  '   If $bOmniksolDebug Then Main.WriteDebugLogChars(LogLabel & "< ", 0)
+  ' Endif
+
+  Try RecBuf[RecBytes] = bData ' store received byte
+  If Error Then
+    RecBytes = 0 ' reset
+    RecBuf = Null
+    Return
+  Endif
+  Inc RecBytes  ' increment counter
+
+  If RecBytes = 150 Then ' all bytes of the packet received
+    ' If $bOmniksolDebug Then Main.WriteDebugLogChars(Hex(bData, 2) & "\n", 1)
+    hOmniksol.Close
+    RecBytes = 0  ' reset to zero for next message
+    Decode_Message()  ' decode message
+    If $bOmniksolDebug Then Main.WriteDebugLog(LogLabel & "Received data, closing connection with inverter.")
+  Else
+    ' If $bOmniksolDebug Then Main.WriteDebugLogChars(Hex(bData, 2), 1) ' write the output to the screen
+  Endif
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Decode_Message()
+
+  Dim i, iDeviceId As Integer
+  Dim sSerial As String = GetSerial(7)
+  Dim sId As String = GetString(15, 30)
+  Dim fEToday As Float = 1000 * GetValue(69, 2, 100)
+  Dim fETotal As Float = GetValue(71, 4, 10)
+  Dim fHTotal As Float = GetValue(75, 4, 1)
+  Dim sTemp As String = GetValue(31, 2, 10)
+
+  Dim aVPV, aIPV As New String[3]
+  Dim aPAC, aVAC, aIAC, aFAC As New String[3]
+
+  ' get number of strings and fetch their stats.
+  GetStrings()
+
+  For i = 0 To 2
+    If aStrings[i] = 1 Then
+      aVPV[i] = GetVPV(i + 1)
+      aIPV[i] = GetIPV(i + 1)
+      aPAC[i] = GetPAC(i + 1)
+      aVAC[i] = GetVAC(i + 1)
+      aIAC[i] = GetIAC(i + 1)
+      aFAC[i] = GetFAC(i + 1)
+    Endif
+  Next
+
+  If $bOmniksolDebug Then
+    Main.WriteDebugLog(LogLabel & "Serial Number: " & sSerial)
+    Main.WriteDebugLog(LogLabel & "ID Inverter: " & sID)
+    Main.WriteDebugLog(LogLabel & "No. of Strings: " & iStrings)
+    Main.WriteDebugLog(LogLabel & "L1: " & aStrings[0] & " L2: " & aStrings[1] & " L3: " & aStrings[2])
+
+    Main.WriteDebugLog(LogLabel & "Temperature: " & sTemp & " C")
+
+    Main.WriteDebugLog(LogLabel & "Total Power Today: " & fEToday & " Wh")
+    Main.WriteDebugLog(LogLabel & "Total Power since Reset: " & fETotal & " kWh")
+    Main.WriteDebugLog(LogLabel & "Total Hours since Reset: " & fHTotal)
+
+    ' only display info for active strings
+    For i = 0 To 2
+      If aStrings[i] = 1 Then
+        Main.WriteDebugLog(LogLabel & "PV" & CStr(i + 1) & " DC Voltage: " & aVPV[i])
+        Main.WriteDebugLog(LogLabel & "PV" & CStr(i + 1) & " DC Current: " & aIPV[i])
+        Main.WriteDebugLog(LogLabel & "L" & CStr(i + 1) & " AC Power: " & aPAC[i] & " Voltage: " & aVAC[i] & " Current: " & aIAC[i] & " Freq: " & aFAC[i] & " Hz")
+      Endif
+    Next
+  Endif
+
+  iDeviceId = Devices.Find(Instance, "Omniksol Main", InterfaceId, "Omniksol Main")
+  ' if found then update it's values
+  If iDeviceId Then
+    Devices.ValueUpdate(iDeviceId, 1, fEToday)
+    Devices.ValueUpdate(iDeviceId, 2, fETotal)
+    Devices.ValueUpdate(iDeviceId, 3, fHTotal)
+    Devices.ValueUpdate(iDeviceId, 4, sTemp)
+    Devices.ValueUpdate(iDeviceId, 5, iStrings)
+  Endif
+
+  ' only fill device of active string(s)
+  For i = 0 To 2
+    If aStrings[i] = 1 Then
+      iDeviceId = Devices.Find(Instance, "Omniksol String #" & CStr(i + 1), InterfaceId, "Omniksol String")
+      ' if found then update it's values
+      If iDeviceId Then
+        Devices.ValueUpdate(iDeviceId, 1, aVPV[i])
+        Devices.ValueUpdate(iDeviceId, 2, aIPV[i])
+      Endif
+    Endif
+  Next
+
+  For i = 0 To 2
+    iDeviceId = Devices.Find(Instance, "Omniksol Output #" & CStr(i + 1), InterfaceId, "Omniksol Output")
+    ' if found then update it's values
+    If iDeviceId Then
+      Devices.ValueUpdate(iDeviceId, 1, aPAC[i])
+      Devices.ValueUpdate(iDeviceId, 2, aVAC[i])
+      Devices.ValueUpdate(iDeviceId, 3, aIAC[i])
+      Devices.ValueUpdate(iDeviceId, 4, aFAC[i])
+    Endif
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' fill array with active strings
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetStrings()
+
+  Dim i As Integer
+
+  ' reset
+  iStrings = 3
+  aStrings = [1, 1, 1]
+
+  For i = 0 To 2
+    If GetValue(33 + 2 * i, 2, 1) <= 0 Then
+      aStrings[i] = 0
+      Dec iStrings
+    Endif
+  Next
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return value
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetValue(iStart As Integer, iNo As Integer, iDivide As Integer) As Float
+
+  Dim fValue As Float
+
+  If iNo = 2 Then
+    fValue += RecBuf[iStart + 1] * (256 ^ 0)
+    fValue += RecBuf[iStart] * (256 ^ 1)
+    If fValue = 65535 Then Return -1
+  Else If iNo = 4 Then
+    If RecBuf[iStart] & RecBuf[iStart + 1] & RecBuf[iStart + 2] & RecBuf[iStart + 3] = "FFFFFFFF" Then Return -1
+
+    fValue += RecBuf[iStart + 3] * (256 ^ 0)
+    fValue += RecBuf[iStart + 2] * (256 ^ 1)
+    fValue += RecBuf[iStart + 1] * (256 ^ 2)
+    fValue += RecBuf[iStart] * (256 ^ 3)
+  Else
+    Return -1
+  Endif
+  Return fValue / iDivide
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "', iStart = " & iStart)
+  Return -1
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return serial number
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetSerial(iStart As Integer) As Float
+
+  Dim fValue As Float
+
+  fValue += RecBuf[iStart - 3] * (256 ^ 0)
+  fValue += RecBuf[iStart - 2] * (256 ^ 1)
+  fValue += RecBuf[iStart - 1] * (256 ^ 2)
+  fValue += RecBuf[iStart] * (256 ^ 3)
+  Return fValue
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+  Return -1
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return a string
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetString(iStart As Integer, iEnd As Integer) As String
+
+  Dim i As Integer
+  Dim sString As String
+
+  For i = iStart To iEnd
+    sString &= Chr(RecBuf[i])
+  Next
+  Return sString
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+  Return ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return dc voltage
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetVPV(iNo As Integer) As Float
+
+  ' must be between 1 and 3
+  If iNo < 1 And iNo > 3 Then iNo = 1
+  Return GetValue(33 + (iNo - 1) * 2, 2, 10)
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+  Return 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return dc current
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetIPV(iNo As Integer) As Float
+
+  ' must be between 1 and 3
+  If iNo < 1 And iNo > 3 Then iNo = 1
+  Return GetValue(39 + (iNo - 1) * 2, 2, 10)
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+  Return 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return power ac
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetPAC(iNo As Integer) As Float
+
+  ' must be between 1 and 3
+  If iNo < 1 And iNo > 3 Then iNo = 1
+  Return GetValue(59 + (iNo - 1) * 4, 2, 1)
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+  Return 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return voltage ac
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetVAC(iNo As Integer) As Float
+
+  ' must be between 1 and 3
+  If iNo < 1 And iNo > 3 Then iNo = 1
+  Return GetValue(51 + (iNo - 1) * 2, 2, 10)
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+  Return 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return L
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetIAC(iNo As Integer) As Float
+
+  ' must be between 1 and 3
+  If iNo < 1 And iNo > 3 Then iNo = 1
+  Return GetValue(45 + (iNo - 1) * 2, 2, 10)
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+  Return 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' return frequency ac
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function GetFAC(iNo As Integer) As Float
+
+  ' must be between 1 and 3
+  If iNo < 1 And iNo > 3 Then iNo = 1
+  Return GetValue(57 + (iNo - 1) * 4, 2, 100)
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+  Return 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' generate magic packet to send to inverter
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub MagicPacket(sSerialNo As String) As Byte[]
+
+  Dim bMagic As New Byte[16]
+  Dim iByte, iPos, iChecksum As Integer
+  Dim sSerial As String = Hex(Val(sSerialNo), 8)
+
+  If Len(sSerialNo) <> 9 Then
+    If $bOmniksolDebug Then Main.WriteDebugLog(LogLabel & "Invalid serialnumber given '" & sSerialNo & "', it must be 9 hex characters long!")
+    Return
+  Endif
+
+  ' magic string
+  bMagic[0] = &H68
+  bMagic[1] = &H02
+  bMagic[2] = &H40
+  bMagic[3] = &H30
+  ' fixed
+  bMagic[12] = &H01
+  bMagic[13] = &H00
+  ' fixed
+  bMagic[15] = &H16
+
+  ' serial 2x backwards
+  For iPos = 7 To 1 Step -2
+
+    bMagic[4 + iByte] = Val("&H" & (Mid(sSerial, iPos, 2)))
+    bMagic[8 + iByte] = Val("&H" & (Mid(sSerial, iPos, 2)))
+    ' increment checksum
+    iChecksum += bMagic[4 + iByte]
+    Inc iByte
+  Next
+  ' calculate checksum byte
+  iChecksum *= 2
+  iChecksum += 115
+  iChecksum = iChecksum And &HFF
+  bMagic[14] = iChecksum
+
+  Return bMagic
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while generating magic packet '" & Error.Text & "' at '" & Error.Where & "'")
+
+End

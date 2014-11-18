@@ -28,6 +28,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[RFXComTRX] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -58,18 +59,19 @@ Public hRFXComTRXSer As New SerialPort
 Public hRFXComTRXRelay As New ServerSocket
 Public hRelayTRXClient As Object[]
 Public hRelayTRXSocket As New Socket
-Public tRFXComTRXConnect As Timer
 Public tRFXComTRXReset As Timer
 Public tRFXComTRXBusy As Timer
 Private bResetActive As Boolean = True
-Private iConnectRetry As Integer = 0 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
 Private RecBuf As New Byte[30]
 Private RecBytes As Byte
 Public bSimulate As Boolean
 Private iSeq As Integer
 Private cQueue As New Collection    ' command buffer
 Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
 
 ' counters to prevent logfile to fill up the disk
 Private iReadErrorCount As Integer
@@ -464,6 +466,19 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bOldAddrFmt = cPl.Settings["oldaddrfmt"]
   $bRFXComTRXDebug = cPl.Settings["debug"]
 
+  InterfaceId = Devices.FindInterface("RFXCom Transceiver")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
@@ -488,6 +503,15 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
@@ -502,12 +526,9 @@ Public Sub RFXComTRX_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
-  ResetInterface()
-
-  ' define timer for RFXComTRX reconnect
-  tRFXComTRXConnect = New Timer As "tRFXComTRXConnect"
-  tRFXComTRXConnect.Delay = iConnectRetry
-  tRFXComTRXConnect.Stop
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
 
   ' define timer for RFXComTRX reset
   tRFXComTRXReset = New Timer As "tRFXComTRXReset"
@@ -517,6 +538,8 @@ Public Sub RFXComTRX_Ready()
   ' define timer for Interface busy
   tRFXComTRXBusy = New Timer As "tRFXComTRXBusy"
   tRFXComTRXBusy.Stop
+
+  ResetInterface()
 
 End
 
@@ -544,19 +567,6 @@ Public Sub DoQueue()
     WriteCommand(aPacket, cQueue.Key)
     Break ' only do first one
   Next
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tRFXComTRXConnect_Timer()
-
-  If Not ConnectTCP(False) Then
-    Inc iConnectRetry
-    iConnectDelay *= iConnectRetry
-    tRFXComTRXConnect.Delay = iConnectDelay
-  Endif
 
 End
 
@@ -601,7 +611,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   hRFXComTRX.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -609,7 +619,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -654,7 +664,7 @@ Public Function ConnectSerial() As Boolean
   tRFXComTRXBusy.Stop
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ResetInterface()
@@ -663,7 +673,7 @@ Public Function ConnectSerial() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -732,7 +742,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   Dim iDeviceId As Integer
   Dim sType As String
 
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"))
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId)
   If iDeviceId Then
     sType = Devices.FindTypeForDevice(iDeviceId)
   Endif
@@ -929,16 +939,16 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
+  Try tReConnect.Stop
   Try tRFXComTRXBusy.Stop
   Try hRFXComTRX.Close
   Try hRFXComTRXSer.Close
   Try hRFXComTRXRelay.Close
-  Try tRFXComTRXConnect.Stop
   Try tRFXComTRXReset.Stop
   Try hRelayTRXClient.Remove
 
   If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
   Endif
@@ -978,11 +988,8 @@ End
 
 Public Sub RFXComTRX_Closed()
 
-  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  If iConnectRetry < 6 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
-    tRFXComTRXConnect.Start
-  Endif
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
 
 End
 
@@ -995,6 +1002,29 @@ Public Sub RFXComTRX_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
+
+End
+
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RFXComTRX_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
@@ -1694,7 +1724,7 @@ Private Sub Decode_Lighting1()
       Return
   End Select
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[7], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), UCase(sType))
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, UCase(sType))
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
 
@@ -1762,7 +1792,7 @@ Private Sub Decode_Lighting2()
       Return
   End Select
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[11], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), UCase(sType))
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, UCase(sType))
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
 
@@ -1818,7 +1848,7 @@ Private Sub Decode_Lighting3()
   End Select
 
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), UCase(sType))
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, UCase(sType))
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
 
@@ -1951,7 +1981,7 @@ Private Sub Decode_Lighting5()
       Return
   End Select
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[10], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), UCase(sType))
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, UCase(sType))
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
 
@@ -2009,7 +2039,7 @@ Private Sub Decode_Lighting6()
       Return
   End Select
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), UCase(sType))
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, UCase(sType))
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
 
@@ -2155,7 +2185,7 @@ Private Sub Decode_Security1()
     WriteMessage("Battery level = " & sBatt)
   Endif
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value & battery status
   If iDeviceId Then
     ' cmd
@@ -2233,7 +2263,7 @@ Private Sub Decode_Camera1()
       Return
   End Select
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[6], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
 
@@ -2295,7 +2325,7 @@ Private Sub Decode_Blinds1()
   End Select
   WriteMessage("Command       = " & sCmd)
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd, Devices.ValueType_Blinds)
 
@@ -2894,7 +2924,7 @@ Private Sub Decode_Remote()
       Return
   End Select
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[6], 4)))
-  iDeviceId = Devices.Find(Instance, "default", Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, "default", InterfaceId, sType)
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd, Devices.ValueType_Remote)
 
@@ -2966,7 +2996,7 @@ Private Sub Decode_Thermostat1()
     WriteMessage("Status        = " & sStatus)
   Endif
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values
   If iDeviceId Then
     Devices.ValueUpdate(iDeviceId, 1, sSetTemp)
@@ -3062,7 +3092,7 @@ Private Sub Decode_Thermostat3()
   End Select
   WriteMessage("Command       = " & sCmd)
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
 
@@ -3129,7 +3159,7 @@ Private Sub Decode_Rain()
     sBatt = "OK"
   Endif
   WriteMessage("Battery       = " & sBatt)
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
   If iDeviceId Then
     ' rain rate mm/hr, total rain mm
@@ -3214,7 +3244,7 @@ Private Sub Decode_Temp()
     sBatt = "OK"
   Endif
   WriteMessage("Battery       = OK")
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value & battery status
   If iDeviceId Then
     If Main.sTemperature = "°C" Then
@@ -3282,7 +3312,7 @@ Private Sub Decode_Hum()
     sBatt = "OK"
   Endif
   WriteMessage("Battery       = " & sBatt)
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value & battery status
   If iDeviceId Then
     ' humid %
@@ -3389,7 +3419,7 @@ Private Sub Decode_TempHum()
     Endif
   Endif
   WriteMessage("Battery       = " & sBatt)
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value & battery status
   If iDeviceId Then
     If Main.sTemperature = "°C" Then
@@ -3487,7 +3517,7 @@ Private Sub Decode_TempHumBaro()
     sBatt = "OK"
   Endif
   WriteMessage("Battery       = " & sBatt)
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
   If iDeviceId Then
     If Main.sTemperature = "°C" Then
@@ -3574,7 +3604,7 @@ Private Sub Decode_Uv()
     sbatt = "OK"
   Endif
   WriteMessage("Battery       = " & sBatt)
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
   If iDeviceId Then
     ' uv level, status and temp if TFA
@@ -3708,7 +3738,7 @@ Private Sub Decode_Wind()
   Endif
   WriteMessage("Battery       = " & sBatt)
   ' find device id
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
   If iDeviceId Then
     ' direction °, direction text, speed m/s, avg speed m/s
@@ -3721,7 +3751,7 @@ Private Sub Decode_Wind()
 
   If bTemp Then ' packet has tfa temp data
     ' find second device for TFA temp
-    iDeviceId = Devices.Find(Instance, sAddressTemp, Devices.FindInterface("RFXCom Transceiver"), sType)
+    iDeviceId = Devices.Find(Instance, sAddressTemp, InterfaceId, sType)
     ' update values & battery status
     If iDeviceId Then
       ' temp, chill
@@ -3850,7 +3880,7 @@ Private Sub Decode_Current()
     sBatt = "OK"
   Endif
   WriteMessage("Battery       = " & sBatt)
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
   If iDeviceId Then
     ' ct1 amp, ct2 amp, ct3 amp
@@ -3917,7 +3947,7 @@ Private Sub Decode_Energy()
   Endif
   WriteMessage("Battery       = " & sBatt)
   ' find device id
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
   If iDeviceId Then
     ' power usage total in Wh and now in Watt
@@ -3976,7 +4006,7 @@ Private Sub Decode_Weight()
   sWeight = CStr((RecBuf[6] * 25.6) + RecBuf[7] / 10)
   WriteMessage("Weight        = " & sWeight & " kg")
   WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value in kg
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, Format(sWeight, ".###"), Devices.ValueType_Weight)
 
@@ -4060,11 +4090,11 @@ Private Sub Decode_RFXSensor()
 
   Select Case sSubType
     Case "ad", "volt"
-      iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType & " " & sSubType)
+      iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType & " " & sSubType)
       ' update value in mV
       If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, CStr(sValue))
     Case "temp"
-      iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType & " " & sSubType)
+      iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType & " " & sSubType)
       ' update value
       If iDeviceId Then
         If Main.sTemperature = "°C" Then
@@ -4112,7 +4142,7 @@ Private Sub Decode_RFXMeter()
       WriteMessage("Counter       = " & lCounter)
       WriteMessage("if RFXPwr     = " & CStr((lCounter / 1000)) & " kWh")
       sAddress = ConvertAddress(sType & " 0x" & (RecBuf[4] * 256 + RecBuf[5]))
-      iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+      iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
       If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, CStr(lCounter))
     Case sTypeRFXMeterInterval
       sType = "rfxmeter"
@@ -4294,9 +4324,9 @@ Private Sub Decode_Chime()
   End Select
   WriteMessage("Signal level  = " & Lsr(RecBuf[7], 4))
 
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("RFXCom Transceiver"), sType)
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   If iDeviceId Then
-    Select Devices.FindDescrForDeviceType(Devices.FindDeviceTypeForDevice(iDeviceId))
+    Select Devices.FindDeviceTypeDescriptionForDeviceId(iDeviceId)
       Case "Doorbell"
         ' chime sound
         Devices.ValueUpdate(iDeviceId, 1, sSound, Devices.ValueType_Chime)
@@ -4508,7 +4538,7 @@ Public Sub Lighting2(sType As String, sAddress As String, sCommand As String, Op
   End Select
 
   ' find out type of control for device
-  sCtrl = Devices.CheckControlDevice(sAddress, Devices.FindInterface("RFXCom Transceiver"))
+  sCtrl = Devices.CheckControlDevice(sAddress, InterfaceId)
 
   aAddr = Split(sAddress, " ")
   If aAddr.Count = 2 Then

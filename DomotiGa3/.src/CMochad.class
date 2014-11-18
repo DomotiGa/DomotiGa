@@ -31,6 +31,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[Mochad] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -49,9 +50,10 @@ Public hMochad As New Socket
 
 Public sBuffer As String
 Public sLastCommand As String
-Public tMochadConnect As Timer
-Private iConnectRetry As Integer = 0 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -72,10 +74,29 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bGlobalX10 = cPl.Settings["globalX10"]
   $bMochadDebug = cPl.Settings["debug"]
 
-  tMochadConnect = New Timer As "MochadConnect"
-  tMochadConnect.Delay = iConnectDelay
- 
+  InterfaceId = Devices.FindInterface("Mochad Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
   ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
   Connect()
 
 End
@@ -102,19 +123,15 @@ Public Function Connect(Optional bFirstStart As Boolean = True) As Boolean
   hMochad.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
   ' All went ok
   Return True
 
-Finally
-  ' Add timer for checking connected
-  tMochadConnect.Start
-
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -132,12 +149,12 @@ Public Sub Mochad_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
   ' initialise the ASCII communication
   Try Write #hMochad, "ASCI" & Chr(10), 5
-
-  ' define timer for reconnect
-  iConnectRetry = 0
-  tMochadConnect.Stop
 
 End
 
@@ -146,27 +163,23 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Mochad_Closed()
 
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed.")
-  ' Start timer to reconnect
-  tMochadConnect.Start
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tMochadConnect_Timer()
+Public Sub ReConnect()
 
-  If iConnectRetry < 6 And If Not IsRunning Then
-    Inc iConnectRetry
-    Main.WriteDebugLog(LogLabel & "Retry to connect.")
-    Connect(False)
-  Else 
-    Try tMochadConnect.Stop
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
   Endif
-  
-End
 
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
@@ -174,10 +187,10 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
-  Try tMochadConnect.Stop
+  Try tReConnect.Stop
   Try hMochad.Close
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
 
   ' all ok
   Return True
@@ -186,7 +199,6 @@ Finally
   IsRunning = False
   ErrorText = ""
   ErrorWhere = ""
-  iConnectRetry = 0
 
 Catch
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
@@ -212,6 +224,7 @@ Public Sub Mochad_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 
@@ -223,14 +236,14 @@ Public Sub SendCommand(sAddress As String, sValue As String)
   Dim sCmd As String
   Dim aDim As String[]
   Dim iDim As Integer
-  Dim iDeviceId As Integer 
+  Dim iDeviceId As Integer
   Dim rResult As Result
-  
-  iDeviceId = Devices.Find(1, sAddress, Devices.FindInterface(PluginName & " Interface"))
+
+  iDeviceId = Devices.Find(1, sAddress, InterfaceId)
   rResult = Devices.GetDevicesAndValues(["device_id": iDeviceId, "inc_device_values": False])
-  
+
   sCmd = "PL " & Left(sAddress, 1) & Val(Right(sAddress, 2)) & " "
-  
+
   sValue = UCase(sValue)
   If InStr(sValue, "DIM ") And If rResult!device_extcode Then ' DIM 1 - 99
     aDim = Split(sValue, " ")
@@ -239,12 +252,12 @@ Public Sub SendCommand(sAddress As String, sValue As String)
       If iDim > 0 Then iDim = Round(0.63 * iDim) ' 63 steps
       sCmd &= "xdim " & iDim
     Else
-      sCmd &= UCase(sValue) 
+      sCmd &= sValue
     Endif
-  Else    
-    sCmd &= UCase(sValue) 
+  Else
+    sCmd &= sValue
   Endif
-  
+
   If $bMochadDebug Then Main.WriteDebugLog(LogLabel & "Send command: " & sCmd)
   Try Write #hMochad, sCmd & Chr$(10), Len(sCmd) + 1
   If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & Error.Text)
@@ -435,7 +448,7 @@ Private Sub ParseData(sStr As String, sLast As String)
         Main.WriteDebugLog(LogLabel & "Battery level = " & sBatt)
         Main.WriteDebugLog(LogLabel & "Tamper = " & sTamper)
       Endif
-      iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("Mochad Interface"), sType)
+      iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
       ' update value & battery status
       If iDeviceId Then
         Devices.ValueUpdate(iDeviceId, 1, sValue)
@@ -459,7 +472,7 @@ Private Sub UpdateX10(sCode As String, sCommand As String)
   If $bGlobalX10 Then
     iDeviceId = Devices.FindAll(sCode, 9999, "X10")
   Else
-    iDeviceId = Devices.Find(Instance, sCode, Devices.FindInterface("Mochad Interface"), "X10")
+    iDeviceId = Devices.Find(Instance, sCode, InterfaceId, "X10")
   Endif
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCommand)
 

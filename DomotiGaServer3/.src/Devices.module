@@ -216,7 +216,7 @@ Private Sub Toggle(sValue As String) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find interface with name sInterfaceName, return it's id
+' find interface with name sInterfaceName and return it's id
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub FindInterface(sInterfaceName As String) As Integer
 
@@ -307,27 +307,29 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' return typename for device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindTypeNameForDevice(iDeviceId As Integer) As String
+Public Sub FindDeviceTypeNameForDeviceId(iDeviceId As Integer) As String
 
-  Dim rDevice As Result
-  Dim iDeviceType As Integer
+  Dim rDeviceType As Result
 
-  iDeviceType = FindDeviceTypeForDevice(iDeviceId)
-  Try rDevice = Main.hDB.Exec("SELECT name FROM devicetypes WHERE id = &1", iDeviceType)
-  Return rDevice!name
+  Try rDeviceType = Main.hDB.Exec("SELECT devicetypes.name FROM devicetypes, devices WHERE devicetypes.id = devices.devicetype_id AND devices.id = &1", iDeviceId)
+  If rDeviceType.Available Then
+    Return rDeviceType!devicetypes.name
+  Else
+    Return 0
+  Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return description for devicetype with iDeviceId
+' return devicetype description of device with iDeviceId
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindDescrForDeviceType(iDeviceId As Integer) As String
+Public Sub FindDeviceTypeDescriptionForDeviceId(iDeviceId As Integer) As String
 
-  Dim rDevice As Result
+  Dim rDeviceType As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT description FROM devicetypes WHERE id = &1", iDeviceId)
-  If rDevice.Available Then
-    Return rDevice!description
+  Try rDeviceType = Main.hDB.Exec("SELECT description FROM devicetypes, devices WHERE devicetypes.id = devices.devicetype_id AND devices.id = &1", iDeviceId)
+  If rDeviceType.Available Then
+    Return rDeviceType!description
   Else
     Return 0
   Endif
@@ -363,7 +365,7 @@ Public Sub FindNameForDevice(iDeviceId As Integer) As String
     Return rDevice!name
   Else
     Main.WriteDebugLog("[Devices] Cannot find name for device with id " & iDeviceId)
-    Return ""
+    Return Null
   Endif
 
 End
@@ -493,21 +495,15 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' find device with interface iInterface, return complete device details
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindDevicesForInterface(iInterface As Integer, Optional sSortOrder As String) As Result
+Public Sub FindDevicesForInterface(iInterface As Integer) As Result
 
   Dim rDevice As Result
 
-  If iInterface Then
-    If sSortOrder Then
-      Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE interface_id = &1 AND enabled is TRUE ORDER BY &2", iInterface, sSortOrder)
-    Else
-      Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE interface_id = &1 AND enabled is TRUE", iInterface)
-    Endif
-    Return rDevice
-  Else
-    Main.WriteDebugLog("[Devices] FindDeviceForInterface: No interface Id given!")
-    Return Null
-  Endif
+  Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE interface_id = &1 AND enabled is TRUE", iInterface)
+  Return rDevice
+
+Catch
+  Return Null
 
 End
 
@@ -824,12 +820,12 @@ Public Sub CheckFirstSeen(iDeviceId As Integer)
 
   Dim rResult, rDevice As Result
 
-  Try rDevice = Main.hDB.Exec("SELECT * FROM devices WHERE id = &1", iDeviceId)
+  Try rDevice = Main.hDB.Exec("SELECT firstseen, address, name FROM devices WHERE id = &1", iDeviceId)
   If rDevice.Available Then
     If rDevice.Count Then
       If rDevice!firstseen = "00:00:00" Or If rDevice!firstseen = "" Then
         If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] Device with address '" & rDevice!address & "' and '" & rDevice!name & "' is a new device!")
-        rResult = Main.hDB.Exec("UPDATE devices SET firstseen = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), rDevice!id)
+        rResult = Main.hDB.Exec("UPDATE devices SET firstseen = &1 WHERE id = &2", Format(Now(), "yyyy-mm-dd hh:nn:ss"), iDeviceId)
       Endif
     Endif
   Endif
@@ -865,34 +861,32 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Variant, Optional iValueType As Integer = ValueType_Undefined) As Boolean
 
-  Dim rResult, rDevice, rDeviceLog As Result
+  Dim rResult, rResultInsert, rResultUpdate, rDevice, rDeviceLog As Result
   Dim bUpdated As Boolean
-  Dim sLabel, sValue, sName, sType, vValueName As String
+  Dim sLabel, sValue, sName, sType As String
   Dim iInstance As Integer
   Dim sTimeNow As String = Format(Now(), "yyyy-mm-dd hh:nn:ss")
-
-  ' First check if device exists
-  If Not CheckIfDeviceExists(iDeviceId) Then
-    If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ValueUpdate called for device with id '" & iDeviceId & "' that doesn't exists")
-    Return False
-  Endif
-
-  sName = FindNameForDevice(iDeviceId)
-  vValueName = "value" & iValueNum
 
   If vValue = "Dim 100" Then vValue = "On"
   If vValue = "Dim 99" Then vValue = "On"
   If vValue = "Dim 0" Then vValue = "Off"
 
-  rDevice = Main.hDB.Exec("SELECT device_values.units, device_values.value, device_values.log, device_values.logdisplay, devices.dimable, devices.switchable FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
+  Try rDevice = Main.hDB.Exec("SELECT device_values.value, device_values.log, device_values.logdisplay, devices.name, devices.dimable, devices.switchable FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
+  ' data for device cannot be retrieved the device probably doesn't exist
+  If Not rDevice Then
+    If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ValueUpdate called for device with id '" & iDeviceId & "' that doesn't exists")
+    Return False
+  Endif
+  ' devicevalue doesn't exist we need to do an insert instead of an update
   If rDevice.Count = 0 Then
-    ' New devicevalue, we need an insert instead of an update!
-    ' We leave sValue empty so update code will be executed
-    rResult = Main.hDB.Exec("INSERT INTO device_values (device_id, value, valuenum, lastchanged) values (&1, &2, &3, &4)", iDeviceId, vValue, iValueNum, sTimeNow)
-    rDevice = Main.hDB.Exec("SELECT device_values.units, device_values.value, device_values.log, device_values.logdisplay, devices.dimable, devices.switchable FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
+    rResultInsert = Main.hDB.Exec("INSERT INTO device_values (device_id, value, valuenum, lastchanged) values (&1, &2, &3, &4)", iDeviceId, vValue, iValueNum, sTimeNow)
+    rDevice = Main.hDB.Exec("SELECT device_values.value, device_values.log, device_values.logdisplay, devices.name, devices.dimable, devices.switchable FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
   Else
     sValue = rDevice!value
   Endif
+
+  ' store device name
+  sName = rDevice!name
 
   If rDevice!switchable Then
     sType = "switch"
@@ -906,9 +900,9 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
   If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ValueUpdate called for device with id '" & iDeviceId & "' valuenum '" & iValueNum & "' and value '" & vValue & "'")
   If vValue <> Null Then
     If Comp(vValue, sValue, gb.IgnoreCase) <> 0 Then
-      rResult = Main.hDB.Exec("UPDATE devices SET lastseen = &1, lastchanged = &1 WHERE id = &2", sTimeNow, iDeviceId)
-      rResult = Main.hDB.Exec("UPDATE device_values SET lastseen = &1, lastchanged = &1, value = &2 WHERE device_id = &3 AND valuenum = &4", sTimeNow, vValue, iDeviceId, iValueNum)
-      If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Device change triggered for device with id '") & iDeviceId & ("' and ") & vValueName & " '" & vValue & "'")
+
+      rResult = Main.hDB.Exec("UPDATE devices, device_values SET devices.lastseen = &1, device_values.lastseen = &1, devices.lastchanged = &1, device_values.lastchanged = &1, device_values.value = &4 WHERE devices.id = &2 AND device_values.device_id = &2 AND device_values.valuenum = &3", sTimeNow, iDeviceId, iValueNum, vValue)
+      If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Device change triggered for device '") & sName & ("' with 'value") & iValueNum & "' = '" & vValue & "'")
       If rDevice!dimable = True Or If rDevice!switchable = True Then Main.RefreshControlPage()
       If rDevice!logdisplay Then Main.WriteLog(sName & " status changed to " & vValue & IIf(sLabel, " " & sLabel, "") & ".")
 
@@ -916,24 +910,21 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
       bUpdated = True
 
       If Plugin.IsPluginEnabled("IViewer", 0) Then
-        Try Plugin.GetPluginObject("IViewer", iInstance).Interface.SendUpdateForDevice(iDeviceId, vValue, vValueName, IIf(sType, sType, vValueName))
+        Try Plugin.GetPluginObject("IViewer", iInstance).Interface.SendUpdateForDevice(iDeviceId, vValue, "value" & iValueNum, IIf(sType, sType, "value" & iValueNum))
       Endif
 
       If Plugin.IsPluginEnabled("MQTT", 0) Then
-        Try Plugin.GetPluginObject("MQTT", iInstance).Interface.PublishMsg(sName & "/" & vValueName, vValue)
+        Try Plugin.GetPluginObject("MQTT", iInstance).Interface.PublishMsg(sName & "/" & "value" & iValueNum, vValue)
       Endif
 
       If Plugin.IsPluginEnabled("SmartVisuServer", 0) Then
-        Try Plugin.GetPluginObject("SmartVisuServer", iInstance).Interface.SendUpdateDevice(sName, vValue, IIf(sType, sType, vValueName))
+        Try Plugin.GetPluginObject("SmartVisuServer", iInstance).Interface.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value" & iValueNum))
       Endif
     Endif
   Endif
 
   If Not bUpdated Then
-    Try rResult = Main.hDB.Exec("UPDATE devices SET lastseen = &1 WHERE id = &2", sTimeNow, iDeviceId)
-    If Error Then rResult = Main.hDB.Exec("UPDATE devices SET lastseen = &1 WHERE id = &2", sTimeNow, iDeviceId)
-    Try rResult = Main.hDB.Exec("UPDATE device_values SET lastseen = &1 WHERE device_id = &2 AND valuenum = &3", sTimeNow, iDeviceId, iValueNum)
-    If Error Then rResult = Main.hDB.Exec("UPDATE device_values SET lastseen = &1 WHERE device_id = &2 AND valuenum = &3", sTimeNow, iDeviceId, iValueNum)
+    rResultUpdate = Main.hDB.Exec("UPDATE devices, device_values SET devices.lastseen = &1, device_values.lastseen = &1 WHERE devices.id = &2 AND device_values.device_id = &2 AND device_values.valuenum = &3", sTimeNow, iDeviceId, iValueNum)
   Else
     If rDevice!log Then
       Main.hDB.Begin()
@@ -960,6 +951,7 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
 
 Catch
   Main.WriteLog("[Devices] ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  Main.WriteLog("[Devices] ERROR: DeviceId = '" & iDeviceId & "' ValueNum =  '" & iValueNum & "'")
   Return False
 
 End

@@ -18,17 +18,7 @@
 
 $execstart=$start=microtime(true);
 session_start();
-$configfile = 'config.php';
-if (file_exists($configfile)) {
-   include "config.php";
-} else {
-   echo "<h3>Check contents of config.php.example first, then rename it to config.php!</h3>";
-   exit;
-}
-if (!extension_loaded('xmlrpc')) {
-   echo "<h3>PHP xmlrpc module is not found, check your apache/php server setup!</h3>";
-   exit;
-}
+include "config.php";
 include "functions.php";
 extract($_REQUEST, EXTR_PREFIX_ALL|EXTR_REFS, 'r_');
 ?>
@@ -72,10 +62,12 @@ if (is_array($data)) {
 } else {
    $data=array();
 }
+
 // Get list of switchable devices
-$datas=get_device_listswitch();
+$datas=get_device_listtype("switch");
 // Get list of dimmable devices
-$datad=get_device_listdim();
+$datad=get_device_listtype("dim");
+
 echo "<style type=\"text/css\">\n";
 foreach ($data AS $item) {
    foreach ($datas AS $items) {	
@@ -159,7 +151,7 @@ foreach ($data AS $item) {
    foreach ($datad AS $itemd) {
       if ($item['id'] == $itemd['id']) { echo " class=\"arrow\"><a href=\"#\" onclick=\"showhide('optionpanel".$item['id']."');\"";}
    }
-   echo "><small>".$item['devicevalue']."</small>".$item['deviceicon'].$item['devicename']."</a></li>\n";
+   echo "><small>".$item['devicevalue1']."</small>".$item['deviceicon'].$item['devicename']."</a></li>\n";
 }
 echo "</ul>\n";
 ?>
@@ -174,10 +166,10 @@ foreach ($data AS $item) {
       }
    }
    foreach ($datad AS $itemd) {
-      if ($itemd['devicevalue'] == ""){ $dimlevel = "0"; };
-      if ($itemd['devicevalue'] == "Off"){ $dimlevel = "0"; };
-      if ($itemd['devicevalue'] == "On"){ $dimlevel = "100"; };
-      if (substr($itemd['devicevalue'],0,3) == "Dim"){ preg_match_all('!\d+!', $itemd['devicevalue'], $dimlevel); $dimlevel=implode($dimlevel[0]); };
+      if ($itemd['devicevalue1'] == ""){ $dimlevel = "0"; };
+      if ($itemd['devicevalue1'] == "Off"){ $dimlevel = "0"; };
+      if ($itemd['devicevalue1'] == "On"){ $dimlevel = "100"; };
+      if (substr($itemd['devicevalue1'],0,3) == "Dim"){ preg_match_all('!\d+!', $itemd['devicevalue1'], $dimlevel); $dimlevel=implode($dimlevel[0]); };
       if ($item['id'] == $itemd['id']) {
          echo "<div id=\"optionpanel".$item['id']."\" style=\"display: none\">\n";
          echo "<p><a class=\"green button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['id']."&value=On\">On</a></p>";

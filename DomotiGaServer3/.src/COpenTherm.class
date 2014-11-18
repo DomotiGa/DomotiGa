@@ -62,6 +62,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[OpenTherm] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -132,6 +133,10 @@ Private fCentralHeatingSetPoint As Float    ' Central heating setpoint
 Private bClockSyncedToday As Boolean        ' Indicates if clock is already synced
 Private iDayOfMonth As Integer
 
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 20sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
@@ -158,6 +163,19 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iRelayPort = cPl.Settings["relayport"]
   $bSyncClock = cPl.Settings["syncclock"]
 
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
+  InterfaceId = Devices.FindInterface("OpenTherm Gateway")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
@@ -165,7 +183,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     ConnectSerial()
   Endif
 
-  'Start relaying
+  ' Start relaying
   If $bRelayEnabled Then
     If StartRelay() Then
       Main.WriteLog(LogLabel & "Relay listening for client on port " & $iRelayPort)
@@ -222,7 +240,7 @@ Public Function ConnectSerial() As Boolean
       Return False
     Else
       ' Write to main logfile we connected successfully
-      Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+      Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
       IsRunning = True
 
       ' All went ok
@@ -231,7 +249,7 @@ Public Function ConnectSerial() As Boolean
   Endif
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -273,7 +291,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   hOpenThermTCP.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready
 
@@ -281,7 +299,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -299,7 +317,21 @@ Public Sub OpenThermTCP_Ready()
   GetDeviceIDs()
   Main.WriteLog(LogLabel & "TCP socket connected.")
   IsRunning = True
+
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
   Try Print #hOpenthermTCP, "PR=A" ' get about information of opentherm gateway
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ConnectTCP()
 
 End
 
@@ -308,7 +340,30 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub OpenThermTCP_Closed()
 
-  Main.WriteLog(LogLabel & "TCP socket closed.")
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub OpenThermTCP_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
@@ -324,6 +379,7 @@ Public Sub OpenThermTCP_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 
@@ -433,35 +489,35 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub GetDeviceIDs()
 
-  iThermostatID = Devices.Find(Instance, "Thermostat", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Thermostat")
+  iThermostatID = Devices.Find(Instance, "Thermostat", InterfaceId, "OpenTherm Thermostat")
   If iThermostatID = 0 Then
     If $bOpenThermDebug Then
       Main.WriteDebugLog(LogLabel & "Thermostat device is missing and not automatically created. Thermostat updates will be ignored!")
       Main.WriteDebugLog(LogLabel & "Check if the device exists and is not disabled or hidden.")
     Endif
   Endif
-  iCHID = Devices.Find(Instance, "CentralHeating", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Central Heating")
+  iCHID = Devices.Find(Instance, "CentralHeating", InterfaceId, "OpenTherm Central Heating")
   If iCHID = 0 Then
     If $bOpenThermDebug Then
       Main.WriteDebugLog(LogLabel & "Central heating device is missing and not automatically created. Central heating updates will be ignored!")
       Main.WriteDebugLog(LogLabel & "Check if the device exists and is not disabled or hidden.")
     Endif
   Endif
-  iBoilerID = Devices.Find(Instance, "Boiler", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Boiler")
+  iBoilerID = Devices.Find(Instance, "Boiler", InterfaceId, "OpenTherm Boiler")
   If iBoilerID = 0 Then
     If $bOpenThermDebug Then
       Main.WriteDebugLog(LogLabel & "Boiler device is missing and not automatically created. Boiler updates will be ignored!")
       Main.WriteDebugLog(LogLabel & "Check if the device exists and is not disabled or hidden.")
     Endif
   Endif
-  iBurnerID = Devices.Find(Instance, "Burner", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Burner")
+  iBurnerID = Devices.Find(Instance, "Burner", InterfaceId, "OpenTherm Burner")
   If iBurnerID = 0 Then
     If $bOpenThermDebug Then
       Main.WriteDebugLog(LogLabel & "Burner device is missing and not automatically created. Burner updates will be ignored!")
       Main.WriteDebugLog(LogLabel & "Check if the device exists and is not disabled or hidden.")
     Endif
   Endif
-  iOutsideID = Devices.Find(Instance, "Outside", Devices.FindInterface("OpenTherm Gateway"), "OpenTherm Outside sensor")
+  iOutsideID = Devices.Find(Instance, "Outside", InterfaceId, "OpenTherm Outside sensor")
   If iOutsideID = 0 Then
     If $bOpenThermDebug Then
       Main.WriteDebugLog(LogLabel & "Outside sensor device is missing and not automatically created. Outside sensor updates will be ignored!")
@@ -1025,7 +1081,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   Dim iDeviceId As Integer
   Dim sType, sDay, sCmdPrefix As String
 
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("OpenTherm gateway"))
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId)
   If iDeviceId Then
     sType = Devices.FindTypeForDevice(iDeviceId)
   Else
@@ -1159,6 +1215,7 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
+  Try tReConnect.Stop
   Try tOpenTherm.Stop
   Try hOpenThermRelay.Close
   Try hOpenThermTCP.Close
@@ -1166,7 +1223,7 @@ Public Function Disconnect() As Boolean
   Try hOpenThermSer.Close
 
  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
   Endif

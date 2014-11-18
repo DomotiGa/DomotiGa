@@ -45,9 +45,10 @@ Private $bIRTransDebug As Boolean
 
 Public hIRTrans As New Socket
 Public sBuffer As String
-Public tIRTransConnect As Timer
-Private iConnectRetry As Integer = 0 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -67,7 +68,21 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iTCPPort = cPl.Settings["tcpport"]
   $bIRTransDebug = cPl.Settings["debug"]
 
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
   ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
   Connect()
 
 End
@@ -94,7 +109,7 @@ Public Function Connect(Optional bFirstStart As Boolean = True) As Boolean
   hIRTrans.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -102,7 +117,7 @@ Public Function Connect(Optional bFirstStart As Boolean = True) As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -120,13 +135,25 @@ Public Sub IRTrans_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
   ' initialise the ASCII communication
   Try Write #hIRTrans, "ASCI", 4
 
-  ' define timer for IRTrans reconnect
-  tIRTransConnect = New Timer As "IRTransConnect"
-  tIRTransConnect.Delay = iConnectRetry
-  tIRTransConnect.Stop
+End
+
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
 
 End
 
@@ -135,24 +162,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub IRTrans_Closed()
 
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed.")
-  If iConnectRetry < 6 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
-    tIRTransConnect.Start
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tIRTransConnect_Timer()
-
-  If Not Connect(False) Then
-    Inc iConnectRetry
-    iConnectDelay *= iConnectRetry
-    tIRTransConnect.Delay = iConnectDelay
-  Endif
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
 
 End
 
@@ -162,10 +173,10 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
-  Try tIRTransConnect.Stop
+  Try tReConnect.Stop
   Try hIRTrans.Close
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
 
   ' all ok
   Return True
@@ -199,6 +210,7 @@ Public Sub IRTrans_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 

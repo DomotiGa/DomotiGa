@@ -15,13 +15,13 @@
 '   VMBGPO - Oled touch panel
 '
 ' To add support for additional modules make these changes
-' 
+'
 '  1. Write a "<moduletype>_Receive" sub routine
 '  2. Write a "<moduletype>_Send" sub routine
 '  3. Add the <moduletype> to the "Decode_packet" routine
 '  4. Add the <moduletype> to the "GetModuleType" routine
 '  5. Append in the "SendCommand" routine the calls to the "<moduletype>_Send" sub routine
-'  
+'
 ' Credits: BreFra (Frank van Breugel)
 
 ' DomotiGa - an open source home automation program.
@@ -42,6 +42,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[Velbus] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -60,17 +61,16 @@ Private $bRelayEnabled As Boolean
 Private $iRelayPort As Integer
 Private $bVelbusDebug As Boolean
 
-
-'Command buffer
+' Command buffer
 Private tVelbusBusy As Timer
 Private bBusBusy As Boolean
 Private cQueue As New Collection
 
-'Scan buffer
+' Scan buffer
 Private tVelbusScan As Timer
 Private cScanQueue As New Collection
 
-'Interface objects
+' Interface objects
 Public tVelbus As Timer
 Public hVelbusSer As New SerialPort
 Public hVelbusTCP As New Socket
@@ -78,7 +78,11 @@ Public hVelbusRelay As New ServerSocket
 Public hRelayVelbusClient As Object[]
 Public hRelayVBSocket As New Socket
 
-'Velbus module types
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
+
+' Velbus module types
 Const VMB8PB As Byte = &H01
 Const VMB1RY As Byte = &H02
 Const VMB1BL As Byte = &H03
@@ -207,8 +211,7 @@ Const VB_EEPROM_READ As Byte = &HFD
 Const VB_EEPROM_STATUS As Byte = &HFE
 Const VB_MODULE_TYPE As Byte = &HFF
 
-
-'Velbus package details
+' Velbus package details
 Private bMsgStart As Boolean = False
 Private iMsgPart As Integer
 Private bMsgSize As Byte
@@ -223,11 +226,8 @@ Private iMsgRelayPart As Integer
 Private bMsgRelaySize As Byte
 Private bMsgRelayData As New Byte[0]
 
-'Array to store addresses of unsupported Velbus modules
+' Array to store addresses of unsupported Velbus modules
 Private VB_Modules_Unsupported As New Byte[0]
-
-'Velbus Interface ID
-Private iVelbusInterfaceID As Integer
 
 Const bExtraDebug As Boolean = False
 
@@ -253,7 +253,20 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bRelayEnabled = cPl.Settings["relayenabled"]
   $iRelayPort = cPl.Settings["relayport"]
   $bVelbusDebug = cPl.Settings["debug"]
-  
+
+  InterfaceId = Devices.FindInterface("Velbus Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
@@ -275,6 +288,15 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
@@ -291,7 +313,7 @@ Public Function ConnectSerial() As Boolean
   ' try to close the connection
   Try hVelbusSer.Close
 
-  ' Open a new serial connection
+  ' open a new serial connection
   hVelbusSer = New Serialport As "VelbusSer"
   With hVelbusSer
     .PortName = $sSerPort
@@ -313,24 +335,23 @@ Public Function ConnectSerial() As Boolean
   tVelbusScan = New Timer As "tVelbusScan"
   tVelbusScan.Stop
 
-  ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  ' write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
-  'Request current status of all connect velbus modules
-  iVelbusInterfaceID = Devices.FindInterface("Velbus interface")
+  ' request current status of all connected velbus modules
   GetCurrentModuleStatus()
 
   ' all went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-  
+
   Return False
 
 End
@@ -342,9 +363,9 @@ Public Sub VelbusSer_Read()
 
   Dim sData As String
 
-  Do While Lof(hVelbusSer) > 0 'Get full buffer
+  Do While Lof(hVelbusSer) > 0 ' Get full buffer
     Try Read #hVelbusSer, sData, 1
-  
+
     If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! -> " & Error.Text)
     CollectPackage(CByte(Asc(sData)))
   Loop
@@ -356,8 +377,6 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
 
-  iVelbusInterfaceID = Devices.FindInterface("Velbus interface")
-
   ' try to close the connection
   Try hVelbusTCP.Close
 
@@ -366,7 +385,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
     hVelbusTCP.Connect($sTCPHost, $iTCPPort)
 
     ' Write to main logfile we are trying to connect
-    If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+    If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
     ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -374,7 +393,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
     Return True
 
   Catch ' some errors
-    Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+    Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
     Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
     IsRunning = False
     ErrorText = Error.Text
@@ -386,8 +405,13 @@ End
 ' TCP socket is connected
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub VelbusTCP_Ready()
+
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
+
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
 
   ' define timer for Interface busy
   tVelbusBusy = New Timer As "tVelbusBusy"
@@ -397,8 +421,7 @@ Public Sub VelbusTCP_Ready()
   tVelbusScan = New Timer As "tVelbusScan"
   tVelbusScan.Stop
 
-  'Request current status of all connect velbus modules
-  iVelbusInterfaceID = Devices.FindInterface("Velbus interface")
+  ' Request current status of all connected velbus modules
   GetCurrentModuleStatus()
 
 End
@@ -407,33 +430,64 @@ End
 ' TCP socket is closed
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub VelbusTCP_Closed()
-  Main.WriteLog(("Velbus TCP socket closed."))
+
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub VelbusTCP_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' TCP socket error while connected/connecting to host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub VelbusTCP_Error()
+
   Dim sMsg As String
 
-  sMsg = Log.Text_TCP_Error(Last.Stat, $sTCPHost)
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
   Main.WriteLog(LogLabel & "ERROR: " & sMsg)
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
+
+End
+
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Receive data from TCP socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub VelbusTCP_Read()
+
   Dim sData As Byte
+
   Try Read #hVelbusTCP, sData
   If Error Then
     Main.WriteDebugLog(LogLabel & "Error reading data from TCP socket! -> " & Error.Text)
   Else
     CollectPackage(sData)
   Endif
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -496,7 +550,9 @@ End
 ' Close relay socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub VelbusRelay_Closed()
+
   Main.WriteLog(("Velbus TCP relay socket closed."))
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -569,36 +625,38 @@ End
 ' Get current status of all known Velbus modules
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub GetCurrentModuleStatus()
-  
+
   Dim rResult As Result
   Dim bInList As Boolean
   Dim sGetStatusModules As New String[]
   Dim sModuleAddress As String
 
-  Try rResult = devices.FindDevicesForInterface(iVelbusInterfaceID)
-    If Not IsNull(rResult) Then
-      If rResult.Count Then
-        For Each rResult
-          'check if scan is not already sent
-          bInList = False
-          If Not IsNull(sGetStatusModules) Then
-            For Each sModuleAddress In sGetStatusModules
-              If sModuleAddress = Left(rResult!address, Len(sModuleAddress)) Then
-                bInList = True
-                Exit
-              Endif
-            Next
-          End If
-          If Not bInList Then
-            sModuleAddress = IIf(InStr(rResult!address, "|") > 0, UCase(Left(rResult!address, (InStr(rResult!address, "|") - 1))), rResult!address)
-            sGetStatusModules.Push(sModuleAddress)
-            SendCommand(sModuleAddress, "STATUS", rResult!id)
-          Endif
-        Next
-      Endif
+  Try rResult = Devices.FindDevicesForInterface(InterfaceId)
+  If Not IsNull(rResult) Then
+    If rResult.Count Then
+      For Each rResult
+        'check if scan is not already sent
+        bInList = False
+        If Not IsNull(sGetStatusModules) Then
+          For Each sModuleAddress In sGetStatusModules
+            If sModuleAddress = Left(rResult!address, Len(sModuleAddress)) Then
+              bInList = True
+              Exit
+            Endif
+          Next
+        End If
+        If Not bInList Then
+          sModuleAddress = IIf(InStr(rResult!address, "|") > 0, UCase(Left(rResult!address, (InStr(rResult!address, "|") - 1))), rResult!address)
+          sGetStatusModules.Push(sModuleAddress)
+          SendCommand(sModuleAddress, "STATUS", rResult!id)
+        Endif
+      Next
     Endif
-  Catch
-    If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Get current state of modules: " & ErrorText & " at " & ErrorWhere)
+  Endif
+
+Catch
+  If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Get current state of modules: " & ErrorText & " at " & ErrorWhere)
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -711,7 +769,7 @@ Private Function CreateVelbusPackage(bPriority As Byte, bAddress As Byte, bDataS
   'Calc checksum
   bCHK = CalcCheckSum(bPacket)
   bPacket.Push(bCHK)
-  
+
   'ETX
   bPacket.Push(VB_ETX)
 
@@ -849,6 +907,7 @@ End
 ' Reset local variables to receive a new data package
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ResetReceivedPackage()
+
   iMsgPart = 0
   bMsgSize = &H00
   bMsgAddr = &H00
@@ -857,6 +916,7 @@ Private Sub ResetReceivedPackage()
   bMsgData.Clear
   bMsgChk = False
   bMsgStart = False
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -881,6 +941,7 @@ Private Function CalcCheckSum(bPacket As Byte[]) As Byte
   Next
   bCHK = bCHK + 1
   Return (bCHK)
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -892,7 +953,7 @@ Private Sub Decode_packet(bAddress As Byte, bData As Byte[])
   Dim sModuleType As String
   Dim bSupported, bIgnoreModule As Boolean
 
-  'Velbus module type
+  ' velbus module type
   If bData[0] = VB_MODULE_TYPE Then
     bModuleType = bData[1]
   Else
@@ -976,9 +1037,9 @@ Private Sub Decode_packet(bAddress As Byte, bData As Byte[])
       bSupported = True
       VMB7IN_Receive(bAddress, bData)
     Case &H00
-      'unkown module type, no scan request scheduled
+      'unknown module type, no scan request scheduled
     Case &h99
-      'unkown module type, do nothing as scan request is scheduled to be sent
+      'unknown module type, do nothing as scan request is scheduled to be sent
       bSupported = True
     Case Else
       sModuleType = "<unknown type> (" & Hex(bModuleType) & ")"
@@ -999,6 +1060,7 @@ Private Sub Decode_packet(bAddress As Byte, bData As Byte[])
       If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "Ignoring future messages of unsupported module " & sModuleType & " with address " & Hex(bAddress))
     Endif
   Endif
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1008,7 +1070,7 @@ Private Function HexStringToByte(sValue As String) As Byte
 
   Dim iValue As Integer = 0
   Dim icnt As Integer
-  
+
   If Len(sValue) = 4 Then sValue = Right(sValue, 2)
 
   For icnt = 1 To 2
@@ -1047,6 +1109,7 @@ Private Function HexStringToByte(sValue As String) As Byte
     If icnt = 1 Then ivalue = ivalue * 16
   Next
   Return CByte(ivalue)
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1063,7 +1126,7 @@ Private Function GetModuleType(Address As Byte, Optional DeviceId As Integer) As
   If DeviceId Then
     iDeviceId = DeviceId
   Else
-    Try rResult = devices.FindDevicesForInterface(iVelbusInterfaceID)
+    Try rResult = Devices.FindDevicesForInterface(InterfaceId)
     If Not IsNull(rResult) Then
       If rResult.Count Then
         For Each rResult
@@ -1084,7 +1147,7 @@ Private Function GetModuleType(Address As Byte, Optional DeviceId As Integer) As
   Endif
 
   If iDeviceId Then
-    sDeviceType = UCase(Devices.FindTypeNameForDevice(iDeviceId))
+    sDeviceType = UCase(Devices.FindDeviceTypeNameForDeviceId(iDeviceId))
     Select sDeviceType 
       Case "VMB4RY"
         Return VMB4RY
@@ -1097,7 +1160,7 @@ Private Function GetModuleType(Address As Byte, Optional DeviceId As Integer) As
       Case "VMBDME"
         Return VMBDME
       Case Else
-        Main.WriteDebugLog(LogLabel & "Unsupported velbus modele '" & UCase(Devices.FindTypeNameForDevice(iDeviceId)) & "'")
+        Main.WriteDebugLog(LogLabel & "Unsupported velbus modele '" & UCase(Devices.FindDeviceTypeNameForDeviceId(iDeviceId)) & "'")
     End Select
   Else
     If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "Unkown moduletype with address " & Hex(Address))
@@ -1118,6 +1181,7 @@ Private Function GetModuleType(Address As Byte, Optional DeviceId As Integer) As
       Return &H00
     Endif
   Endif
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1206,7 +1270,8 @@ Public Sub SendCommand(sAddress As String, sCmd As String, Optional DeviceId As 
       If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "Unable to send command to unknown or not (yet) unsupported Velbus module at address " & sAddress)
       Return
   End Select
-End Sub
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Support for VMB4RY module
@@ -1228,16 +1293,16 @@ Private Sub VMB4RY_Receive(Address As Byte, DataByte As Byte[])
 
   sAddress = Hex(Address, 2)
   For iChannel = 0 To 3
-    Relay[iChannel] = Devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), iVelbusInterfaceID, "VMB4RY Channel " & CStr(iChannel + 1))
+    Relay[iChannel] = Devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), InterfaceId, "VMB4RY Channel " & CStr(iChannel + 1))
     Select Case DataByte[0]
       Case VB_STATUS
         'Do nothing?
       Case VB_MODULE_TYPE
         If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "VMB4RY - Module type message received")
       Case VB_SWITCH_OFF
-        If BTst(DataByte[1], iChannel) Then Devices.ValueUpdate(Relay[iChannel], 1, "Off", devices.ValueType_Switch)
+        If BTst(DataByte[1], iChannel) Then Devices.ValueUpdate(Relay[iChannel], 1, "Off", Devices.ValueType_Switch)
       Case VB_SWITCH_ON
-        If BTst(DataByte[1], iChannel) Then Devices.ValueUpdate(Relay[iChannel], 1, "On", devices.ValueType_Switch)
+        If BTst(DataByte[1], iChannel) Then Devices.ValueUpdate(Relay[iChannel], 1, "On", Devices.ValueType_Switch)
 
       Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
         If BTst(DataByte[1], iChannel) Then Update_LED_Status(Relay[iChannel], DataByte[0]) 
@@ -1246,7 +1311,7 @@ Private Sub VMB4RY_Receive(Address As Byte, DataByte As Byte[])
         If BTst(DataByte[1], iChannel) Then
           If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "VMB4RY - Relay channel " & (iChannel + 1) & " changed")
           sRelayStatus = IIf(BTst(DataByte[3], iChannel), "On", "Off")
-          Devices.ValueUpdate(Relay[iChannel], 1, sRelayStatus, devices.ValueType_Switch)
+          Devices.ValueUpdate(Relay[iChannel], 1, sRelayStatus, Devices.ValueType_Switch)
           If BTst(DataByte[5], 7) Then
             update_LED_Status(Relay[iChannel], VB_LED_SET)
           Else
@@ -1260,12 +1325,14 @@ Private Sub VMB4RY_Receive(Address As Byte, DataByte As Byte[])
         If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "Unsupported packet type '" & CStr(DataByte[0]) & "' for VMB4RY module!")
     End Select
   Next
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Support for VMB4RY module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub VMB4RY_Send(ModuleAddress As Byte, iChannel As Integer, sAction As String)
+
   Dim bTempData As New Byte[]
   Dim bPrio As Byte
 
@@ -1292,15 +1359,17 @@ Private Sub VMB4RY_Send(ModuleAddress As Byte, iChannel As Integer, sAction As S
     End Select
     QueueCommand(CreateVelbusPackage(bPrio, ModuleAddress, bTempData.Count, bTempData, False))
   Endif
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Support for VMBDME module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub VMBDME_Receive(Address As Byte, DataByte As Byte[])
+
   Dim iCnt As Integer
   Dim sAddress, VMBDME_device_id As String
- 
+
   If $bVelbusDebug Then
     Main.WriteDebugLog(LogLabel & "Data package of VMBDME module with address " & Hex(Address, 2) & " received")
     If bExtraDebug Then
@@ -1311,7 +1380,7 @@ Private Sub VMBDME_Receive(Address As Byte, DataByte As Byte[])
   Endif
 
   sAddress = Hex(Address, 2)
-  VMBDME_device_id = Devices.Find(Instance, sAddress, iVelbusInterfaceID, "VMBDME")
+  VMBDME_device_id = Devices.Find(Instance, sAddress, InterfaceId, "VMBDME")
 
   Select Case DataByte[0]
       Case VB_STATUS
@@ -1332,24 +1401,26 @@ Private Sub VMBDME_Receive(Address As Byte, DataByte As Byte[])
       Case Else
         If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "Unsupported packet type '" & CStr(DataByte[0]) & "' for VMBDME module!")
   End Select
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Support for VMBDME module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub VMBDME_Send(ModuleAddress As Byte, sAction As String)
+
   Dim bTempData As New Byte[]
   Dim bPrio As Byte
   Dim sCommand As String
   Dim iDim As Integer
-  
+
   If InStr(sAction, " ") Then
     sCommand = Left(sAction, InStr(sAction, " ") - 1)
     iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
   Else
     sCommand = sAction
   Endif
-  
+
   Select Case UCase(sCommand)
     Case "ON"
       bPrio = VB_HPrio
@@ -1389,6 +1460,7 @@ Private Sub VMBDME_Send(ModuleAddress As Byte, sAction As String)
   If bTempData.Count > 1 Then
     QueueCommand(CreateVelbusPackage(bPrio, ModuleAddress, bTempData.Count, bTempData, False))
   Endif
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1412,10 +1484,10 @@ Private Sub VMB4DC_Receive(Address As Byte, DataByte As Byte[])
   sAddress = Hex(Address, 2)
 
   For iChannel = 0 To 3
-    iDimmer[iChannel] = devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), iVelbusInterfaceID, "VMB4DC Channel " & CStr(iChannel + 1))
-    
+    iDimmer[iChannel] = Devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), InterfaceId, "VMB4DC Channel " & CStr(iChannel + 1))
+
     Select Case DataByte[0]
-'       If $bVelbusDebug Then Main.WriteDebugLog((LogLabel & "Decoding packet type: ") & CStr(bData[0]))
+      ' If $bVelbusDebug Then Main.WriteDebugLog((LogLabel & "Decoding packet type: ") & CStr(bData[0]))
       Case VB_STATUS
         'Do nothing?
       Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
@@ -1453,11 +1525,12 @@ End
 ' Support for VMB4DC module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub VMB4DC_Send(ModuleAddress As Byte, iChannel As Integer, sAction As String)
+
   Dim bTempData As New Byte[]
   Dim bPrio As Byte
   Dim sCommand As String
   Dim iDim As Integer
-  
+
   If InStr(sAction, " ") Then
     sCommand = Left(sAction, InStr(sAction, " ") - 1)
     iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
@@ -1504,6 +1577,7 @@ Private Sub VMB4DC_Send(ModuleAddress As Byte, iChannel As Integer, sAction As S
     End Select
     QueueCommand(CreateVelbusPackage(bPrio, ModuleAddress, bTempData.Count, bTempData, False))
   Endif
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1517,21 +1591,21 @@ Private Sub VMB7IN_Receive(Address As Byte, DataByte As Byte[])
 
   sAddress = Hex(Address, 2)
   For iCnt = 0 To 6
-    iChannel[iCnt] = Devices.Find(Instance, sAddress & "|" & CStr(iCnt + 1), iVelbusInterfaceID, "VMB7IN Channel " & CStr(iCnt + 1))
+    iChannel[iCnt] = Devices.Find(Instance, sAddress & "|" & CStr(iCnt + 1), InterfaceId, "VMB7IN Channel " & CStr(iCnt + 1))
   Next
   Select Case DataByte[0]
     Case VB_STATUS
       For iCnt = 0 To 6
-        If BTst(DataByte[1], iCnt) Then devices.ValueUpdate(iChannel[iCnt], 1, "Pressed")
-        If BTst(DataByte[2], iCnt) Then devices.ValueUpdate(iChannel[iCnt], 1, "Released")
-        If BTst(DataByte[3], iCnt) Then devices.ValueUpdate(iChannel[iCnt], 1, "Pressed (long)")
+        If BTst(DataByte[1], iCnt) Then Devices.ValueUpdate(iChannel[iCnt], 1, "Pressed")
+        If BTst(DataByte[2], iCnt) Then Devices.ValueUpdate(iChannel[iCnt], 1, "Released")
+        If BTst(DataByte[3], iCnt) Then Devices.ValueUpdate(iChannel[iCnt], 1, "Pressed (long)")
       Next
     Case VB_INPUT_STATUS
       For iCnt = 0 To 6
         If BTst(DataByte[1], iCnt) Then 
-          devices.ValueUpdate(iChannel[iCnt], 1, "Pressed") 
-        Else 
-          devices.ValueUpdate(iChannel[iCnt], 1, "Released")
+          Devices.ValueUpdate(iChannel[iCnt], 1, "Pressed") 
+        Else
+          Devices.ValueUpdate(iChannel[iCnt], 1, "Released")
         Endif
       Next
     Case VB_MODULE_TYPE
@@ -1544,8 +1618,8 @@ Private Sub VMB7IN_Receive(Address As Byte, DataByte As Byte[])
         iWattCounter = (256 * CInt(DataByte[6])) + CInt(DataByte[7])
         iKWh = iKWhCounter / iPulses
         iWatt = 3600000000 / (iPulses * iWattCounter)
-        devices.ValueUpdate(iChannel[iEnergyChannel], 1, iWatt, devices.ValueType_Power_Watt)
-        devices.ValueUpdate(iChannel[iEnergyChannel], 2, iKWh, devices.ValueType_Energy_kWh)
+        Devices.ValueUpdate(iChannel[iEnergyChannel], 1, iWatt, Devices.ValueType_Power_Watt)
+        Devices.ValueUpdate(iChannel[iEnergyChannel], 2, iKWh, Devices.ValueType_Energy_kWh)
       Endif
     Case Else
       If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "Unsupported packet type '" & CStr(DataByte[0]) & "' for VMB7IN module!")
@@ -1557,11 +1631,12 @@ End
 ' Support for VMB7IN module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub VMB7IN_Send(ModuleAddress As Byte, sAction As String)
+
   Dim bTempData As New Byte[]
   Dim bPrio As Byte
   Dim sCommand As String
   Dim iDim As Integer
-  
+
   If InStr(sAction, " ") Then
     sCommand = Left(sAction, InStr(sAction, " ") - 1)
     iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
@@ -1578,8 +1653,8 @@ Private Sub VMB7IN_Send(ModuleAddress As Byte, sAction As String)
       If $bVelbusDebug Then Main.WriteDebugLog((LogLabel & "Unsupported action '" & sAction & "' for VMB7IN module!"))
   End Select
   QueueCommand(CreateVelbusPackage(bPrio, ModuleAddress, bTempData.Count, bTempData, False))
-End
 
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Support for VMBGPO module
@@ -1588,7 +1663,7 @@ Private Sub VMBGPO_Receive(Address As Byte, DataByte As Byte[])
 
   Dim VMBGPO_device_id, VMBGPO_Temperature, iCnt As Integer
   Dim sAddress As String
- 
+
   If $bVelbusDebug Then
     Main.WriteDebugLog(LogLabel & "Data package of VMBGPO module with address " & Hex(Address, 2) & " received")
     If bExtraDebug Then
@@ -1603,7 +1678,7 @@ Private Sub VMBGPO_Receive(Address As Byte, DataByte As Byte[])
       Case VB_STATUS
         'todo
       Case VB_TEMP
-        VMBGPO_device_id = devices.Find(Instance, sAddress, iVelbusInterfaceID, "Velbus VMBGPO panel")
+        VMBGPO_device_id = Devices.Find(Instance, sAddress, InterfaceId, "Velbus VMBGPO panel")
         If DataByte.Count = 7 Then
           If BTst(DataByte[2], 0) And BTst(DataByte[2], 1) And BTst(DataByte[2], 2) And BTst(DataByte[2], 3) And BTst(DataByte[2], 4) Then
             VMBGPO_Temperature = -0.0625
@@ -1630,7 +1705,7 @@ Private Sub VMBGPO_Receive(Address As Byte, DataByte As Byte[])
             If BTst(DataByte[1], 5) Then VMBGPO_Temperature += 16
             If BTst(DataByte[1], 6) Then VMBGPO_Temperature += 32
           Endif
-          Devices.ValueUpdate(VMBGPO_device_id, 1, VMBGPO_Temperature, devices.ValueType_Temperature)
+          Devices.ValueUpdate(VMBGPO_device_id, 1, VMBGPO_Temperature, Devices.ValueType_Temperature)
         Else
           If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "VMBGPO - received unsupported temperature message")
         Endif
@@ -1646,14 +1721,14 @@ End
 ' Support for VMBGPO module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub VMBGPO_Send(ModuleAddress As Byte, sAction As String)
+
   Dim bTempData As New Byte[]
   Dim bPrio As Byte
-  
+
   Select Case UCase(sAction)
     Case "STATUS"
       bPrio = VB_LPrio
       bTempData.Push(VB_MODULE_STATUS)
-    
     Case Else
       If $bVelbusDebug Then Main.WriteDebugLog(LogLabel & "Unsupported action '" & sAction & "' for VMB4RY module!")
   End Select
@@ -1661,11 +1736,11 @@ Private Sub VMBGPO_Send(ModuleAddress As Byte, sAction As String)
 
 End
 
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Update LED status of push button
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Update_LED_Status(DeviceId As Integer, bLedStatus As Byte)
+
   Select Case bLedStatus
     Case VB_LED_CLEAR
       Devices.ValueUpdate(DeviceId, 2, "Off")
@@ -1678,8 +1753,8 @@ Private Sub Update_LED_Status(DeviceId As Integer, bLedStatus As Byte)
     Case VB_LED_BLINK_VERY_FAST
       Devices.ValueUpdate(DeviceId, 2, "Blink very fast")
   End Select
-End
 
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Close port
@@ -1687,16 +1762,17 @@ End
 Public Function Disconnect() As Boolean
 
   ' try stop running timers
+  Try tReConnect.Stop
   Try tVelbusBusy.Stop
   Try tVelbusScan.Stop
-  
+
  ' try to close the connection
   hVelbusRelay.Close
   hVelbusSer.Close
   hVelbusTCP.Close
-  
+
   If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
   Endif
@@ -1704,7 +1780,7 @@ Public Function Disconnect() As Boolean
   ' all ok
   Return True
 
-  Catch ' some errors
+Catch ' some errors
   IsRunning = False
   ErrorText = ""
   ErrorWhere = ""

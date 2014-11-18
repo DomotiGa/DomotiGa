@@ -25,6 +25,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[CUL] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -48,7 +49,6 @@ Public hCULSer As New SerialPort
 Public bSimulate As Boolean = False
 Public tCULBusy As Timer
 Public tCULLed As Timer
-Public tCULConnect As Timer
 
 ' FS20 on/off-for-timers
 Private oOnOffTimers As New Object[]
@@ -60,9 +60,11 @@ Private bMessage As Boolean = False
 Private iByteCount As Integer = 0
 Private cQueue As New Collection  ' command buffer
 Private bCULBusy As Boolean  ' waiting for delay timer to finish
-Private iConnectRetry As Integer = 0 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
 Private cLowTemps As New Collection ' to store FHT low temp byte
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -86,6 +88,19 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sFHTid = cPl.Settings["fhtid"]
   $iModel = cPl.Settings["model"]
   $bCULDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("CUL Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
 
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
@@ -111,6 +126,10 @@ Public Sub CUL_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
   Init()
 
 End
@@ -118,22 +137,28 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' reconnect routine
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tCULConnect_Timer()
+Public Sub tReConnect_Timer()
 
-  If Not ConnectTCP(False) Then
-    Inc iConnectRetry
-    iConnectDelay *= iConnectRetry
-    tCULConnect.Delay = iConnectDelay
-  Endif
+  ConnectTCP()
 
 End
 
 Public Sub CUL_Closed()
 
-  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  If iConnectRetry < 6 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
-    tCULConnect.Start
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
   Endif
 
 End
@@ -159,7 +184,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   hCUL.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort & " (" & sModel[$iModel] & ")")
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort & " (" & sModel[$iModel] & ")")
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -167,7 +192,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -202,14 +227,14 @@ Public Function ConnectSerial() As Boolean
   Init()
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort & " (" & sModel[$iModel] & ")")
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort & " (" & sModel[$iModel] & ")")
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -227,17 +252,17 @@ Public Function Disconnect() As Boolean
   Dim oTimer As Object
 
   ' try to close the connection
-  Try hCUL.Close
-  Try hCULSer.Close
   Try tCULBusy.Stop
   Try tCULLed.Stop
-  Try tCULConnect.Stop
+  Try tReConnect.Stop
+  Try hCUL.Close
+  Try hCULSer.Close
   For Each oTimer In oOnOffTimers
     Try oTimer.Stop
   Next
 
   If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
   Endif
@@ -275,6 +300,7 @@ Public Sub CUL_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 
@@ -307,7 +333,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   Dim sType As String
 
   ' find out what kind of device we are dealing with
-  iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("CUL Interface"))
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId)
   If iDeviceId Then
     sType = Devices.FindTypeForDevice(iDeviceId)
   Else
@@ -319,7 +345,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
     Case "FS20"
       PrepareFS20Command(sAddress, sCmd)
       If sCmd = "On" Then
-        If Devices.FindDescrForDeviceType(Devices.FindDeviceTypeForDevice(iDeviceId)) = "Bell Button" Then
+        If Devices.FindDeviceTypeDescriptionForDeviceId(iDeviceId) = "Bell Button" Then
           StartOnOffTimer(iDeviceId, "Off", 1)
         Endif
       Endif
@@ -467,11 +493,6 @@ Public Function Init()
   tCULLed = New Timer As "tCULLED"
   tCULLed.Delay = 500
   tCULLed.Stop
-
-  ' define timer for CUL reconnect
-  tCULConnect = New Timer As "tCULConnect"
-  tCULConnect.Delay = iConnectRetry
-  tCULConnect.Stop
 
   ' init CUL
   If $bCULDebug Then Main.WriteDebugLogChars(LogLabel & "Switching to X21 mode.\n")
@@ -679,13 +700,13 @@ Private Sub Display_Message()
       Try sVal = aFS20Values[iCmd]
       If Not Error Then
         If $bCULDebug Then Main.WriteDebugLog(LogLabel & "FS20 message received with address '" & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and command '" & sVal & "'" & IIf(iDur, " duration " & iDur, "") & CalcRSSI(fRSSI))
-        iDeviceId = Devices.Find(Instance, sHouseCode & sAddress, Devices.FindInterface("CUL Interface"), "FS20")
+        iDeviceId = Devices.Find(Instance, sHouseCode & sAddress, InterfaceId, "FS20")
         ' move some values around if needed
         If iCmd < 18 Then ' Off, Dim, On
           sValue = sVal
           sValue2 = " "
           If sValue = "On" Then
-            If Devices.FindDescrForDeviceType(Devices.FindDeviceTypeForDevice(iDeviceId)) = "Bell Button" Then
+            If Devices.FindDeviceTypeDescriptionForDeviceId(iDeviceId) = "Bell Button" Then
               StartOnOffTimer(iDeviceId, "Off", 1)
             Endif
           Endif
@@ -743,7 +764,7 @@ Private Sub Display_Message()
 
         If $bCULDebug Then Main.WriteDebugLog(LogLabel & "FHT TFK message received with address '" & sHouseCode & sAddress & "', status '" & IIf(Len(sValue2), sValue2, sValue) & "' and battery level '" & sBatt & "'")
         ' find device id
-        iDeviceId = Devices.Find(Instance, sHouseCode & sAddress, Devices.FindInterface("CUL Interface"), "FHTTFK")
+        iDeviceId = Devices.Find(Instance, sHouseCode & sAddress, InterfaceId, "FHTTFK")
         If iDeviceId Then
           ' update values
           Devices.ValueUpdate(iDeviceId, 1, sValue)
@@ -844,7 +865,7 @@ Private Sub Display_Message()
           If sCmd = "Warnings" Then Main.WriteDebugLog(LogLabel & "Warnings: Battery=" & sBatt & " LowTemp=" & sLowTemp & " Sensor=" & sSensor & " Window=" & sWindow)
         Endif
         ' find device id
-        iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("CUL Interface"), "FHT80")
+        iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, "FHT80")
         If iDeviceId Then
           If sCmd = "Measured-Temp" Then
             ' update values
@@ -876,7 +897,7 @@ Private Sub Display_Message()
       Try sEMPeakValue = Chr(RecBuf[15]) & Chr(RecBuf[16]) & Chr(RecBuf[17]) & Chr(RecBuf[18])
 
       If $bCULDebug Then Main.WriteDebugLog(LogLabel & "EM message received sensor '" & aEMType[Val(sEMType)] & "' [" & sEMType & "]" & " with address '" & sAddress & "' cumulated value: " & sEMCumulValue & (" last: ") & sValue & (" top: ") & sEMPeakValue & (" msg count: ") & Val("&H" & sMsgCounter))
-      iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("CUL Interface"), aEMType[Val(sEMType)])
+      iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, aEMType[Val(sEMType)])
       ' update value
       If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sEMCumulValue)
       If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, sValue)
@@ -959,7 +980,7 @@ Private Sub Display_Message()
             Main.WriteDebugLog(LogLabel & "Reported a Temperature of " & sValue & "°C and Humidity of " & sValue2 & "%")
         End Select
       Endif
-      iDeviceId = Devices.Find(Instance, sAddress, Devices.FindInterface("CUL Interface"), sType)
+      iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
       ' update value
       Select sType
         Case "S300TH"

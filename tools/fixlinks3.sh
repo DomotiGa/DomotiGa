@@ -50,6 +50,7 @@ ln -s ../../DomotiGa3/.src/CLEDMatrix.class
 ln -s ../../DomotiGa3/.src/CMochad.class
 ln -s ../../DomotiGa3/.src/CMQTT.class
 ln -s ../../DomotiGa3/.src/CMeteohub.class
+ln -s ../../DomotiGa3/.src/CMySensors.class
 ln -s ../../DomotiGa3/.src/CNcid.class
 ln -s ../../DomotiGa3/.src/CLGTV.class
 ln -s ../../DomotiGa3/.src/CLIRC.class
@@ -57,6 +58,7 @@ ln -s ../../DomotiGa3/.src/CNMA.class
 ln -s ../../DomotiGa3/.src/COpenTherm.class
 ln -s ../../DomotiGa3/.src/COpenWeatherMap.class
 ln -s ../../DomotiGa3/.src/COpenZWave.class
+ln -s ../../DomotiGa3/.src/COmniksol.class
 ln -s ../../DomotiGa3/.src/COnkyo.class
 ln -s ../../DomotiGa3/.src/COWFS.class
 ln -s ../../DomotiGa3/.src/COWW.class

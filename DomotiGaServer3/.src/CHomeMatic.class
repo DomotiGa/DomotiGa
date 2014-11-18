@@ -28,6 +28,7 @@ Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
 Public LogLabel As String = "[HomeMatic] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -44,7 +45,6 @@ Private $sHMLANid As String
 
 Public hHM As New Socket
 Public tHMBusy As Timer
-Public tHMConnect As Timer
 Public bHMPairEnabled As Boolean
 Public iStackCount As Integer               ' Use in Main form statusbar?
 Public iStackCountUntransmitted As Integer  ' Use in Main form statusbar?
@@ -63,8 +63,6 @@ Private RecBuf As New Byte[255]
 Private bMessage As Boolean = False
 Private iByteCount As Integer = 0
 Private bHMBusy As Boolean  ' waiting for delay timer to finish
-Private iConnectRetry As Integer = 5 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
 
 ' stack management
 Private cQueue As New Collection  ' command buffer
@@ -91,6 +89,9 @@ Private iDelta As Long
 ' data collection
 Private sConf5Dump As String
 
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -110,8 +111,30 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iTCPPort = cPl.Settings["tcpport"]
   $sHMLANid = cPl.Settings["hmid"]
   $bHMDebug = cPl.Settings["debug"]
- 
+
+  InterfaceId = Devices.FindInterface("HomeMatic LAN Adapter")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
   ' Connect/Initialize connection
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
   ConnectTCP()
 
 End
@@ -131,30 +154,18 @@ Public Sub HM_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
   Init()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tHMConnect_Timer()
-
-  If Not ConnectTCP(False) Then
-    Inc iConnectRetry
-    iConnectDelay *= iConnectRetry
-    tHMConnect.Delay = iConnectDelay
-  Endif
 
 End
 
 Public Sub HM_Closed()
 
-  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  If iConnectRetry < 6 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60000) & " minutes.", "."))
-    tHMConnect.Start
-   Endif
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
 
 End
 
@@ -184,7 +195,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   tKeepAlive.Start
 
   ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to Server " & $sTCPHost & ":" & $iTCPPort)
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -192,7 +203,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -209,10 +220,10 @@ Public Function Disconnect() As Boolean
 
   ' try to close the connection
   Try tHMBusy.Stop
-  Try tHMConnect.Stop
+  Try tReConnect.Stop
   Try hHM.Close
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP Server closed.")
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
 
   ' all ok
   Return True
@@ -240,6 +251,19 @@ Public Sub tKeepAlive_Timer()
 
 End
 
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
+
+End
+
 Public Sub HM_Error()
 
   Dim sMsg As String
@@ -249,6 +273,7 @@ Public Sub HM_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 
@@ -285,7 +310,7 @@ Public Sub SendCommand(iDeviceId As Integer, sValue As String)
   If Error Then Return
 
   ' get description of devicetype to use as model
-  Try sModel = Devices.FindDescrForDeviceType(Devices.FindDeviceTypeForDevice(iDeviceId))
+  Try sModel = Devices.FindDeviceTypeDescriptionForDeviceId(iDeviceId)
   If Error Then Return
 
   If sModel = "HM_CC_TC"
@@ -560,11 +585,6 @@ Public Function Init()
   tAckTimer.Delay = 4500                '10 x tHMBusy.Delay
   tAckTimer.Stop
 
-  ' define timer for reconnect
-  tHMConnect = New Timer As "tHMConnect"
-  tHMConnect.Delay = iConnectRetry
-  tHMConnect.Stop
-
   ' get offset from UTC for time calculations
   iUTCoffset = UTCoffset()
 
@@ -579,7 +599,7 @@ Public Function Init()
   SendHMLAN("A" & $sHMLANid)
 
   ' setup ACK's for paired units
-  rResult = Devices.FindDevicesForInterface(Devices.FindInterface("HomeMatic LAN Adapter"))
+  rResult = Devices.FindDevicesForInterface(InterfaceId)
   For Each rResult
   SendHMLAN("+" & rResult!address & ",00,00")
   Next
@@ -804,9 +824,9 @@ Private Sub Pair_me(sMsgnr As String, sNewDevice_address As String, sPayload As 
         sValues = Split(sValue)
         sType = rDeviceInfo!type
         ' check if device exists with this address.
-        iDeviceId = Devices.Find(Instance, sNewDevice_address, Devices.FindInterface("HomeMatic LAN Adapter"), sType, sNewDevice_serA)
+        iDeviceId = Devices.Find(Instance, sNewDevice_address, InterfaceId, sType, sNewDevice_serA)
         ' If Not iDeviceId Then ' insert
-        '   sNewDevice_Id = Devices.AutoCreateDevice(sNewDevice_address, Devices.FindInterface("HomeMatic LAN Adapter"), sType, sNewDevice_serA)
+        '   sNewDevice_Id = Devices.AutoCreateDevice(sNewDevice_address, InterfaceId, sType, sNewDevice_serA)
         '   rResult = Main.hDB.Exec("SELECT id FROM devices WHERE address = &1", sNewDevice_address)
         '   sQuery = "CREATE TABLE domotigalogs." & rResult!id & " (id int, LastSeen CHAR(64), lastChanged CHAR(6))"
         '   Main.hDB.Exec(sQuery)
@@ -854,7 +874,7 @@ Private Sub Display_Message(sSegments As String[])
           Case "70"
             iHumidity = (ascii2hex(Mid(sSegments[5], 23, 2)))
             fTemperature = (ascii2hex(Mid(sSegments[5], 19, 4))) / 10
-            iDeviceId = Devices.Find(Instance, sSrc, Devices.FindInterface("HomeMatic LAN Adapter"), "HM_CC_TC")
+            iDeviceId = Devices.Find(Instance, sSrc, InterfaceId, "HM_CC_TC")
             If iDeviceId Then
               Devices.ValueUpdate(iDeviceId, 2, fTemperature, Devices.ValueType_Temperature)
               Devices.ValueUpdate(iDeviceId, 3, iHumidity, Devices.ValueType_Humidity)
@@ -862,14 +882,14 @@ Private Sub Display_Message(sSegments As String[])
             If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr$(9) & sSrc & " Temperature " & fTemperature & " Humidity " & iHumidity)
           Case "58"
             iValvestate = (ascii2hex(Mid(sSegments[5], 21, 2))) / 2.55
-            iDeviceId = Devices.Find(Instance, sSrc, Devices.FindInterface("HomeMatic LAN Adapter"), "HM_CC_TC")
+            iDeviceId = Devices.Find(Instance, sSrc, InterfaceId, "HM_CC_TC")
             If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr$(9) & sSrc & " Requesting Valve " & sDst & " for " & iValvestate & " % open")
             If iDeviceId Then Devices.ValueUpdate(iDeviceId, 4, iValvestate)
           Case "02"
             If bAsleep = False And bAckRequested = False And Mid$(sSegments[5], 19, 4) = "0102" Then
              fTemperature = (ascii2hex(Mid(sSegments[5], 23, 2))) / 2
              If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr$(9) & sSrc & " Set Temperature " & fTemperature)
-             iDeviceId = Devices.Find(Instance, sSrc, Devices.FindInterface("HomeMatic LAN Adapter"), "HM_CC_TC")
+             iDeviceId = Devices.Find(Instance, sSrc, InterfaceId, "HM_CC_TC")
              If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, fTemperature, Devices.ValueType_Temperature)
             Else If bAsleep = False And bAckRequested = False And Mid$(sSegments[5], 19, 2) = "00" Then
               If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr$(9) & sSrc & " Awake ")
@@ -880,7 +900,7 @@ Private Sub Display_Message(sSegments As String[])
             If (bAsleep = False) And If (bAckRequested = True) And If (Mid$(sSegments[5], 19, 4) = "0602") Then
               fTemperature = (ascii2hex(Mid(sSegments[5], 23, 2))) / 2
               If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr$(9) & sSrc & " Manual Override Temperature " & fTemperature)
-              iDeviceId = Devices.Find(Instance, sSrc, Devices.FindInterface("HomeMatic LAN Adapter"), "HM_CC_TC")
+              iDeviceId = Devices.Find(Instance, sSrc, InterfaceId, "HM_CC_TC")
               If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, fTemperature, Devices.ValueType_Temperature)
              Else If Left(sSegments[0]) = "E" And (bAsleep = False) And If (bAckRequested = True) And If (Mid$(sSegments[5], 19, 2) = "03") Then
               sConf5Dump &= Left(Right(sPayload, -4), -2) ' experimental, only through quickset after db modification (add the commands)
@@ -975,14 +995,15 @@ Public Sub Systemtime() As String
 
 End
 
-'offset in seconds from UTC
+' offset in seconds from UTC
 Public Function UTCoffset() As Integer
 
+  Dim sUTCtime As String
   Dim iUTCtime, iLOCALtime As Integer
 
-  Shell ("date -u +%s") To iUTCtime
+  Exec ["date", "-u", "+%s"] To sUTCtime
   iLOCALtime = DateDiff("01/01/1970 00:00:00", Now, gb.Second)
-  Return iLOCALtime - iUTCtime
+  Return iLOCALtime - Val(sUTCtime)
 
 End
 
