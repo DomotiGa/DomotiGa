@@ -52,15 +52,17 @@ Private $iRelayPort As Integer
 Private $bRelayEnabled As Boolean
 Private $bUseAck As Boolean
 
-Public hMySensorsEth As New Socket
+Public hMySensorsTCP As New Socket
 Public hMySensorsSer As New SerialPort
 Public hMySensorsRelayServer As New ServerSocket
 Public hMySensorsRelayClient As Object[]
 Public hMySensorsRelaySocket As New Socket
-Public tMySensorsConnect As Timer
 Public tMySensorsBusy As Timer
-Private iConnectRetry As Integer = 0 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
+
 Private RecBuf As String
 Public bSimulate As Boolean
 Private sTxMsgQueue As New String[]     ' Outgoing message queue
@@ -258,6 +260,11 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Return
   Endif
 
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
   ' Connect/Initialize connection
   bGatewayReady = False
   If InStr($sInterface, "tcp") Then
@@ -266,7 +273,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     ConnectSerial()
   Endif
 
-  ' Previously in the code it was check if the MySensorsEth object was created, but
+  ' Previously in the code it was check if the MySensorsTCP object was created, but
   ' that was useless for TCP connections (they never fail while the TCP will setup)
 
   ' Start MySensors Relaying
@@ -433,7 +440,7 @@ Public Function SendMessage(sMsgText As String)
 
   If $sInterface = "tcp" Then
     ' send the message to the tcp stream
-    Try Write #hMySensorsEth, sMsgText, Len(sMsgText)
+    Try Write #hMySensorsTCP, sMsgText, Len(sMsgText)
     If Error Then WriteMyDebugLog("Unable to write to TCP port! -> " & Error.Text)
   Else
     ' send the message to the serial port
@@ -463,31 +470,18 @@ Public Sub tMySensorsBusy_Timer()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tMySensorsConnect_Timer()
-
-  If Not ConnectTCP(False) Then
-    Inc iConnectRetry
-    iConnectDelay *= iConnectRetry
-    tMySensorsConnect.Delay = iConnectDelay
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Disconnect() As Boolean
 
   bGatewayReady = False
 
-  ' try to close the connection
+  ' try to stop timers and close the connections
+  Try tReConnect.Stop
   Try tMySensorsBusy.Stop
-  Try hMySensorsEth.Close
+  Try hMySensorsTCP.Close
   Try hMySensorsSer.Close
   Try hMySensorsRelayServer.Close
-  Try tMySensorsConnect.Stop
   Try hMySensorsRelayClient.Remove
 
   If InStr($sInterface, "tcp") Then
@@ -537,11 +531,11 @@ End
 Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
 
   ' try to close the connection
-  Try hMySensorsEth.Close
+  Try hMySensorsTCP.Close
 
   ' get a new one
-  hMySensorsEth = New Socket As "MySensorsEth"
-  hMySensorsEth.Connect($sTCPHost, $iTCPPort)
+  hMySensorsTCP = New Socket As "MySensorsTCP"
+  hMySensorsTCP.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
   If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
@@ -552,7 +546,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -563,15 +557,14 @@ Catch ' some errors
 End
 
 
-Public Sub MySensorsEth_Ready()
+Public Sub MySensorsTCP_Ready()
 
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
-  ' define timer for MySensors reconnect
-  tMySensorsConnect = New Timer As "tMySensorsConnect"
-  tMySensorsConnect.Delay = iConnectRetry
-  tMySensorsConnect.Stop
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
 
   ' define timer for Interface busy
   tMySensorsBusy = New Timer As "tMySensorsBusy"
@@ -580,17 +573,14 @@ Public Sub MySensorsEth_Ready()
 End
 
 
-Public Sub MySensorsEth_Closed()
+Public Sub MySensorsTCP_Closed()
 
-  WriteMyDebugLog("ERROR: TCP socket closed by peer.")
-  If iConnectRetry < 6 Then
-    WriteMyDebugLog("Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
-    tMySensorsConnect.Start
-  Endif
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
 
 End
 
-Public Sub MySensorsEth_Error()
+Public Sub MySensorsTCP_Error()
 
   Dim sMsg As String
 
@@ -599,14 +589,46 @@ Public Sub MySensorsEth_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 
-Public Sub MySensorsEth_Read()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ConnectTCP()
+
+End
+
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySensorsTCP_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+Public Sub MySensorsTCP_Read()
 
   Dim sData As Byte
 
-  Try sData = Read #hMySensorsEth As Byte
+  Try sData = Read #hMySensorsTCP As Byte
   If Error Then WriteMyDebugLog("Error reading data from the TCP port! -> " & Error.Text)
   If bSimulate = False Then ProcessReceivedChar(sData)
 
@@ -644,14 +666,14 @@ Public Function ConnectSerial() As Boolean
   tMySensorsBusy.Stop
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -706,7 +728,7 @@ End
 ' Message receive functions.
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-' Process a character received by MySensorsEth_Read or MySensorsSer_Read
+' Process a character received by MySensorsTCP_Read or MySensorsSer_Read
 Private Sub ProcessReceivedChar(bTemp As Byte)
 
   ' relay incoming data to relay port

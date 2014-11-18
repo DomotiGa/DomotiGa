@@ -49,7 +49,6 @@ Public hCULSer As New SerialPort
 Public bSimulate As Boolean = False
 Public tCULBusy As Timer
 Public tCULLed As Timer
-Public tCULConnect As Timer
 
 ' FS20 on/off-for-timers
 Private oOnOffTimers As New Object[]
@@ -61,9 +60,11 @@ Private bMessage As Boolean = False
 Private iByteCount As Integer = 0
 Private cQueue As New Collection  ' command buffer
 Private bCULBusy As Boolean  ' waiting for delay timer to finish
-Private iConnectRetry As Integer = 0 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
 Private cLowTemps As New Collection ' to store FHT low temp byte
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -96,6 +97,11 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Return
   Endif
 
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
@@ -120,6 +126,10 @@ Public Sub CUL_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
   Init()
 
 End
@@ -127,22 +137,28 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' reconnect routine
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tCULConnect_Timer()
+Public Sub tReConnect_Timer()
 
-  If Not ConnectTCP(False) Then
-    Inc iConnectRetry
-    iConnectDelay *= iConnectRetry
-    tCULConnect.Delay = iConnectDelay
-  Endif
+  ConnectTCP()
 
 End
 
 Public Sub CUL_Closed()
 
-  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  If iConnectRetry < 6 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
-    tCULConnect.Start
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
   Endif
 
 End
@@ -176,7 +192,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -211,14 +227,14 @@ Public Function ConnectSerial() As Boolean
   Init()
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort & " (" & sModel[$iModel] & ")")
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort & " (" & sModel[$iModel] & ")")
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -236,11 +252,11 @@ Public Function Disconnect() As Boolean
   Dim oTimer As Object
 
   ' try to close the connection
-  Try hCUL.Close
-  Try hCULSer.Close
   Try tCULBusy.Stop
   Try tCULLed.Stop
-  Try tCULConnect.Stop
+  Try tReConnect.Stop
+  Try hCUL.Close
+  Try hCULSer.Close
   For Each oTimer In oOnOffTimers
     Try oTimer.Stop
   Next
@@ -284,6 +300,7 @@ Public Sub CUL_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 
@@ -476,11 +493,6 @@ Public Function Init()
   tCULLed = New Timer As "tCULLED"
   tCULLed.Delay = 500
   tCULLed.Stop
-
-  ' define timer for CUL reconnect
-  tCULConnect = New Timer As "tCULConnect"
-  tCULConnect.Delay = iConnectRetry
-  tCULConnect.Stop
 
   ' init CUL
   If $bCULDebug Then Main.WriteDebugLogChars(LogLabel & "Switching to X21 mode.\n")

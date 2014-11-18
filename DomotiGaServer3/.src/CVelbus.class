@@ -78,6 +78,10 @@ Public hVelbusRelay As New ServerSocket
 Public hRelayVelbusClient As Object[]
 Public hRelayVBSocket As New Socket
 
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
+
 ' Velbus module types
 Const VMB8PB As Byte = &H01
 Const VMB1RY As Byte = &H02
@@ -258,6 +262,11 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Return
   Endif
 
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
@@ -275,6 +284,15 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   Else
     Main.WriteLog(LogLabel & "Relay disabled.")
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ConnectTCP()
 
 End
 
@@ -318,7 +336,7 @@ Public Function ConnectSerial() As Boolean
   tVelbusScan.Stop
 
   ' write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' request current status of all connected velbus modules
@@ -328,7 +346,7 @@ Public Function ConnectSerial() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -375,7 +393,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
     Return True
 
   Catch ' some errors
-    Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+    Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
     Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
     IsRunning = False
     ErrorText = Error.Text
@@ -390,6 +408,10 @@ Public Sub VelbusTCP_Ready()
 
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
+
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
 
   ' define timer for Interface busy
   tVelbusBusy = New Timer As "tVelbusBusy"
@@ -409,7 +431,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub VelbusTCP_Closed()
 
-  Main.WriteLog(("Velbus TCP socket closed."))
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub VelbusTCP_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
@@ -420,11 +452,25 @@ Public Sub VelbusTCP_Error()
 
   Dim sMsg As String
 
-  sMsg = Log.Text_TCP_Error(Last.Stat, $sTCPHost)
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
   Main.WriteLog(LogLabel & "ERROR: " & sMsg)
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
+
+End
+
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
 
 End
 
@@ -1716,6 +1762,7 @@ End
 Public Function Disconnect() As Boolean
 
   ' try stop running timers
+  Try tReConnect.Stop
   Try tVelbusBusy.Stop
   Try tVelbusScan.Stop
 

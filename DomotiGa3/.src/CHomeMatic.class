@@ -45,7 +45,6 @@ Private $sHMLANid As String
 
 Public hHM As New Socket
 Public tHMBusy As Timer
-Public tHMConnect As Timer
 Public bHMPairEnabled As Boolean
 Public iStackCount As Integer               ' Use in Main form statusbar?
 Public iStackCountUntransmitted As Integer  ' Use in Main form statusbar?
@@ -64,8 +63,6 @@ Private RecBuf As New Byte[255]
 Private bMessage As Boolean = False
 Private iByteCount As Integer = 0
 Private bHMBusy As Boolean  ' waiting for delay timer to finish
-Private iConnectRetry As Integer = 5 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
 
 ' stack management
 Private cQueue As New Collection  ' command buffer
@@ -91,6 +88,10 @@ Private iDelta As Long
 
 ' data collection
 Private sConf5Dump As String
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -119,7 +120,21 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Return
   Endif
 
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
   ' Connect/Initialize connection
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
   ConnectTCP()
 
 End
@@ -139,30 +154,18 @@ Public Sub HM_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
   Init()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tHMConnect_Timer()
-
-  If Not ConnectTCP(False) Then
-    Inc iConnectRetry
-    iConnectDelay *= iConnectRetry
-    tHMConnect.Delay = iConnectDelay
-  Endif
 
 End
 
 Public Sub HM_Closed()
 
-  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  If iConnectRetry < 6 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60000) & " minutes.", "."))
-    tHMConnect.Start
-   Endif
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
 
 End
 
@@ -200,7 +203,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -217,7 +220,7 @@ Public Function Disconnect() As Boolean
 
   ' try to close the connection
   Try tHMBusy.Stop
-  Try tHMConnect.Stop
+  Try tReConnect.Stop
   Try hHM.Close
 
   Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
@@ -248,6 +251,19 @@ Public Sub tKeepAlive_Timer()
 
 End
 
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+  Endif
+
+End
+
 Public Sub HM_Error()
 
   Dim sMsg As String
@@ -257,6 +273,7 @@ Public Sub HM_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 
@@ -567,11 +584,6 @@ Public Function Init()
   tAckTimer = New Timer As "tAcktimer"
   tAckTimer.Delay = 4500                '10 x tHMBusy.Delay
   tAckTimer.Stop
-
-  ' define timer for reconnect
-  tHMConnect = New Timer As "tHMConnect"
-  tHMConnect.Delay = iConnectRetry
-  tHMConnect.Stop
 
   ' get offset from UTC for time calculations
   iUTCoffset = UTCoffset()
@@ -983,14 +995,15 @@ Public Sub Systemtime() As String
 
 End
 
-'offset in seconds from UTC
+' offset in seconds from UTC
 Public Function UTCoffset() As Integer
 
+  Dim sUTCtime As String
   Dim iUTCtime, iLOCALtime As Integer
 
-  Shell ("date -u +%s") To iUTCtime
+  Exec ["date", "-u", "+%s"] To sUTCtime
   iLOCALtime = DateDiff("01/01/1970 00:00:00", Now, gb.Second)
-  Return iLOCALtime - iUTCtime
+  Return iLOCALtime - Val(sUTCtime)
 
 End
 

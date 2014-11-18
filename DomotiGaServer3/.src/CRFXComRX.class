@@ -50,9 +50,6 @@ Public hRFXComRXSer As New SerialPort
 Public hRFXComRXRelay As New ServerSocket
 Public hRelayRXClient As Object[]
 Public hRelayRXSocket As New Socket
-Public tRFXComRXConnect As Timer
-Private iConnectRetry As Integer = 0 ' retries
-Private iConnectDelay As Integer = 60000 ' 1 minute
 
 Const SWVERS As Byte = &H20
 Const MODEHS As Byte = &H21
@@ -91,6 +88,10 @@ Private bCmdHeader As Byte
 Private iSupplyVoltage As Integer
 Private sTemperature As Single
 
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
@@ -122,6 +123,11 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     IsRunning = False
     Return
   Endif
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
 
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
@@ -156,30 +162,27 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub RFXComRX_Ready()
 
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
   ProtocolSetup("MODEVAR")
-
-  ' define timer for RFXComRX reconnect
-  tRFXComRXConnect = New Timer As "tRFXComRXConnect"
-  tRFXComRXConnect.Delay = iConnectRetry
-  tRFXComRXConnect.Stop
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tRFXComRXConnect_Timer()
-
-  If Not ConnectTCP(False) Then
-    Inc iConnectRetry
-    iConnectDelay *= iConnectRetry
-    tRFXComRXConnect.Delay = iConnectDelay
-  Endif
 
 End
 
@@ -222,7 +225,7 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to Server " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -253,7 +256,7 @@ Public Function ConnectSerial() As Boolean
   End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ProtocolSetup("MODEVAR")
@@ -262,7 +265,7 @@ Public Function ConnectSerial() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -421,10 +424,10 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
+  Try tReConnect.Stop
   Try hRFXComRX.Close
   Try hRFXComRXSer.Close
   Try hRFXComRXRelay.Close
-  Try tRFXComRXConnect.Stop
   Try hRelayRXClient.Remove
 
   If InStr($sInterface, "tcp") Then
@@ -478,10 +481,29 @@ End Sub
 
 Public Sub RFXComRX_Closed()
 
-  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  If iConnectRetry < 6 Then
-    Main.WriteDebugLog(LogLabel & "Retry to connect" & IIf(iConnectRetry, " in " & (iConnectDelay / 60) & " minutes.", "."))
-    tRFXComRXConnect.Start
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub RFXComRX_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+Public Sub ReConnect()
+
+  Inc iReConnectRetry
+  If iReConnectRetry < aReConnectDelay.Max Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
   Endif
 
 End
@@ -495,6 +517,7 @@ Public Sub RFXComRX_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 
