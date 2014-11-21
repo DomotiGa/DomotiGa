@@ -1793,6 +1793,11 @@ void OnNotification
 			// The OnNotification will (re)send all the information again
 			break;
 		}
+		case Notification::Type_DriverRemoved:
+		{
+			WriteLog( LogLevel_Debug, true, "DriverRemoved" );
+			break;
+		}
 		case Notification::Type_EssentialNodeQueriesComplete:
 		{
 			WriteLog( LogLevel_Debug, true, "EssentialNodeQueriesComplete: HomeId=0x%x Node=%d", data->GetHomeId(), (int)data->GetNodeId() );
@@ -2510,9 +2515,7 @@ void DomoZWave_RemoveSerialPort( const char* serialPort )
 			ctrl->m_running = false;
 
 			// Only removedriver it is existed
-			pthread_mutex_lock( &g_criticalSection );
 			Manager::Get()->RemoveDriver( serialPort );
-			pthread_mutex_unlock( &g_criticalSection );
 		}
 	}
 
