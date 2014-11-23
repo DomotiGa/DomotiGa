@@ -2542,13 +2542,13 @@ void DomoZWave_Destroy( )
 		ctrl->m_running = false;
 	}
 
-	pthread_mutex_lock( &g_criticalSection );
-
 	for ( list<string>::iterator it = serialPortName.begin(); it != serialPortName.end(); ++it )
 	{
 		string Name = *it;
 		Manager::Get()->RemoveDriver( Name );
 	}
+
+	pthread_mutex_lock( &g_criticalSection );
 
 	Manager::Get()->RemoveWatcher( OnNotification, NULL );
 
