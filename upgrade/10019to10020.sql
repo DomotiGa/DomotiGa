@@ -1,3 +1,14 @@
+
+--
+-- Delete old procedure
+--
+
+DROP PROCEDURE IF EXISTS sp_addcolumn;
+
+--
+-- Add fields to rrdtool settings
+--
+
 ALTER TABLE settings_rrdtool ADD COLUMN width int(11) NOT NULL DEFAULT '785' AFTER debug;
 ALTER TABLE settings_rrdtool ADD COLUMN height int(11) NOT NULL DEFAULT '120' AFTER width;
 
