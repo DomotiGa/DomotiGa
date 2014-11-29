@@ -55,6 +55,13 @@ Private RecBytes As Byte
 Public aStrings As String[]
 Public iStrings As Integer
 
+' auto discover/broadcast
+Const sBroadcastMsg As String = "WIFIKIT-214028-READ"
+Const iBroadcastPort As Integer = 48899
+Public hBroadcastOmnik As UdpSocket
+Public hBroadcastUDPClient As UdpSocket
+Public aBroadcastAddrs As New String[]
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
@@ -87,10 +94,112 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Initialize
   ' Runtask will be called.
 
-  ' When in debug mode, connect right away.
-  If $bOmniksolDebug Then Connect()
+  ' When discover mode is enabled, get broadcast address, then udp broadcast for ip and serial
+  If $bDiscover Then
+    Setup_BroadcastAddrs()
+    Setup_UDPListener()
+    SendBroadcast()
+  Else
+    ' When in debug mode, connect right away.
+    If $bOmniksolDebug Then Connect($sTCPHost, $sSerial)
+  Endif
 
 End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' determine broadcast address(es) of this machine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Setup_BroadcastAddrs()
+
+  Dim aIPs, athisIP As String[]
+  Dim sHost, sIP As String
+
+  Shell "ip addr | grep brd | grep inet | awk -F ' ' '{print $4}'" To sHost
+  aIPs = Split(Trim$(sHost), " ")
+  For Each sIP In aIPs
+    athisIP = Split(sIP, ".")
+    If CInt(athisIP[0]) = 127 Then Continue
+    aBroadcastAddrs.Add(athisIP[0] & "." & athisIP[1] & "." & athisIP[2] & "." & athisIP[3])
+    If $bOmniksolDebug Then Main.WriteDebugLog(LogLabel & "Auto Discover enabled, found broadcast address '" & Trim(sHost) & "'")
+  Next
+
+End
+
+Private Sub SendBroadcast()
+
+  Dim sIP As String
+  Dim aIP As String[]
+
+ ' sent it to all computers on this network
+  hBroadcastOmnik = New UdpSocket As "BroadcastOmnik"
+  hBroadcastOmnik.Broadcast = True
+  hBroadcastOmnik.Port = 0
+  hBroadcastOmnik.Bind()
+  hBroadcastOmnik.TargetPort = iBroadcastPort
+
+  For Each sIP In aBroadcastAddrs
+    aIP = Split(sIP, ".")
+    If CInt(aIP[0]) = 127 Then Continue
+    hBroadcastOmnik.TargetHost = aIP[0] & "." & aIP[1] & "." & aIP[2] & "." & "255"
+    Write #hBroadcastOmnik, sBroadcastMsg, Len(sBroadcastMsg)
+    If $bOmniksolDebug Then Main.WriteDebugLog(LogLabel & "Broadcasted '" & sBroadcastMsg & "' to " & sIP)
+  Next
+  Try Close hBroadcastOmnik
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start udp listener
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Function Setup_UDPListener()
+
+  hBroadcastUDPClient = New UdpSocket As "BroadcastUDPClient"
+  Try hBroadcastUDPClient.Port = iBroadcastPort
+  Try hBroadcastUDPClient.Bind()
+  If Not Error And If $bOmniksolDebug Then Main.WriteDebugLog(LogLabel & "UDP listening on port " & iBroadcastPort)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got broadcasted udp message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub BroadcastUDPClient_Read()
+
+  Dim aLines, aResponse As String[]
+  Dim sString, sLine As String
+
+  sString = Read #hBroadcastUDPCLient, Lof(hBroadcastUDPClient)
+  aLines = Split(sString, "\n")
+  For Each sline In aLines
+    If sLine = sBroadcastMsg Then Continue
+    aResponse = Scan(sLine, "*,*,*")
+    If aResponse.Count = 3 Then
+      If $bOmniksolDebug Then
+        Main.WriteDebugLog(LogLabel & "An inverter replied with '" & sLine & "'")
+        Main.WriteDebugLog(LogLabel & "Querying inverter with IP address '" & aResponse[0] & "' and Serialno. '" & aResponse[2] & "'")
+      Endif
+      Connect(aResponse[0], aResponse[2])
+    Endif
+  Next
+
+End
+
+Public Sub BroadcastUDPClient_Error()
+
+  Select Case hBroadcastUDPCLient.Status
+    Case Net.CannotBindSocket
+      Main.WriteDebugLog(LogLabel & "Unable to bind to that port.")
+    Case Net.CannotCreateSocket
+      Main.WriteDebugLog(LogLabel & "The system does not allow to create a socket.")
+    Case Net.CannotRead
+      Main.WriteDebugLog(LogLabel & "Error receiving data.")
+    Case Net.CannotWrite
+      Main.WriteDebugLog(LogLabel & "Error sending data.")
+  End Select
+
+ Catch
+
+ End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' run crontask
@@ -98,7 +207,11 @@ End
 Public Sub RunTask()
 
   If Events.TimeCron($sCron) = True Then
-    Connect()
+    If $bDiscover Then
+      SendBroadcast()
+    Else
+      Connect($sTCPHost, $sSerial)
+    Endif
   Else
     If $bOmniksolDebug Then Main.WriteDebugLog(LogLabel & "Not inside crontab range, skipping connect.")
   Endif
@@ -117,14 +230,15 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the tcp host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Public Function Connect(sIp As String, sSerial As String) As Boolean
 
   ' try to close the connection
   Try hOmniksol.Close
 
   ' get a new one
   hOmniksol = New Socket As "Omniksol"
-  hOmniksol.Connect($sTCPHost, $iTCPPort)
+  hOmniksol.Tag = sSerial
+  hOmniksol.Connect(sIp, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
   Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
@@ -177,7 +291,7 @@ Public Sub Omniksol_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
-  SendMagic(MagicPacket($sSerial))
+  SendMagic(MagicPacket(Last.Tag))
 
 End
 
@@ -196,6 +310,8 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
+  Try hBroadcastOmnik.Close
+  Try hBroadcastUDPClient.Close
   Try hOmniksol.Close
 
   Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
