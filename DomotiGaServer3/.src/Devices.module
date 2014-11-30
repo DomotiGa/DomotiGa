@@ -718,18 +718,18 @@ Public Sub GetCurrentUnitsForDevice(iDeviceId As Integer, iValue As Integer) As 
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' find device with sAddress and iInterface, return id if found
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' find device with iInstance, sAddress and iInterface, return it's id if found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Find(iInstance As Integer, sAddress As String, iInterface As Integer, Optional sDevice As String, sPrefName As String) As Integer
 
   Dim rDeviceFind As Result
 
   If iInterface Then
-    Try rDeviceFind = Main.hDB.Exec("SELECT * FROM devices WHERE address LIKE &1 AND interface_id = &2", sAddress, iInterface)
-    If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, sDevice, sPrefName)
+    Try rDeviceFind = Main.hDB.Exec("SELECT * FROM devices WHERE address LIKE &1 AND interface_id = &2 AND instance_id = &3", sAddress, iInterface, iInstance)
+    If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, iInstance, sDevice, sPrefName)
   Else
-    Main.WriteDebugLog("[Devices] Interface for device '" & sDevice & "' with address '" & sAddress & "' not found!")
+    Main.WriteDebugLog("[Devices] Interface for device '" & sDevice & "' with address '" & sAddress & "' and instance '" & iInstance & "' not found!")
     Return 0
   Endif
 
@@ -738,13 +738,13 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' find device with sAddress in it's address and iInterface, return id if found
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FindRegExp(sAddress As String, iInterface As Integer, Optional sDevice As String, sRegex1 As String = "[[:<:]]", sRegex2 As String = "[[:>:]]") As Integer
+Public Sub FindRegExp(sAddress As String, iInterface As Integer, iInstance As Integer, Optional sDevice As String, sRegex1 As String = "[[:<:]]", sRegex2 As String = "[[:>:]]") As Integer
 
   Dim rDeviceFind As Result
 
   If iInterface Then
-    Try rDeviceFind = Main.hDB.Exec("SELECT * FROM devices WHERE address REGEXP '" & sRegex1 & sAddress & sRegex2 & "' AND interface_id = &1", iInterface)
-    If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, sDevice)
+    Try rDeviceFind = Main.hDB.Exec("SELECT * FROM devices WHERE address REGEXP '" & sRegex1 & sAddress & sRegex2 & "' AND interface_id = &1 AND instance_id = &2", iInterface, iInstance)
+    If Not Error Then Return FindDevice(rDeviceFind, sAddress, iInterface, iInstance, sDevice)
   Else
     Main.WriteDebugLog("[Devices] Interface for device '" & sDevice & "' with address '" & sAddress & "' not found!")
     Return 0
@@ -764,7 +764,7 @@ Public Sub FindAll(sAddress As String, iInterface As Integer, Optional sDevice A
 
 End
 
-Public Sub FindDevice(rDevice As Result, sAddress As String, iInterface As Integer, Optional sDeviceType As String, sPrefName As String) As Integer
+Public Sub FindDevice(rDevice As Result, sAddress As String, iInterface As Integer, iInstance As Integer, Optional sDeviceType As String, sPrefName As String) As Integer
 
   Dim rResult As Result
 
@@ -791,12 +791,12 @@ Public Sub FindDevice(rDevice As Result, sAddress As String, iInterface As Integ
   Else
     If Not IsBlacklisted(sAddress, iInterface) Then
       If sDeviceType Then
-        Main.WriteDebugLog("[Devices] Device with type '" & sDeviceType & "', address '" & sAddress & "' and interface '" & FindNameForInterface(iInterface) & "' not found!")
+        Main.WriteDebugLog("[Devices] Device with type '" & sDeviceType & "', address '" & sAddress & "', instance " & iInstance & "' and interface '" & FindNameForInterface(iInterface) & "' not found!")
       Else
         Main.WriteDebugLog("[Devices] Device with address '" & sAddress & "' and interface '" & FindNameForInterface(iInterface) & "' not found!")
       Endif
       If Main.bAutoDeviceCreate Then
-        Return AutoCreateDevice(sAddress, iInterface, sDeviceType, sPrefName)
+        Return AutoCreateDevice(sAddress, iInterface, iInstance, sDeviceType, sPrefName)
       Else
         Return 0
       Endif
@@ -864,14 +864,13 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
   Dim rResult, rResultInsert, rResultUpdate, rDevice, rDeviceLog As Result
   Dim bUpdated As Boolean
   Dim sLabel, sValue, sName, sType As String
-  Dim iInstance As Integer
   Dim sTimeNow As String = Format(Now(), "yyyy-mm-dd hh:nn:ss")
 
   If vValue = "Dim 100" Then vValue = "On"
   If vValue = "Dim 99" Then vValue = "On"
   If vValue = "Dim 0" Then vValue = "Off"
 
-  Try rDevice = Main.hDB.Exec("SELECT device_values.value, device_values.log, device_values.logdisplay, devices.name, devices.dimable, devices.switchable FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
+  Try rDevice = Main.hDB.Exec("SELECT device_values.value, device_values.log, device_values.logdisplay, devices.name, devices.dimable, devices.switchable, devices.instance_id FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
   ' data for device cannot be retrieved the device probably doesn't exist
   If Not rDevice Then
     If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ValueUpdate called for device with id '" & iDeviceId & "' that doesn't exists")
@@ -894,9 +893,6 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
     sType = "dimmer"
   Endif
 
-  ' Now hardcoded, should come from the devices table
-  iInstance = 1
-
   If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ValueUpdate called for device with id '" & iDeviceId & "' valuenum '" & iValueNum & "' and value '" & vValue & "'")
   If vValue <> Null Then
     If Comp(vValue, sValue, gb.IgnoreCase) <> 0 Then
@@ -909,16 +905,17 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
       Events.CheckDeviceChangeEvents(iDeviceId, iValueNum, vValue)
       bUpdated = True
 
+      ' FIXME: instance of these plugins do not map to device instances, now set to 1 by default, maybe we should call/loop through all enabled instances?
       If Plugin.IsPluginEnabled("IViewer", 0) Then
-        Try Plugin.GetPluginObject("IViewer", iInstance).Interface.SendUpdateForDevice(iDeviceId, vValue, "value" & iValueNum, IIf(sType, sType, "value" & iValueNum))
+        Try Plugin.GetPluginObject("IViewer", 1).Interface.SendUpdateForDevice(iDeviceId, vValue, "value" & iValueNum, IIf(sType, sType, "value" & iValueNum))
       Endif
 
       If Plugin.IsPluginEnabled("MQTT", 0) Then
-        Try Plugin.GetPluginObject("MQTT", iInstance).Interface.PublishMsg(sName & "/" & "value" & iValueNum, vValue)
+        Try Plugin.GetPluginObject("MQTT", 1).Interface.PublishMsg(sName & "/" & "value" & iValueNum, vValue)
       Endif
 
       If Plugin.IsPluginEnabled("SmartVisuServer", 0) Then
-        Try Plugin.GetPluginObject("SmartVisuServer", iInstance).Interface.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value" & iValueNum))
+        Try Plugin.GetPluginObject("SmartVisuServer", 1).Interface.SendUpdateDevice(sName, vValue, IIf(sType, sType, "value" & iValueNum))
       Endif
     Endif
   Endif
@@ -1037,7 +1034,7 @@ Private Sub FindUniqueName(sName As String) As String
 
 End
 
-Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, sShortName As String, Optional sPrefName As String) As Integer
+Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, iInstance As Integer, sShortName As String, Optional sPrefName As String) As Integer
 
   Dim rResult As Result
   Dim sName As String
@@ -1423,12 +1420,13 @@ Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, sShortNam
       Main.WriteDebugLog("[Devices] Device type: " & sShortName)
       Main.WriteDebugLog("[Devices] Address: " & sAddress)
       Main.WriteDebugLog("[Devices] Interface: " & FindNameForInterface(iInterface) & "' (" & iInterface & ")")
+      Main.WriteDebugLog("[Devices] Instance: " & iInstance)
       Main.WriteDebugLog("[Devices] Please report this to support@domotiga.nl")
       Main.WriteDebugLog("[Devices] Also note that you can probably simply create this device manually, and selecting a devicetype similar to the one missing.")
       Return
   End Select
 
-  Main.WriteDebugLog("[Devices] Auto created device '" & sName & "' with address '" & sAddress & "' of type '" & FindNameForDeviceType(iTypeId) & "' with interface '" & FindNameForInterface(iInterface) & "'")
+  Main.WriteDebugLog("[Devices] Auto created device '" & sName & "' with address '" & sAddress & "' of type '" & FindNameForDeviceType(iTypeId) & "' with interface '" & FindNameForInterface(iInterface) & "' and instance '" & iInstance & "'")
 
   ' create device
   Main.hDB.Begin()
@@ -1436,6 +1434,7 @@ Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, sShortNam
   rResult!name = sName
   rResult!devicetype_id = iTypeId
   rResult!interface_id = iInterface
+  rResult!instance_id = iInstance
   rResult!address = sAddress
   rResult!enabled = True
   rResult!onicon = "new.png"
@@ -1620,6 +1619,21 @@ Public Sub HideDevice(iDeviceId As Integer) As Boolean
   Dim rResult As Result
 
   rResult = Main.hDB.Exec("UPDATE devices SET hide = TRUE WHERE id = &1", iDeviceId)
+  Return True
+
+Catch
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' make device with iDeviceId visible
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub UnHideDevice(iDeviceId As Integer) As Boolean
+
+  Dim rResult As Result
+
+  rResult = Main.hDB.Exec("UPDATE devices SET hide = FALSE WHERE id = &1", iDeviceId)
   Return True
 
 Catch
