@@ -37,6 +37,7 @@ ln -s ../../DomotiGa3/.src/CGenericIO.class
 ln -s ../../DomotiGa3/.src/CHDDTemp.class
 ln -s ../../DomotiGa3/.src/CHomeMatic.class
 ln -s ../../DomotiGa3/.src/CIPort.class
+ln -s ../../DomotiGa3/.src/CIpx800.class
 ln -s ../../DomotiGa3/.src/CIRMan.class
 ln -s ../../DomotiGa3/.src/CIRTrans.class
 ln -s ../../DomotiGa3/.src/CIViewer.class

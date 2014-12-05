@@ -44,6 +44,7 @@ cp ../../DomotiGa3/.src/CGenericIO.class .
 cp ../../DomotiGa3/.src/CHDDTemp.class .
 cp ../../DomotiGa3/.src/CHomeMatic.class .
 cp ../../DomotiGa3/.src/CIPort.class .
+cp ../../DomotiGa3/.src/CIpx800.class .
 cp ../../DomotiGa3/.src/CIRMan.class .
 cp ../../DomotiGa3/.src/CIRTrans.class .
 cp ../../DomotiGa3/.src/CIViewer.class .
