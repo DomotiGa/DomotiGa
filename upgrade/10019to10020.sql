@@ -1,4 +1,11 @@
 --
+-- Add fields to mqtt settings
+--
+
+ALTER TABLE settings_mqtt ADD COLUMN enablepublish tinyint(1) NOT NULL DEFAULT '0' AFTER clientname;
+ALTER TABLE settings_mqtt ADD COLUMN enablesubscribe tinyint(11) NOT NULL DEFAULT '0' AFTER enablepublish;
+
+--
 -- Table structure for table `settings_ipx800`
 -- 
 
