@@ -1538,6 +1538,33 @@ INSERT INTO `settings_bluetooth` VALUES (0,0,'hci0',-20,300,0),(1,0,'hci0',-20,3
 UNLOCK TABLES;
 
 --
+-- Table structure for table `settings_broadcastudp`
+--
+
+DROP TABLE IF EXISTS `settings_broadcastudp`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_broadcastudp` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `udpport` int(11) DEFAULT NULL,
+  `targetip` varchar(32) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_broadcastudp`
+--
+
+LOCK TABLES `settings_broadcastudp` WRITE;
+/*!40000 ALTER TABLE `settings_broadcastudp` DISABLE KEYS */;
+INSERT INTO `settings_broadcastudp` VALUES (0,0,19009,'',0),(1,1,19009,'',0);
+/*!40000 ALTER TABLE `settings_broadcastudp` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `settings_bwiredmap`
 --
 
