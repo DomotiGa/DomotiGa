@@ -21,6 +21,7 @@ ln -s ../../DomotiGa3/.src/CBroadcastUDP.class
 ln -s ../../DomotiGa3/.src/CCUL.class
 ln -s ../../DomotiGa3/.src/CBwiredMap.class
 ln -s ../../DomotiGa3/.src/CCTX35.class
+ln -s ../../DomotiGa3/.src/CConrad8Relay.class
 ln -s ../../DomotiGa3/.src/CCurrentCost.class
 ln -s ../../DomotiGa3/.src/CDenon.class
 ln -s ../../DomotiGa3/.src/CDeviceDiscover.class

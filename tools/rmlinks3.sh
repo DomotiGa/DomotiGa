@@ -28,6 +28,7 @@ cp ../../DomotiGa3/.src/CBroadcastUDP.class .
 cp ../../DomotiGa3/.src/CCUL.class .
 cp ../../DomotiGa3/.src/CBwiredMap.class .
 cp ../../DomotiGa3/.src/CCTX35.class .
+cp ../../DomotiGa3/.src/CConrad8Relay.class .
 cp ../../DomotiGa3/.src/CCurrentCost.class .
 cp ../../DomotiGa3/.src/CDenon.class .
 cp ../../DomotiGa3/.src/CDeviceDiscover.class .

@@ -1,0 +1,481 @@
+' Gambas class file
+
+' Description:
+' CConrad8Relay.class
+' Support for Conrad 8-way relay board.
+
+' Development Status:
+' Beta. Needs Testing.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' This module was written by Markus Kiss in 2014.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Conrad8Relay"
+Public PluginFriendlyName As String = "Conrad 8-Relay"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Markus Kiss"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[Conrad 8-Relay] "
+Public InterfaceId As Integer
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $bDebug As Boolean
+Private $sInterface As String
+Private $sSerPort As String
+Private $sBaud As String
+
+Public hConrad As New Socket
+Public hConradSer As New SerialPort
+
+Public sBuffer As String
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+
+Private sSeparator As String = "-"
+Private iCardCount As Integer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sInterface = cPl.Settings["type"]
+  $sSerPort = cPl.Settings["serialport"]
+  $sBaud = cPl.Settings["baudrate"]
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("Conrad 8-Relay Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Connect/Initialize connection
+  If InStr($sInterface, "tcp") Then
+    ' Define timer for TCP reconnect
+    tReConnect = New Timer As "tReConnect"
+    tReConnect.Delay = iReConnectRetry
+    tReConnect.Stop
+
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectTCP() As Boolean
+
+  ' try to close the connection
+  Try hConrad.Close
+
+  ' get a new one
+  hConrad = New Socket As "Conrad"
+  hConrad.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+  IsRunning = False
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectSerial() As Boolean
+
+  ' try to close the connection
+  Try hConradSer.Close
+
+  ' get a new one
+  hConradSer = New Serialport As "ConradSer"
+  With hConradSer
+    .PortName = $sSerPort
+    .Speed = $sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  End With
+
+
+  ' Write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+  IsRunning = True
+
+  ' Send init
+  SendCmd("\x01\x01\x01\x01")
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Conrad_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
+  ' Send init
+  SendCmd("\x01\x01\x01\x01")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ReConnect()
+
+  If iReConnectRetry < aReConnectDelay.Max + 1 Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
+  Endif
+  Inc iReConnectRetry
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' socket is closed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Conrad_Closed()
+
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hConrad.Close
+  Try hConradSer.Close
+
+  If InStr($sInterface, "tcp") Then
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
+  Else
+    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  Endif
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Conrad_Error()
+
+  Dim sMsg As String
+
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send command via serial port or tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCmd(sCmd As String)
+
+  Dim sCmdHex As String
+  Dim i As Integer
+
+  If $bDebug Then
+    For i = 1 To Len(sCmd)
+      sCmdHex &= "0x" & Hex$(Asc(Mid$(sCmd, i, 1)), 2) & " "
+    Next
+    Main.WriteDebugLog(LogLabel & "Sending '" & sCmdHex & "' to cards.")
+  Endif
+
+  If $sInterface = "tcp" Then
+    Try Write #hConrad, sCmd, Len(sCmd)
+    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & Error.Text)
+  Else
+    Try Write #hConradSer, sCmd, Len(sCmd)
+    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! -> " & Error.Text)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send command to device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sValue As String)
+
+  Dim aAddr As String[]
+  Dim bCard, bRelay As Byte
+  Dim sCmd, sCard, sRelay, sCrc As String
+
+  aAddr = Split(sAddress, sSeparator)
+  If aAddr.Count > 1 Then
+    bCard = aAddr[0]
+    bRelay = aAddr[1]
+
+    If UCase(sValue) = "ON" Then
+      sCmd = Chr(6)
+    Else If UCase(sValue) = "OFF" Then
+      sCmd = Chr(7)
+    Else If UCase(sValue) = "GET" Then
+      sCmd = Chr(2)
+    Else
+      Main.WriteLog(LogLabel & "Unknown command '" & sValue & "'.")
+      Return
+    Endif
+
+    sCard = Chr(bCard)
+    sRelay = Chr(Lsl(1, bRelay - 1))
+    sCrc = Chr(Asc(sCmd) Xor Asc(sCard) Xor Asc(sRelay))
+
+    sCmd &= sCard & sRelay & sCrc
+    SendCmd(sCmd)
+  Else
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown address: " & sAddress)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' data received on tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Conrad_Read()
+
+  Dim sData As String
+
+  Try sData = Read #hConrad, 1
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
+
+  sBuffer &= sData
+
+  If Len(sBuffer) = 4 Then
+    ParseLine(sBuffer)
+    sBuffer = Null
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' data received on serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ConradSer_Read()
+
+  Dim sData As String
+
+  Try sData = Read #hConradSer, 1
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! -> " & Error.Text)
+
+  sBuffer &= sData
+
+  If Len(sBuffer) = 4 Then
+    ParseLine(sBuffer)
+    sBuffer = Null
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ParseLine(sStr As String)
+
+  Dim bData As Byte[]
+  Dim bCrc As Byte
+  Dim i As Integer
+
+  bData = Byte[].FromString(sStr)
+  bCrc = bData[0] Xor bData[1] Xor bData[2]
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received: 0x" & Hex$(bData[0], 2) & " 0x" & Hex$(bData[1], 2) & " 0x" & Hex$(bData[2], 2) & " 0x" & Hex$(bData[3], 2))
+
+  If bCrc <> bData[3] Then
+    Main.WriteLog(LogLabel & "Wrong CRC 0x" & Hex$(bCrc, 2) & " <> " & Hex$(bData[3], 2))
+    Return
+  Endif
+
+  Select Case bData[0]
+
+    Case 255
+      ' no operation
+      For i = 1 To 8
+        UpdateDeviceValue(bData[1] & sSeparator & i, "NOP", "")
+      Next
+
+    Case 254
+      ' setup
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Found card with address " & bData[1])
+
+    Case 253
+      ' get port
+      For i = 1 To 8
+        If BTst(bData[2], i - 1) = True Then
+          UpdateDeviceValue(bData[1] & sSeparator & i, "GET", "On")
+        Else
+          UpdateDeviceValue(bData[1] & sSeparator & i, "GET", "Off")
+        Endif
+      Next
+
+      ' get current state of next card
+      If bData[1] < iCardCount Then
+        SendCommand((bData[1] + 1) & sSeparator & "1", "GET")
+      Endif
+
+    Case 249
+    Case 248
+      ' set single
+      ' del single
+      For i = 1 To 8
+        If BTst(bData[2], i - 1) = True Then
+          UpdateDeviceValue(bData[1] & sSeparator & i, "GET", "On")
+        Else
+          UpdateDeviceValue(bData[1] & sSeparator & i, "GET", "Off")
+        Endif
+      Next
+
+    Case 1
+      ' last answer of setup
+      If bData[1] = 0 Then
+        iCardCount = 255
+      Else
+        iCardCount = bData[1] - 1
+      Endif
+
+      Main.WriteLog(LogLabel & iCardCount & " card(s) found with version " & (bData[2] / 10))
+
+      ' get current states, start with first card
+      If iCardCount > 0 Then
+        SendCommand("1" & sSeparator & "1", "GET")
+      Endif
+
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Cmd 0x" & Hex$(bData[0]) & " not implemented yet!")
+  End Select
+
+End
+
+Private Sub UpdateDeviceValue(iAddress As String, sValueType As String, vValue As Variant)
+
+  Dim iDeviceId As Integer
+
+  ' try to find device with address, and correct interface type.
+  iDeviceId = Devices.Find(Instance, iAddress, InterfaceId, PluginName)
+  ' if found then update it's value
+  If iDeviceId Then
+    Select Case UCase(sValueType)
+      Case "NOP"
+        Devices.ValueUpdate(iDeviceId, 1, Devices.GetValueForDevice(iDeviceId, 1))
+      Case "SETUP"
+        Devices.ValueUpdate(iDeviceId, 1, vValue)
+      Case "GET"
+        Devices.ValueUpdate(iDeviceId, 1, vValue)
+    End Select
+  Else
+    Main.WriteLog(LogLabel & "ERROR: '" & iAddress & "' returned invalid device id!")
+  Endif
+
+End
