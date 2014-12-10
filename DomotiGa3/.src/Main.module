@@ -1,5 +1,6 @@
 ' Gambas module file
 
+
 ' Description:
 ' Main.module
 
@@ -41,7 +42,6 @@ Public sGraphsUrl As String
 Public bServerStartup As Boolean = False
 Public bServerCurrent As Boolean
 Public bServer As Boolean
-Public hBroadcastEvent As UdpSocket
 
 ' IP/Broadcast addresses
 Public aBroadcastAddr As New String[]
@@ -200,10 +200,6 @@ Public iXMLRPCMaxConn As Integer
 Public iXMLRPCHTTPPort As Integer
 Public bXMLRPCDebug As Boolean
 Public hXMLRPC As CXMLRPC
-
-' Broadcast UDP
-Public hBroadcastUDPClient As UdpSocket
-Public bBroadcastUDPEnabled As Boolean
 
 ' CallerID
 Public bCallerIDEnabled As Boolean
@@ -711,7 +707,6 @@ Public Sub GetSettings()
   iXMLRPCMaxConn = rResult!maxconn
   iXMLRPCHTTPPort = rResult!httpport
   bXMLRPCDebug = rResult!debug
-  bBroadcastUDPEnabled = rResult!broadcastudp
 
   ' CallerID
   rResult = GetSettingTable("callerid")
@@ -958,14 +953,13 @@ Public Sub CloseAll()
 
   ' XBMCxPl close
   Try hXBMCxPL = Null
+
   ' xpl close
   Try hxPL.Disconnect
-  ' UDP broadcast server close
-  Try hBroadcastEvent.Close
-  ' UDP broadcast client close
-  Try hBroadcastUDPClient.Close
+
   ' rfxcom close
   Try hRFXComxPL = Null
+
   ' xmlrpc close
   Try hXMLRPC.Disconnect
 
@@ -997,6 +991,10 @@ Public Sub Setup()
   RestoreGlobalVars() ' restore globalvars from database
   If Not bMainDebug Then WriteLog("[Main] NOTE: All disabled module log entries are muted, enable main debug if you want to see them!")
 
+  ' Start broadcast for Client/Server
+  Plugin.Register("broadcastudp")
+  Plugin.Restart("broadcastudp")
+
   Setup_Email() ' e-mail SMTP client
   Setup_Sound() ' built in sound player
   Setup_VoiceText() ' text2speech support
@@ -1006,7 +1004,6 @@ Public Sub Setup()
   Setup_VideoServer() ' IP9100 videoserver
   Setup_Pictures() ' preload images in memory
   Setup_ServerStats() ' Server Statistics
-  Setup_UDPClient() ' Broadcast UDP client
   Setup_xPL() ' xPL support
   Setup_RFXComxPL() ' RFXCom xPL support
   Setup_Calendar() 'Calendar planning support
@@ -1237,23 +1234,6 @@ Private Sub Setup_XMLRPC()
 
       ' start xmlrpc server
       hXMLRPC.Connect()
-
-      If bBroadcastUDPEnabled Then
-        ' Setup Broadcast UDP socket
-        hBroadcastEvent = New UdpSocket As "BroadcastUDP"
-        hBroadcastEvent.Broadcast = True
-        hBroadcastEvent.Port = 0
-        hBroadcastEvent.Bind()
-        Try hBroadcastEvent.TargetPort = iXMLRPCHTTPPort + 10000
-        If Error Then
-          hBroadcastEvent = Null
-          WriteLog("[XMLRPC] ERROR: UDP Broadcast server FAILED to start on Port " & Str(iXMLRPCHTTPPort + 10000))
-        Endif
-        WriteLog("[XMLRPC] UDP Broadcasts are enabled on Port " & Str(iXMLRPCHTTPPort + 10000))
-      Else
-        WriteLog("[XMLRPC] UDP Broadcasts are disabled.")
-      Endif
-
     Endif
   Else
     If bMainDebug Then WriteLog("[Plugin] XML-RPC server disabled.")
@@ -1269,11 +1249,6 @@ Public Sub Restart_XMLRPC()
   If hXMLRPC Then
     hXMLRPC.Disconnect
     hXMLRPC = Null
-  Endif
-
-  ' Also re-init the BroadcastUDP
-  If hBroadcastEvent Then
-    hBroadcastEvent = Null
   Endif
 
   Setup_XMLRPC()
@@ -1429,40 +1404,6 @@ End
 Public Sub Restart_ServerStats()
 
   Setup_ServerStats()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' start udp listener
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Function Setup_UDPClient()
-
-  Dim iUDPClientPort As Integer
-
-  If Not bServer And If bBroadcastUDPEnabled Then
-    iUDPClientPort = iXMLRPCHTTPPort + 10000
-    WriteLog("Broadcast UDP Client enabled.")
-
-    hBroadcastUDPClient = New UdpSocket As "BroadcastUDPClient"
-    Try hBroadcastUDPClient.Port = iUDPClientPort
-    Try hBroadcastUDPClient.Bind()
-    If Not Error Then WriteLog("UDP client listening on port " & iUDPClientPort)
-  Else
-    If bMainDebug Then WriteLog("Broadcast UDP Client disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart udp listener after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Restart_UDPClient()
-
-  If hBroadcastUDPClient Then
-    Try hBroadcastUDPClient.Close
-    hBroadcastUDPClient = Null
-  Endif
-  Setup_UDPClient()
 
 End
 
@@ -2461,92 +2402,45 @@ Public Function UptimeString(lSeconds As Long) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' got broadcasted udp message from server
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub BroadcastUDPClient_Read()
-
-  Dim sString As String
-  Dim aScan As String[]
-
-  sString = Read #hBroadcastUDPCLient, Lof(hBroadcastUDPClient)
-  If sString = "[DeviceUpdate]" Then
-    If FDevices.Visible And If FDevices.bAutoRefresh Then FDevices.GetDeviceList()
-  Else If InStr(sString, "[GlobalVar]") Then
-    aScan = Scan(Right(sString, Len(sString) - InStr(sString, "]")), "*|*")
-    If aScan.Count = 2 Then SetGlobalVar(aScan[0], aScan[1])
-  Else If InStr(sString, "[MainLog]") Then
-    WriteServerLog(Right(sString, Len(sString) - InStr(sString, "]")), "MainLog")
-  Else If InStr(sString, "[SpeakLog]") Then
-    WriteServerLog(Right(sString, Len(sString) - InStr(sString, "]")), "SpeakLog")
-  Else If InStr(sString, "[DebugLog]") Then
-    WriteServerLog(Right(sString, Len(sString) - InStr(sString, "]")), "DebugLog")
-  Else If InStr(sString, "[ControlUpdate]") Then
-    If FControl.Visible Then FControl.ReloadPage()
-  Else If InStr(sString, "[PhoneCallUpdate]") Then
-    If FPhone.Visible Then FPhone.GetPhoneCallsList()
-  Else If InStr(sString, "[SecurityUpdate]") Then
-    'FDSC.PanelStatusUpdate() - subroutine doesn't seem to exist anymore?
-    If InStr(sString, "Entry") Then FMain.OpenPage(FDSC)
-  Else If InStr(sString, "[NotifySend]") Then
-    aScan = Scan(Right(sString, Len(sString) - InStr(sString, "]")), "*|*|*")
-    If aScan.Count = 3 Then Exec ["/usr/bin/notify-send", aScan[0], aScan[1], "-i", aScan[2]]
-  Else If InStr(sString, "[PLCBUSStatus]") Then
-    If FToolsPLCBUSCmdr.Visible Then FToolsPLCBUSCmdr.txtStatus.Text = Right(sString, Len(sString) - InStr(sString, "]"))
-  Endif
-
-End
-
-Public Sub BroadcastUDPClient_Error()
-
-  Select Case hBroadcastUDPCLient.Status
-    Case Net.CannotBindSocket
-      Main.WriteDebugLog("[BroadcastUDPClient] Unable to bind to that port.")
-    Case Net.CannotCreateSocket
-      Main.WriteDebugLog("[BroadcastUDPClient] The system does not allow to create a socket.")
-    Case Net.CannotRead
-      Main.WriteDebugLog("[BroadcastUDPClient] Error receiving data.")
-    Case Net.CannotWrite
-      Main.WriteDebugLog("[BroadcastUDPClient] Error sending data.")
-  End Select
-
- Catch
-
- End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' broadcast events via UDP
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub BroadcastEvent(sMessage As String)
 
-  Dim sIP As String
-
-  ' not ready yet
-  If hBroadcastEvent = Null Then Return
-  ' broadcast msg on network(s)
-  For Each sIp In aBroadcastAddr
-    hBroadcastEvent.TargetHost = sIp
-    Try Write #hBroadcastEvent, sMessage, Len(sMessage)
-  Next
+  'If Plugin.IsPluginEnabled("BroadcastUDP", 1) Then
+  Try Plugin.GetPluginObject("BroadcastUDP", 1).Interface.Send(sMessage)
+  'Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' catch errors
+' Process a broadcast message from the server
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub BroadcastUDP_Error()
+Public Sub BroadcastReceived(sKey As String, sData As String)
 
-  Select Case hBroadcastEvent.Status
-    Case Net.CannotBindSocket
-      Main.WriteDebugLog("[BroadcastUDP] Unable to bind to that port.")
-    Case Net.CannotCreateSocket
-      Main.WriteDebugLog("[BroadcastUDP] The system does not allow to create a socket.")
-    Case Net.CannotRead
-      Main.WriteDebugLog("[BroadcastUDP] Error receiving data.")
-    Case Net.CannotWrite
-      Main.WriteDebugLog("[BroadcastUDP] Error sending data.")
+  Dim aScan As String[]
+
+  Select sKey
+    Case "[DeviceUpdate]"
+      If FDevices.Visible And If FDevices.bAutoRefresh Then FDevices.GetDeviceList()
+    Case "[GlobalVar]"
+      aScan = Scan(sData, "*|*")
+      If aScan.Count = 2 Then Main.SetGlobalVar(aScan[0], aScan[1])
+    Case "[MainLog]"
+      Main.WriteServerLog(sData, "MainLog")
+    Case "[DebugLog]"
+      Main.WriteServerLog(sData, "DebugLog")
+    Case "[SpeakLog]"
+      Main.WriteServerLog(sData, "SpeakLog")
+    Case "[ControlUpdate]"
+      If FControl.Visible Then FControl.ReloadPage()
+    Case "[PhoneCallUpdate]"
+      If FPhone.Visible Then FPhone.GetPhoneCallsList()
+    Case "[NotifySend]"
+      aScan = Scan(sData, "*|*|*")
+      If aScan.Count = 3 Then Exec ["/usr/bin/notify-send", aScan[0], aScan[1], "-i", aScan[2]]
+    Case "[PLCBUSStatus]"
+      If FToolsPLCBUSCmdr.Visible Then FToolsPLCBUSCmdr.txtStatus.Text = sData
   End Select
-
-Catch
 
 End
 
@@ -2597,21 +2491,21 @@ End
 Public Sub RefreshDeviceList()
 
   If FDevices.Visible And If FDevices.bAutoRefresh Then FDevices.GetDeviceList()
-  If Main.bServer And If Main.bBroadcastUDPEnabled Then Main.BroadcastEvent("[DeviceUpdate]")
+  If Main.bServer Then Main.BroadcastEvent("[DeviceUpdate]")
 
 End
 
 Public Sub RefreshControlPage()
 
   If FControl.Id Then FControl.ReloadPage()
-  If Main.bServer And If Main.bBroadcastUDPEnabled Then Main.BroadcastEvent("[ControlUpdate]")
+  If Main.bServer Then Main.BroadcastEvent("[ControlUpdate]")
 
 End
 
 Public Sub RefreshPhoneCallList()
 
   FPhone.GetPhoneCallsList()
-  If Main.bServer And If Main.bBroadcastUDPEnabled Then Main.BroadcastEvent("[PhoneCallUpdate]")
+  If Main.bServer Then Main.BroadcastEvent("[PhoneCallUpdate]")
 
 End
 
@@ -2698,7 +2592,7 @@ End
 Public Sub NotifySend(sTitle As String, sText As String)
 
   If Main.bServer Then
-    If Main.bBroadcastUDPEnabled Then Main.BroadcastEvent("[NotifySend]" & sTitle & "|" & sText & "|" & sBaseDir &/ "icons" &/ "logo.png")
+    Main.BroadcastEvent("[NotifySend]" & sTitle & "|" & sText & "|" & sBaseDir &/ "icons" &/ "logo.png")
     Exec ["/usr/bin/notify-send", sTitle, sText, "-i", sBaseDir &/ "icons" &/ "logo.png"]
   Endif
 
