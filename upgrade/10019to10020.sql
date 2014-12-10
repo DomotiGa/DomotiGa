@@ -123,6 +123,11 @@ ALTER TABLE settings_rrdtool ADD COLUMN height int(11) NOT NULL DEFAULT '120' AF
 INSERT INTO plugins (id, interface, protocols, name, type) values (91, 'XMLRPC', '', 'XMLRPC', 'class');
 
 --
+-- Move VideoServer to plugin
+--
+INSERT INTO plugins (id, interface, protocols, name, type) values (92, 'VideoServer', '', 'VideoServer', 'class');
+
+--
 -- Finally update to 1.0.020
 --
 

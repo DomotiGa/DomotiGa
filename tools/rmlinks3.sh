@@ -114,6 +114,7 @@ cp ../../DomotiGa3/.src/CxPL.class .
 cp ../../DomotiGa3/.src/CxPLMsg.class .
 cp ../../DomotiGa3/.src/CXively.class .
 cp ../../DomotiGa3/.src/CVelbus.class .
+cp ../../DomotiGa3/.src/CVideoServer.class .
 cp ../../DomotiGa3/.src/CViera.class .
 cp ../../DomotiGa3/.src/CVisonic.class .
 cp ../../DomotiGa3/.src/CYouLess.class .
@@ -132,7 +133,6 @@ cp ../../DomotiGa3/.src/ServerStats.module .
 cp ../../DomotiGa3/.src/Sounds.module .
 cp ../../DomotiGa3/.src/Thermostat.module .
 cp ../../DomotiGa3/.src/Util.module .
-cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
 cp ../../DomotiGa3/.src/CWeatherUnderground.class .
 cp ../../DomotiGa3/.src/JsonRpc/* ./JsonRpc/

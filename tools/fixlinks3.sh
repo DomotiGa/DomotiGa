@@ -95,6 +95,7 @@ ln -s ../../DomotiGa3/.src/CToon.class
 ln -s ../../DomotiGa3/.src/CTVGuide.class
 ln -s ../../DomotiGa3/.src/CTwitter.class
 ln -s ../../DomotiGa3/.src/CUPS.class
+ln -s ../../DomotiGa3/.src/CVideoServer.class
 ln -s ../../DomotiGa3/.src/CVISCA.class
 ln -s ../../DomotiGa3/.src/CWeatherUnderground.class
 ln -s ../../DomotiGa3/.src/CWeeder.class
@@ -125,7 +126,6 @@ ln -s ../../DomotiGa3/.src/ServerStats.module
 ln -s ../../DomotiGa3/.src/Sounds.module
 ln -s ../../DomotiGa3/.src/Util.module
 ln -s ../../DomotiGa3/.src/Thermostat.module
-ln -s ../../DomotiGa3/.src/VideoServer.module
 ln -s ../../DomotiGa3/.src/VoiceText.module
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class
