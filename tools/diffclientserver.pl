@@ -13,7 +13,6 @@ my @ignore = (
 	'Client.module',
 	'JSONClient.module',
 	'ScreenFunc.module',
-	'XMLClient.module',
 	'XMLParser.module',
 
 	# Different
