@@ -1505,7 +1505,7 @@ CREATE TABLE `settings_astro` (
 
 LOCK TABLES `settings_astro` WRITE;
 /*!40000 ALTER TABLE `settings_astro` DISABLE KEYS */;
-INSERT INTO `settings_astro` VALUES (0,'52.8167','-5.7667',255,'civil','winter,spring,summer,fall','20,20,21,22',0,'°C','€',1),(1,'52.8167','-5.7667',255,'civil','winter,spring,summer,fall','20,20,21,22',0,'°C','€',0);
+INSERT INTO `settings_astro` VALUES (0,'52.37021','4.8951',255,'civil','winter,spring,summer,fall','20,20,21,22',0,'°C','€',1),(1,'52.37021','4.8951',255,'civil','winter,spring,summer,fall','20,20,21,22',0,'°C','€',0);
 /*!40000 ALTER TABLE `settings_astro` ENABLE KEYS */;
 UNLOCK TABLES;
 
