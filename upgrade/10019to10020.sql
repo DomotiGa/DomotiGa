@@ -116,6 +116,12 @@ DROP PROCEDURE IF EXISTS sp_addcolumn;
 ALTER TABLE settings_rrdtool ADD COLUMN width int(11) NOT NULL DEFAULT '785' AFTER debug;
 ALTER TABLE settings_rrdtool ADD COLUMN height int(11) NOT NULL DEFAULT '120' AFTER width;
 
+
+--
+-- Move XML-RPC to plugin
+--
+INSERT INTO plugins (id, interface, protocols, name, type) values (91, 'XMLRPC', '', 'XMLRPC', 'class');
+
 --
 -- Finally update to 1.0.020
 --
