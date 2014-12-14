@@ -11,7 +11,6 @@ my @ignore = (
 	# Client specific
 	'CItems.class',
 	'Client.module',
-	'JSONClient.module',
 	'ScreenFunc.module',
 	'XMLParser.module',
 
