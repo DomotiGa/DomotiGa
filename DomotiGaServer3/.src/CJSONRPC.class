@@ -17,7 +17,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "JSONRPC"
 Public PluginFriendlyName As String = "JSON-RPC"
-Public PluginVersion As String = "1.10"
+Public PluginVersion As String = "1.20"
 Public PluginAuthor As String = "Alexander Kuiper"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -38,7 +38,11 @@ Private APIVersion As String = "0.04"
 ' Private Variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
+Private $bHTTPEnabled As Boolean
 Private $iHTTPPort As Integer
+Private $bHTTPSEnabled As Boolean
+Private $iHTTPSPort As Integer
+Private $sSSLCertificate As String
 Private $iMaxConn As Integer
 Private $iTypeConn As Integer
 Private $iAuth As Integer
@@ -48,6 +52,8 @@ Private $bDebug As Boolean
 ' Other Variable definitions like sockets, timers, etc
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public hJSONRPC As JsonRpcServer
+Public pSTunnel As Process
+Private sSTunnel As String
 Private $sCurrentMethod As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -85,7 +91,11 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $iMaxConn = cPl.Settings["maxconn"]
+  $bHTTPEnabled = cPl.Settings["httpenabled"]
   $iHTTPPort = cPl.Settings["httpport"]
+  $bHTTPSEnabled = cPl.Settings["httpsenabled"]
+  $iHTTPSPort = cPl.Settings["httpsport"]
+  $sSSLCertificate = cPl.Settings["sslcertificate"]
   $iTypeConn = cPl.Settings["type"]
   $iAuth = cPl.Settings["auth"]
   $bDebug = cPl.Settings["debug"]
@@ -110,6 +120,10 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Connect() As Boolean
 
+  Dim bOk As Boolean
+  Dim hPid As File
+  Dim sPid As String
+  Dim iPid As Integer
   Dim hRpcFunc As JsonRpcFunction
 
   hJSONRPC = New JsonRpcServer As "hJSONRPC"
@@ -303,20 +317,71 @@ Public Function Connect() As Boolean
   hJSONRPC.Register(hRpcFunc)
 
   ' ---------------------------------------------------------
+  ' First try to cleanup any left over stunnel processes
+  ' ---------------------------------------------------------
+  If Exist(Main.sBaseDir & "/wrappers/stunnel/" & "stunnel.pid") Then
+    Try sPid = File.Load(Main.sBaseDir & "/wrappers/stunnel/" & "stunnel.pid")
+    If Not Error Then
+      If InStr(sPid, "\n") Then sPid = Mid(sPid, 1, InStr(sPid, "\n") - 1)
+
+      Try iPid = CInt(sPid)
+      If Not Error Then
+        ' Now kill the process with a kill signal (if existing)
+        Try Exec ["kill", "-9", iPid]
+        Wait 0.1
+      Endif
+    Endif
+  Endif
+
+  ' ---------------------------------------------------------
   ' All have been setup, now try to start the JSOC-RPC server
   ' ---------------------------------------------------------
-  Try hJSONRPC.Listen($iHTTPPort, $iMaxConn, $bDebug)
+  If $bHTTPEnabled Then
+    Try hJSONRPC.Listen($iHTTPPort, $iMaxConn, $bDebug)
+  Else
+    Try hJSONRPC.Listen($iHTTPPort, $iMaxConn, $bDebug, "localhost")
+  Endif
+
   If hJSONRPC.Listening Then
     ' Write to main logfile we connected successfully
     Main.WriteLog(LogLabel & PluginFriendlyName & " Server listening on Port " & $iHTTPPort)
-    IsRunning = True
-    Return True
+    bOk = True
   Else
     Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " Server FAILED listen on  Port " & $iHTTPPort)
-    IsRunning = False
     ErrorText = "Net Not Active"
-    Return False
+    bOk = False
   Endif
+
+  ' ---------------------------------------------------------
+  ' Start HTTPS support via stunnel
+  ' ---------------------------------------------------------
+  If $bHTTPSEnabled And If bOk Then
+    If Util.ProgramExist("stunnel") Then 
+      ' stunnel -f -p stunnel.pem -P /var/tmp/stunnel.pid -d 9091 -r localhost:9090
+      pSTunnel = Exec ["stunnel", "-f", "-p", $sSSLCertificate, "-P", Main.sBaseDir & "/wrappers/stunnel/" & "stunnel.pid", "-d", $iHTTPSPort, "-r", "localhost:" & $iHTTPPort] For Read As "pSTunnel"
+      If Error Then
+        Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " Server FAILED listen on SSL Port " & $iHTTPSPort)
+        Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+
+        ' If HTTP is disabled, this is fatal
+        If Not $bHTTPEnabled Then
+          ErrorText = "command 'stunnel' failed to execute, response '" & Error.Text & "'"
+          bOk = False
+        Endif
+      Else
+        Main.WriteLog(LogLabel & PluginFriendlyName & " Server listening on SSL Port " & $iHTTPSPort)
+      Endif
+    Else
+      ' If HTTP is disabled, this is fatal
+      If Not $bHTTPEnabled Then
+        ErrorText = "command 'stunnel' not found, did you install it?"
+        bOk = False
+      Endif
+    Endif
+  Endif
+
+  IsRunning = bOk
+  Return bOk
 
 Catch ' some errors
   Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " Server FAILED listen on  Port " & $iHTTPPort)
@@ -330,9 +395,34 @@ Catch ' some errors
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Process error output produced by the process - only relevant if we get an error 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub pSTunnel_Error(sError As String)
+
+  sSTunnel &= sError
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Process died
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub pStunnel_Kill()
+
+  Print sSTunnel
+  Print "State=" & pSTunnel.State & ", Value=" & pSTunnel.Value
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Shutdown our JSON-RPC server
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Disconnect()
+
+  ' Stop the possible running process
+  Try pSTunnel.Kill
+
+  ' Cleanup the pid file
+  Try Kill Main.sBaseDir & "/wrappers/stunnel/" & "stunnel.pid"
 
   hJSONRPC.Stop()
 

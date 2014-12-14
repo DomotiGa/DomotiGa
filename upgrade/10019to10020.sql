@@ -128,6 +128,13 @@ INSERT INTO plugins (id, interface, protocols, name, type) values (91, 'XMLRPC',
 INSERT INTO plugins (id, interface, protocols, name, type) values (92, 'VideoServer', '', 'VideoServer', 'class');
 
 --
+-- Add SSL support to JSON-RPC
+--
+ALTER TABLE settings_jsonrpc ADD COLUMN `httpsport` INT(11) NULL DEFAULT NULL AFTER `debug`, ADD COLUMN `httpenabled` TINYINT(1) NOT NULL DEFAULT '-1' AFTER `httpsport`, ADD COLUMN `httpsenabled` TINYINT(1) NOT NULL DEFAULT '0' AFTER `httpenabled`, ADD COLUMN `sslcertificate` VARCHAR(128) NULL DEFAULT NULL AFTER `httpsenabled`;
+
+UPDATE settings_jsonrpc SET sslcertificate = 'server.pm';
+
+--
 -- Finally update to 1.0.020
 --
 
