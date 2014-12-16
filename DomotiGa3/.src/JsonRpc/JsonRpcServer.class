@@ -252,11 +252,21 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Write the JSON data to the socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub JsonSend(sType As String, hS As Socket, vJsonData As Variant, Optional sCrossOrigin As String = "", Optional bGzip As Boolean = False)
+Private Sub JsonSend(sType As String, hS As Socket, vJsonData As Variant, Optional cData As Collection)
 
   Dim sJsonData As String
   Dim sGzipData As String
   Dim cCz As New Compress
+  Dim bGzip As Boolean
+  Dim sCrossOrigin As String
+  Dim sHost As String
+
+  ' Check for parameters
+  If cData Then
+    If cData.Exist("gzip") Then bGzip = cData["gzip"]
+    If cData.Exist("cross-origin") Then sCrossOrigin = cData["cross-origin"]
+    If cData.Exist("host") Then sHost = cData["host"]
+  Endif
 
   Try sJsonData = JSON.Encode(vJsonData)
   If Error Then
@@ -291,6 +301,7 @@ Private Sub JsonSend(sType As String, hS As Socket, vJsonData As Variant, Option
     hS.EndOfLine = gb.Windows
     Print #hS, "HTTP/1.1 200 OK"
     Print #hS, "Connection: close"
+    If sHost Then Print #hS, "Host: " & sHost
     If bGzip Then
       Print #hS, "Content-Length: " & Len(sGzipData)
     Else
@@ -362,7 +373,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Process JSON-RPC request. The sType can be "HTTP", "HTTPURL" or "RAW"
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ProcessQuery(sType As String, hS As Socket, Buf As String, Optional sCrossOrigin As String = "", Optional bGzip As Boolean = False)
+Private Sub ProcessQuery(sType As String, hS As Socket, Buf As String, Optional cData As Collection)
 
   Dim sJsonData As String
   Dim vTestData As Variant
@@ -492,9 +503,9 @@ Private Sub ProcessQuery(sType As String, hS As Socket, Buf As String, Optional 
 
   If vOutput.Count >= 1 Then
     If JsonBatch Then
-      JsonSend(sType, hS, vOutput, sCrossOrigin, bGzip)
+      JsonSend(sType, hS, vOutput, cData)
     Else
-      JsonSend(sType, hS, vOutput[0], sCrossOrigin, bGzip)
+      JsonSend(sType, hS, vOutput[0], cData)
     Endif
   Endif
 
@@ -540,8 +551,15 @@ Public Sub Socket_Read()
       Endif
 
       ' First check if we have a HTTP POST or RAW (needs to start with "{")
-      If Left(cCol["buffer"], 5) = "POST " Or If Left(cCol["buffer"], 4) = "PUT " Then
+      If Left(cCol["buffer"], 5) = "POST " Then
         cCol["protocol"] = ""
+        cCol["method"] = "POST"
+      Else If Left(cCol["buffer"], 4) = "PUT " Then
+        cCol["protocol"] = ""
+        cCol["method"] = "PUT"
+      Else If Left(cCol["buffer"], 8) = "OPTIONS " Then
+        cCol["protocol"] = ""
+        cCol["method"] = "OPTIONS"
       Else If Left(cCol["buffer"], 1) = "{" Then
         cCol["protocol"] = "RAW"
       Else
@@ -550,7 +568,7 @@ Public Sub Socket_Read()
       Endif
 
     Else
-      ' We expect at LEAST something like "POST /", "PUT /" or "{"
+      ' We expect at LEAST something like "POST /", "PUT /", "OPTIONS /" or "{"
       RemoveSocket(hS)
       Return
     Endif
@@ -615,22 +633,6 @@ Public Sub Socket_Read()
           If InStr(UCase(sCad), "GZIP") Then cCol["gzip"] = True
         Endif
 
-        If InStr(UCase(Buf), "CONTENT-TYPE:") > 0 Then
-          sCad = Mid(Buf, InStr(UCase(Buf), "CONTENT-TYPE:") + 13)
-          sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
-          If (LCase(sCad) <> "application/json") And (LCase(sCad) <> "application/json-rpc") Then
-            hError(hS, "415 Unsupported Media Type")
-            RemoveSocket(hS)
-            Return
-          Else
-            cCol["type"] = 1
-          Endif
-        Else
-          hError(hS, "415 Unsupported Media Type")
-          RemoveSocket(hS)
-          Return
-        Endif
-
         If InStr(UCase(Buf), "CONTENT-LENGTH:") > 0 Then
           sCad = Mid(Buf, InStr(UCase(Buf), "CONTENT-LENGTH:") + 15)
           sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
@@ -657,30 +659,58 @@ Public Sub Socket_Read()
           cCol["cross-origin"] = sCad
         Endif
 
-        ' We should check if the request is in the URL
-        If cCol["length"] = 0 Or If cCol["length"] = -1 Then
-          ' First get the first line, this is the URL and remove the HTTP/1.x
-          sCad = Trim(Left(cCol["buffer"], InStr(cCol["buffer"], Chr(13)) - 9))
-          If InStr(sCad, "?request=") Then
-            sCad = Mid(sCad, InStr(sCad, "?request=") + 9)
-            Try sCad = URL.Decode(sCad)
-            If Error Then
-              hError(hS, "400 Bad Request")
+        ' Support for host header, required for HTTP/1.1
+        If InStr(UCase(Buf), Chr(10) & "HOST:") > 0 Then
+          sCad = Mid(Buf, InStr(UCase(Buf), Chr(10) & "HOST:") + 7)
+          sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
+          cCol["host"] = sCad
+        Endif
+
+        ' Do certain things only for POST and PUT methods
+        If cCol["method"] = "POST" Or If cCol["method"] = "PUT" Then
+ 
+           If InStr(UCase(Buf), "CONTENT-TYPE:") > 0 Then
+            sCad = Mid(Buf, InStr(UCase(Buf), "CONTENT-TYPE:") + 13)
+            sCad = Trim(Left(sCad, InStr(sCad, Chr(13))))
+            If (LCase(sCad) <> "application/json") And (LCase(sCad) <> "application/json-rpc") Then
+              hError(hS, "415 Unsupported Media Type")
+              RemoveSocket(hS)
+              Return
+            Else
+              cCol["type"] = 1
+            Endif
+          Else
+            hError(hS, "415 Unsupported Media Type")
+            RemoveSocket(hS)
+            Return
+          Endif
+
+          ' We should check if the request is in the URL
+          If cCol["length"] = 0 Or If cCol["length"] = -1 Then
+            ' First get the first line, this is the URL and remove the HTTP/1.x
+            sCad = Trim(Left(cCol["buffer"], InStr(cCol["buffer"], Chr(13)) - 9))
+            If InStr(sCad, "?request=") Then
+              sCad = Mid(sCad, InStr(sCad, "?request=") + 9)
+              Try sCad = URL.Decode(sCad)
+              If Error Then
+                hError(hS, "400 Bad Request")
+                RemoveSocket(hS)
+                Return
+              Endif
+
+              ' We seem to have a valid request, append mandatory characters and process it
+              ProcessQuery("HTTPURL", hS, sCad, ["cross-origin": cCol["cross-origin"], "gzip": cCol["gzip"], "host": cCol["host"]])
               RemoveSocket(hS)
               Return
             Endif
 
-            ' We seem to have a valid request, append mandatory characters and process it
-            ProcessQuery("HTTPURL", hS, sCad, cCol["cross-origin"], cCol["gzip"])
-            RemoveSocket(hS)
-            Return
+            If cCol["length"] = -1 Then
+              hError(hS, "411 Length Required")
+              RemoveSocket(hS)
+              Return
+            Endif
           Endif
 
-          If cCol["length"] = -1 Then
-            hError(hS, "411 Length Required")
-            RemoveSocket(hS)
-            Return
-          Endif
         Endif
 
         ' Check for "Expect: 100-continue" option & HTTP/1.1
@@ -700,10 +730,13 @@ Public Sub Socket_Read()
 
     If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) Then
 
-      If cCol["length"] = -1 Or cCol["type"] <> 1 Then
-        hError(hS, "406 Not Acceptable")
-        RemoveSocket(hS)
-        Return
+      ' Do certain things only for POST and PUT methods
+      If cCol["method"] = "POST" Or If cCol["method"] = "PUT" Then
+        If cCol["length"] = -1 Or If cCol["type"] <> 1 Then
+          hError(hS, "406 Not Acceptable")
+          RemoveSocket(hS)
+          Return
+        Endif
       Endif
 
       For cCount = cWait To 200 Step 1
@@ -721,7 +754,21 @@ Public Sub Socket_Read()
       Else
         ' We accept size or larger size, due to a bug in OpenRemote
         If cLen >= cCol["length"] Then 
-          ProcessQuery("HTTP", hS, cCol["buffer"], cCol["cross-origin"], cCol["gzip"])
+
+          If cCol["method"] = "OPTIONS" Then
+            hS.Begin
+            hS.EndOfLine = gb.Windows
+            Print #hS, "HTTP/1.1 200 OK"
+            If cCol["host"] Then Print #hS, "Host: " & cCol["host"]
+            If cCol["cross-origin"] Then Print #hS, "Access-Control-Allow-Origin: " & cCol["cross-origin"]
+            Print #hS, "Allow: POST, PUT, OPTIONS"
+            Print #hS, "Content-Length: 0"
+            Print #hS, ""
+            Try hS.Send
+          Else
+            ProcessQuery("HTTP", hS, cCol["buffer"], ["cross-origin": cCol["cross-origin"], "gzip": cCol["gzip"], "host": cCol["host"]])
+          Endif
+
           RemoveSocket(hS)
           Return
         Else
@@ -756,7 +803,7 @@ Public Sub Socket_Read()
 
     ' If <= 200 then we have received a valid JSON request, else we just drop the connection without a message
     If cWait <= 200 Then
-      ProcessQuery("RAW", hS, cCol["buffer"], "", False)
+      ProcessQuery("RAW", hS, cCol["buffer"])
       cCol["buffer"] = ""
     Else
       RemoveSocket(hS)
