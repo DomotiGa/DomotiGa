@@ -135,6 +135,15 @@ ALTER TABLE settings_jsonrpc ADD COLUMN `httpsport` INT(11) NULL DEFAULT NULL AF
 UPDATE settings_jsonrpc SET sslcertificate = 'server.pm';
 
 --
+-- Update thermostat ids
+--
+ALTER TABLE thermostat_schedule CHANGE COLUMN `scenario` `scenario_id` INT(11) UNSIGNED NOT NULL;
+ALTER TABLE thermostat_schedule CHANGE COLUMN `heating` `heating_id` INT(11) UNSIGNED NOT NULL;
+ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `scenario` `scenario_id` INT(11) UNSIGNED NOT NULL;
+ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `heating` `heating_id` INT(11) UNSIGNED NOT NULL;
+ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `constant` `constant_id` INT(11) UNSIGNED NOT NULL;
+
+--
 -- Finally update to 1.0.020
 --
 

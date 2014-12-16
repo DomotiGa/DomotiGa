@@ -4528,8 +4528,8 @@ DROP TABLE IF EXISTS `thermostat_schedule`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `thermostat_schedule` (
-  `scenario` int(11) unsigned NOT NULL,
-  `heating` int(11) unsigned NOT NULL,
+  `scenario_id` int(11) unsigned NOT NULL,
+  `heating_id` int(11) unsigned NOT NULL,
   `description` text,
   PRIMARY KEY (`scenario`,`heating`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -4552,11 +4552,11 @@ DROP TABLE IF EXISTS `thermostat_schedule_entry`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `thermostat_schedule_entry` (
-  `scenario` int(11) unsigned NOT NULL,
-  `heating` int(11) unsigned NOT NULL,
+  `scenario_id` int(11) unsigned NOT NULL,
+  `heating_id` int(11) unsigned NOT NULL,
   `day` int(10) unsigned NOT NULL DEFAULT '0',
   `time` time NOT NULL DEFAULT '00:00:00',
-  `constant` int(11) unsigned NOT NULL,
+  `constant_id` int(11) unsigned NOT NULL,
   `secondary` tinyint(1) NOT NULL,
   PRIMARY KEY (`scenario`,`heating`,`day`,`time`,`secondary`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
