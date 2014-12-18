@@ -130,9 +130,11 @@ INSERT INTO plugins (id, interface, protocols, name, type) values (92, 'VideoSer
 --
 -- Add SSL support to JSON-RPC
 --
-ALTER TABLE settings_jsonrpc ADD COLUMN `httpsport` INT(11) NULL DEFAULT NULL AFTER `debug`, ADD COLUMN `httpenabled` TINYINT(1) NOT NULL DEFAULT '-1' AFTER `httpsport`, ADD COLUMN `httpsenabled` TINYINT(1) NOT NULL DEFAULT '0' AFTER `httpenabled`, ADD COLUMN `sslcertificate` VARCHAR(128) NULL DEFAULT NULL AFTER `httpsenabled`;
+ALTER TABLE settings_jsonrpc ADD COLUMN `httpsport` INT(11) NOT NULL DEFAULT '0' AFTER `debug`, ADD COLUMN `httpenabled` TINYINT(1) NOT NULL DEFAULT '-1' AFTER `httpsport`, ADD COLUMN `httpsenabled` TINYINT(1) NOT NULL DEFAULT '0' AFTER `httpenabled`, ADD COLUMN `sslcertificate` VARCHAR(128) NULL DEFAULT NULL AFTER `httpsenabled`;
 
 UPDATE settings_jsonrpc SET sslcertificate = 'server.pm';
+ALTER TABLE settings_jsonrpc CHANGE COLUMN `httpport` int(11) NOT NULL DEFAULT '0';
+ALTER TABLE settings_jsonrpc CHANGE COLUMN `maxconn` int(11) NOT NULL DEFAULT '0';
 
 --
 -- Update thermostat ids

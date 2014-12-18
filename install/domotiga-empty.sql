@@ -2368,12 +2368,12 @@ DROP TABLE IF EXISTS `settings_jsonrpc`;
 CREATE TABLE `settings_jsonrpc` (
   `id` int(11) NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
-  `httpport` int(11) DEFAULT NULL,
-  `maxconn` int(11) DEFAULT NULL,
+  `httpport` int(11) NOT NULL DEFAULT '0',
+  `maxconn` int(11) NOT NULL DEFAULT '0',
   `type` int(11) DEFAULT NULL,
   `auth` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
-  `httpsport` int(11) DEFAULT NULL,
+  `httpsport` int(11) NOT NULL DEFAULT '0',
   `httpenabled` tinyint(1) NOT NULL DEFAULT '-1',
   `httpsenabled` tinyint(1) NOT NULL DEFAULT '0',
   `sslcertificate` VARCHAR(128) DEFAULT NULL,
@@ -4531,7 +4531,7 @@ CREATE TABLE `thermostat_schedule` (
   `scenario_id` int(11) unsigned NOT NULL,
   `heating_id` int(11) unsigned NOT NULL,
   `description` text,
-  PRIMARY KEY (`scenario`,`heating`)
+  PRIMARY KEY (`scenario_id`,`heating_id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -4558,7 +4558,7 @@ CREATE TABLE `thermostat_schedule_entry` (
   `time` time NOT NULL DEFAULT '00:00:00',
   `constant_id` int(11) unsigned NOT NULL,
   `secondary` tinyint(1) NOT NULL,
-  PRIMARY KEY (`scenario`,`heating`,`day`,`time`,`secondary`)
+  PRIMARY KEY (`scenario_id`,`heating_id`,`day`,`time`,`secondary`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
