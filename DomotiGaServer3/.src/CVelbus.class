@@ -9,11 +9,13 @@
 '
 ' Code currently supports Velbus modules
 '
-'   VMB4RY - 4 Relay module
-'   VMB4DC - 0/1 - 10V dimmer controller
-'   VMB7IN - 7 Channel input module
-'   VMBDME - Dimmer module
-'   VMBGPO - Oled touch panel
+'   VMB2BLE  - 2 channel blind module
+'   VMB4RY   - 4 Relay module
+'   VMB4RYNO - 4 channel relay module with normal open contacts
+'   VMB4DC   - 0/1 - 10V dimmer controller
+'   VMB7IN   - 7 Channel input module
+'   VMBDME   - Dimmer module
+'   VMBGPO   - Oled touch panel (Black or White
 '
 ' To add support for additional modules make these changes
 '
@@ -140,6 +142,7 @@ Const VB_REALY_TIMER_BLINK As Byte = &H0D
 Const VB_INTERFACE_STATUS As Byte = &H0E
 Const VB_SLIDER_STATUS As Byte = &H0F
 Const VB_LAST_SLIDER_STATUS As Byte = &H11
+Const VB_BLIND_SET As Byte = &H1C
 Const VB_FIRMWARE_UPDATE As Byte = &H60
 Const VB_FIRMWARE_INFO As Byte = &H61
 Const VB_FIRMWARE_UPGRADE_ENTER As Byte = &H62
@@ -995,6 +998,8 @@ Private Sub Decode_packet(bAddress As Byte, bData As Byte[])
       sModuleType = "VMB4RYLD"
     Case VMB4RYNO
       sModuleType = "VMB4RYNO"
+      bSupported = True
+      VMB4RYNO_Receive(bAddress, bData)
     Case VMB4DC
       sModuleType = "VMB4DC"
       bSupported = True
@@ -1063,7 +1068,7 @@ Private Sub Decode_packet(bAddress As Byte, bData As Byte[])
   Endif
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: Failed to decode packet '" & Error.Text & "' at '" & Error.Where & "'")
+  Main.WriteLog("ERROR: Failed to decode packet '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -1152,9 +1157,11 @@ Private Function GetModuleType(Address As Byte, Optional DeviceId As Integer) As
 
   If iDeviceId Then
     sDeviceType = UCase(Devices.FindDeviceTypeNameForDeviceId(iDeviceId))
-    Select sDeviceType
+    Select sDeviceType 
       Case "VMB4RY"
         Return VMB4RY
+      Case "VMB4RYNO"
+        Return VMB4RYNO
       Case "VMB4DC"
         Return VMB4DC
       Case "VMB7IN"
@@ -1167,7 +1174,7 @@ Private Function GetModuleType(Address As Byte, Optional DeviceId As Integer) As
         Main.WriteDebugLog(LogLabel & "Unsupported velbus module '" & UCase(Devices.FindDeviceTypeNameForDeviceId(iDeviceId)) & "'")
     End Select
   Else
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown moduletype with address " & Hex(Address))
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Unkown moduletype with address " & Hex(Address))
     bIgnoreModule = False
     'To prevent scan broadcaststorms ignore scheduled scan if it's already in queue 
     For Each bScanAddress In cScanQueue
@@ -1254,6 +1261,16 @@ Public Sub SendCommand(sAddress As String, sCmd As String, Optional DeviceId As 
         VMB4RY_Send(bAddress, 4, sCmd)
       Else
         VMB4RY_Send(bAddress, CInt(Right(sAddress, 1)), sCmd)
+      Endif
+    Case VMB4RYNO
+      If UCase(sCmd) = "STATUS" Then
+        VMB4RYNO_Send(bAddress, 1, sCmd)
+        VMB4RYNO_Send(bAddress, 2, sCmd)
+        VMB4RYNO_Send(bAddress, 3, sCmd)
+        VMB4RYNO_Send(bAddress, 4, sCmd)
+        VMB4RYNO_Send(bAddress, 5, sCmd)
+      Else
+        VMB4RYNO_Send(bAddress, CInt(Right(sAddress, 1)), sCmd)
       Endif
     Case VMB4DC
       If UCase(sCmd) = "STATUS" Then
@@ -1358,6 +1375,210 @@ Private Sub VMB4RY_Send(ModuleAddress As Byte, iChannel As Integer, sAction As S
         bTempData.Push(BSet(&h00, (iChannel - 1)))
       Case Else
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported action '" & sAction & "' for VMB4RY module!")
+    End Select
+    QueueCommand(CreateVelbusPackage(bPrio, ModuleAddress, bTempData.Count, bTempData, False))
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB4RYNO module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB4RYNO_Receive(Address As Byte, DataByte As Byte[])
+
+  Dim Relay As New Integer[5]
+  Dim iChannel, iCnt As Integer
+  Dim sAddress, sRelayStatus As String
+
+  If $bDebug Then
+    Main.WriteDebugLog(LogLabel & "Data package of VMB4RYNO module with address " & Hex(Address, 2) & " received")
+    If bExtraDebug Then
+      For iCnt = 0 To (DataByte.count - 1)
+        Main.WriteDebugLog(LogLabel & "VMB4RYNO - DataByte " & (iCnt + 1) & " : " & Bin(DataByte[iCnt], 8))
+      Next
+    Endif
+  Endif
+
+  sAddress = Hex(Address, 2)
+  Select Case DataByte[0]
+    Case VB_STATUS
+      'Do nothing?
+    Case VB_MODULE_TYPE
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "VMB4RYNO - Module type message received")
+    Case VB_SWITCH_OFF
+      For iChannel = 0 To 4
+        If BTst(DataByte[1], iChannel) Then
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "VMB4RYNO - Relay channel " & (iChannel + 1) & " switched off status received")
+          Relay[iChannel] = Devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), InterfaceId, "VMB4RYNO Channel " & CStr(iChannel + 1))
+          Devices.ValueUpdate(Relay[iChannel], 1, "Off", Devices.ValueType_Switch)
+        Endif
+      Next
+    Case VB_SWITCH_ON
+      For iChannel = 0 To 4
+        If BTst(DataByte[1], iChannel) Then
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "VMB4RYNO - Relay channel " & (iChannel + 1) & " switched on status received")
+          Relay[iChannel] = Devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), InterfaceId, "VMB4RYNO Channel " & CStr(iChannel + 1))
+          Devices.ValueUpdate(Relay[iChannel], 1, "On", Devices.ValueType_Switch)
+        Endif
+      Next
+    Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
+      For iChannel = 0 To 4      
+        If BTst(DataByte[1], iChannel) Then
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "VMB4RYNO - Relay channel " & (iChannel + 1) & " LED status received")
+          Relay[iChannel] = Devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), InterfaceId, "VMB4RYNO Channel " & CStr(iChannel + 1))
+          Update_LED_Status(Relay[iChannel], DataByte[0]) 
+        Endif
+      Next
+    Case VB_RELAY_STATUS
+      For iChannel = 0 To 4
+        If BTst(DataByte[1], iChannel) Then
+          sRelayStatus = IIf(BTst(DataByte[3], 0), "On", "Off")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "VMB4RYNO - Relay channel " & (iChannel + 1) & " switched " & sRelayStatus)
+          Devices.ValueUpdate(Relay[iChannel], 1, sRelayStatus, Devices.ValueType_Switch)
+          If BTst(DataByte[4], 7) Then
+            update_LED_Status(Relay[iChannel], VB_LED_SET)
+          Else
+            update_LED_Status(Relay[iChannel], VB_LED_CLEAR)
+          Endif
+          If BTst(DataByte[4], 6) Then update_LED_Status(Relay[iChannel], VB_LED_BLINK_SLOW)
+          If BTst(DataByte[4], 5) Then update_LED_Status(Relay[iChannel], VB_LED_BLINK_FAST)
+          If BTst(DataByte[4], 4) Then Update_LED_Status(Relay[iChannel], VB_LED_BLINK_VERY_FAST)
+        Endif
+      Next
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported packet type '" & CStr(DataByte[0]) & "' for VMB4RYNO module!")
+  End Select
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB4RYNO module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB4RYNO_Send(ModuleAddress As Byte, iChannel As Integer, sAction As String)
+
+  Dim bTempData As New Byte[]
+  Dim bPrio As Byte
+
+  If (iChannel >= 1) And (iChannel <= 5) Then
+    Select Case UCase(sAction)
+      Case "ON"
+        bTempData.push(VB_SWITCH_ON)
+        bTempData.push(BSet(&h00, (iChannel - 1)))
+        bPrio = VB_HPrio
+      Case "OFF"
+        bTempData.push(VB_SWITCH_OFF)
+        bTempData.push(BSet(&h00, (iChannel - 1)))
+        bPrio = VB_HPrio
+      Case "STATUS"
+        bTempData.Push(VB_MODULE_STATUS)
+        bTempData.Push(BSet(&h00, (iChannel - 1)))
+        bPrio = VB_LPrio
+      Case Else
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported action '" & sAction & "' for VMB4RYNO module!")
+    End Select
+    QueueCommand(CreateVelbusPackage(bPrio, ModuleAddress, bTempData.Count, bTempData, False))
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB2BLE module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB2BLE_Receive(Address As Byte, DataByte As Byte[])
+
+  Dim iCnt, iChannel As Integer
+  Dim sAddress, VMB2BLE_device_id As String
+
+  If $bDebug Then
+    Main.WriteDebugLog(LogLabel & "Data package of VMB2BLE module with address " & Hex(Address, 2) & " received")
+    If bExtraDebug Then
+      For iCnt = 0 To (DataByte.count - 1)
+        Main.WriteDebugLog(LogLabel & "VMB2BLE - DataByte " & (iCnt + 1) & " : " & Bin(DataByte[iCnt], 8))
+      Next
+    Endif
+  Endif
+
+  sAddress = Hex(Address, 2)
+
+  Select Case DataByte[0]
+    Case VB_STATUS
+      'Do nothing?
+    Case VB_MODULE_TYPE
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "VMB2BLE - Module type message received")
+    Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
+      If BTst(DataByte[1], 0) Then Update_LED_Status(VMB2BLE_device_id, DataByte[0])
+    Case VB_BLIND_STATUS
+      For iChannel = 0 To 1
+        If BTst(DataByte[1], iChannel) Then
+          VMB2BLE_device_id = Devices.Find(Instance, sAddress, InterfaceId, "VMB2BLE Blind " & CStr(iChannel + 1))
+          If BTst(DataByte[3], 0) Then
+            Devices.ValueUpdate(VMB2BLE_device_id, 2, "Blind up")
+          Else
+            If BTst(DataByte[3], 1) Then
+              Devices.ValueUpdate(VMB2BLE_device_id, 2, "Blind down")
+            Else
+              Devices.ValueUpdate(VMB2BLE_device_id, 2, "Blinds off")
+            Endif
+          Endif
+          Select Case DataByte[5]
+            Case &h64 '100%, blind is down
+              Devices.ValueUpdate(VMB2BLE_device_id, 1, "Off", Devices.ValueType_Blinds)
+            Case &h00 '0%, blind is up
+              Devices.ValueUpdate(VMB2BLE_device_id, 1, "On", Devices.ValueType_Blinds)
+            Case Else
+              Devices.ValueUpdate(VMB2BLE_device_id, 1, "Dim " & Str(DataByte[2]), Devices.ValueType_Blinds)
+          End Select
+        Endif
+      Next
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported packet type '" & CStr(DataByte[0]) & "' for VMB2BLE module!")
+  End Select
+
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMB2BLE module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMB2BLE_Send(ModuleAddress As Byte, iChannel As Integer, sAction As String)
+
+  Dim bTempData As New Byte[]
+  Dim bPrio As Byte
+  Dim sCommand As String
+  Dim iDim As Integer
+
+  If InStr(sAction, " ") Then
+    sCommand = Left(sAction, InStr(sAction, " ") - 1)
+    iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
+  Else
+    sCommand = sAction
+  Endif
+  
+  If (iChannel >= 1) And (iChannel <= 2) Then
+    Select Case UCase(sCommand)
+      Case "ON"                 'Blind up
+        bTempData.push(VB_BLIND_UP)
+        bTempData.push(BSet(&h00, (iChannel - 1)))
+        bTempData.push(&H00)    'high byte of time out
+        bTempData.push(&H00)    'mid byte of time out
+        bTempData.push(&H00)    'low byte of time out
+        bPrio = VB_HPrio
+      Case "OFF"                'Blind down
+        bTempData.push(VB_BLIND_DOWN)
+        bTempData.push(BSet(&h00, (iChannel - 1)))
+        bTempData.push(&H00)    'high byte of time out
+        bTempData.push(&H00)    'mid byte of time out
+        bTempData.push(&H00)    'low byte of time out
+        bPrio = VB_HPrio
+      Case "DIM"
+        bTempData.push(VB_BLIND_SET)
+        bTempData.push(BSet(&h00, (iChannel - 1)))
+        bPrio = VB_HPrio
+      Case "STATUS"
+        bPrio = VB_LPrio
+        bTempData.Push(VB_MODULE_STATUS)
+        bTempData.Push(BSet(&h00, (iChannel - 1)))
+      Case Else
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported action '" & sAction & "' for VMB2BLE module!")
     End Select
     QueueCommand(CreateVelbusPackage(bPrio, ModuleAddress, bTempData.Count, bTempData, False))
   Endif
@@ -1539,7 +1760,7 @@ Private Sub VMB4DC_Send(ModuleAddress As Byte, iChannel As Integer, sAction As S
   Else
     sCommand = sAction
   Endif
-
+  
   If (iChannel >= 1) And (iChannel <= 4) Then
     Select Case UCase(sCommand)
       Case "ON"
@@ -1645,7 +1866,7 @@ Private Sub VMB7IN_Send(ModuleAddress As Byte, sAction As String)
   Else
     sCommand = sAction
   Endif
-
+  
   Select Case UCase(sCommand)
     Case "STATUS"
       bPrio = VB_LPrio
