@@ -4462,12 +4462,12 @@ DROP TABLE IF EXISTS `thermostat_constant`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `thermostat_constant` (
-  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `constant_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(64) DEFAULT NULL,
   `value` decimal(6,2) DEFAULT NULL,
   `description` text,
   `color` int(11) NOT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`constant_id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -4488,7 +4488,7 @@ DROP TABLE IF EXISTS `thermostat_heating`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `thermostat_heating` (
-  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `heating_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(64) DEFAULT NULL,
   `sensor` int(11) unsigned NOT NULL,
   `device` int(11) unsigned DEFAULT NULL,
@@ -4502,7 +4502,7 @@ CREATE TABLE `thermostat_heating` (
   `regulatorOffsetTop` float unsigned DEFAULT NULL,
   `secondary` tinyint(1) DEFAULT NULL,
   `description` text,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`heating_id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
