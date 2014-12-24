@@ -69,12 +69,14 @@ Private Const Type_Conn_Socket As Integer = 1 ' Only real sockets
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' iType constants, used by BuildFilterFields & FilterFields
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Const Type_Data_None As Integer = 0
 Private Const Type_Data_Device As Integer = 1
 Private Const Type_Data_DeviceValue As Integer = 6
 Private Const Type_Data_Event As Integer = 2
 Private Const Type_Data_Action As Integer = 3
 Private Const Type_Data_Scene As Integer = 4
 Private Const Type_Data_Location As Integer = 5
+Private Const Type_Thermostat_Scenario As Integer = 6
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -121,7 +123,6 @@ End
 Public Function Connect() As Boolean
 
   Dim bOk As Boolean
-  Dim hPid As File
   Dim sPid As String
   Dim iPid As Integer
   Dim hRpcFunc As JsonRpcFunction
@@ -289,6 +290,12 @@ Public Function Connect() As Boolean
   hJSONRPC.Register(hRpcFunc)
 
   ' ### Thermostat methods ###
+  hRpcFunc = New JsonRpcFunction("thermostat.list")
+  hJSONRPC.Register(hRpcFunc)
+  hRpcFunc = New JsonRpcFunction("thermostat.get")
+  hJSONRPC.Register(hRpcFunc)
+  hRpcFunc = New JsonRpcFunction("thermostat.set")
+  hJSONRPC.Register(hRpcFunc)
   hRpcFunc = New JsonRpcFunction("thermostat.derogateheating")
   hJSONRPC.Register(hRpcFunc)
   hRpcFunc = New JsonRpcFunction("thermostat.getderogateheating")
@@ -479,7 +486,7 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As JSONCollection)
 
       ' ### Astro methods ###
     Case "astro.get"
-      Call_Astro_Get()
+      Call_Astro_Get(cData)
 
       ' ### Data methods ###
     Case "data.newmessage"
@@ -529,7 +536,7 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As JSONCollection)
 
       ' ### Plugin methods ###
     Case "plugin.list"
-      Call_Plugin_List()
+      Call_Plugin_List(cData)
     Case "plugin.restart"
       Call_Plugin_Restart(cData)
 
@@ -616,6 +623,8 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As JSONCollection)
       Call_Calendar_Set(cData)
 
       ' ### Thermostat methods ###
+    Case "thermostat.list"
+      Call_Thermostat_List(cData)
     Case "thermostat.derogateheating"
       Call_Thermostat_DerogateHeating(cData)
     Case "thermostat.getderogateheating"
@@ -791,147 +800,151 @@ Private Sub CheckParmInstance(cData As JSONCollection, sPlugin As String) As Int
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Generic call check
+' Retrieve the "fields" field if it exists. If not existing, return an empty String[]
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub CheckParmString(cData As JSONCollection, sParam As String, Optional bNotEmpty As Boolean = True) As Boolean
+Private Sub GetParamFields(cData As JSONCollection) As String[]
 
-  If cData = Null Then
-    SetReply(-32602, Null, "params '" & sParam & "' is missing")
-    Return False
-  Endif
+  Dim aFields As String[]
 
-  ' Can't be an empty string if bNotEmpty is set
-  If bNotEmpty Then
-    If TypeOf(cData[sParam]) <> gb.String Then
-      SetReply(-32602, Null, "params '" & sParam & "' is missing or isn't a string")
-      Return False
-    Endif
-
-    If Not Util.JSON_RemoveEmpty(cData[sParam]) Then
-      SetReply(-32602, Null, "params '" & sParam & "' is empty string")
-      Return False
+  If cData And If cData.Exist("fields") Then
+    If Object.Type(cData["fields"]) = "String[]" Or If Object.Type(cData["fields"]) = "Variant[]" Then
+      Try aFields = cData["fields"] 
+      If Error Then
+        SetReply(-32602, Null, "params 'fields' is not an array of strings")
+        Return Null
+      Endif
+    Else
+      SetReply(-32602, Null, "params 'fields' is not an array of strings")
+      Return Null
     Endif
   Else
-    If TypeOf(cData[sParam]) <> gb.Null And If TypeOf(cData[sParam]) <> gb.String Then
-      SetReply(-32602, Null, "params '" & sParam & "' is missing or isn't a string")
-      Return False
-    Endif
+    aFields = New String[]
   Endif
 
-  Return True
+  Return aFields
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Do filtering of fields - trying to keep it generic as possible
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub FilterFields(iType As Integer, aFields As String[], rResult As Result, cMap As Collection, cValue As JSONCollection) As Boolean
+Private Sub FilterFields(iType As Integer, aFields As String[], rResult As Object, cMap As Collection, cValue As JSONCollection) As Boolean
 
   Dim sAttrName As String
   Dim sKey As String
   Dim vAttrValue As Variant
-  Dim cMapReverse As New Collection
   Dim hField As ResultField
   Dim mField As String
+  Dim cMapReverse As Collection
 
-  ' Check if we got a required field list in, else we just do all fields in the table
-  If aFields And If aFields.Count Then
+  ' Just initiate the cMap collection if it isn't used
+  If cMap = Null Then cMap = New Collection
 
-    For Each sAttrName In aFields
+  ' We can't work with a Null object - we can't return a String[]
+  If aFields = Null Then
+    SetReply(-32602, Null, "aFields Object is 'Null'")
+    Return False
+  Endif
 
-      ' Determine if a mapping is in place
-      If cMap.Exist(sAttrName) Then
-        sKey = cMap[sAttrName]
-      Else
-        sKey = sAttrName
-      Endif
+  ' If no fields are selected, we automatically select all fields in record/collection
+  If aFields.Count = 0 Then
 
-      ' First we test if the field exists
-      Try vAttrValue = rResult[sKey]
-
-      ' Somebody passed an invalid field - bail now
-      If Error Then
-        ' Put exceptions here
-        If sKey = "NA" Then
-        Else
-          SetReply(-32602, Null, "Field '" & sAttrName & IIf(cMap.Exist(sAttrName), "/" & sKey, "") & "' doesn't exist in the database")
-          Return False
-        Endif
-      Endif
-
-      ' Override values
-      Select sAttrName
-        Case "value"
-          Try vAttrValue = Devices.CorrectValue(rResult!value, rResult!correction, rResult!device_id)
-          If Error Then vAttrValue = ""
-        Case "lastchanged" 'last seen
-          Try vAttrValue = Replace$(Str$(Format(rResult!lastchanged, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
-          If Error Then vAttrValue = "Never"
-        Case "firstseen" 'last seen
-          Try vAttrValue = Replace$(Str$(Format(rResult!firstseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
-          If Error Then vAttrValue = "Never"
-        Case "lastseen" 'last seen
-          Try vAttrValue = Replace$(Str$(Format(rResult!lastseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
-          If Error Then vAttrValue = "Never"
-        Case "icon" 'status icon - only valid for devices table - NOT set, this happens during device values
-          vAttrValue = ""
-      End Select
-
-      cValue.Add(vAttrValue, sAttrName)
-    Next
-
-  Else
-
-    ' Reverse cMap collection, else we can easily use it
+    ' Reverse mapping, else we can easily use it - one time done
+    cMapReverse = New Collection
     For Each mField In cMap
       cMapReverse.Add(cMap.Key, mField)
     Next
 
-    For Each hField In rResult.Fields
+    Select Object.Type(rResult)
+      Case "Result"
 
-      sKey = hField.Name
+        For Each hField In rResult.Fields
+          sKey = hField.Name
 
-      ' Determine if a mapping is in place
-      If cMapReverse.Exist(sKey) Then
-        sAttrName = cMapReverse[sKey]
-      Else
-        sAttrName = sKey
-      Endif
+          If cMapReverse.Exist(sKey) Then
+            sAttrName = cMapReverse[sKey]
+          Else
+            sAttrName = sKey
+          Endif
 
-      ' First we test if the field exists
-      Try vAttrValue = rResult[sKey]
+          aFields.Add(sAttrName)
+        Next
 
-      ' Somebody passed an invalid field - bail now
-      If Error Then
-        ' Put exceptions here
-        If sKey = "NA" Then
-        Else
-          SetReply(-32602, Null, "Field '" & sKey & IIf(cMapReverse.Exist(sKey), "/" & sAttrName, "") & "' doesn't exist in the database")
-          Return False
-        Endif
-      Endif
+      Case "JSONCollection", "Collection"
 
-      ' Override values
-      Select sAttrName
-        Case "value"
-          Try vAttrValue = Devices.CorrectValue(rResult!value, rResult!correction, rResult!device_id)
-          If Error Then vAttrValue = ""
-        Case "lastchanged" 'last seen
-          Try vAttrValue = Replace$(Str$(Format(rResult!lastchanged, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
-          If Error Then vAttrValue = "Never"
-        Case "firstseen" 'last seen
-          Try vAttrValue = Replace$(Str$(Format(rResult!firstseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
-          If Error Then vAttrValue = "Never"
-        Case "lastseen" 'last seen
-          Try vAttrValue = Replace$(Str$(Format(rResult!lastseen, "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
-          If Error Then vAttrValue = "Never"
-        Case "icon" 'status icon - only valid for devices table - NOT set, this happens during device values
-          vAttrValue = ""
-      End Select
+        For Each rResult
+          sKey = rResult.Key
 
-      cValue.Add(vAttrValue, sAttrName)
-    Next
+          If cMapReverse.Exist(sKey) Then
+            sAttrName = cMapReverse[sKey]
+          Else
+            sAttrName = sKey
+          Endif
+
+          aFields.Add(sAttrName)
+        Next
+
+      Default
+        SetReply(-32602, Null, "rResult Object.Type is unknown '" & Object.Type(rResult) & "'")
+        Return False
+    End Select
+
+    ' Add special fields
+    Select iType 
+      Case Type_Data_Device ' For devices add the icon
+        aFields.Add("icon")
+      Case Type_Data_Event
+        aFields.Add("actionlist")
+    End Select
+
   Endif
+
+  ' Check if we got a required field list in, else we just do all fields in the table
+  For Each sAttrName In aFields
+
+    ' Determine if a mapping is in place
+    If cMap.Exist(sAttrName) Then
+      sKey = cMap[sAttrName]
+    Else
+      sKey = sAttrName
+    Endif
+
+    ' First we test if the field exists
+    Try vAttrValue = rResult[sKey]
+
+    ' We shouldn't run Null, has to be ""
+    If TypeOf(vAttrValue) = gb.Null Then vAttrValue = ""
+
+    ' Somebody passed an invalid field - bail now
+    If Error Then
+      ' Put exceptions here
+      If sKey = "NA" Then
+      Else
+        SetReply(-32602, Null, "Field '" & sAttrName & IIf(cMap.Exist(sAttrName), "/" & sKey, "") & "' doesn't exist in the database")
+        Return False
+      Endif
+    Endif
+
+    ' Override values
+    Select sAttrName
+      Case "value"
+        Try vAttrValue = Devices.CorrectValue(rResult["value"], rResult["correction"], rResult["device_id"])
+        If Error Then vAttrValue = ""
+      Case "lastchanged" 'last changed
+        Try vAttrValue = Replace$(Str$(Format(rResult["lastchanged"], "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
+        If Error Then vAttrValue = "Never"
+      Case "firstseen" 'first seen
+        Try vAttrValue = Replace$(Str$(Format(rResult["firstseen"], "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
+        If Error Then vAttrValue = "Never"
+      Case "lastseen" 'last seen
+        Try vAttrValue = Replace$(Str$(Format(rResult["lastseen"], "yyyy-mm-dd hh:nn:ss")), Format(Date(), "yyyy-mm-dd") & " ", "")
+        If Error Then vAttrValue = "Never"
+      Case "icon" 'status icon - only valid for devices table - NOT set, this happens during device values
+        vAttrValue = ""
+    End Select
+
+    cValue.Add(vAttrValue, sAttrName)
+  Next
 
   Return True
 
@@ -987,10 +1000,6 @@ Private Sub BuildFilterFields(iType As Integer, rResult As Result, cMap As Colle
     GetField.Add("icon")
   Endif
 
-  If iType = Type_Data_Action Then ' For Events add the action list
-    GetField.Add("actionlist")
-  Endif
-
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1041,20 +1050,28 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Method=astro.get
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Call_Astro_Get()
+Private Sub Call_Astro_Get(cData As JSONCollection)
 
-  Dim cValue As New JSONCollection
+  Dim GetField As New String[]
+  Dim cValueIn As New Collection
+  Dim cValueOut As New JSONCollection
 
-  cValue.Add(Main.GetGlobalVar("Sunrise"), "sunrise")
-  cValue.Add(Main.GetGlobalVar("Sunset"), "sunset")
-  cValue.Add(Main.GetGlobalVar("Sunrise_Twilight"), "sunrise_twilight")
-  cValue.Add(Main.GetGlobalVar("Sunset_Twilight"), "sunset_twilight")
-  cValue.Add(Main.iAstroLatitude, "latitude")
-  cValue.Add(Main.iAstroLongitude, "longitude")
-  cValue.Add(Main.fAstroAutoTimezone, "timezone")
-  cValue.Add(Main.sAstroAutoTimezoneName, "timezonename")
+  ' Check for "fields"
+  GetField = GetParamFields(cData)
+  If Not GetField Then Return
 
-  SetReply(0, cValue)
+  cValueIn.Add(Main.GetGlobalVar("Sunrise"), "sunrise")
+  cValueIn.Add(Main.GetGlobalVar("Sunset"), "sunset")
+  cValueIn.Add(Main.GetGlobalVar("Sunrise_Twilight"), "sunrise_twilight")
+  cValueIn.Add(Main.GetGlobalVar("Sunset_Twilight"), "sunset_twilight")
+  cValueIn.Add(Main.iAstroLatitude, "latitude")
+  cValueIn.Add(Main.iAstroLongitude, "longitude")
+  cValueIn.Add(Main.fAstroAutoTimezone, "timezone")
+  cValueIn.Add(Main.sAstroAutoTimezoneName, "timezonename")
+
+  If Not FilterFields(Type_Data_None, GetField, cValueIn, Null, cValueOut) Then Return
+
+  SetReply(0, cValueOut)
 
 End
 
@@ -1369,14 +1386,9 @@ Private Sub Call_Device_List(cData As JSONCollection)
       sList = "enabled"
     Endif
 
-    ' Detect if the "fields" parameter is supplied, it has to be an array of strings
-    If cData["fields"] <> Null And If TypeOf(cData["fields"]) = gb.Object Then
-      Try GetField = cData["fields"]
-      If Error Then
-        SetReply(-32602, Null, "params 'fields' is not an array of strings")
-        Return
-      Endif
-    Endif
+    ' Check for "fields"
+    GetField = GetParamFields(cData)
+    If Not GetField Then Return
 
     ' Detect if the "groups" parameter is supplied, it has to be an array of strings
     If cData["groups"] <> Null And If TypeOf(cData["groups"]) = gb.Object Then
@@ -1459,9 +1471,7 @@ Private Sub Call_Device_List(cData As JSONCollection)
     Endif
 
     ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(Type_Data_Device, GetField, rResult, MapField, cValue) Then
-      Return
-    Endif
+    If Not FilterFields(Type_Data_Device, GetField, rResult, MapField, cValue) Then Return
 
     ' Add device values
     aValueValue = New Collection[]
@@ -1527,14 +1537,9 @@ Private Sub Call_Device_Get(cData As JSONCollection)
 
   If Not CheckParam(cData, ["device_id": ["datatype": "integer"]]) Then Return
 
-  ' Detect if the "fields" parameter is supplied, it has to be an array of strings
-  If cData["fields"] <> Null And If TypeOf(cData["fields"]) = gb.Object Then
-    Try GetField = cData["fields"]
-    If Error Then
-      SetReply(-32602, Null, "params 'fields' is not an array of strings")
-      Return
-    Endif
-  Endif
+  ' Check for "fields"
+  GetField = GetParamFields(cData)
+  If Not GetField Then Return
 
   ' Retrieve the information from the database, we will filter out in the next steps
   rResult = Devices.GetDeviceList("all+ext")
@@ -1560,9 +1565,7 @@ Private Sub Call_Device_Get(cData As JSONCollection)
   For Each rResult
     If cData["device_id"] = rResult!id Then
       ' Filter out the fields - if get get a False, an error happened
-      If Not FilterFields(Type_Data_Device, GetField, rResult, MapField, cValue) Then
-        Return
-      Endif
+      If Not FilterFields(Type_Data_Device, GetField, rResult, MapField, cValue) Then Return
       Break
     Endif
 
@@ -1630,18 +1633,11 @@ Private Sub Call_Location_List(cData As JSONCollection)
     Return
   Endif
 
-  GetField = ["location_id", "name"]
-
+  ' Filter out the fields - if get get a False, an error happened
   For Each rResult
     cValue = New JSONCollection
-
-    ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(Type_Data_Location, GetField, rResult, MapField, cValue) Then
-      Return
-    Endif
-
+    If Not FilterFields(Type_Data_Location, GetField, rResult, MapField, cValue) Then Return
     aValue.Add(cValue)
-
   Next
 
   SetReply(0, aValue)
@@ -1651,34 +1647,58 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Method=plugin.list
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Call_Plugin_List()
+Private Sub Call_Plugin_List(cData As JSONCollection)
 
   Dim cPl As CPluginEntry
-  Dim cValue As New JSONCollection
+  Dim cValueIn As New JSONCollection
+  Dim cValueOut As New JSONCollection
   Dim aValue As New Collection[]
+  Dim GetField As New String[]
 
-  ' friendlyname
-  ' pluginversion
+  ' Check for "fields"
+  GetField = GetParamFields(cData)
+  If Not GetField Then Return
 
   ' Loop through all plugins
   For Each cPl In Plugin.cPluginList
 
     If cPl.Instance = 0 Then Continue
 
-    cValue = New JSONCollection
-    cValue.Add(cPl.name, "name")
-    cValue.Add(cPl.Instance, "instance_id")
-    cValue.Add(cPl.Settings["enabled"], "enabled")
+    cValueIn = New JSONCollection
+    cValueOut = New JSONCollection
+
+    cValueIn.Add(cPl.name, "name")
+    cValueIn.Add(cPl.Instance, "instance_id")
+    cValueIn.Add(cPl.Settings["enabled"], "enabled")
 
     If cPl.Interface Then
-      Try cValue.Add(cPl.Interface.IsRunning, "running")
-      If Error Then cValue.Add(False, "running")
-
-      Try cValue.Add(cPl.Interface.ErrorText, "error")
-      If Error Then cValue.Add("UNKNOWN", "error")
+      Try cValueIn.Add(cPl.Interface.IsRunning, "running")
+      If Error Then cValueIn.Add(False, "running")
+      Try cValueIn.Add(cPl.Interface.ErrorText, "error")
+      If Error Then cValueIn.Add("UNKNOWN", "error")
+      Try cValueIn.Add(cPl.Interface.ErrorWhere, "error")
+      If Error Then cValueIn.Add("UNKNOWN", "errorwhere")
+      Try cValueIn.Add(cPl.Interface.PluginFriendlyName, "friendlyname")
+      If Error Then cValueIn.Add("", "friendlyname")
+      Try cValueIn.Add(cPl.Interface.PluginVersion, "version")
+      If Error Then cValueIn.Add("", "version")
+      Try cValueIn.Add(cPl.Interface.PluginAuthor, "author")
+      If Error Then cValueIn.Add("", "author")
+      Try cValueIn.Add(cPl.Interface.PluginMaxInstances, "maxinstances")
+      If Error Then cValueIn.Add(0, "maxinstances")
+    Else
+      cValueIn.Add(False, "running")
+      cValueIn.Add("", "error")
+      cValueIn.Add("", "errorwhere")
+      cValueIn.Add("", "friendlyname")
+      cValueIn.Add("", "version")
+      cValueIn.Add("", "author")
+      cValueIn.Add(0, "maxinstances")
     Endif
 
-    aValue.Add(cValue)
+    If Not FilterFields(Type_Data_None, GetField, cValueIn, Null, cValueOut) Then Return
+
+    aValue.Add(cValueOut)
   Next
 
   SetReply(0, aValue)
@@ -1845,9 +1865,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Call_Event_List(cData As JSONCollection)
 
+  Dim aValue As New Collection[]
   Dim cValue As New JSONCollection
   Dim cValueAction As New JSONCollection
-  Dim aValue As New Collection[]
   Dim aValueAction As New Collection[]
   Dim rResult As Result
   Dim rResultAction As Result
@@ -1859,19 +1879,9 @@ Private Sub Call_Event_List(cData As JSONCollection)
   MapField.Add("id", "event_id")
   MapField.Add("NA", "actionlist")
 
-  ' Determine if we got a "field" parameter/value
-  If cData <> Null Then
-
-    ' Detect if the "fields" parameter is supplied, it has to be an array of strings
-    If cData["fields"] <> Null And If TypeOf(cData["fields"]) = gb.Object Then
-      Try GetField = cData["fields"]
-      If Error Then
-        SetReply(-32602, Null, "params 'fields' is not an array of strings")
-        Return
-      Endif
-    Endif
-
-  Endif
+  ' Check for "fields"
+  GetField = GetParamFields(cData)
+  If Not GetField Then Return
 
   rResult = Events.GetEventList()
   If Not rResult Then
@@ -1884,18 +1894,11 @@ Private Sub Call_Event_List(cData As JSONCollection)
     Return
   Endif
 
-  If GetField.Count = 0 Then
-    BuildFilterFields(Type_Data_Event, rResult, MapField, GetField)
-  Endif
-
   For Each rResult
-
     cValue = New JSONCollection
 
     ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(Type_Data_Event, GetField, rResult, MapField, cValue) Then
-      Return
-    Endif
+    If Not FilterFields(Type_Data_Event, GetField, rResult, MapField, cValue) Then Return
 
     ' Add the action list - Only actionid & order, delay doesn't seem to be used?
     If GetField.Exist("actionlist") Then
@@ -1955,19 +1958,9 @@ Private Sub Call_Action_List(cData As JSONCollection)
   ' Mapping of attribute names from SQL to JSON. Hopefully to be removed in the future
   MapField.Add("id", "action_id")
 
-  ' Determine if we got a "field" parameter/value
-  If cData <> Null Then
-
-    ' Detect if the "fields" parameter is supplied, it has to be an array of strings
-    If cData["fields"] <> Null And If TypeOf(cData["fields"]) = gb.Object Then
-      Try GetField = cData["fields"]
-      If Error Then
-        SetReply(-32602, Null, "params 'fields' is not an array of strings")
-        Return
-      Endif
-    Endif
-
-  Endif
+  ' Check for "fields"
+  GetField = GetParamFields(cData)
+  If Not GetField Then Return
 
   rResult = Events.GetActionList()
   If Not rResult Then
@@ -1980,21 +1973,11 @@ Private Sub Call_Action_List(cData As JSONCollection)
     Return
   Endif
 
-  If GetField.Count = 0 Then
-    BuildFilterFields(Type_Data_Action, rResult, MapField, GetField)
-  Endif
-
+  ' Filter out the fields - if get get a False, an error happened
   For Each rResult
-
     cValue = New JSONCollection
-
-    ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(Type_Data_Action, GetField, rResult, MapField, cValue) Then
-      Return
-    Endif
-
+    If Not FilterFields(Type_Data_Action, GetField, rResult, MapField, cValue) Then Return
     aValue.Add(cValue)
-
   Next
 
   SetReply(0, aValue)
@@ -2062,17 +2045,9 @@ Private Sub Call_Scene_List(cData As JSONCollection)
   ' Mapping of attribute names from SQL to JSON. Hopefully to be removed in the future
   MapField.Add("id", "scene_id")
 
-  ' Determine if we got a "field" parameter/value
-  If cData <> Null Then
-    ' Detect if the "fields" parameter is supplied, it has to be an array of strings
-    If cData["fields"] <> Null And If TypeOf(cData["fields"]) = gb.Object Then
-      Try GetField = cData["fields"]
-      If Error Then
-        SetReply(-32602, Null, "params 'fields' is not an array of strings")
-        Return
-      Endif
-    Endif
-  Endif
+  ' Check for "fields"
+  GetField = GetParamFields(cData)
+  If Not GetField Then Return
 
   rResult = Scenes.GetSceneList()
   If Not rResult Then
@@ -2085,17 +2060,10 @@ Private Sub Call_Scene_List(cData As JSONCollection)
     Return
   Endif
 
-  If GetField.Count = 0 Then
-    BuildFilterFields(Type_Data_Scene, rResult, MapField, GetField)
-  Endif
-
+  ' Filter out the fields for each record - if get get a False, an error happened
   For Each rResult
     cValue = New JSONCollection
-
-    ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(Type_Data_Scene, GetField, rResult, MapField, cValue) Then
-      Return
-    Endif
+    If Not FilterFields(Type_Data_Scene, GetField, rResult, MapField, cValue) Then Return
     aValue.Add(cValue)
   Next
 
@@ -2497,6 +2465,87 @@ End
 Private Sub Call_Calendar_Set(cData As JSONCollection)
 
   ' cData["planning"] = String[]
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Method=thermostat.list
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Call_Thermostat_List(cData As JSONCollection)
+
+  Dim cValue As New Collection[]
+  Dim cScenario As New JSONCollection
+  Dim rResult As Result
+  Dim rResultHeating As Result
+  Dim GetField As New String[]
+  Dim MapField As New Collection
+  Dim aHeating As New Collection[]
+  Dim cHeating As New JSONCollection
+  Dim sCurrTemp, sReqTemp As String
+  Dim fTemp As Float
+  Dim bHeating As Boolean
+
+  If Not CheckParam(cData, ["command": ["datatype": "string"]]) Then Return
+
+  ' Check for "fields"
+  GetField = GetParamFields(cData)
+  If Not GetField Then Return
+
+  Select cData["command"]
+    Case "scenarios", "scenarii"
+
+      rResult = Main.hDB.Exec("SELECT * FROM thermostat_scenarii ORDER BY scenario_id")
+
+      If rResult.Available And If rResult.Count Then
+        For Each rResult
+          cScenario = New JSONCollection
+
+          If Not FilterFields(Type_Thermostat_Scenario, GetField, rResult, MapField, cScenario) Then Return
+
+          If GetField And If GetField.Count > 0 Then
+            If GetField.Find("heating") >= 0 Then
+              bHeating = True
+            Else
+              bHeating = False
+            Endif
+          Else
+            bHeating = True
+          Endif
+
+          If bHeating Then
+            ' Add Heating for the scenario
+            aHeating = New Collection[]
+            rResultHeating = Main.hDB.Exec("SELECT * FROM `thermostat_schedule` s, `thermostat_heating` h WHERE s.heating_id=h.heating_id AND s.scenario_id=&1", rResult!scenario_id)
+            If rResultHeating.Available And If rResultHeating.Count Then
+              For Each rResultHeating
+                cHeating = New JSONCollection
+                sCurrTemp = Devices.GetCurrentValueForDevice(rResultHeating!sensor, 1)
+                fTemp = Thermostat.GetDerogateHeating(rResultHeating!heating_id)
+                If fTemp = Thermostat.NO_TEMP Then fTemp = Thermostat.GetRequestedTempForHeating(rResultHeating!scenario_id, rResultHeating!heating_id)
+                sReqTemp = fTemp
+
+                cHeating.Add(rResultHeating!heating_id, "heating_id")
+                cHeating.Add(rResultHeating!name, "name")
+                cHeating.Add(sCurrTemp, "temp_cur")
+                cHeating.Add(sReqTemp, "temp_req")
+
+                aHeating.Add(cHeating)
+              Next
+
+            Endif
+
+            cScenario.Add(aHeating, "heating") 
+          Endif
+
+          cValue.Add(cScenario)
+        Next
+      Endif
+    Default
+      SetReply(-32602, Null, "params 'mode' has unknown value '" & cData["command"] & "'")
+      Return
+  End Select
+
+  SetReply(0, cValue)
 
 End
 
