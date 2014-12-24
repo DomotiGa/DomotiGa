@@ -142,6 +142,7 @@ ALTER TABLE settings_jsonrpc MODIFY COLUMN `maxconn` int(11) NOT NULL DEFAULT '0
 -- Update thermostat ids
 --
 
+ALTER TABLE thermostat_scenarii CHANGE COLUMN `id` `scenario_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE thermostat_heating CHANGE COLUMN `id` `heating_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE thermostat_constant CHANGE COLUMN `id` `constant_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE thermostat_schedule CHANGE COLUMN `scenario` `scenario_id` INT(11) UNSIGNED NOT NULL;
