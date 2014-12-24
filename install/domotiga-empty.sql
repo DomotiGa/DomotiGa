@@ -1349,7 +1349,7 @@ DROP TABLE IF EXISTS `scenes`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `scenes` (
-  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `scene_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `name` varchar(64) DEFAULT NULL,
   `log` tinyint(1) DEFAULT NULL,
@@ -1359,7 +1359,7 @@ CREATE TABLE `scenes` (
   `category` int(11) DEFAULT NULL,
   `location_id` int(11) DEFAULT NULL,
   `event_id` int(11) DEFAULT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`scene_id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

@@ -152,6 +152,12 @@ ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `heating` `heating_id` INT(1
 ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `constant` `constant_id` INT(11) UNSIGNED NOT NULL;
 
 --
+-- Update scene ids
+--
+
+ALTER TABLE scenes CHANGE COLUMN `id` `scene_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
 -- Add new Smartwares radiator valve devicetype (RFXComTRX433e with firmware >= 233)
 --
 
