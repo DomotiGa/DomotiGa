@@ -65,6 +65,7 @@ cp ../../DomotiGa3/.src/CNcid.class .
 cp ../../DomotiGa3/.src/CLGTV.class .
 cp ../../DomotiGa3/.src/CLIRC.class .
 cp ../../DomotiGa3/.src/CNMA.class .
+cp ../../DomotiGa3/.src/CNetworkDetect.class .
 cp ../../DomotiGa3/.src/COpenTherm.class .
 cp ../../DomotiGa3/.src/COpenWeatherMap.class .
 cp ../../DomotiGa3/.src/COpenZWave.class .
@@ -78,7 +79,6 @@ cp ../../DomotiGa3/.src/CPLCBUS.class .
 cp ../../DomotiGa3/.src/CPluginEntry.class .
 cp ../../DomotiGa3/.src/CPlugwise.class .
 cp ../../DomotiGa3/.src/CPioneer.class .
-cp ../../DomotiGa3/.src/CPing.class .
 cp ../../DomotiGa3/.src/CPushbullet.class .
 cp ../../DomotiGa3/.src/CPushover.class .
 cp ../../DomotiGa3/.src/CProwl.class .

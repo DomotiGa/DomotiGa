@@ -116,20 +116,22 @@ DROP PROCEDURE IF EXISTS sp_addcolumn;
 ALTER TABLE settings_rrdtool ADD COLUMN width int(11) NOT NULL DEFAULT '785' AFTER debug;
 ALTER TABLE settings_rrdtool ADD COLUMN height int(11) NOT NULL DEFAULT '120' AFTER width;
 
-
 --
 -- Move XML-RPC to plugin
 --
+
 INSERT INTO plugins (id, interface, protocols, name, type) values (91, 'XMLRPC', '', 'XMLRPC', 'class');
 
 --
 -- Move VideoServer to plugin
 --
+
 INSERT INTO plugins (id, interface, protocols, name, type) values (92, 'VideoServer', '', 'VideoServer', 'class');
 
 --
 -- Add SSL support to JSON-RPC
 --
+
 ALTER TABLE settings_jsonrpc ADD COLUMN `httpsport` INT(11) NOT NULL DEFAULT '0' AFTER `debug`, ADD COLUMN `httpenabled` TINYINT(1) NOT NULL DEFAULT '-1' AFTER `httpsport`, ADD COLUMN `httpsenabled` TINYINT(1) NOT NULL DEFAULT '0' AFTER `httpenabled`, ADD COLUMN `sslcertificate` VARCHAR(128) NULL DEFAULT NULL AFTER `httpsenabled`;
 
 UPDATE settings_jsonrpc SET sslcertificate = 'server.pm';
@@ -139,6 +141,8 @@ ALTER TABLE settings_jsonrpc MODIFY COLUMN `maxconn` int(11) NOT NULL DEFAULT '0
 --
 -- Update thermostat ids
 --
+
+ALTER TABLE thermostat_scenarii CHANGE COLUMN `id` `scenario_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE thermostat_heating CHANGE COLUMN `id` `heating_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE thermostat_constant CHANGE COLUMN `id` `constant_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE thermostat_schedule CHANGE COLUMN `scenario` `scenario_id` INT(11) UNSIGNED NOT NULL;
@@ -146,6 +150,80 @@ ALTER TABLE thermostat_schedule CHANGE COLUMN `heating` `heating_id` INT(11) UNS
 ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `scenario` `scenario_id` INT(11) UNSIGNED NOT NULL;
 ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `heating` `heating_id` INT(11) UNSIGNED NOT NULL;
 ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `constant` `constant_id` INT(11) UNSIGNED NOT NULL;
+
+--
+-- Update scene ids
+--
+
+ALTER TABLE scenes CHANGE COLUMN `id` `scene_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- Add new Smartwares radiator valve devicetype (RFXComTRX433e with firmware >= 233)
+--
+
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (665,'Smartwares Radiator Valve','Radiator valve 433.92Mhz','Smartwares','0x312abfg 1');
+
+UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss RollerTrol HastaNew HastaOld A-OKRF01 A-OKAC114 Meiantech ByronSX ByronMP SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagintrx WT TRC022 AOKE EuroDomest Smartwares' WHERE id = 35;
+
+--
+-- Added extra index to speed up queries
+--
+
+ALTER TABLE device_values_log ADD INDEX device_id (device_id);
+
+--
+-- Renamed plugin Ping to Network detect and added arp-scan functionality
+--
+
+ALTER TABLE settings_ping RENAME settings_networkdetect;
+ALTER TABLE settings_networkdetect ADD COLUMN enable_ping tinyint(1) NOT NULL DEFAULT '0' AFTER polltime;
+ALTER TABLE settings_networkdetect ADD COLUMN enable_arpscan tinyint(1) NOT NULL DEFAULT '0' AFTER enable_ping;
+UPDATE plugins SET interface = 'Network Interface' WHERE id=5;
+UPDATE plugins SET protocols = 'Ping Arp-Scan' WHERE id=5;
+UPDATE plugins SET name = 'NetworkDetect' WHERE id=5;
+
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (666,'Network Device Arp-Scan','Status On/Off','Arp-Scan','192.168.178.1 or e4:ce:8f:20:31:64');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (667,'Network Host Arp-Scan','Status Up/Down','Arp-Scan','192.168.178.1 or e4:ce:8f:20:31:64');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (668,'Mobile Device Arp-Scan','Status Home/Away','Arp-Scan','192.168.178.1 or e4:ce:8f:20:31:64');
+
+--
+-- Table structure for table `config_housemode`
+--
+
+DROP TABLE IF EXISTS `config_housemode`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `config_housemode` (
+  `housemode_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(64) DEFAULT NULL,
+  PRIMARY KEY (`housemode_id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `config_housemode`
+--
+
+LOCK TABLES `config_housemode` WRITE;
+/*!40000 ALTER TABLE `config_housemode` DISABLE KEYS */;
+INSERT INTO `config_housemode` VALUES (1,'normal'),(2,'work'),(3,'away'),(4,'vacation');
+/*!40000 ALTER TABLE `config_housemode` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Update tables to charset utf8
+--
+
+ALTER SCHEMA domotiga DEFAULT CHARACTER SET utf8;
+ALTER TABLE devices DEFAULT CHARACTER SET utf8;
+ALTER TABLE devices CHANGE COLUMN `name` `name` VARCHAR(64) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+ALTER TABLE devices CHANGE COLUMN `address` `address` VARCHAR(64) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+ALTER TABLE devices CHANGE COLUMN `onicon` `onicon` VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL; 
+ALTER TABLE devices CHANGE COLUMN `officon` `officon` VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL; 
+ALTER TABLE devices CHANGE COLUMN `dimicon` `dimicon` VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL; 
+ALTER TABLE devices CHANGE COLUMN `groups` `groups` VARCHAR(128) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+ALTER TABLE devices CHANGE COLUMN `batterystatus` `batterystatus` VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+ALTER TABLE devices CHANGE COLUMN `comments` `comments` TEXT CHARACTER SET 'utf8' NULL DEFAULT NULL;
 
 --
 -- Finally update to 1.0.020

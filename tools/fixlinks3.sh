@@ -55,6 +55,7 @@ ln -s ../../DomotiGa3/.src/CMQTT.class
 ln -s ../../DomotiGa3/.src/CMeteohub.class
 ln -s ../../DomotiGa3/.src/CMySensors.class
 ln -s ../../DomotiGa3/.src/CNcid.class
+ln -s ../../DomotiGa3/.src/CNetworkDetect.class
 ln -s ../../DomotiGa3/.src/CLGTV.class
 ln -s ../../DomotiGa3/.src/CLIRC.class
 ln -s ../../DomotiGa3/.src/CNMA.class
@@ -70,7 +71,6 @@ ln -s ../../DomotiGa3/.src/CPhilipsHue.class
 ln -s ../../DomotiGa3/.src/CPLCBUS.class
 ln -s ../../DomotiGa3/.src/CPluginEntry.class
 ln -s ../../DomotiGa3/.src/CPlugwise.class
-ln -s ../../DomotiGa3/.src/CPing.class
 ln -s ../../DomotiGa3/.src/CPioneer.class
 ln -s ../../DomotiGa3/.src/CPushover.class
 ln -s ../../DomotiGa3/.src/CPushbullet.class

@@ -1,7 +1,7 @@
 ' Gambas class file
 
 ' Description:
-' CPing.class
+' CNetworkDetect.class
 ' Support for Network related devices.
 
 ' Development Status:
@@ -15,15 +15,15 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public PluginName As String = "Ping"
-Public PluginFriendlyName As String = "Ping"
+Public PluginName As String = "NetworkDetect"
+Public PluginFriendlyName As String = "NetworkDetect"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
 
 Public KeyName As String
-Public LogLabel As String = "[Ping] "
+Public LogLabel As String = "[NetworkDetect] "
 Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
@@ -35,11 +35,15 @@ Public ErrorWhere As String
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
 Private $iPollTime As Integer
+Private $bEnablePing As Boolean
+Private $bEnableArpScan As Boolean
 Private $bDebug As Boolean
 
-Public tPing As Timer
+Public tPoll As Timer
 Private hPing As Process
+Private hArpScan As Process
 Private cOutput As New Collection
+Private sArpScanOutput As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -56,9 +60,11 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $iPollTime = cPl.Settings["polltime"]
+  $bEnablePing = cPl.Settings["enable_ping"]
+  $bEnableArpScan = cPl.Settings["enable_arpscan"]
   $bDebug = cPl.Settings["debug"]
 
-  InterfaceId = Devices.FindInterface("Ping Socket")
+  InterfaceId = Devices.FindInterface("Network Interface")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
     Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
@@ -78,8 +84,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
-  Try tPing.Stop
+  Try tPoll.Stop
   Try hPing = Null
+  Try hArpScan = Null
   IsRunning = False
 
 End
@@ -89,19 +96,102 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Run()
 
-  ' start poll timer for Ping
-  tPing = New Timer As "tPing"
-  tPing.Delay = $iPollTime * 1000 ' multiply for seconds
-  tPing.Start
+  ' start poll timer for Network Detect
+  tPoll = New Timer As "tPoll"
+  tPoll.Delay = $iPollTime * 1000 ' multiply for seconds
+  tPoll.Start
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' gets called at each timer event
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tPing_Timer()
+Public Sub tPoll_Timer()
 
-  CheckPing()
+  If $bEnablePing Then CheckPing()
+  If $bEnableArpScan Then NetworkArpScan()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' get arp-scan list
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub NetworkArpScan()
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking network with 'arp-scan -g -l'.")
+  hArpScan = Exec ["arp-scan", "-g", "-l"] For Read As "ArpScan"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read arp-scan output
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ArpScan_Read()
+
+  Dim sBuffer As String
+
+  sBuffer = Read #Last, -256
+  sArpScanOutput &= sBuffer
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse arp-scan output, return value 0 means ok, anything else is not run
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ArpScan_Kill()
+
+  Dim rResult As Result
+  Dim iDeviceType As Integer
+  Dim iFound As Boolean
+  Dim sStatus As String
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sArpScanOutput)
+
+  ' get all devices of devicetype arp-scan
+  rResult = Devices.FindDevicesForInterface(InterfaceId)
+  If rResult And If rResult.Available Then
+    For Each rResult
+      iDeviceType = Devices.FindDeviceTypeForDevice(rResult!id)
+      If iDeviceType < 666 Then Continue ' skip ping devices
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking '" & rResult!name & "' with address '" & rResult!address & "'.")
+      ' see if it is found in arp-scan output
+      iFound = IIf(InStr(sArpScanOutput, rResult!address), True, False)
+      Select iDeviceType
+        Case 666
+          If iFound Then
+            ' arp-scan successful
+            sStatus = ("On")
+          Else
+            ' not reachable
+            sStatus = ("Off")
+          Endif
+        Case 667
+          If iFound Then
+            ' arp-scan successful
+            sStatus = ("Up")
+          Else
+            ' not reachable
+            sStatus = ("Down")
+          Endif
+        Case 668
+          If iFound Then
+            ' arp-scan successful
+            sStatus = ("Home")
+          Else
+            ' not reachable
+            sStatus = ("Away")
+          Endif
+      End Select
+      ' debug output
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Device '" & rResult!name & "' is '" & sStatus & "'.")
+      ' find and update device
+      Devices.CheckFirstSeen(rResult!id)
+      Devices.ValueUpdate(rResult!id, 1, sStatus)
+
+    Next
+  Else
+    Main.WriteLog(LogLabel & "No Arp-Scan devices found in device table!")
+  Endif
 
 End
 
@@ -111,21 +201,18 @@ End
 Private Sub CheckPing()
 
   Dim rResult As Result
+  Dim iDeviceType As Integer
 
-  ' get all devices with this devicetype
+  ' get all devices of devicetype ping
   rResult = Devices.FindDevicesForInterface(InterfaceId)
-  If rResult Then
-    If rResult.Available Then
-      If rResult.Count >= 1 Then
-        For Each rResult
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking '" & rResult!name & "' with address '" & rResult!address & "'.")
-          ' try to fetch their index page
-          NetworkPing(rResult!id, rResult!address)
-        Next
-      Else
-        Main.WriteLog(LogLabel & "No Ping devices found in device table!")
-      Endif
-    Endif
+  If rResult And If rResult.Available Then
+    For Each rResult
+      iDeviceType = Devices.FindDeviceTypeForDevice(rResult!id)
+      If iDeviceType > 73 Then Continue ' skip arp-scan devices
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking '" & rResult!name & "' with address '" & rResult!address & "'.")
+      ' see if we can ping it
+      NetworkPing(rResult!id, rResult!address)
+    Next
   Else
     Main.WriteLog(LogLabel & "No Ping devices found in device table!")
   Endif
@@ -163,19 +250,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Ping_Kill()
 
-  Dim iDeviceId, iRc As Integer
+  Dim iDeviceId As Integer = Last.Tag
+  Dim iRc As Integer = Last.Value
   Dim sStatus, sOutput, sRTT As String
-
-  iDeviceId = Last.Tag
-  iRc = Last.Value
 
   If iDeviceId Then
     ' save ping output
     sOutput = cOutput[iDeviceId]
     cOutput.Remove(iDeviceId)
 
-    Select Devices.FindDeviceTypeDescriptionForDeviceId(iDeviceId)
-      Case "Status AIBO"
+    Select Devices.FindDeviceTypeForDevice(iDeviceId)
+      Case 3
         If iRc = 0 Then
           ' ping succesful
           sStatus = ("Awake")
@@ -183,7 +268,7 @@ Public Sub Ping_Kill()
           ' not reachable, unknown host etc.
           sStatus = ("Sleeping")
         Endif
-      Case "Status On/Off"
+      Case 72
         If iRc = 0 Then
           ' ping succesful
           sStatus = ("On")
@@ -191,7 +276,7 @@ Public Sub Ping_Kill()
           ' not reachable, unknown host etc.
           sStatus = ("Off")
         Endif
-      Case "Status Up/Down"
+      Case 73
         If iRc = 0 Then
           ' ping succesful
           sStatus = ("Up")
@@ -214,7 +299,7 @@ Public Sub Ping_Kill()
   Endif
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: Parsing Ping Result: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: Parsing Ping Result: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
