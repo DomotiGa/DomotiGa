@@ -211,6 +211,21 @@ INSERT INTO `config_housemode` VALUES (1,'normal'),(2,'work'),(3,'away'),(4,'vac
 UNLOCK TABLES;
 
 --
+-- Update tables to charset utf8
+--
+
+ALTER SCHEMA domotiga DEFAULT CHARACTER SET utf8;
+ALTER TABLE devices DEFAULT CHARACTER SET utf8;
+ALTER TABLE devices CHANGE COLUMN `name` `name` VARCHAR(64) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+ALTER TABLE devices CHANGE COLUMN `address` `address` VARCHAR(64) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+ALTER TABLE devices CHANGE COLUMN `onicon` `onicon` VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL; 
+ALTER TABLE devices CHANGE COLUMN `officon` `officon` VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL; 
+ALTER TABLE devices CHANGE COLUMN `dimicon` `dimicon` VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL; 
+ALTER TABLE devices CHANGE COLUMN `groups` `groups` VARCHAR(128) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+ALTER TABLE devices CHANGE COLUMN `batterystatus` `batterystatus` VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+ALTER TABLE devices CHANGE COLUMN `comments` `comments` TEXT CHARACTER SET 'utf8' NULL DEFAULT NULL;
+
+--
 -- Finally update to 1.0.020
 --
 
