@@ -259,6 +259,30 @@ LOCK TABLES `conditions` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `config_housemode`
+--
+
+DROP TABLE IF EXISTS `config_housemode`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `config_housemode` (
+  `housemode_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(64) DEFAULT NULL,
+  PRIMARY KEY (`housemode_id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `config_housemode`
+--
+
+LOCK TABLES `config_housemode` WRITE;
+/*!40000 ALTER TABLE `config_housemode` DISABLE KEYS */;
+INSERT INTO `config_housemode` VALUES (1,'normal'),(2,'work'),(3,'away'),(4,'vacation');
+/*!40000 ALTER TABLE `config_housemode` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `contacts`
 --
 
