@@ -172,6 +172,21 @@ UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI D
 ALTER TABLE device_values_log ADD INDEX device_id (device_id);
 
 --
+-- Renamed plugin Ping to Network detect and added arp-scan functionality
+--
+
+ALTER TABLE settings_ping RENAME settings_networkdetect;
+ALTER TABLE settings_networkdetect ADD COLUMN enable_ping tinyint(1) NOT NULL DEFAULT '0' AFTER polltime;
+ALTER TABLE settings_networkdetect ADD COLUMN enable_arpscan tinyint(1) NOT NULL DEFAULT '0' AFTER enable_ping;
+UPDATE plugins SET interface = 'Network Interface' WHERE id=5;
+UPDATE plugins SET protocols = 'Ping Arp-Scan' WHERE id=5;
+UPDATE plugins SET name = 'NetworkDetect' WHERE id=5;
+
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (666,'Network Device Arp-Scan','Status On/Off','Arp-Scan','192.168.178.1 or e4:ce:8f:20:31:64');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (667,'Network Host Arp-Scan','Status Up/Down','Arp-Scan','192.168.178.1 or e4:ce:8f:20:31:64');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (668,'Mobile Device Arp-Scan','Status Home/Away','Arp-Scan','192.168.178.1 or e4:ce:8f:20:31:64');
+
+--
 -- Finally update to 1.0.020
 --
 
