@@ -359,7 +359,8 @@ CREATE TABLE `device_values_log` (
   `valuenum` int(11) unsigned NOT NULL,
   `value` text,
   `lastchanged` datetime DEFAULT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `device_id` (`device_id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
