@@ -49,6 +49,8 @@ Private tUpdateLights As Timer
 Private ipaddress As String
 Private sApiUrl As String
 Private sAuthorizedApiUrl As String
+Private sApiVersion As String
+Private sRequiredApiVersion As String = "1.3.0"  ' Version 1.3.0 or more
 
 Private hGetApi As HttpClient
 Private hPostApi As HttpClient
@@ -63,17 +65,17 @@ Private cJsonData As New Collection
 ' - Any other code per Class
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
-
+  
   KeyName = cPl.KeyName
   Instance = cPl.Instance
   If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
-
+  
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $sUsername = cPl.Settings["username"]
   $iPolltime = cPl.Settings["polltime"]
   $bDebug = cPl.Settings["debug"]
-
+  
   InterfaceId = Devices.FindInterface("Philips Hue Interface")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
@@ -81,37 +83,37 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     IsRunning = False
     Return
   Endif
-
+  
   ' Start the discover timer after 5 seconds to allow for start up
   tDiscoverHue = New Timer As "DiscoverHue"
   tDiscoverHue.Delay = 5000
   tDiscoverHue.Start
-
+  
   tUpdateLights = New Timer As "UpdateLights"
   tUpdateLights.Delay = $iPolltime * 1000
-
+  
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory sub for EACH Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
-
+  
   tUpdateLights.Stop
   IsRunning = False
-
+  
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' control devices
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sCmd As String)
-
+  
   Dim cContent As New Collection
   Dim aDim As String[]
   Dim iDim As Integer
   Dim sHdr As New String[]
-
+  
   sCmd = UCase(sCmd)
   If InStr(sCmd, "ON") Then
     cContent.Add(True, "on")
@@ -130,7 +132,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
       Endif
     Endif
   Endif
-
+  
   ' use httpclient to post json
   sHdr.Add("Expect:")
   hPutApi = New HttpClient As "hPutApi"
@@ -139,52 +141,47 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   hPutApi.TimeOut = 10
   hPutApi.Async = True
   hPutApi.Put("application/json", JSON.Encode(cContent), sHdr)
-
+  
 End
 
 Public Sub DiscoverHue_Timer()
-
+  
   tDiscoverHue.Stop
-
+  
   If Not Plugin.IsPluginEnabled("DeviceDiscover", 1) Then
     IsRunning = False
     Main.WriteLog(LogLabel & PluginFriendlyName & " stopping, Device Discover plugin is not running.")
     Return
   Endif
-
+  
   Try ipaddress = Plugin.GetPluginObject("DeviceDiscover", 1).Interface.FindDeviceWhereModelNameIsLike("Philips hue bridge")
-
+  
   If Len(ipaddress) = 0 Then
     ' TODO: Limit amount of tries
     tDiscoverHue.Start
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " brige found with ipadress: " & ipaddress)
     sApiUrl = "http://" & ipaddress & "/api"
-
-    If Len($sUsername) > 0 Then
-      tUpdateLights.Start
-    Else
-      tCreateUsername = New Timer As "CreateUsername"
-      tCreateUsername.Delay = 5000
-      tCreateUsername.Start
-    Endif
-
+    
+    ' Determine if username is correct and the api version 
+    checkAuthenticationAndApi()
+    
     ' Initialize
     IsRunning = True
-
+    
   Endif
-
+  
 End
 
 Public Sub CreateUsername_Timer()
-
+  
   Dim cContent As Collection
-
+  
   Main.WriteLog(LogLabel & PluginFriendlyName & " getting acces, please push the button on the bridge!")
-
+  
   cContent = New Collection
   cContent.Add("DomotiGa", "devicetype")
-
+  
   ' use httpclient to post json
   hPostApi = New HttpClient As "hPostApi"
   hPostApi.URL = sApiUrl
@@ -192,42 +189,59 @@ Public Sub CreateUsername_Timer()
   hPostApi.TimeOut = 10
   hPostApi.Async = True
   hPostApi.Post("application/json", JSON.Encode(cContent))
-
+  
 End
 
 Public Sub UpdateLights_Timer()
-
-  sAuthorizedApiUrl = sApiUrl & "/" & $sUsername
-
+  
   hGetApi = New HttpClient As "hGetApi"
-  hGetApi.URL = sAuthorizedApiUrl
+  hGetApi.URL = sAuthorizedApiUrl & "/lights"
   hGetApi.Tag = getRandomId()
   hGetApi.TimeOut = 10
   hGetApi.Async = True
   hGetApi.Get()
+  
+End
 
+Private Function checkAuthenticationAndApi()
+  
+  If Len($sUsername) > 0 Then
+    sAuthorizedApiUrl = sApiUrl & "/" & $sUsername
+    
+    hGetApi = New HttpClient As "hGetApi"
+    hGetApi.URL = sAuthorizedApiUrl & "/config"
+    hGetApi.Tag = getRandomId()
+    hGetApi.TimeOut = 10
+    hGetApi.Async = True
+    hGetApi.Get()
+  Else
+    tCreateUsername = New Timer As "CreateUsername"
+    tCreateUsername.Delay = 5000
+    tCreateUsername.Start
+  Endif
+  
 End
 
 Private Function getRandomId() As Integer
-
+  
   Dim iId As Integer
-
+  
   Randomize
   Do
     iId = Int(Rnd(1, 32768))
   Loop Until Not cJsonData.Exist(iId)
-
+  
   Return iId
-
+  
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' get json data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub hGetApi_Read()
-
+  
   Dim sData, sBuffer As String
-
+  
   If Lof(Last) Then sBuffer = Read #Last, Lof(Last)
   If cJsonData[Last.Tag] Then
     sData = cJsonData[Last.Tag] & sBuffer
@@ -235,27 +249,27 @@ Public Sub hGetApi_Read()
     sData = sBuffer
   Endif
   cJsonData[Last.Tag] = sData
-
+  
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' parse and save json data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub hGetApi_Finished()
-
+  
   Dim sBuffer As String
   Dim iId As Integer
   Dim cData As Collection
   Dim cDataArray As Collection[]
-
+  
   Select Last.Code
     Case 200
       iId = Last.Tag
       sBuffer = cJsonData[iId] 
       cJsonData.Remove(iId)
-
+      
       If $bDebug Then Main.WriteDebugLog(LogLabel & "Received json: '" & sBuffer & "'")
-
+      
       If Len(sBuffer) Then
         Try cDataArray = JSON.Decode(sBuffer)
         If Error 
@@ -270,44 +284,23 @@ Public Sub hGetApi_Finished()
       If $bDebug Then Main.WriteLog(LogLabel & PluginFriendlyName & " " & Last.Code & " error occured while trying to get JSON data!")
   End Select
   Last.Close
-
+  
 End
 
 Public Sub hGetApi_Error()
-
+  
   If $bDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & Last.Status)
   Last.Close
-
-End
-
-Private Function parseGetJson(cData As Collection, sUrl As String)
-
-  ' handle errors from posted data
-  If cData.Exist("error") Then
-    If cData["error"].Exist("type") Then
-      Select cData["error"]["type"]
-        Case 1
-          IsRunning = False
-          Main.WriteDebugLog(LogLabel & PluginFriendlyName & " unauthorized user")
-        Case Else
-          Main.WriteDebugLog(LogLabel & PluginFriendlyName & " json form post url(" & sUrl & ") errorcode: " & cData["error"]["type"])
-      End Select
-    Endif
-  Endif
-
-  If cData.Exist("lights") Then
-    proccessLightsInfo(cData["lights"])
-  Endif
-
+  
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' get json data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub hPostApi_Read()
-
+  
   Dim sData, sBuffer As String
-
+  
   If Lof(Last) Then sBuffer = Read #Last, Lof(Last)
   If cJsonData[Last.Tag] Then
     sData = cJsonData[Last.Tag] & sBuffer
@@ -315,19 +308,19 @@ Public Sub hPostApi_Read()
     sData = sBuffer
   Endif
   cJsonData[Last.Tag] = sData
-
+  
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' check if json post ok
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub hPostApi_Finished()
-
+  
   Dim sBuffer As String
   Dim iId As Integer
   Dim cData As Collection
   Dim cDataArray As Collection[]
-
+  
   Select Last.Code
     Case 200
       If $bDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " JSON data posted!")
@@ -348,83 +341,19 @@ Public Sub hPostApi_Finished()
       If $bDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & Last.Code & " error occured while trying to get JSON data!")
   End Select
   Last.Close
-
+  
 End
 
 Public Sub hPostApi_Error()
-
+  
   If $bDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " error posting JSON data: " & Last.Status)
-
+  
 End
 
-Private Function parsePostedJson(cData As Collection, sUrl As String)
-
-  Dim rResult As Result
-
-  ' Don't continue if data is completely empty
-  If cData = Null Then Return
-
-  ' handle errors from posted data
-  If cData.Exist("error") Then
-    If cData["error"].Exist("type") Then
-      Select cData["error"]["type"]
-        Case 101
-          tCreateUsername.Start
-        Case Else
-          Main.WriteDebugLog(LogLabel & PluginFriendlyName & " json form post url(" & sUrl & ") errorcode: " & cData["error"]["type"])
-      End Select
-    Endif
-  Endif
-
-  If cData.Exist("success") Then
-    If cData["success"].Exist("username") Then
-      tCreateUsername.Stop
-      $sUsername = cData["success"]["username"]
-      sAuthorizedApiUrl = sApiUrl & "/" & $sUsername
-      Try rResult = Main.hDB.Exec("UPDATE settings_philipshue SET username = &1 WHERE id = &2", $sUsername, Instance)
-      If Error Then
-        Main.WriteLog(LogLabel & PluginFriendlyName & " cannot save username")
-        IsRunning = False
-      Else
-        Main.WriteLog(LogLabel & PluginFriendlyName & " created user!")
-        tUpdateLights.Start
-      Endif
-    Endif
-  Endif
-
-End
-
-Private Function proccessLightsInfo(cLights As Collection)
-
-  Dim cLight As Collection
-  Dim iDeviceId, iBri As Integer
-  Dim sValue As String
-
-  For Each cLight In cLights
-    iDeviceId = Devices.Find(Instance, cLights.Key, InterfaceId, cLight["modelid"])
-    If iDeviceId > 0 Then
-      If cLight["state"]["on"] Then
-        '  0 is not off, 255 max
-        iBri = cLight["state"]["bri"]
-        svalue = "Dim " & Format((100 * iBri / 255), "#")
-      Else
-        sValue = "Off"
-      Endif
-      Devices.ValueUpdate(iDeviceId, 1, sValue)
-      'Devices.ValueUpdate(iDeviceId, 2, "#ffffff")
-      'Devices.ValueUpdate(iDeviceId, 3, IIf(cLight["state"]["reachable"], "Online", "Offline"))
-    Endif
-  Next
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' get json data
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub hPutApi_Read()
-
+  
   Dim sData, sBuffer As String
-
+  
   If Lof(Last) Then sBuffer = Read #Last, Lof(Last)
   If cJsonData[Last.Tag] Then
     sData = cJsonData[Last.Tag] & sBuffer
@@ -432,19 +361,16 @@ Public Sub hPutApi_Read()
     sData = sBuffer
   Endif
   cJsonData[Last.Tag] = sData
-
+  
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' parse and save json data
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub hPutApi_Finished()
-
+  
   Dim sBuffer As String
   Dim iId As Integer
   Dim cData As Collection
   Dim cDataArray As Collection[]
-
+  
   Select Last.Code
     Case 200
       iId = Last.Tag
@@ -464,18 +390,85 @@ Public Sub hPutApi_Finished()
       If $bDebug Then Main.WriteLog(LogLabel & PluginFriendlyName & " " & Last.Code & " error occured while trying to put JSON data!")
   End Select
   Last.Close
-
+  
 End
 
 Public Sub hPutApi_Error()
-
+  
   If $bDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " " & Last.Status)
   Last.Close
+  
+End
 
+' ~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse data from bridge
+' ~~~~~~~~~~~~~~~~~~~~~~~~
+
+Private Function parseGetJson(cData As Collection, sUrl As String)
+  
+  ' handle errors from posted data
+  If cData.Exist("error") Then
+    If cData["error"].Exist("type") Then
+      Select cData["error"]["type"]
+        Case 1
+          sAuthorizedApiUrl = Null
+          IsRunning = False
+          Main.WriteDebugLog(LogLabel & PluginFriendlyName & " unauthorized user")
+        Case Else
+          Main.WriteDebugLog(LogLabel & PluginFriendlyName & " json form post url(" & sUrl & ") errorcode: " & cData["error"]["type"])
+      End Select
+    Endif
+  Endif
+  
+  Select Case Replace$(sUrl, sAuthorizedApiUrl, "")
+    Case "/lights"
+      proccessLightsInfo(cData)
+    Case "/config"
+      proccessConfig(cData)
+    Case Else
+      ' URL not found
+  End Select
+  
+End
+
+Private Function parsePostedJson(cData As Collection, sUrl As String)
+  
+  Dim rResult As Result
+  
+  ' Don't continue if data is completely empty
+  If cData = Null Then Return
+  
+  ' handle errors from posted data
+  If cData.Exist("error") Then
+    If cData["error"].Exist("type") Then
+      Select cData["error"]["type"]
+        Case 101
+          checkAuthenticationAndApi()
+        Case Else
+          Main.WriteDebugLog(LogLabel & PluginFriendlyName & " json form post url(" & sUrl & ") errorcode: " & cData["error"]["type"])
+      End Select
+    Endif
+  Endif
+  
+  If cData.Exist("success") Then
+    If cData["success"].Exist("username") Then
+      tCreateUsername.Stop
+      $sUsername = cData["success"]["username"]
+      Try rResult = Main.hDB.Exec("UPDATE settings_philipshue SET username = &1 WHERE id = &2", $sUsername, Instance)
+      If Error Then
+        Main.WriteLog(LogLabel & PluginFriendlyName & " cannot save username")
+        IsRunning = False
+      Else
+        Main.WriteLog(LogLabel & PluginFriendlyName & " created user!")
+        checkAuthenticationAndApi()
+      Endif
+    Endif
+  Endif
+  
 End
 
 Private Function parsePutJson(cData As Collection, sUrl As String)
-
+  
   ' handle errors from posted data
   If cData.Exist("error") Then
     If cData["error"].Exist("type") Then
@@ -485,9 +478,115 @@ Private Function parsePutJson(cData As Collection, sUrl As String)
       End Select
     Endif
   Endif
-
+  
   If cData.Exist("success") Then
     ' Do nothing
   Endif
+  
+End
 
+' ~~~~~~~~~~~~~~~~~~~~~~~~
+' Proccess data from bridge
+' ~~~~~~~~~~~~~~~~~~~~~~~~
+
+Private Function proccessLightsInfo(cLights As Collection)
+  
+  Dim cLight As Collection
+  Dim iDeviceId, iBri As Integer
+  Dim sValue, sColor, sReachable As String
+  
+  For Each cLight In cLights
+    iDeviceId = Devices.Find(Instance, cLights.Key, InterfaceId, cLight["modelid"], cLight["name"])
+    If iDeviceId > 0 Then
+      sReachable = IIf(cLight["state"]["reachable"], "Online", "Offline")
+      If cLight["state"]["on"] Then
+        '  0 is not off, 255 max
+        iBri = cLight["state"]["bri"]
+        svalue = "Dim " & Format((100 * iBri / 255), "#")
+      Else
+        sValue = "Off"
+      Endif
+      Devices.ValueUpdate(iDeviceId, 1, sValue)
+      'Devices.ValueUpdate(iDeviceId, 2, "#ffffff")
+      'Devices.ValueUpdate(iDeviceId, 3, sReachable)
+    Endif
+  Next
+  
+End
+
+Private Function proccessConfig(cData As Collection)
+  
+  If cData.Exist("apiversion")
+    sApiVersion = cData["apiversion"]
+  Else 
+    sApiVersion = "1.2.0" ' Included since 1.2.1 
+  Endif
+  
+  If Val(Replace(sApiVersion, ".", "")) >= Val(Replace(sRequiredApiVersion, ".", "")) Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " required bridge version: " & sRequiredApiVersion & " currently using: " & sApiVersion)
+    ' Config correct, start with updating lights
+    tUpdateLights.Start
+  Else
+    Main.WriteLog(LogLabel & PluginFriendlyName & " required bridge version: " & sRequiredApiVersion & " currently using: " & sApiVersion & ", please upgrade your bridge.")
+    StopPlugin()
+  Endif
+  
+End
+
+' ~~~~~~~~~~~~~~~~~~~~~~~~
+' Internal info about all types of hue lights
+' ~~~~~~~~~~~~~~~~~~~~~~~~
+
+Private Function getDeviceInfo(sModelId As String) As JSONCollection
+  
+  Dim cInfo As New JSONCollection
+  ' typeId As Integer of DomotiGa database
+  ' productName As String
+  ' deviceId As Integer, Type from hex
+  '   0x0100 (256) Dimmable Light
+  '   0x0200 (512) Color Light
+  '   0x0210 (528) Extended Color Light
+  ' colorGamut As String
+  '   "" no
+  '   A
+  '   B
+  ' friendlyName As String
+  ' friendOfHue As Boolean
+  
+  Select sModelId
+    Case "LCT001"
+      cInfo.Add(373, "typeId")
+      cInfo.Add("Hue bulb A19", "productName")
+      cInfo.Add(528, "deviceId")
+      cInfo.Add("B", "colorGamut")
+      cInfo.Add("Hue Lamp", "friendlyName")
+      cInfo.Add(True, "friendOfHue")
+    ' Case "LCT002"
+    ' Case "LCT003"
+    ' Case "LST001"
+    ' Case "LLC010"
+    ' Case "LLC011"
+    ' Case "LLC012"
+    ' Case "LLC006"
+    ' Case "LLC007"
+    ' Case "LLC013"
+    Case "LWB004"
+      cInfo.Add(308, "typeId") 
+      cInfo.Add("Hue A19 Lux", "productName")
+      cInfo.Add(256, "deviceId")
+      cInfo.Add("", "colorGamut")
+      cInfo.Add("LUX Lamp", "friendlyName")
+      cInfo.Add(True, "friendOfHue")
+    ' Case "LLM001"
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & PluginFriendlyName & " modelId not found: " & sModelId)
+      cInfo.Add(0, "typeId")
+      cInfo.Add("", "productName")
+      cInfo.Add(0, "deviceId")
+      cInfo.Add("", "colorGamut")
+      cInfo.Add("", "friendlyName")
+      cInfo.Add(False, "friendOfHue")
+  End Select
+
+  Return cInfo
 End
