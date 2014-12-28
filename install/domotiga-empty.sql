@@ -3121,6 +3121,7 @@ CREATE TABLE `settings_networkdetect` (
   `polltime` int(11) DEFAULT NULL,
   `enable_ping` tinyint(1) NOT NULL DEFAULT '0',
   `enable_arpscan` tinyint(1) NOT NULL DEFAULT '0',
+  `timeout` int(11) NOT NULL DEFAULT 100,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=latin1;
@@ -3132,7 +3133,7 @@ CREATE TABLE `settings_networkdetect` (
 
 LOCK TABLES `settings_networkdetect` WRITE;
 /*!40000 ALTER TABLE `settings_networkdetect` DISABLE KEYS */;
-INSERT INTO `settings_networkdetect` VALUES (0,0,300,0,0,0),(1,0,300,0,0,0);
+INSERT INTO `settings_networkdetect` VALUES (0,0,300,0,0,100,0),(1,0,300,0,0,100,0);
 /*!40000 ALTER TABLE `settings_networkdetect` ENABLE KEYS */;
 UNLOCK TABLES;
 
