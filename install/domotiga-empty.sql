@@ -720,7 +720,7 @@ CREATE TABLE `events_actions` (
   `order` int(11) NOT NULL,
   `delay` int(11) NOT NULL,
   PRIMARY KEY (`event`,`order`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -744,7 +744,7 @@ CREATE TABLE `floors` (
   `name` varchar(32) DEFAULT NULL,
   `image` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`floor`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -769,7 +769,7 @@ CREATE TABLE `gas_usage` (
   `stamp` datetime DEFAULT NULL,
   `consumption` bigint(20) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -794,7 +794,7 @@ CREATE TABLE `globalvars` (
   `value` text,
   `datatype` smallint(6) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=22 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=22 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -842,7 +842,7 @@ CREATE TABLE `graph_data` (
   `ds_id` int(11) NOT NULL,
   PRIMARY KEY (`id`),
   KEY `graph_id` (`graph_id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -885,7 +885,7 @@ CREATE TABLE `graphs` (
   `grid_type` varchar(32) NOT NULL,
   `groups` varchar(128) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -908,7 +908,7 @@ CREATE TABLE `groups` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=22 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=22 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -932,7 +932,7 @@ CREATE TABLE `locations` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -956,7 +956,7 @@ CREATE TABLE `macros` (
   `name` varchar(64) DEFAULT NULL,
   `formula` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -982,7 +982,7 @@ CREATE TABLE `markers` (
   `lat` double DEFAULT NULL,
   `lng` double DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1010,7 +1010,7 @@ CREATE TABLE `menu` (
   `icon` varchar(32) DEFAULT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=27 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=27 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1034,7 +1034,7 @@ CREATE TABLE `menu_names` (
   `id` int(11) NOT NULL,
   `name` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1061,7 +1061,7 @@ CREATE TABLE `newsfeeds` (
   `description` text,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1085,7 +1085,7 @@ CREATE TABLE `notify` (
   `keyword` varchar(64) DEFAULT NULL,
   `type` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1108,7 +1108,7 @@ CREATE TABLE `notifytypes` (
   `type` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`type`)
-) ENGINE=MyISAM AUTO_INCREMENT=9 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=9 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1135,7 +1135,7 @@ CREATE TABLE `plugins` (
   `name` varchar(32) NOT NULL,
   `type` varchar(32) NOT NULL DEFAULT 'class',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=90 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=90 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1161,7 +1161,7 @@ CREATE TABLE `power_exported` (
   `stamp` datetime DEFAULT NULL,
   `consumption` bigint(20) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1186,7 +1186,7 @@ CREATE TABLE `power_usage` (
   `stamp` datetime DEFAULT NULL,
   `consumption` bigint(20) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1209,7 +1209,7 @@ CREATE TABLE `remarks_fullmoon` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=7 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=7 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1233,7 +1233,7 @@ CREATE TABLE `remarks_humid` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=24 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=24 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1257,7 +1257,7 @@ CREATE TABLE `remarks_personal` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=45 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=45 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1281,7 +1281,7 @@ CREATE TABLE `remarks_plants` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=30 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=30 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1305,7 +1305,7 @@ CREATE TABLE `remarks_tags` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=1144 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=1144 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1329,7 +1329,7 @@ CREATE TABLE `remarks_tempbelow5` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=16 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=16 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1353,7 +1353,7 @@ CREATE TABLE `remarks_tempbelowmin5` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `text` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=17 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=17 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1385,7 +1385,7 @@ CREATE TABLE `scenes` (
   `location_id` int(11) DEFAULT NULL,
   `event_id` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1412,7 +1412,7 @@ CREATE TABLE `security` (
   `lcd_line1` varchar(32) DEFAULT NULL,
   `lcd_line2` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4451,7 +4451,7 @@ CREATE TABLE `stock` (
   PRIMARY KEY (`stockid`),
   UNIQUE KEY `eanid` (`ean`),
   KEY `nameid` (`name`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4614,7 +4614,7 @@ CREATE TABLE `trafficfeeds` (
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `type` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4644,7 +4644,7 @@ CREATE TABLE `triggers` (
   `param4` text,
   `param5` text,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4675,7 +4675,7 @@ CREATE TABLE `tv_categories` (
   `FK_Users` int(11) NOT NULL,
   `IsUpdated` tinyint(4) NOT NULL,
   PRIMARY KEY (`RecID`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4736,7 +4736,7 @@ CREATE TABLE `tv_programs` (
   `SubCategoryName` varchar(50) NOT NULL,
   `CreationDate` char(12) NOT NULL,
   `FK_Users` int(11) NOT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4764,7 +4764,7 @@ CREATE TABLE `tv_subcategories` (
   `FK_Users` int(11) NOT NULL,
   `IsUpdated` tinyint(4) NOT NULL,
   PRIMARY KEY (`RecID`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4794,7 +4794,7 @@ CREATE TABLE `users` (
   `emailaddress` varchar(32) DEFAULT NULL,
   `cookie` varchar(64) DEFAULT '',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=5 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=5 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4818,7 +4818,7 @@ CREATE TABLE `version` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `db` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM AUTO_INCREMENT=66 DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM AUTO_INCREMENT=66 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4844,7 +4844,7 @@ CREATE TABLE `water_usage` (
   `stamp` datetime DEFAULT NULL,
   `consumption` bigint(20) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -4871,7 +4871,7 @@ CREATE TABLE `weatherfeeds` (
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `type` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
