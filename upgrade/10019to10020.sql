@@ -469,6 +469,8 @@ ALTER TABLE thermostat_schedule DEFAULT CHARACTER SET utf8;
 ALTER TABLE thermostat_schedule CHANGE COLUMN `description` `description` TEXT CHARACTER SET 'utf8' NULL DEFAULT NULL;
 ALTER TABLE thermostat_schedule_entry DEFAULT CHARACTER SET utf8;
 
+INSERT INTO plugins (interface, protocols, name) VALUES ("Wirelesstags Interface", "Wirelesstags", "Wirelesstags");
+
 --
 -- Finally update to 1.0.020
 --
