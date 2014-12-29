@@ -1392,7 +1392,7 @@ DROP TABLE IF EXISTS `scenes`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `scenes` (
-  `scene_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `name` varchar(64) DEFAULT NULL,
   `log` tinyint(1) DEFAULT NULL,
@@ -1402,7 +1402,7 @@ CREATE TABLE `scenes` (
   `category` int(11) DEFAULT NULL,
   `location_id` int(11) DEFAULT NULL,
   `event_id` int(11) DEFAULT NULL,
-  PRIMARY KEY (`scene_id`)
+  PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=10 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -4490,12 +4490,12 @@ DROP TABLE IF EXISTS `thermostat_constant`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `thermostat_constant` (
-  `constant_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(64) DEFAULT NULL,
   `value` decimal(6,2) DEFAULT NULL,
   `description` text,
   `color` int(11) NOT NULL,
-  PRIMARY KEY (`constant_id`)
+  PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -4516,7 +4516,7 @@ DROP TABLE IF EXISTS `thermostat_heating`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `thermostat_heating` (
-  `heating_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(64) DEFAULT NULL,
   `sensor` int(11) unsigned NOT NULL,
   `device` int(11) unsigned DEFAULT NULL,
@@ -4530,7 +4530,7 @@ CREATE TABLE `thermostat_heating` (
   `regulatorOffsetTop` float unsigned DEFAULT NULL,
   `secondary` tinyint(1) DEFAULT NULL,
   `description` text,
-  PRIMARY KEY (`heating_id`)
+  PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -4551,10 +4551,10 @@ DROP TABLE IF EXISTS `thermostat_scenarii`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `thermostat_scenarii` (
-  `scenario_id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(64) DEFAULT NULL,
   `description` text,
-  PRIMARY KEY (`scenario_id`)
+  PRIMARY KEY (`id`)
 ) ENGINE=MyISAM AUTO_INCREMENT=4 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

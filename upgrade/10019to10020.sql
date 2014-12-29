@@ -142,20 +142,11 @@ ALTER TABLE settings_jsonrpc MODIFY COLUMN `maxconn` int(11) NOT NULL DEFAULT '0
 -- Update thermostat ids
 --
 
-ALTER TABLE thermostat_scenarii CHANGE COLUMN `id` `scenario_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
-ALTER TABLE thermostat_heating CHANGE COLUMN `id` `heating_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
-ALTER TABLE thermostat_constant CHANGE COLUMN `id` `constant_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 ALTER TABLE thermostat_schedule CHANGE COLUMN `scenario` `scenario_id` INT(11) UNSIGNED NOT NULL;
 ALTER TABLE thermostat_schedule CHANGE COLUMN `heating` `heating_id` INT(11) UNSIGNED NOT NULL;
 ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `scenario` `scenario_id` INT(11) UNSIGNED NOT NULL;
 ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `heating` `heating_id` INT(11) UNSIGNED NOT NULL;
 ALTER TABLE thermostat_schedule_entry CHANGE COLUMN `constant` `constant_id` INT(11) UNSIGNED NOT NULL;
-
---
--- Update scene ids
---
-
--- ALTER TABLE scenes CHANGE COLUMN `id` `scene_id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
 -- Add new Smartwares radiator valve devicetype (RFXComTRX433e with firmware >= 233)
