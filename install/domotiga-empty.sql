@@ -1470,7 +1470,7 @@ CREATE TABLE `settings_asterisk` (
   `password` varchar(64) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1501,9 +1501,9 @@ CREATE TABLE `settings_astro` (
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   `temperature` varchar(6) DEFAULT NULL,
   `currency` varchar(6) DEFAULT NULL,
-  `dst` tinyint(1) DEFAULT NULL,
+  `dst` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1531,7 +1531,7 @@ CREATE TABLE `settings_bluetooth` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1558,7 +1558,7 @@ CREATE TABLE `settings_broadcastudp` (
   `targetip` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1593,7 +1593,7 @@ CREATE TABLE `settings_bwiredmap` (
   `pushtime` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1620,10 +1620,10 @@ CREATE TABLE `settings_callerid` (
   `areacode` varchar(16) DEFAULT NULL,
   `prefixnational` varchar(16) DEFAULT NULL,
   `prefixinternational` varchar(16) DEFAULT NULL,
-  `autocreatecontacts` tinyint(1) DEFAULT NULL,
+  `autocreatecontacts` tinyint(1) NOT NULL DEFAULT '0',
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1653,7 +1653,7 @@ CREATE TABLE `settings_conrad8relay` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1679,10 +1679,10 @@ CREATE TABLE `settings_ctx35` (
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `globalx10` tinyint(1) DEFAULT NULL,
+  `globalx10` tinyint(1) NOT NULL DEFAULT '0',
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1706,7 +1706,7 @@ CREATE TABLE `settings_cul` (
   `id` int(11) NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
-  `tcpport` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
@@ -1714,7 +1714,7 @@ CREATE TABLE `settings_cul` (
   `fhtid` varchar(32) DEFAULT '0000',
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1723,7 +1723,7 @@ CREATE TABLE `settings_cul` (
 
 LOCK TABLES `settings_cul` WRITE;
 /*!40000 ALTER TABLE `settings_cul` DISABLE KEYS */;
-INSERT INTO `settings_cul` VALUES (0,0,'192.168.178.18','2323','tcp','/dev/ACM0','38400',1,'0000',0),(1,0,'192.168.178.18','2323','tcp','/dev/ACM0','38400',3,'0000',0);
+INSERT INTO `settings_cul` VALUES (0,0,'192.168.178.18',2323,'tcp','/dev/ACM0','38400',1,'0000',0),(1,0,'192.168.178.18',2323,'tcp','/dev/ACM0','38400',3,'0000',0);
 /*!40000 ALTER TABLE `settings_cul` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -1741,7 +1741,7 @@ CREATE TABLE `settings_currentcost` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -1771,7 +1771,7 @@ CREATE TABLE `settings_denon` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
