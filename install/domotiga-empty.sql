@@ -2114,7 +2114,7 @@ CREATE TABLE `settings_gps` (
   `baudrate` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2203,7 +2203,7 @@ CREATE TABLE `settings_iport` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2233,7 +2233,7 @@ CREATE TABLE `settings_ipx800` (
   `poll` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2259,7 +2259,7 @@ CREATE TABLE `settings_irman` (
   `serialport` varchar(128) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2286,7 +2286,7 @@ CREATE TABLE `settings_irtrans` (
   `tcpport` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2313,7 +2313,7 @@ CREATE TABLE `settings_iviewer` (
   `password` varchar(64) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2340,7 +2340,7 @@ CREATE TABLE `settings_jeelabs` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2403,7 +2403,7 @@ CREATE TABLE `settings_jsonrpc` (
   `httpsenabled` tinyint(1) NOT NULL DEFAULT '0',
   `sslcertificate` VARCHAR(128) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2432,7 +2432,7 @@ CREATE TABLE `settings_k8055` (
   `debouncetime2` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2459,7 +2459,7 @@ CREATE TABLE `settings_kmtronicudp` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2486,7 +2486,7 @@ CREATE TABLE `settings_knx` (
   `tcpport` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2515,7 +2515,7 @@ CREATE TABLE `settings_ledmatrix` (
   `displayid` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2545,7 +2545,7 @@ CREATE TABLE `settings_lgtv` (
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2572,7 +2572,7 @@ CREATE TABLE `settings_lirc` (
   `tcpport` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2598,21 +2598,21 @@ CREATE TABLE `settings_main` (
   `flushtime` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   `logbuffer` int(11) DEFAULT NULL,
-  `authentication` tinyint(1) DEFAULT NULL,
+  `authentication` tinyint(1) NOT NULL DEFAULT '0',
   `startpage` varchar(32) DEFAULT NULL,
-  `debugevents` tinyint(1) DEFAULT NULL,
-  `debugdevices` tinyint(1) DEFAULT NULL,
-  `debugenergy` tinyint(1) DEFAULT NULL,
-  `debugplugin` tinyint(1) DEFAULT NULL,
-  `debugglobalvar` tinyint(1) DEFAULT NULL,
+  `debugevents` tinyint(1) NOT NULL DEFAULT '0',
+  `debugdevices` tinyint(1) NOT NULL DEFAULT '0',
+  `debugenergy` tinyint(1) NOT NULL DEFAULT '0',
+  `debugplugin` tinyint(1) NOT NULL DEFAULT '0',
+  `debugglobalvar` tinyint(1) NOT NULL DEFAULT '0',
   `hometoppanel` varchar(256) DEFAULT NULL,
   `homeleftpanel` varchar(256) DEFAULT NULL,
   `homerightpanel` varchar(256) DEFAULT NULL,
   `homebottompanel` varchar(256) DEFAULT NULL,
-  `autodevicecreate` tinyint(1) DEFAULT NULL,
+  `autodevicecreate` tinyint(1) NOT NULL DEFAULT '0',
   `logprefix` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2639,7 +2639,7 @@ CREATE TABLE `settings_meteohub` (
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2664,10 +2664,10 @@ CREATE TABLE `settings_mochad` (
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) DEFAULT NULL,
-  `globalX10` tinyint(1) DEFAULT NULL,
+  `globalX10` tinyint(1) NOT NULL DEFAULT '0',
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2697,14 +2697,14 @@ CREATE TABLE `settings_mqtt` (
   `pubtopic` varchar(256) DEFAULT NULL,
   `subtopic` varchar(256) DEFAULT NULL,
   `heartbeat` int(11) DEFAULT NULL,
-  `retain` tinyint(1) DEFAULT NULL,
+  `retain` tinyint(1) NOT NULL DEFAULT '0',
   `qos` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   `clientname` varchar(23) DEFAULT 'domotiga',
   `enablepublish` tinyint(1) NOT NULL DEFAULT '0',
   `enablesubsribe` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2732,12 +2732,12 @@ CREATE TABLE `settings_mysensors` (
   `tcpport` int(11) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
-  `relayenabled` tinyint(1) DEFAULT NULL,
+  `relayenabled` tinyint(1) NOT NULL DEFAULT '0',
   `relayport` int(11) DEFAULT NULL,
   `useack` tinyint(1) NOT NULL DEFAULT '0',
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -2764,7 +2764,7 @@ CREATE TABLE `settings_ncid` (
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   `tcpport` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
