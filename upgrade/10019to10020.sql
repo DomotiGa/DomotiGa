@@ -832,10 +832,16 @@ ALTER TABLE settings_xpl DEFAULT CHARACTER SET utf8;
 ALTER TABLE settings_youless DEFAULT CHARACTER SET utf8;
 
 --
--- Inser Wireless Tags
+-- Insert Wireless Tags plugin
 --
 
 INSERT INTO plugins (interface, protocols, name) VALUES ("Wirelesstags Interface", "Wirelesstags", "Wirelesstags");
+
+--
+-- Added new MQTT devicetype
+--
+
+INSERT INTO devicetypes VALUES (669,'MQTT JSON Generic Device','MQTT JSON Generic','MQTT','topic like raw/sensor');
 
 --
 -- Finally update to 1.0.020
