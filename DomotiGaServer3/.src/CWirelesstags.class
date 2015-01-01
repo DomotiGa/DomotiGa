@@ -159,9 +159,10 @@ Public Sub WirelesstagsLogin()
       Case 500
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Could not authenticate successfully with given credentials!")
       Case Else
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown error while login: " & hWirelesstags.Code)
-        Write sBuffer
-        Try Write JSON.Decode(sBuffer)
+        If $bDebug Then 
+	  Main.WriteDebugLog(LogLabel & "Unknown error while login: " & hWirelesstags.Code)
+'          Try Write JSON.Decode(sBuffer)
+	Endif
     End Select
   Endif
 
@@ -236,9 +237,11 @@ Public Sub WirelesstagsGetLoginEmail()
       Case 400
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Could not authenticate successfully with given credentials!")
       Case Else
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown error during GetLoginEmail: " & hWirelesstags.Code)
-        Write sBuffer
-        Write JSON.Decode(sBuffer)
+        If $bDebug Then
+	  Main.WriteDebugLog(LogLabel & "Unknown error during GetLoginEmail: " & hWirelesstags.Code)
+          Write sBuffer
+          Write JSON.Decode(sBuffer)
+	Endif
     End Select
   Endif
 
@@ -258,6 +261,64 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
       If $bDebug Then Main.WriteDebugLog(LogLabel & "Only Wirelesstags's thermostat and schedule device are controllable!")
   End Select
 
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a get state request
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CalculateTagStatus(tag As Object, isMsTag As Boolean, isMoistureTag As Boolean, isCurrentTag As Boolean, isHTU As Boolean) As String
+  Dim EventStates As String[] = ["Disarmed", "Armed", "Moved","Opened", "Closed", "Detected", "Timed Out", "Stabilizing..."]
+  Dim tag_status As String 
+  
+  tag_status = Iif(tag["OutOfRange"],  "(Out of range)", "")
+  if isMsTag Then
+    tag_status &= "(" & EventStates[tag["eventState"]]
+    tag_status &= Iif(tag["az2"] = 2, " 2D)", ")")
+  Endif
+  if (tag["isNest"]) Then tag_status = Iif(tag["eventState"] = 5, " (Home)", " (Away)" )
+
+  if (isMoistureTag) Then
+    if (tag["shorted"]) Then tag_status &= " (Water Detected)"
+    select case tag["capEventState"]
+      Case 1
+        tag_status &= " (Disarmed)"
+      Case 2
+        tag_status &= " (Normal)"
+      Case 3
+        tag_status &= " (Too Dry)"
+      Case 4
+        tag_status &= " (Too Wet)"
+    End Select
+  Else if (isHTU) Then
+    Select Case tag["capEventState"]
+      Case 2
+        tag_status &= " (Normal RH)"
+      Case 3
+        tag_status &= " (Too Dry)"
+      Case 4
+        tag_status &= " (Too Humid)"
+    End Select
+  else if (isCurrentTag) Then
+    if (tag["capEventState"] = 3) Then tag_status &= " (Detached)"
+    if (tag["ampData"] <> NULL) Then
+      if (tag["ampData"]["eventState"] = 2) Then 
+        tag_status &= " (Normal)"
+      else if (tag["ampData"]["eventState"] = 3) Then 
+        tag_status &= " (Too High)"
+      else if (tag["ampData"]["eventState"] = 4) Then 
+        tag_status &= " (Too Low)"
+      Endif
+    Endif
+  Endif
+
+  if (tag["tempEventState"] = 2) Then 
+    tag_status &= " (Too Hot)"
+  else if (tag["tempEventState"] = 3) Then 
+    tag_status &= " (Too Cold)"
+  Endif
+  
+  return tag_status
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -302,6 +363,9 @@ Public Sub hWirelesstagsGetTagList_Finished()
   Dim sTagName, sTagUUID, sTagType, sTagLastComm, sTagEventState As String
   Dim fTagTemperature, fTagBatteryVolt, fTagCap As Float
   Dim d As Date
+  Dim bisMsTag, bisMoistureTag, bhasBeeper, bisPIR, bisKumostat, bhasEventLog, bisNest, bisReed, bisCurrentTag, bisHTU As Boolean
+  Dim EventStates As String[] = ["Disarmed", "Armed", "Moved","Opened", "Closed", "Detected", "Timed Out", "Stabilizing..."]
+  Dim tag as Collection
 
   Select Last.Code
     Case 200
@@ -310,26 +374,40 @@ Public Sub hWirelesstagsGetTagList_Finished()
       iTagNumber = 0
       Do While iTagNumber < cState["d"].count
 
-      Try sTagName = cState["d"][iTagNumber]["name"]
+      tag = cState["d"][iTagNumber]
+      Try sTagName = tag["name"]
       If Not Error Then
-        sTagUUID = cState["d"][iTagNumber]["uuid"]
-        Select cState["d"][iTagNumber]["tagType"]
+        sTagUUID = tag["uuid"]
+        Select tag["tagType"]
           Case 12
             sTagType = "ZGW05"
           Case 32
             sTagType = "ZGW06"
           Case Else
-            sTagType = "Unknown : " & cState["d"][iTagNumber]["tagType"]
+            sTagType = "Unknown : " & tag["tagType"]
         End Select
 
-        iUnixTime = Int(((cState["d"][iTagNumber]["lastComm"] / 10000) - 11644473600000) / 1000)
+        iUnixTime = Int(((tag["lastComm"] / 10000) - 11644473600000) / 1000)
         d = DateAdd(Date(1970, 1, 1), gb.Second, iUnixTime)
-        sTagLastComm = Str(d)
+        sTagLastComm = Format(d, "yyyy-mm-dd hh:mm:ss")
 
-        fTagTemperature = cState["d"][iTagNumber]["temperature"]
-        fTagBatteryVolt = cState["d"][iTagNumber]["batteryVolt"]
-        sTagEventState = cState["d"][iTagNumber]["eventState"]
-        fTagCap = cState["d"][iTagNumber]["cap"]
+        fTagTemperature = tag["temperature"]
+        fTagBatteryVolt = tag["batteryVolt"]
+        sTagEventState = EventStates[tag["eventState"]]
+	bisMsTag = (tag["tagType"] = 12 OR tag["tagType"] = 13) ' || tag["tagType"] = 22)
+	bisMoistureTag = (tag["tagType"] = 32 OR tag["tagType"] = 33)
+	bhasBeeper = (tag["tagType"] = 13 OR tag["tagType"] = 12)
+	bisReed = (tag["tagType"] = 52 OR tag["tagType"] = 53)
+	bisPIR = (tag["tagType"] = 72)
+	bisKumostat = (tag["tagType"] = 62)
+	bhasEventLog = bisMsTag OR bisReed OR bisPIR
+'	bisNest = Iif(tag["thermostat"] AND tag["thermostat"]["nest_id"], TRUE, FALSE)
+	bisHTU = (tag["tagType"] = 52 OR tag["tagType"] = 62 OR tag["tagType"] = 72 OR tag["tagType"] = 13) AND NOT bisNest
+	bisCurrentTag = (tag["tagType"] = 42)
+	sTagEventState = CalculateTagStatus(tag, bisMsTag OR bisPIR OR bisReed, bisMoistureTag, bisCurrentTag, bisHTU)
+        fTagCap = tag["cap"]
+'	if $bDebug Then 
+	Main.WriteDebugLog(LogLabel & "State: " & sTagEventState & "Moisture: " & bisMoistureTag)
         iDeviceId = Devices.Find(Instance, sTagUUID, InterfaceId, sTagType, sTagName)
         ' if found then update it's values
         If iDeviceId Then

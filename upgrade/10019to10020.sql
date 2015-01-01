@@ -844,6 +844,12 @@ INSERT INTO plugins (interface, protocols, name) VALUES ("Wirelesstags Interface
 INSERT INTO devicetypes VALUES (669,'MQTT JSON Generic Device','MQTT JSON Generic','MQTT','topic like raw/sensor');
 
 --
+-- Add previously unknown ELVMAX Eco Button
+--
+
+INSERT INTO devicetypes VALUES (670,'Eco Button','Eco Button','ELVMAX','[xxxxxx]');
+
+--
 -- Finally update to 1.0.020
 --
 
