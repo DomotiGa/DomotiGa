@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-Public sProgramVersion As String = "1.0.019"
+Public sProgramVersion As String = "1.0.020"
 Public sBaseDir As String
 Public sSettings As String = "server-domotiga.conf"
 Public bExitProgram As Boolean ' exit program flag
@@ -33,9 +33,10 @@ Public bAutoDeviceCreate As Boolean
 
 ' Client/Server
 Public bServer As Boolean = True
-Public hBroadcastEvent As UdpSocket
-Public aBroadcastAddrs As New String[]
-Public sOurIPAddress As String
+
+' IP/Broadcast addresses
+Public aBroadcastAddr As New String[]
+Public aIPAddr As New String[]
 
 ' Debug
 Public bMainDebug As Boolean
@@ -78,6 +79,7 @@ Public tMainSleep As Timer
 
 ' MySQL
 Public sSQLHost As String
+Public iSQLPort As Integer
 Public sSQLUser As String
 Public sSQLPass As String
 Public sSQLDatabase As String
@@ -141,21 +143,11 @@ Public bEmailSSL As Boolean
 Public bGTranslateEnabled As Boolean = False ' use Google Translate
 Public sGTranslateAPIKey As String ' Google Translate (paid) API key
 
-' VideoServer
-Public bVideoServerEnabled As Boolean
-Public sVideoServerAddress As String
-Public iVideoServerPort As Integer
-Public sVideoServerUser As String
-Public sVideoServerPassword As String
-Public bVideoServerDebug As Boolean
-Public sVideoServerChannel1 As String
-Public sVideoServerChannel2 As String
-Public sVideoServerChannel3 As String
-Public sVideoServerChannel4 As String
-
 ' RRDTool
 Public bRRDToolEnabled As Boolean
 Public iRRDToolPollTime As Integer
+Public iRRDToolWidth As Integer
+Public iRRDToolHeight As Integer
 Public sRRDToolRRA As String
 Public bRRDToolDebug As Boolean
 
@@ -166,16 +158,6 @@ Public bServerStatsDebug As Boolean
 
 ' WakeOnLan
 Public hBroadcast As UdpSocket
-
-' XMLRPC
-Public bXMLRPCEnabled As Boolean
-Public iXMLRPCMaxConn As Integer
-Public iXMLRPCHTTPPort As Integer
-Public bXMLRPCDebug As Boolean
-Public hXMLRPC As CXMLRPC
-
-' Broadcast UDP
-Public bBroadcastUDPEnabled As Boolean
 
 ' CallerID
 Public bCallerIDEnabled As Boolean
@@ -217,6 +199,10 @@ Public Function Main() As Boolean
   Dim sBackTrace, sTrace As String
   Dim iSleep, iSleepTimer As Integer
 
+  ' Detect our IP and broadcast address(es)
+  aIPAddr = Util.Detect_IPAddr()
+  aBroadcastAddr = Util.Detect_BroadcastAddr()
+
   ' determine basedir
   sBaseDir = Application.Path
   If InStr(sBaseDir, "/" & Application.Name) Then
@@ -240,7 +226,6 @@ Public Function Main() As Boolean
   System.Language = sLanguage
 
   ' start different sections
-  Main.Setup_BroadcastAddrs()
   Main.Setup_Logfiles()
   Main.DisplayProgramInfo()
   Main.WriteLog("[Main] Checking directory structure ...")
@@ -333,7 +318,7 @@ Public Sub Application_Signal(iSignal As Integer)
       sSignal = "<Unknown signal " & iSignal & ">"
   End Select
   Print "Received signal " & sSignal & ", exit " & Application.Name
-  WriteLog("[Main] Received signal " & sSignal & ", exit program")
+  WriteLog("[Main] Received signal " & sSignal & ", exit " & Application.Name)
 
   ' Reset signal handler
   Signal[iSignal].Reset
@@ -357,7 +342,7 @@ Private Function ParseArgs()
       If sArg = "-d" Then
         ' start as a daemon in the background
         Application.Daemon = True
-      Else If sArg = "-h" Then
+      Else If sArg = "-h" Or If sArg = "--help" Then
         ' display help info
         Print Application.Name & " version " & sProgramVersion
         Print "Copyright(C) 2008-" & Year(Now) & " Ron Klinkien"
@@ -408,13 +393,16 @@ Public Function ConnectDatabase() As Boolean
   With hDB
     .Type = "mysql"
     .Host = sSQLHost
+    .Port = iSQLPort
     .Login = sSQLUser
     .Password = sSQLPass
     .Name = sSQLDatabase
     .Open
   End With
 
-  WriteLog("[MySQL] Using server version '" & hDB.Version & "'.")
+  WriteLog("[MySQL] Database on host '" & sSQLHost & "'.")
+  WriteLog("[MySQL] Port used " & iSQLPort & ".")
+  WriteLog("[MySQL] Version is '" & hDB.Version & "'.")
 
   ' all ok
   Return True
@@ -478,6 +466,8 @@ Public Sub DisplayProgramInfo()
   WriteLog("[Main]  ---- Program Restart ----")
   WriteLog("[Main] Starting " & Application.Name & " V" & Main.sProgramVersion & " last updated on " & sModified)
   WriteLog("[Main] Running on host '" & System.Host & "' (pid " & Application.Id & ") as user '" & System.User.Name & "'. (id " & System.User.Id & ")")
+  WriteLog("[Main] Detected IP " & IIf(aIPAddr.Count > 1, "Addresses", "Address") & " '" & aIPAddr.Join(", ") & "'.")
+  WriteLog("[Main] Detected Broadcast " & IIf(aBroadcastAddr.Count > 1, "Addresses", "Address") & " '" & aBroadcastAddr.Join(", ") & "'.")
   WriteLog("[Main] System language is '" & System.Language & "' on architecture '" & System.Architecture & "'.")
   WriteLog("[Main] Program base directory is '" & sBaseDir & "'.")
   WriteLog("[Main] Database settings are loaded from '" & sSettings & "'.")
@@ -510,6 +500,7 @@ Public Sub CreateDirectoryTree()
     Try Mkdir (sBaseDir &/ "tvguide")
     Try Mkdir (sBaseDir &/ "tvguide/imdb")
     Try Mkdir (sBaseDir &/ "tvguide/cache")
+    Try Mkdir (sBaseDir &/ "wrappers/stunnel")
   Endif
 
 End
@@ -523,6 +514,7 @@ Public Sub SetConfig()
 
   hSettings = New Settings(sBaseDir &/ sSettings)
   hSettings["MySQL/Host"] = sSQLHost
+  hSettings["MySQL/Port"] = iSQLPort
   hSettings["MySQL/User"] = sSQLUser
   hSettings["MySQL/Password"] = sSQLPass
   hSettings["MySQL/Database"] = sSQLDatabase
@@ -547,6 +539,7 @@ Public Sub GetConfig()
   If Not Exist(sBaseDir &/ sSettings) Then
     hSettings = New Settings(sBaseDir &/ sSettings)
     hSettings["MySQL/Host"] = "localhost"
+    hSettings["MySQL/Port"] = 3306
     hSettings["MySQL/User"] = "domouser"
     hSettings["MySQL/Password"] = "kung-fu"
     hSettings["MySQL/Database"] = "domotiga"
@@ -563,6 +556,7 @@ Public Sub GetConfig()
     Main.WriteLog("[Main] Couldn't open config file called '" & Main.sSettings & "'. Created one with default settings!")
   Else
     sSQLHost = GetConfigValue("MySQL/Host", "localhost")
+    iSQLPort = GetConfigValue("MySQL/Port", 3306)
     sSQLUser = GetConfigValue("MySQL/User", "domouser")
     sSQLPass = GetConfigValue("MySQL/Password", "kung-fu")
     sSQLDatabase = GetConfigValue("MySQL/Database", "domotiga")
@@ -639,23 +633,12 @@ Public Sub GetSettings()
   sEmailPassword = rResult!password
   bEmailSSL = rResult!sslenabled
 
-  ' VideoServer
-  rResult = GetSettingTable("videoserver")
-  bVideoServerEnabled = rResult!enabled
-  sVideoServerAddress = rResult!tcphost
-  iVideoServerPort = rResult!tcpport
-  sVideoServerUser = rResult!user
-  sVideoServerPassword = rResult!password
-  bVideoServerDebug = rResult!debug
-  sVideoServerChannel1 = rResult!channel1
-  sVideoServerChannel2 = rResult!channel2
-  sVideoServerChannel3 = rResult!channel3
-  sVideoServerChannel4 = rResult!channel4
-
   ' RRDTool
   rResult = GetSettingTable("rrdtool")
   bRRDToolEnabled = rResult!enabled
   iRRDToolPollTime = rResult!polltime
+  iRRDToolWidth = rResult!width
+  iRRDToolHeight = rResult!height
   sRRDToolRRA = rResult!rra
   bRRDToolDebug = rResult!debug
 
@@ -664,14 +647,6 @@ Public Sub GetSettings()
   bServerStatsEnabled = rResult!enabled
   sServerStatsName = rResult!servername
   bServerStatsDebug = rResult!debug
-
-  ' XMLRPC
-  rResult = GetSettingTable("xmlrpc")
-  bXMLRPCEnabled = rResult!enabled
-  iXMLRPCMaxConn = rResult!maxconn
-  iXMLRPCHTTPPort = rResult!httpport
-  bXMLRPCDebug = rResult!debug
-  bBroadcastUDPEnabled = rResult!broadcastudp
 
   ' CallerID
   rResult = GetSettingTable("callerid")
@@ -840,17 +815,6 @@ Public Sub CloseAll()
   ' stop all running timers
   StopTimers()
 
-  ' XBMCxPl close
-  Try hXBMCxPL = Null
-  ' xpl close
-  Try hxPL.Disconnect
-  ' UDP broadcast server close
-  Try hBroadcastEvent.Close
-  ' rfxcom close
-  Try hRFXComxPL = Null
-  ' xmlrpc close
-  Try hXMLRPC.Disconnect
-
   ' Stop all plugins
   Plugin.StopAll()
 
@@ -872,14 +836,16 @@ Public Sub Setup()
   GetSettings() ' read all settings from database
   RestoreGlobalVars() ' restore globalvars from database
   If Not bMainDebug Then WriteLog("[Main] NOTE: All disabled module log entries are muted, enable main debug if you want to see them!")
-  Setup_IPAddr() ' get our ip address
+
+  ' Start broadcast for Client/Server
+  Plugin.Register("broadcastudp")
+  Plugin.Restart("broadcastudp")
+
   Setup_Email() ' e-mail SMTP client
   Setup_Sound() ' built in sound player
   Setup_VoiceText() ' text2speech support
   Setup_Thermostat() ' Thermostat function
   Setup_RRDTool() ' RRDTool graphing framework
-  Setup_XMLRPC() ' XML-RPC server
-  Setup_VideoServer() ' IP9100 videoserver
   Setup_ServerStats() ' Server Statistics
   Setup_xPL() ' xPL support
   Setup_RFXComxPL() ' RFXCom xPL support
@@ -1082,67 +1048,6 @@ Public Sub Restart_Astro()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' start xmlrpc
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Setup_XMLRPC()
-
-  If bXMLRPCEnabled Then
-    If bXMLRPCDebug Then WriteLog("[Plugin] XML-RPC server enabled.")
-    If bServer Then
-      ' create a new xmlrpc class instance
-      hXMLRPC = New CXMLRPC
-
-      ' set the properties
-      hXMLRPC.MaxConn = iXMLRPCMaxconn
-      hXMLRPC.HTTPPort = iXMLRPCHTTPPort
-      hXMLRPC.XMLRPCDebug = bXMLRPCDebug
-
-      ' start xmlrpc server
-      hXMLRPC.Connect()
-
-      If bBroadcastUDPEnabled Then
-        ' Setup Broadcast UDP socket
-        hBroadcastEvent = New UdpSocket As "BroadcastUDP"
-        hBroadcastEvent.Broadcast = True
-        hBroadcastEvent.Port = 0
-        hBroadcastEvent.Bind()
-        Try hBroadcastEvent.TargetPort = iXMLRPCHTTPPort + 10000
-        If Error Then
-          hBroadcastEvent = Null
-          WriteLog("[XMLRPC] ERROR: UDP Broadcast server FAILED to start on Port " & Str(iXMLRPCHTTPPort + 10000))
-        Endif
-        WriteLog("[XMLRPC] UDP Broadcasts are enabled on Port " & Str(iXMLRPCHTTPPort + 10000))
-      Else
-        WriteLog("[XMLRPC] UDP Broadcasts are disabled.")
-      Endif
-
-    Endif
-  Else
-    If bMainDebug Then WriteLog("[Plugin] XML-RPC server disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart xmlrpc server after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Restart_XMLRPC()
-
-  If hXMLRPC Then
-    hXMLRPC.Disconnect
-    hXMLRPC = Null
-  Endif
-
-  ' Also re-init the BroadcastUDP
-  If hBroadcastEvent Then
-    hBroadcastEvent = Null
-  Endif
-
-  Setup_XMLRPC()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' check if e-mail client is enabled
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Setup_Email()
@@ -1213,36 +1118,13 @@ Public Sub Restart_VoiceText()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' capture video images from videoserver
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Setup_VideoServer()
-
-  If bVideoServerEnabled Then
-    WriteLog("[Plugin] IP9100 VideoServer support enabled.")
-  Else
-    If bMainDebug Then WriteLog("[Plugin] IP9100 VideoServer support disabled.")
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' restart videoserver after settings change
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Restart_VideoServer()
-
-  ' not much todo now
-   Setup_VideoServer()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' check if rrdtool support is enabled
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Setup_RRDTool()
 
     If bRRDToolEnabled Then
       If bServer Then
-        If ProgramExist("rrdtool") Then
+        If Util.ProgramExist("rrdtool") Then
           RRDTool.Run()
           WriteLog("[Plugin] RRDTool support enabled.")
         Else
@@ -1331,8 +1213,8 @@ Private Sub Setup_xPL()
       hxPL = New CxPL
       ' set the properties
       With hxPL
-        .TargetHost = aBroadcastAddrs[0]
-        .OurIPAddress = sOurIPAddress
+        .TargetHost = aBroadcastAddr[0]
+        .OurIPAddress = aIPAddr[0]
         .HeartBeatTime = ixPLHeartBeatTime
         .xPLDebug = bxPLDebug
       End With
@@ -1495,51 +1377,6 @@ End
 Public Sub Caps(sString As String) As String
 
   Return UCase(Mid(sString, 1, 1)) & Mid(sString, 2)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Encode String as Html, normally to be used with XML-RPC
-' We support XML 1.0 Fith Edition and XML 1.1
-' http://en.wikipedia.org/wiki/XML#Characters_and_escaping
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub HtmlEncode(sStr As String, Optional sOnlyFirstLine As Boolean = False) As String
-
-  ' In certain scenarios we only want the first line in the Html string and remove the rest
-  If sOnlyFirstLine Then
-    ' Remove &H0A - line feed
-    If String.InStr(sStr, Chr(10)) > 0 Then
-      sStr = String.Left(sStr, String.InStr(sStr, Chr(10)) - 1)
-    Endif
-
-    ' Remove &H0D - carriage return
-    If String.InStr(sStr, Chr(13)) > 0 Then
-      sStr = String.Left(sStr, String.InStr(sStr, Chr(13)) - 1)
-    Endif
-  Endif
-
-  sStr = Replace(sStr, "&", "&amp;")
-  sStr = Replace(sStr, "<", "&lt;")
-  sStr = Replace(sStr, ">", "&gt;")
-  sStr = Replace(sStr, "'", "&apos;")
-  sStr = Replace(sStr, "\"", "&quot;")
-
-  Return sStr
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Decode String as Html, normally to be used with XML-RPC
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub HtmlDecode(sStr As String) As String
-
-  sStr = Replace(sStr, "&amp;", "&")
-  sStr = Replace(sStr, "&lt;", "<")
-  sStr = Replace(sStr, "&gt;", ">")
-  sStr = Replace(sStr, "&apos;", "'")
-  sStr = Replace(sStr, "&quot;", "\"")
-
-  Return sStr
 
 End
 
@@ -1895,7 +1732,7 @@ Public Sub SetGlobalVar(sVar As String, vValue As Variant, Optional bBroadcast A
         Return False
       Endif
 
-    Case gb.String
+    Case gb.String, gb.Null
       Try vValue = CStr(vValue)
       If Error Then
         If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to String datatype")
@@ -2094,24 +1931,6 @@ Public Sub RestoreGlobalVars(Optional bReadTable As Boolean = True)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' check if command can be found on system
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ProgramExist(sProg As String) As Boolean
-
-  Dim sTemp As String
-  Dim iPos As Integer
-
-  iPos = String.InStr(sProg, " ")
-  If iPos Then sProg = String.Left(sProg, iPos - 1)
-
-  Shell "which " & sProg To sTemp
-
-  If Not sTemp Then Return False
-  Return Not (Trim$(sTemp) Like "which: *")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' insert spaces at end of string until length reached
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function SpaceAlignLeft(sString As String, iLength As Integer) As String
@@ -2242,94 +2061,11 @@ Public Function UptimeString(lSeconds As Long) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' check if system has minimal gambas version required
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function CheckReq(iMinimalVersion As Integer) As Boolean
-
-  Dim iVer As Integer
-  Dim sVer As String
-
-  If InStr(GetGambasVersion(), " ") = 0 Then
-    sVer = GetGambasVersion()
-  Else
-    sVer = Left$(GetGambasVersion(), InStr(GetGambasVersion(), " ") - 1)
-  Endif
-
-  iVer = Val(Replace(sVer, ".", ""))
-  If iVer >= iMinimalVersion Then
-    Return False
-  Else
-    Return True
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' get ip address of this machine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Setup_IPAddr()
-
-  Dim sHost As String
-
-  ' inet 192.168.178.24/24 brd 192.168.178.255 scope global eth0
-  Shell "ip addr | grep brd | grep inet | awk -F ' ' '{print $2}' | awk -F '/' '{print $1}'" To sHost
-  sOurIPAddress = Trim(sHost)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' determine broadcast address(es) of this machine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Setup_BroadcastAddrs()
-
-  Dim aIPs, athisIP As String[]
-  Dim sHost, sIP As String
-
-  Shell "ip addr | grep brd | grep inet | awk -F ' ' '{print $4}'" To sHost
-  aIPs = Split(Trim$(sHost), " ")
-  For Each sIP In aIPs
-    athisIP = Split(sIP, ".")
-    If CInt(athisIP[0]) = 127 Then Continue
-    aBroadcastAddrs.Add(athisIP[0] & "." & athisIP[1] & "." & athisIP[2] & "." & athisIP[3])
-    Main.WriteLog("[Main] Found broadcast address '" & Trim(sHost) & "'")
-  Next
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' broadcast events via UDP
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub BroadcastEvent(sMessage As String)
 
-  Dim sIP As String
-
-  ' not ready yet
-  If hBroadcastEvent = Null Then Return
-  ' broadcast msg on network(s)
-  For Each sIp In aBroadcastAddrs
-    hBroadcastEvent.TargetHost = sIp
-    Try Write #hBroadcastEvent, sMessage, Len(sMessage)
-  Next
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' catch errors
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub BroadcastUDP_Error()
-
-  Select Case hBroadcastEvent.Status
-    Case Net.CannotBindSocket
-      Main.WriteDebugLog("[BroadcastUDP] Unable to bind to that port.")
-    Case Net.CannotCreateSocket
-      Main.WriteDebugLog("[BroadcastUDP] The system does not allow to create a socket.")
-    Case Net.CannotRead
-      Main.WriteDebugLog("[BroadcastUDP] Error receiving data.")
-    Case Net.CannotWrite
-      Main.WriteDebugLog("[BroadcastUDP] Error sending data.")
-  End Select
-
-Catch
+  Try Plugin.GetPluginObject("BroadcastUDP", 1).Interface.Send(sMessage)
 
 End
 
@@ -2356,7 +2092,7 @@ Private Sub CheckDatabaseVersion()
       WriteLog("The version of your database is " & sDBVersion & " but the version of the program is " & sPrgVersion & ("!"))
       Repeat
         If bAllowAutoUpgrade Then
-          If Main.ProgramExist("mysql") Then
+          If Util.ProgramExist("mysql") Then
             sToVersion = Format(Str(iDBVersion + 1), "00000")
             ' make the jump to version 1.0.000
             If sToVersion = "01210" Then sToVersion = "10000"
@@ -2406,7 +2142,7 @@ End
 Public Sub NotifySend(sTitle As String, sText As String)
 
   If Main.bServer Then
-    If Main.bBroadcastUDPEnabled Then Main.BroadcastEvent("[NotifySend]" & sTitle & "|" & sText & "|" & sBaseDir &/ "icons" &/ "logo.png")
+    Main.BroadcastEvent("[NotifySend]" & sTitle & "|" & sText & "|" & sBaseDir &/ "icons" &/ "logo.png")
   Endif
 
 End
@@ -2443,7 +2179,6 @@ End
 
 Public Sub SendSMS(sText As String, sTo As String)
 
-
   If Plugin.IsPluginEnabled("SMS", 0) Then
     Try Plugin.GetPluginObject("SMS", 1).Interface.SendSMS(sText, sTo)
   Endif
@@ -2451,9 +2186,9 @@ Public Sub SendSMS(sText As String, sTo As String)
 End
 
 Private Sub Setup_Calendar()
-  
+
   Calendar.Init()
-  
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2461,9 +2196,8 @@ End
 ' This is to make Plugins GUI and CLI independant
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Message_Error(sLogLabel As String, sStr As String)
- 
+
   ' Replace the "\n" and add "***"
   WriteLog(sLogLabel & "ERROR: " & sStr)
 
 End
-

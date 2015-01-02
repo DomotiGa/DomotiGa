@@ -1,0 +1,527 @@
+' Gambas class file
+
+' Description:
+' CIPX800.class
+' Provide access to IPX800 devices.
+
+' Development Status:
+' Unstable.
+
+' Links:
+' http://gce-electronics.com/fr/
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Ipx800"
+Public PluginFriendlyName As String = "IPX800"
+Public PluginVersion As String = "1.01"
+Public PluginAuthor As String = "ErrNo"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 9
+
+Public KeyName As String
+Public LogLabel As String = "[Ipx800] "
+Public InterfaceId As Integer
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sUsername As String
+Private $sPassword As String
+Private $iPoll As Integer
+Private $bDebug As Boolean
+
+Public hIpx800 As New Socket
+Private sBuffer As String
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+
+Public tPoll As Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' cmd queue stuff, only needed if you need to send data back to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private cQueue As New Collection    ' command buffer
+Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
+Public tIpx800Busy As Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sUsername = cPl.Settings["username"]
+  $sPassword = cPl.Settings["password"]
+  $iPoll = cPl.Settings["poll"]
+  $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("Ipx800 Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
+  ' Connect/Initialize connection
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tPoll_Timer()
+
+  Dim i As Integer
+
+  QueueCommandString("GetOutputs")
+  QueueCommandString("GetInputs")
+  For i = 1 To 4
+    QueueCommandString("GetAn" & i)
+  Next
+  For i = 1 To 3
+    QueueCommandString("GetCount" & i)
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tPoll.Stop
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Connect() As Boolean
+
+  ' try to close the connection
+  Try hIpx800.Close
+
+  ' get a new one
+  hIpx800 = New Socket As "Ipx800"
+  hIpx800.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Ipx800_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Ipx800_Error()
+
+  Dim sMsg As String
+
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Ipx800_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  ' define timer for interface busy
+  tIpx800Busy = New Timer As "tIpx800Busy"
+  tIpx800Busy.Stop
+
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
+  ' start poll timer for read status
+  If $iPoll > 0 Then
+    tPoll = New Timer As "tPoll"
+    tPoll.Delay = $iPoll * 1000 ' multiply for seconds
+    tPoll.Start
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Ipx800_Closed()
+
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  Connect()
+
+End
+
+Public Sub ReConnect()
+
+  If iReConnectRetry < aReConnectDelay.Max + 1 Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
+  Endif
+  Inc iReConnectRetry
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host/close serial port, close plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try tReConnect.Stop
+  Try tIpx800Busy.Stop
+  Try hIpx800.Close
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " connection closed.")
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Ipx800_Read()
+
+  Dim sData As String
+
+  Try sData = Read #hIpx800, 1
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from tcp port! -> " & Error.Text)
+  If sData = "\n" Then ' buffer until end of record
+    sBuffer &= sData
+    ProcessData(sBuffer)
+    sBuffer = Null
+  Else
+    sBuffer &= sData
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessData(sData As String)
+
+  Dim aData As String[]
+  Dim aMessage, aAddress As String[]
+  Dim sLine As String
+  Dim iAddress, iDeviceId, iValue As Integer
+  Dim sValue As String
+  Dim rDevice As Result
+
+  ' parse incoming data here, extract values, identification/addresses
+  ' you can ofcourse also feed bytes from _Read to ProcessData(bByte as byte)
+  ' it depends on type of data received
+  aData = Split(sData, "\r\n")
+  For Each sLine In aData
+    If sLine <> "" Then
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received [" & sLine & "]")
+      'manage GetOutputs return
+      aMessage = Scan(sLine, "GetOutputs=*")
+      If aMessage.Count = 1 Then
+        rDevice = Devices.FindDevicesForInterface(InterfaceId)
+        If rDevice.count > 0 Then
+          For Each rDevice
+            If Devices.FindInstanceForDevice(rDevice!id) = Instance Then
+              aAddress = Scan(rDevice!address, "Output|*")
+              If aAddress.Count = 1 Then
+                iAddress = aAddress[0]
+                iValue = Mid(aMessage[0], iAddress, 1)
+                If iValue = 1 Then
+                  sValue = "On"
+                Else
+                  sValue = "Off"
+                Endif
+                Devices.ValueUpdate(rDevice!id, 1, sValue)
+              Endif
+            Endif
+          Next
+        Endif
+      Endif
+
+      ' manage GetInputs return
+      aMessage = Scan(sLine, "GetInputs=*")
+      If aMessage.Count = 1 Then
+        rDevice = Devices.FindDevicesForInterface(InterfaceId)
+        If rDevice.count > 0 Then 
+          For Each rDevice
+            If Devices.FindInstanceForDevice(rDevice!id) = Instance Then
+              aAddress = Scan(rDevice!address, "Input|*")
+              If aAddress.Count = 1 Then
+                iAddress = aAddress[0]
+                iValue = Mid(aMessage[0], iAddress, 1)
+                If iValue = 1 Then
+                  sValue = "On"
+                Else
+                  sValue = "Off"
+                Endif
+                Devices.ValueUpdate(rDevice!id, 1, sValue)
+              Endif
+            Endif
+          Next
+        Endif
+      Endif
+
+      ' manage GetCount return
+      aMessage = Scan(sLine, "GetCount*=*")
+      If aMessage.Count = 2 Then
+        rDevice = Devices.FindDevicesForInterface(InterfaceId)
+        If rDevice.count > 0 Then
+          For Each rDevice
+            If Devices.FindInstanceForDevice(rDevice!id) = Instance Then
+              aAddress = Scan(rDevice!address, "Count|*")
+              If aAddress.Count = 1 Then
+                iAddress = aAddress[0]
+                If iAddress = aMessage[0] Then
+                  iValue = aMessage[1]
+                  Devices.ValueUpdate(rDevice!id, 1, iValue)
+                Endif
+              Endif
+            Endif
+          Next
+        Endif
+      Endif
+
+      ' manage GetAn return
+      aMessage = Scan(sLine, "GetAn*=*")
+      If aMessage.Count = 2 Then
+        rDevice = Devices.FindDevicesForInterface(InterfaceId)
+        If rDevice.count > 0 Then
+          For Each rDevice
+            If Devices.FindInstanceForDevice(rDevice!id) = Instance Then
+              aAddress = Scan(rDevice!address, "Analogic|*")
+              If aAddress.Count = 1 Then
+                iAddress = aAddress[0]
+                If iAddress = aMessage[0] Then
+                  iValue = aMessage[1]
+                  Devices.ValueUpdate(rDevice!id, 1, iValue)
+                Endif
+              Endif
+            Endif
+          Next
+        Endif
+      Endif
+    Endif
+  Next
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' domotiga want to control a device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim sBuffer As String
+  Dim bOK As Boolean = False
+  Dim aScan As String[]
+
+  ' create data packet to send, use supplied address and cmd
+  sBuffer = "Set"
+
+  aScan = Scan(sAddress, "*|*")
+  If aScan.count = 2 Then
+    If aScan[0] = "Output" Then
+      If Len(aScan[1]) = 2 Then
+        sBuffer = sBuffer & aScan[1]
+        Select Case sCmd
+          Case "On"
+            sBuffer = sBuffer & "1"
+            bOK = True
+          Case "Off"
+            sBuffer = sBuffer & "0"
+            bOK = True
+          Case Else
+            Main.WriteDebugLog(LogLabel & "ERROR: Only switch options exists for Ipx800 outputs!")
+        End Select
+      Else
+        Main.WriteDebugLog(LogLabel & "ERROR: Not an Ipx800 valid address: 2 digits needed!")
+      Endif
+    Else
+      Main.WriteDebugLog(LogLabel & "ERROR: Not an Ipx800 output!")
+    Endif
+  Endif
+
+  ' and send it to cmdbuffer
+  If bOK Then
+    QueueCommandString(sBuffer)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommandString(sCommand As String)
+
+  Dim bBuf As Byte[]
+  Dim i As Integer
+
+  bBuf = New Byte[Len(sCommand)]
+  For i = 1 To Len(sCommand)
+    bBuf[i - 1] = Asc(Mid(sCommand, i, 1))
+  Next
+  QueueCommand(bBuf)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(aPacket As Byte[])
+
+  ' add command to queue
+  cQueue.Add(aPacket, Rnd)
+
+  ' if controller is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
+
+  Dim aPacket As Byte[] = Null
+
+  For Each aPacket In cQueue
+    WriteCommand(aPacket, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tIpx800Busy_Timer()
+
+  bInterfaceBusy = False
+  tIpx800Busy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    DoQueue()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send commands to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function WriteCommand(bBuffer As Byte[], sKey As String)
+
+  Dim iCnt As Integer
+  Dim sMessage As String
+
+  For iCnt = 0 To bBuffer.Length - 1
+    sMessage &= Chr(bBuffer[iCnt])
+  Next
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
+
+  ' send the message to the tcp stream
+  Try bBuffer.Write(hIpx800, 0, bBuffer.Length)
+  If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to TCP port! -> " & Error.Text)
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+  ' TODO: lire le resultat
+  'Ipx800_Read()
+
+  tIpx800Busy.Delay = 50 ' 50mS (initial test value)
+  tIpx800Busy.Start
+  bInterfaceBusy = True
+
+End

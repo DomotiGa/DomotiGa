@@ -21,7 +21,6 @@
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Plugwise"
-Public PluginType As Integer = Plugin.Type_Class
 Public PluginFriendlyName As String = "Plugwise"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
@@ -41,7 +40,7 @@ Public ErrorWhere As String
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
 Private $sSerPort As String
-Private $bPlugwiseDebug As Boolean
+Private $bDebug As Boolean
 Private $iPollTime As Integer
 
 Public hPlugwise As New SerialPort
@@ -61,6 +60,7 @@ Private bStickBusy As Boolean       ' waiting for delay timer to finish
 Private bHeaderFound As Boolean = False
 Private bFooterFound As Boolean = False
 Private sRecBuf As String
+Private bTimeOut As Boolean
 
 ' CRC-16(CCITT) table with Poly = 0x10210
 Private aCRCTable As New Integer[256]
@@ -81,6 +81,25 @@ Const LOGADDRESSOFFSET As Integer = 278528
 Const POWERLOGRESPONSECODE As String = "0049"
 Const SWITCHINFOCODE As String = "0056"
 
+' TODO: code to build for
+Const ADVERTISENODERESPONSE As String = "0006"
+Const SETCLOCKCODE As String = "0016"
+Const POPULATERESPONSE As String = "0019"
+Const DATETIMEINFOCODE As String = "0029"
+Const DATETIMEINFORESPONSE As String = "003A"
+Const SENDSCHEDULERESPONSE As String = "003D"
+Const CLOCKINFORCODE As String = "003E"
+Const CLOCKINFORESPONSE As String = "003F"
+Const FEATURESETCODE As String = "005F"
+Const FEATURESETRESPONSE As String = "0060"
+Const PINGRESPONSE As String = "000E"
+Const QUERYCIRCLEPLUSRESPONSE As String = "0002"
+Const QUERYCIRCLEPLUSENDRESPONSE As String = "0003"
+Const CONNECTCIRCLEPLUSRESPONSE As String = "0005"
+Const REMOVENODERESPONSE As String = "001D"
+Const LOGINTERVALCODE As String = "0057"
+Const CLEARGROUPMAC As String = "0058"
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
@@ -97,7 +116,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnabled = cPl.Settings["enabled"]
   $iPollTime = cPl.Settings["polltime"]
   $sSerPort = cPl.Settings["serialport"]
-  $bPlugwiseDebug = cPl.Settings["debug"]
+  $bDebug = cPl.Settings["debug"]
 
   InterfaceId = Devices.FindInterface("Plugwise Stick")
   If InterfaceId = 0 Then
@@ -199,6 +218,7 @@ Public Sub Run()
 
   ' define timer for Plugwise stick busy
   tPlugwiseBusy = New Timer As "tPlugwiseBusy"
+  tPlugwiseBusy.Delay = IIf(bTimeOut, 100, 350) ' if a TimedOut device is present increase time between packets
   tPlugwiseBusy.Stop
 
   InitStick()
@@ -227,22 +247,13 @@ Private Function GetPackets(sRaw As String) As String[]
   Dim rReg As New Regexp
   Dim aMatches As New String[]
   Dim iCnt As Integer
-  Dim sGambasVersion As String
 
   rReg.Compile("\x03\x03(\\w+)\r\n")
   rReg.Exec(sRaw)
 
-  ' Workaround for "Regexp.Submatches is deprecated"
-  sGambasVersion = Main.GetGambasVersion()
-  If sGambasVersion > "3.4.2" Then
-    For iCnt = 0 To rReg.Count - 1
-      aMatches.Add(rReg[iCnt].Text)
-    Next
-  Else
-    For iCnt = 0 To rReg.SubMatches.Count - 1
-      aMatches.Add(rReg.SubMatches[iCnt].Text)
-    Next
-  Endif
+  For iCnt = 0 To rReg.Count - 1
+    aMatches.Add(rReg[iCnt].Text)
+  Next
   Return aMatches
 
 End
@@ -251,16 +262,13 @@ Private Function ProcessReceivedPacket(sInput As String)
 
   Dim sType, sPacket, sCRC As String
   Dim iBegin As Integer
-  Dim aPackets As String[]
 
   ' reset for next data
   sRecBuf = ""
   bHeaderFound = False
   bFooterFound = False
 
-  aPackets = GetPackets(sInput)
-
-  For Each sPacket In aPackets
+  For Each sPacket In GetPackets(sInput)
 
     ' find and store header position
     iBegin = InStr(sPacket, Chr(3) & Chr(3))
@@ -271,9 +279,9 @@ Private Function ProcessReceivedPacket(sInput As String)
     ' checksum check
     sCRC = Mid(sPacket, Len(sPacket) - 5, 4)
     If sCRC = CalculateCRC(Mid(sPacket, iBegin + 2, Len(sPacket) - iBegin - 7)) Then
-      If $bPlugwiseDebug Then Main.WriteDebugLog(LogLabel & "< " & Mid(sPacket, 5, Len(sPacket) - 6) & " (CRC OK)")
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & Mid(sPacket, 5, Len(sPacket) - 6) & " (CRC OK)")
     Else
-      If $bPlugwiseDebug Then Main.WriteDebugLog(LogLabel & "< " & Mid(sPacket, 5, Len(sPacket) - 6) & " (CRC Error, discarding data)")
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & Mid(sPacket, 5, Len(sPacket) - 6) & " (CRC Error, discarding data)")
       Return
     Endif
 
@@ -301,13 +309,17 @@ Private Function ProcessReceivedPacket(sInput As String)
       Case SWITCHINFOCODE
         ProcessSwitchResponse(sPacket)
 
+      ' TODO: these are not tested yet
+      Case CLOCKINFORESPONSE
+        ProcessClockInfoResponse(sPacket)
+
       Case Else
-        If $bPlugwiseDebug Then Main.WriteDebugLog(LogLabel & "Received unknown response type! (" & sType & ")")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received unknown response type! (" & sType & ")")
      End Select
   Next
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -337,34 +349,59 @@ Private Sub CalculateLogHistory(sPulses As String, sMAC As String) As String
 
 End
 
-Private Sub ProcessPowerLogResponse(sResult As String)
+Private Sub ProcessClockInfoResponse(sResult As String)
 
-  Dim sMAC, sLogDate1, sLogDate2, sLogDate3, sLogDate4 As String
-  Dim sLogPulse1, sLogPulse2, sLogPulse3, sLogPulse4 As String
+  Dim sSeq As String = Mid(sResult, 1, 4)
+  Dim sMAC As String = Mid(sResult, 5, 16)
+  Dim sHour, sMin, sSec, sWeekday, sRest, sRest2 As String
 
-  If $bPlugwiseDebug Then
-    Main.WriteDebugLog(LogLabel & "Received Power Log response!")
-    Main.WriteDebugLog(LogLabel & "Sequence Number: " & Mid(sResult, 1, 4))
-    sMAC = Mid(sResult, 5, 16)
-    Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
-    sLogDate1 = TimeSinceLastMonth(Mid(sResult, 21, 8))
-    sLogPulse1 = CalculateLogHistory(Mid(sResult, 29, 8), sMAC)
-    sLogDate2 = TimeSinceLastMonth(Mid(sResult, 37, 8))
-    sLogPulse2 = CalculateLogHistory(Mid(sResult, 45, 8), sMAC)
-    sLogDate3 = TimeSinceLastMonth(Mid(sResult, 53, 8))
-    sLogPulse3 = CalculateLogHistory(Mid(sResult, 61, 8), sMAC)
-    sLogDate4 = TimeSinceLastMonth(Mid(sResult, 69, 8))
-    sLogPulse4 = CalculateLogHistory(Mid(sResult, 77, 8), sMAC)
+  sHour = Mid(sResult, 21, 2)
+  sMin = Mid(sResult, 23, 2)
+  sSec = Mid(sResult, 25, 2)
+  sWeekday = Mid(sResult, 27, 2)
+  sRest = Mid(sResult, 29, 2)
+  sRest2 = Mid(sResult, 31, 4)
 
-    ' firstbuf=00004224  (First buffer - Hours passed since 1 jun 2007 02:00)
-    Main.WriteDebugLog(LogLabel & "Log1: " & sLogPulse1 & " kWh at " & sLogDate1)
-    Main.WriteDebugLog(LogLabel & "Log2: " & sLogPulse2 & " kWh at " & sLogDate2)
-    Main.WriteDebugLog(LogLabel & "Log3: " & sLogPulse3 & " kWh at " & sLogDate3)
-    Main.WriteDebugLog(LogLabel & "Log4: " & sLogPulse4 & " kWh at " & sLogDate4)
-  Endif
+  If Not $bDebug Then Return
+  Main.WriteDebugLog(LogLabel & "Received Clock Info response!")
+  Main.WriteDebugLog(LogLabel & "Sequence Number: " & sSeq)
+  Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
+  Main.WriteDebugLog(LogLabel & "Time: " & sHour & ":" & sMin & ":" & sSec)
+  Main.WriteDebugLog(LogLabel & "Weekday: " & sWeekday)
+  Main.WriteDebugLog(LogLabel & "Rest: " & sRest)
+  Main.WriteDebugLog(LogLabel & "Rest2: " & sRest2)
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+Private Sub ProcessPowerLogResponse(sResult As String)
+
+  Dim sLogDate1, sLogDate2, sLogDate3, sLogDate4, sMAC As String = Mid(sResult, 5, 16)
+  Dim sLogPulse1, sLogPulse2, sLogPulse3, sLogPulse4 As String
+
+  sLogDate1 = TimeSinceLastMonth(Mid(sResult, 21, 8))
+  sLogPulse1 = CalculateLogHistory(Mid(sResult, 29, 8), sMAC)
+  sLogDate2 = TimeSinceLastMonth(Mid(sResult, 37, 8))
+  sLogPulse2 = CalculateLogHistory(Mid(sResult, 45, 8), sMAC)
+  sLogDate3 = TimeSinceLastMonth(Mid(sResult, 53, 8))
+  sLogPulse3 = CalculateLogHistory(Mid(sResult, 61, 8), sMAC)
+  sLogDate4 = TimeSinceLastMonth(Mid(sResult, 69, 8))
+  sLogPulse4 = CalculateLogHistory(Mid(sResult, 77, 8), sMAC)
+
+  If Not $bDebug Then Return
+  Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
+  Main.WriteDebugLog(LogLabel & "Received Power Log response!")
+  Main.WriteDebugLog(LogLabel & "Sequence Number: " & Mid(sResult, 1, 4))
+  ' firstbuf=00004224  (First buffer - Hours passed since 1 jun 2007 02:00)
+  Main.WriteDebugLog(LogLabel & "Log1: " & sLogPulse1 & " kWh at " & sLogDate1)
+  Main.WriteDebugLog(LogLabel & "Log2: " & sLogPulse2 & " kWh at " & sLogDate2)
+  Main.WriteDebugLog(LogLabel & "Log3: " & sLogPulse3 & " kWh at " & sLogDate3)
+  Main.WriteDebugLog(LogLabel & "Log4: " & sLogPulse4 & " kWh at " & sLogDate4)
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -380,7 +417,11 @@ Private Sub ProcessDeviceInfoResponse(sResult As String)
   sLogAddress = Mid(sResult, 29, 8)
   iLogAddress = (Val("&H" & sLogAddress & "&") - LOGADDRESSOFFSET) / 32
   sType = Mid(sResult, 61, 2)
-  If $bPlugwiseDebug Then
+
+  ' store logaddress
+  cLogAddress.Add(iLogAddress, sMAC)
+
+  If $bDebug Then
     Main.WriteDebugLog(LogLabel & "Received Device Info response!")
     Main.WriteDebugLog(LogLabel & "Sequence Number: " & Mid(sResult, 1, 4))
     Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
@@ -401,18 +442,16 @@ Private Sub ProcessDeviceInfoResponse(sResult As String)
     Main.WriteDebugLog(LogLabel & "Hardware Type: " & sHW)
   Endif
 
-  ' store logaddress
-  cLogAddress.Add(iLogAddress, sMAC)
-
   ' update device state
   iDeviceId = Devices.Find(Instance, sMAC, InterfaceId, "Plugwise Circle")
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sState, Devices.ValueType_Switch)
 
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking power logs of device with address '" & sMAC & "'")
   ' now that the logaddress is known get the power logs too
   GetPowerLogs(sMAC)
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -425,7 +464,7 @@ Private Sub ProcessSwitchResponse(sResult As String)
   sButton = Mid(sResult, 21, 2)
   sState = IIf(Mid(sResult, 23, 2) = "01", "On", "Off")
 
-  If $bPlugwiseDebug Then
+  If $bDebug Then
     Main.WriteDebugLog(LogLabel & "Received Switch response!")
     Main.WriteDebugLog(LogLabel & "Sequence Number: " & Mid(sResult, 1, 4))
     Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
@@ -438,7 +477,7 @@ Private Sub ProcessSwitchResponse(sResult As String)
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sState, Devices.ValueType_Switch)
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -446,7 +485,7 @@ Private Sub ProcessCommandResponse(sResult As String)
 
   Dim sMAC, sOnline, sID, sSID As String
 
-  If $bPlugwiseDebug Then
+  If $bDebug Then
     Main.WriteDebugLog(LogLabel & "Received Command response!")
     sMAC = Mid(sResult, 5, 16)
     sOnline = Mid(sResult, 23, 2)
@@ -460,46 +499,47 @@ Private Sub ProcessCommandResponse(sResult As String)
   Endif
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 Private Sub ProcessAckResponse(sResult As String)
 
-  Dim sAckCode As String
+  Dim sMsg, sAckCode As String = Mid(sResult, 5, 4)
 
-  If $bPlugwiseDebug Then
+  Select Case sAckCode
+    Case "00C1"
+      sMsg = "OK"
+    Case "00C2"
+      sMsg = "Error, Re-Init"
+    Case "00E1"
+      sMsg = "NAK/Timeout"
+      bTimeOut = True
+    Case Else
+      sMsg = "Unknown"
+  End Select
+
+  If $bDebug Then
     Main.WriteDebugLog(LogLabel & "Received Ack response!")
-    sAckCode = Mid(sResult, 5, 4)
     Main.WriteDebugLog(LogLabel & "Sequence Number: " & Mid(sResult, 1, 4))
-    Main.WriteDebugLog(LogLabel & "Acknowledgement: " & sAckCode & IIf(sAckCode = "00C1", " (OK)", " (ERROR)"))
+    Main.WriteDebugLog(LogLabel & "Acknowledgement: " & sAckCode & " (" & sMsg & ")")
   Endif
+  If sAckCode = "00C2" Then InitStick()
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 Private Sub ProcessCalibrationResponse(sResult As String)
 
-  Dim sMAC As String
+  Dim sMAC As String = Mid(sResult, 5, 16)
   Dim fGainA, fGainB, fOffTot, fOffNoise As Float
 
-  sMAC = Mid(sResult, 5, 16)
   fGainA = HexToFloat(Mid(sResult, 21, 8))
   fGainB = HexToFloat(Mid(sResult, 29, 8))
   fOffTot = HexToFloat(Mid(sResult, 37, 8))
   fOffNoise = HexToFloat(Mid(sResult, 45, 8))
-
-  If $bPlugwiseDebug Then
-    Main.WriteDebugLog(LogLabel & "Received Calibration response!")
-    Main.WriteDebugLog(LogLabel & "Sequence Number: " & Mid(sResult, 1, 4))
-    Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
-    Main.WriteDebugLog(LogLabel & "GainA: " & Str(fGainA))
-    Main.WriteDebugLog(LogLabel & "GainB: " & Str(fGainB))
-    Main.WriteDebugLog(LogLabel & "OffTot: " & Str(fOffTot))
-    Main.WriteDebugLog(LogLabel & "OffNoise: " & Str(fOffNoise))
-  Endif
 
   ' store calibration data
   StoreCircle(sMAC, fGainA, fGainB, fOffTot, fOffNoise)
@@ -507,8 +547,17 @@ Private Sub ProcessCalibrationResponse(sResult As String)
   ' get power info now calibration data is known
   GetPowerInfo(sMAC)
 
+  If Not $bDebug Then Return
+  Main.WriteDebugLog(LogLabel & "Received Calibration response!")
+  Main.WriteDebugLog(LogLabel & "Sequence Number: " & Mid(sResult, 1, 4))
+  Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
+  Main.WriteDebugLog(LogLabel & "GainA: " & Str(fGainA))
+  Main.WriteDebugLog(LogLabel & "GainB: " & Str(fGainB))
+  Main.WriteDebugLog(LogLabel & "OffTot: " & Str(fOffTot))
+  Main.WriteDebugLog(LogLabel & "OffNoise: " & Str(fOffNoise))
+
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -525,7 +574,7 @@ Private Sub ProcessPowerInfoResponse(sResult As String)
   ' Check if MAC address is known, else there is a problem
   If Not cOffNoise.Exist(sMac) Then
     Main.WriteLog(LogLabel & "ERROR: MAC Address: " & sMAC & " is not registered with the call 'ProcessCalibrationResponse'")
-  Endif 
+  Endif
 
   ' calculate actual usage in Watt
   iPulses = Val("&H" & sPulses) / 1.0
@@ -534,7 +583,7 @@ Private Sub ProcessPowerInfoResponse(sResult As String)
   skW = Format(CStr(fkW), "0.00")
   sWatt = Format(CStr(fkW * 1000), "0.00")
 
-  If $bPlugwiseDebug Then
+  If $bDebug Then
     Main.WriteDebugLog(LogLabel & "Received Power Info response!")
     Main.WriteDebugLog(LogLabel & "Sequence Number: " & Mid(sResult, 1, 4))
     Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
@@ -548,6 +597,9 @@ Private Sub ProcessPowerInfoResponse(sResult As String)
     Devices.ValueUpdate(iDeviceId, 2, sWatt, Devices.ValueType_Energy_kWh)
     Devices.ValueUpdate(iDeviceId, 3, skW, Devices.ValueType_Power_Watt)
   Endif
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking relay state of device with address '" & sMAC & "'")
+  GetDeviceInfo(sMAC)
 
 Catch ' some errors
   Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
@@ -577,15 +629,14 @@ Private Sub InitStick()
   sCmd = STICKINITCODE
   sCRC = CalculateCRC(sCmd)
   sPacket = sHeader & sCmd & sCRC & sFooter
-
-  If $bPlugwiseDebug Then
-    Main.WriteDebugLog(LogLabel & "Initializing Stick")
-    Main.WriteDebugLog(LogLabel & "Cmd: " & sCmd & (" CRC: ") & sCRC)
-  Endif
   QueueCommand(sPacket)
 
+  If Not $bDebug Then Return
+  Main.WriteDebugLog(LogLabel & "Initializing Stick")
+  Main.WriteDebugLog(LogLabel & "Cmd: " & sCmd & (" CRC: ") & sCRC)
+
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -621,7 +672,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub WriteCommand(sBuffer As String, sKey As String)
 
-  If $bPlugwiseDebug Then Main.WriteDebugLog(LogLabel & "> " & Mid(sBuffer, 5, Len(sBuffer) - 6))
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & Mid(sBuffer, 5, Len(sBuffer) - 6))
 
   Try Print #hPlugwise, sBuffer
   If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! ->" & Error.Text)
@@ -630,7 +681,6 @@ Private Sub WriteCommand(sBuffer As String, sKey As String)
   cQueue.Remove(sKey)
 
   ' start timer to wait before sending next command
-  tPlugwiseBusy.Delay = 50 ' 50mS (initial test value)
   tPlugwiseBusy.Start
   bStickBusy = True
 
@@ -645,7 +695,7 @@ Public Sub tPlugwiseBusy_Timer()
   tPlugwiseBusy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If $bPlugwiseDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
 
@@ -673,17 +723,13 @@ End
 Private Sub CheckPlugs()
 
   Dim rResult As Result
-  Dim sMac As String
 
   Try rResult = Devices.FindDevicesForInterface(InterfaceId)
   If rResult.Count Then
     For Each rResult
-      sMac = CheckAddress(rResult!address)
-      If sMAC <> "0" Then
-        If $bPlugwiseDebug Then Main.WriteDebugLog(LogLabel & "Checking power usage of device '" & rResult!name & "' with address '" & rResult!address & "'")
-        GetPowerInfo(CheckAddress(rResult!address))
-        If $bPlugwiseDebug Then Main.WriteDebugLog(LogLabel & "Checking relay state of device '" & rResult!name & "' with address '" & rResult!address & "'")
-        GetDeviceInfo(CheckAddress(rResult!address))
+      If CheckAddress(rResult!address) Then
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Getting power info for device '" & rResult!name & "' with address '" & rResult!address & "'")
+        GetPowerInfo(UCase(rResult!address))
       Endif
     Next
   Else
@@ -695,13 +741,13 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' check/convert address before usage
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub CheckAddress(sAddress As String) As String
+Private Sub CheckAddress(sAddress As String) As Boolean
 
-  If Len(sAddress) <> 16 Then
-    Main.WriteDebugLog(LogLabel & "Lenght of address '" & sAddress & "' is invalid, must be 16 chars long.")
-    Return "0"
+  If Len(sAddress) <> 16 And If Len(sAddress) <> 19 Then
+    Main.WriteDebugLog(LogLabel & "Lenght of address '" & sAddress & "' is invalid, must be 16 chars long for a Circle, or 19 for a Switch.")
+    Return False
   Endif
-  Return UCase(sAddress)
+  Return True
 
 End
 
@@ -710,12 +756,11 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sCmd As String)
 
-  Dim sPacket, sCommand, sFunc, sCRC, sMAC As String
+  Dim sPacket, sCommand, sFunc, sCRC, sMAC As String = UCase(sAddress)
   Dim sHeader As String = Chr(5) & Chr(5) & Chr(3) & Chr(3)
   Dim sFooter As String = Chr(13) & Chr(10)
 
-  sMAC = CheckAddress(sAddress)
-  If sMAC = "0" Then Return
+  If Not CheckAddress(sMAC) Then Return
 
   sFunc = IIf(UCase(sCmd) = "ON", "01", "00")
 
@@ -724,13 +769,12 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   sCommand = POWERCHANGECODE & sMAC & sFunc
   sCRC = CalculateCRC(sCommand)
   sPacket = sHeader & sCommand & sCRC & sFooter
-
-  If $bPlugwiseDebug Then
-    Main.WriteDebugLog(LogLabel & "Queue Power Change:")
-    Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
-    Main.WriteDebugLog(LogLabel & "Cmd String: " & sCommand & " CRC: " & sCRC)
-  Endif
   QueueCommand(sPacket)
+
+  If Not $bDebug Then Return
+  Main.WriteDebugLog(LogLabel & "Queue Power Change:")
+  Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
+  Main.WriteDebugLog(LogLabel & "Cmd String: " & sCommand & " CRC: " & sCRC)
 
 Catch ' some errors
   Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
@@ -756,22 +800,20 @@ Private Sub GetPowerLogs(sAddress As String)
     sCRC = CalculateCRC(sCmd)
     sPacket = sHeader & sCmd & sCRC & sFooter
 
-    If $bPlugwiseDebug Then
-      Main.WriteDebugLog(LogLabel & "Queue Power Logs:")
-      Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
-      Main.WriteDebugLog(LogLabel & "Log Address: " & iLogAddress & " Hex: " & sLogAddress)
-      Main.WriteDebugLog(LogLabel & "Cmd String: " & sCmd & " CRC: " & sCRC)
-    Endif
     QueueCommand(sPacket)
+    If Not $bDebug Then Return
+    Main.WriteDebugLog(LogLabel & "Queue Power Logs:")
+    Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
+    Main.WriteDebugLog(LogLabel & "Log Address: " & iLogAddress & " Hex: " & sLogAddress)
+    Main.WriteDebugLog(LogLabel & "Cmd String: " & sCmd & " CRC: " & sCRC)
   Else
-    If $bPlugwiseDebug Then
-      Main.WriteDebugLog(LogLabel & "Queue Power Logs:")
-      Main.WriteDebugLog(LogLabel & "Log Address: Unknown, skipping.")
-    Endif
+    If Not $bDebug Then Return
+    Main.WriteDebugLog(LogLabel & "Queue Power Logs:")
+    Main.WriteDebugLog(LogLabel & "Log Address: Unknown, skipping.")
   Endif
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -786,13 +828,12 @@ Private Sub GetDeviceInfo(sAddress As String)
   sCmd = DEVICEINFOCODE & sMAC
   sCRC = CalculateCRC(sCmd)
   sPacket = sHeader & sCmd & sCRC & sFooter
-
-  If $bPlugwiseDebug Then
-    Main.WriteDebugLog(LogLabel & "Queue Device Info:")
-    Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
-    Main.WriteDebugLog(LogLabel & "Cmd String: " & sCmd & " CRC: " & sCRC)
-  Endif
   QueueCommand(sPacket)
+
+  If Not $bDebug Then Return
+  Main.WriteDebugLog(LogLabel & "Queue Device Info:")
+  Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
+  Main.WriteDebugLog(LogLabel & "Cmd String: " & sCmd & " CRC: " & sCRC)
 
 Catch ' some errors
   Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
@@ -801,29 +842,27 @@ End
 
 Private Sub GetPowerInfo(sAddress As String)
 
-  Dim sPacket, sCmd, sCRC, sMAC As String
+  Dim sPacket, sCmd, sCRC, sMAC As String = Replace(sAddress, ":", "")
   Dim sHeader As String = Chr(5) & Chr(5) & Chr(3) & Chr(3)
   Dim sFooter As String = Chr(13) & Chr(10)
-
-  sMac = Replace(sAddress, ":", "")
 
   If Not cGainA.Exist(sMAC) Then ' get calibration info first
     ' <ENQ><ENQ><ETX><ETX>0026000D6F00002366BB7071<CR><LF>
     sCmd = CALIBRATIONCODE & sMAC
-    If $bPlugwiseDebug Then Main.WriteDebugLog(LogLabel & "Queue Calibration Request:")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Queue Calibration Request:")
   Else
     ' <ENQ><ENQ><ETX><ETX>0012000D6F00002366BB338B<CR><LF>
     sCmd = POWERINFOCODE & sMAC
-    If $bPlugwiseDebug Then Main.WriteDebugLog(LogLabel & "Queue Power Info Request:")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Queue Power Info Request:")
   Endif
 
   sCRC = CalculateCRC(sCmd)
   sPacket = sHeader & sCmd & sCRC & sFooter
-  If $bPlugwiseDebug Then
-    Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
-    Main.WriteDebugLog(LogLabel & "Cmd String: " & sCmd & " CRC: " & sCRC)
-  Endif
   QueueCommand(sPacket)
+
+  If Not $bDebug Then Return
+  Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
+  Main.WriteDebugLog(LogLabel & "Cmd String: " & sCmd & " CRC: " & sCRC)
 
 Catch ' some errors
   Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")

@@ -25,7 +25,6 @@
 // Define and get version numbers of DomoZWave and the open-zwave
 //-----------------------------------------------------------------------------
 char domozwave_vers[] = "DomoZWave version 2.10";
-#include <vers.c> // OpenZWave 1.0.r705 and earlier
 #include <vers.cpp> // OpenZWave 1.0.r706 and later
 
 //-----------------------------------------------------------------------------
@@ -1015,7 +1014,19 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 	// We will store the COMMAND_CLASS_ information (for the device and per instance)
 	// We will store the number of instances
 	// We will store the configuration items available 
-	if ( add )
+
+	bool missedvalueadd = false;
+	if ( ( dev_index >= 1 ) && ( ! add ) ) {
+
+		uint valueid = std::distance( nodeInfo->instanceLabel[instanceID].begin(), nodeInfo->instanceLabel[instanceID].find(dev_index) );
+		if ( valueid >= nodeInfo->instanceLabel[instanceID].size() )
+		{
+			WriteLog( LogLevel_Debug, false, "Extra=This ValueChange didn't trigger dev_index the last time" );
+			missedvalueadd = true;
+		}
+	}
+
+	if ( ( add ) || ( missedvalueadd ) )
 	{
 		WriteLog( LogLevel_Debug, false, "ValueKnown=%s, ReadOnly=%s, WriteOnly=%s", ( Manager::Get()->IsValueSet( valueID ) )?"true":"false", ( Manager::Get()->IsValueReadOnly( valueID ) )?"true":"false", ( Manager::Get()->IsValueWriteOnly( valueID ) )?"true":"false" );
 
@@ -1089,10 +1100,12 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 			nodeInfo->instanceLabel[instanceID][dev_index] = dev_label;
 		} 
 
-		// We will not send the ValueAdd to DomotiGa, because they are in general unreliable and
-		// open-zwave in most cases during a restart send empty values
-		WriteLog( LogLevel_Debug, false, "Note=Value not send to DomotiGa to with ValueAdd (values are unreliable at startup)" );
-		return;
+		if ( add ) {
+			// We will not send the ValueAdd to DomotiGa, because they are in general unreliable and
+			// open-zwave in most cases during a restart send empty values
+			WriteLog( LogLevel_Debug, false, "Note=Value not send to DomotiGa to with ValueAdd (values are unreliable at startup)" );
+			return;
+		}
 	}
 
 	// Handle CommandClass Basic in a special way
@@ -2380,18 +2393,10 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 
 	WriteLog( LogLevel_Debug, true, "DomoZWave_Init: Initializing Open-ZWave Wrapper" );
 
-	// Check if we got an UNKNOWN version, than follow the NEW version convention
-	if ( strcmp(ozw_vers, "OpenZWave version UNKNOWN") == 0 )
-	{
-		// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
-		char ozw_vers2[100];
-		snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d", ozw_vers_major, ozw_vers_minor, ozw_vers_revision );
-		WriteLog( LogLevel_Debug, false, "%s", ozw_vers2 );
-	}
-	else
-	{
-		WriteLog( LogLevel_Debug, false, "%s", ozw_vers );
-	}
+	// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
+	char ozw_vers2[100];
+	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d", ozw_vers_major, ozw_vers_minor, ozw_vers_revision );
+	WriteLog( LogLevel_Debug, false, "%s", ozw_vers2 );
 
 	pthread_mutexattr_t mutexattr;
 
@@ -2591,21 +2596,14 @@ const char* DomoZWave_Version( )
 
 const char* DomoZWave_OZWVersion( )
 {
-	// Check if we got an UNKNOWN version, than follow the NEW version convention
-	if ( strcmp(ozw_vers, "OpenZWave version UNKNOWN") == 0 )
-	{
-		// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
-		char ozw_vers2[100];
-		snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d", ozw_vers_major, ozw_vers_minor, ozw_vers_revision );
+	string ozw_vers;
 
-		char* ozw_vers2_return = &ozw_vers2[0];
-		return ozw_vers2_return;
-	}
-	else
-	{
-		return ozw_vers;
-	}
+	// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
+	char ozw_vers2[100];
+	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d", ozw_vers_major, ozw_vers_minor, ozw_vers_revision );
 
+	ozw_vers = ozw_vers2;
+	return ozw_vers.c_str();
 }
 
 //-----------------------------------------------------------------------------

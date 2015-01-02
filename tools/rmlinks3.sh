@@ -24,9 +24,11 @@ cp ../../DomotiGa3/.src/AVControl.module .
 cp ../../DomotiGa3/.src/CallerID.module .
 cp ../../DomotiGa3/.src/CAsterisk.class .
 cp ../../DomotiGa3/.src/CBluetooth.class .
+cp ../../DomotiGa3/.src/CBroadcastUDP.class .
 cp ../../DomotiGa3/.src/CCUL.class .
 cp ../../DomotiGa3/.src/CBwiredMap.class .
 cp ../../DomotiGa3/.src/CCTX35.class .
+cp ../../DomotiGa3/.src/CConrad8Relay.class .
 cp ../../DomotiGa3/.src/CCurrentCost.class .
 cp ../../DomotiGa3/.src/CDenon.class .
 cp ../../DomotiGa3/.src/CDeviceDiscover.class .
@@ -44,6 +46,7 @@ cp ../../DomotiGa3/.src/CGenericIO.class .
 cp ../../DomotiGa3/.src/CHDDTemp.class .
 cp ../../DomotiGa3/.src/CHomeMatic.class .
 cp ../../DomotiGa3/.src/CIPort.class .
+cp ../../DomotiGa3/.src/CIpx800.class .
 cp ../../DomotiGa3/.src/CIRMan.class .
 cp ../../DomotiGa3/.src/CIRTrans.class .
 cp ../../DomotiGa3/.src/CIViewer.class .
@@ -62,6 +65,7 @@ cp ../../DomotiGa3/.src/CNcid.class .
 cp ../../DomotiGa3/.src/CLGTV.class .
 cp ../../DomotiGa3/.src/CLIRC.class .
 cp ../../DomotiGa3/.src/CNMA.class .
+cp ../../DomotiGa3/.src/CNetworkDetect.class .
 cp ../../DomotiGa3/.src/COpenTherm.class .
 cp ../../DomotiGa3/.src/COpenWeatherMap.class .
 cp ../../DomotiGa3/.src/COpenZWave.class .
@@ -75,7 +79,6 @@ cp ../../DomotiGa3/.src/CPLCBUS.class .
 cp ../../DomotiGa3/.src/CPluginEntry.class .
 cp ../../DomotiGa3/.src/CPlugwise.class .
 cp ../../DomotiGa3/.src/CPioneer.class .
-cp ../../DomotiGa3/.src/CPing.class .
 cp ../../DomotiGa3/.src/CPushbullet.class .
 cp ../../DomotiGa3/.src/CPushover.class .
 cp ../../DomotiGa3/.src/CProwl.class .
@@ -111,6 +114,7 @@ cp ../../DomotiGa3/.src/CxPL.class .
 cp ../../DomotiGa3/.src/CxPLMsg.class .
 cp ../../DomotiGa3/.src/CXively.class .
 cp ../../DomotiGa3/.src/CVelbus.class .
+cp ../../DomotiGa3/.src/CVideoServer.class .
 cp ../../DomotiGa3/.src/CViera.class .
 cp ../../DomotiGa3/.src/CVisonic.class .
 cp ../../DomotiGa3/.src/CYouLess.class .
@@ -129,7 +133,6 @@ cp ../../DomotiGa3/.src/ServerStats.module .
 cp ../../DomotiGa3/.src/Sounds.module .
 cp ../../DomotiGa3/.src/Thermostat.module .
 cp ../../DomotiGa3/.src/Util.module .
-cp ../../DomotiGa3/.src/VideoServer.module .
 cp ../../DomotiGa3/.src/VoiceText.module .
 cp ../../DomotiGa3/.src/CWeatherUnderground.class .
 cp ../../DomotiGa3/.src/JsonRpc/* ./JsonRpc/

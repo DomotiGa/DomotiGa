@@ -17,9 +17,11 @@ ln -s ../../DomotiGa3/.src/AVControl.module
 ln -s ../../DomotiGa3/.src/CallerID.module
 ln -s ../../DomotiGa3/.src/CAsterisk.class
 ln -s ../../DomotiGa3/.src/CBluetooth.class
+ln -s ../../DomotiGa3/.src/CBroadcastUDP.class
 ln -s ../../DomotiGa3/.src/CCUL.class
 ln -s ../../DomotiGa3/.src/CBwiredMap.class
 ln -s ../../DomotiGa3/.src/CCTX35.class
+ln -s ../../DomotiGa3/.src/CConrad8Relay.class
 ln -s ../../DomotiGa3/.src/CCurrentCost.class
 ln -s ../../DomotiGa3/.src/CDenon.class
 ln -s ../../DomotiGa3/.src/CDeviceDiscover.class
@@ -37,6 +39,7 @@ ln -s ../../DomotiGa3/.src/CGenericIO.class
 ln -s ../../DomotiGa3/.src/CHDDTemp.class
 ln -s ../../DomotiGa3/.src/CHomeMatic.class
 ln -s ../../DomotiGa3/.src/CIPort.class
+ln -s ../../DomotiGa3/.src/CIpx800.class
 ln -s ../../DomotiGa3/.src/CIRMan.class
 ln -s ../../DomotiGa3/.src/CIRTrans.class
 ln -s ../../DomotiGa3/.src/CIViewer.class
@@ -52,6 +55,7 @@ ln -s ../../DomotiGa3/.src/CMQTT.class
 ln -s ../../DomotiGa3/.src/CMeteohub.class
 ln -s ../../DomotiGa3/.src/CMySensors.class
 ln -s ../../DomotiGa3/.src/CNcid.class
+ln -s ../../DomotiGa3/.src/CNetworkDetect.class
 ln -s ../../DomotiGa3/.src/CLGTV.class
 ln -s ../../DomotiGa3/.src/CLIRC.class
 ln -s ../../DomotiGa3/.src/CNMA.class
@@ -67,7 +71,6 @@ ln -s ../../DomotiGa3/.src/CPhilipsHue.class
 ln -s ../../DomotiGa3/.src/CPLCBUS.class
 ln -s ../../DomotiGa3/.src/CPluginEntry.class
 ln -s ../../DomotiGa3/.src/CPlugwise.class
-ln -s ../../DomotiGa3/.src/CPing.class
 ln -s ../../DomotiGa3/.src/CPioneer.class
 ln -s ../../DomotiGa3/.src/CPushover.class
 ln -s ../../DomotiGa3/.src/CPushbullet.class
@@ -92,6 +95,7 @@ ln -s ../../DomotiGa3/.src/CToon.class
 ln -s ../../DomotiGa3/.src/CTVGuide.class
 ln -s ../../DomotiGa3/.src/CTwitter.class
 ln -s ../../DomotiGa3/.src/CUPS.class
+ln -s ../../DomotiGa3/.src/CVideoServer.class
 ln -s ../../DomotiGa3/.src/CVISCA.class
 ln -s ../../DomotiGa3/.src/CWeatherUnderground.class
 ln -s ../../DomotiGa3/.src/CWeeder.class
@@ -122,7 +126,6 @@ ln -s ../../DomotiGa3/.src/ServerStats.module
 ln -s ../../DomotiGa3/.src/Sounds.module
 ln -s ../../DomotiGa3/.src/Util.module
 ln -s ../../DomotiGa3/.src/Thermostat.module
-ln -s ../../DomotiGa3/.src/VideoServer.module
 ln -s ../../DomotiGa3/.src/VoiceText.module
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcFunction.class
 ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class
