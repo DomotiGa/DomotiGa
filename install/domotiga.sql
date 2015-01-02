@@ -2720,7 +2720,7 @@ CREATE TABLE `settings_mqtt` (
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   `clientname` varchar(23) DEFAULT 'domotiga',
   `enablepublish` tinyint(1) NOT NULL DEFAULT '0',
-  `enablesubsribe` tinyint(1) NOT NULL DEFAULT '0',
+  `enablesubscribe` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
