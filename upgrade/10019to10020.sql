@@ -850,6 +850,12 @@ INSERT INTO devicetypes VALUES (669,'MQTT JSON Generic Device','MQTT JSON Generi
 INSERT INTO devicetypes VALUES (670,'Eco Button','Eco Button','ELVMAX','[xxxxxx]');
 
 --
+-- Added devicetype for KNX Shutter
+--
+
+INSERT INTO `devicetypes` VALUES (56,'KNX Shutter Actuator Basic','KNX Device Shutter','KNX','0/1/2|0/1/3|0/1/4[|0/1/5]');
+
+--
 -- Finally update to 1.0.020
 --
 
