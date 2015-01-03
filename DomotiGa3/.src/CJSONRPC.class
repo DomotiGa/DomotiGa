@@ -477,7 +477,8 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As JSONCollection)
   Select sName
       ' ### System methods ###
     Case "system.hostname"
-      Call_System_Hostname()
+      cData.Add("hostname", "command")
+      Call_System_Get(cData)
     Case "system.get"
       Call_System_Get(cData)
 
@@ -487,11 +488,14 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As JSONCollection)
 
       ' ### Generic methods ###
     Case "domotiga.pid"
-      Call_DomotiGa_PID()
+      cData.Add("pid", "command")
+      Call_DomotiGa_Get(cData)
     Case "domotiga.uptime"
-      Call_DomotiGa_Uptime()
+      cData.Add("uptime", "command")
+      Call_DomotiGa_Get(cData)
     Case "domotiga.version"
-      Call_DomotiGa_Version()
+      cData.Add("version", "command")
+      Call_DomotiGa_Get(cData)
     Case "domotiga.get"
       Call_DomotiGa_Get(cData)
 
@@ -818,7 +822,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Retrieve the "fields" field if it exists. If not existing, return an empty String[]
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub GetParamFields(cData As JSONCollection) As Boolean
+Private Sub GetParamFields(cData As JSONCollection, Optional aExtraFields As String[]) As Boolean
 
   Dim aFields As String[]
   Dim aFieldsExtra As String[]
@@ -835,6 +839,18 @@ Private Sub GetParamFields(cData As JSONCollection) As Boolean
       Endif
       cData["fields"] = aFields.Copy()
 
+      ' Filter possible sub fields
+      If aExtraFields Then
+        For Each sFieldName In aExtraFields
+          If cData["fields"].Exist(sFieldName) Then
+            If Not cData.Exist("fields_" & sFieldName) Then
+              cData["fields_" & sFieldName] = New String[]
+            Endif
+            cData["fields"].Remove(cData["fields"].Find(sFieldName))
+          Endif
+        Next
+      Endif
+
       ' Now filter possible sub fields - like "values:units"
       ' We will create then a "fields_values" with the String[]
       For Each sFieldName In aFields
@@ -848,9 +864,6 @@ Private Sub GetParamFields(cData As JSONCollection) As Boolean
           Endif 
           cData["fields_" & sField1].Add(sField2)
           cData["fields"].Remove(cData["fields"].Find(sFieldName))
-          If Not cData["fields"].Exist(sField1) Then
-            cData["fields"].Add(sField1)
-          Endif
         Endif
       Next
     Else
@@ -858,8 +871,7 @@ Private Sub GetParamFields(cData As JSONCollection) As Boolean
       Return False
     Endif
   Else
-    aFields = New String[]
-    cData["fields"] = aFields
+    cData["fields"] = New String[]
   Endif
 
   Return True
@@ -900,7 +912,12 @@ Private Sub FilterFields(iType As Integer, aFields As String[], rResult As Objec
       Case "Result"
 
         For Each hField In rResult.Fields
-          sKey = hField.Name
+
+          If InStr(hField.Name, ".") Then
+            sKey = Mid(hField.Name, RInStr(hField.Name, ".") + 1)
+          Else
+            sKey = hField.Name
+          Endif
 
           If cMapReverse.Exist(sKey) Then
             sAttrName = cMapReverse[sKey]
@@ -934,6 +951,8 @@ Private Sub FilterFields(iType As Integer, aFields As String[], rResult As Objec
     Select iType 
       Case Type_Data_Device ' For devices add the icon
         aFields.Add("icon")
+      Case Type_Data_DeviceValue ' For corrected values
+        aFields.Add("value")
       Case Type_Data_Event
         aFields.Add("actionlist")
     End Select
@@ -1053,15 +1072,6 @@ Private Sub Call_API_Version()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Method=system.hostname
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Call_System_Hostname()
-
-  SetReply(0, System.Host)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Method=system.get
 ' Supported command: hostname, ipaddress, architecture, family, gambasversion, user, uptime
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1105,33 +1115,6 @@ Private Sub Call_System_Get(cData As JSONCollection)
       Endif
       SetReply(0, cValueOut)
    End Select
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Method=domotiga.pid
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Call_DomotiGa_PID()
-
-  SetReply(0, Application.Id)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Method=domotiga.uptime
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Call_DomotiGa_Uptime()
-
-  SetReply(0, Main.GetGlobalVar("Program_Uptime"))
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Method=domotiga.version
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Call_DomotiGa_Version()
-
-  SetReply(0, Main.sProgramVersion)
 
 End
 
@@ -1481,21 +1464,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Call_Device_List(cData As JSONCollection)
 
+  Dim cDevice As New JSONCollection
+  Dim aDevices As New Collection[]
   Dim cValue As New JSONCollection
-  Dim aValue As New Collection[]
-  Dim cValueValue As New JSONCollection
-  Dim aValueValue As New Collection[]
-  Dim hValueValue As New JSONCollection
+  Dim aValues As Object
   Dim rResult As Result
   Dim rResultValues As Result
   Dim iGrp As Integer
   Dim sList As String
   Dim MapField As New Collection
   Dim MapFieldValues As New Collection
-  Dim GetFieldValues As New String[]
   Dim GetGroup As New String[]
   Dim GetLocation As New Integer[]
-  Dim sValuesFormat As String
   Dim bFound As Boolean
 
   ' Mapping of attribute names from SQL to JSON. Hopefully to be removed in the future
@@ -1518,7 +1498,7 @@ Private Sub Call_Device_List(cData As JSONCollection)
   Endif
 
   ' Check for "fields"
-  If Not GetParamFields(cData) Then Return
+  If Not GetParamFields(cData, ["values"]) Then Return
 
   ' Detect if the "groups" parameter is supplied, it has to be an array of strings
   If cData["groups"] <> Null And If TypeOf(cData["groups"]) = gb.Object Then
@@ -1544,8 +1524,6 @@ Private Sub Call_Device_List(cData As JSONCollection)
     Return
   Endif
 
-  sValuesFormat = cData["valuesformat"]
-
   ' If we got a field list, we don't know what to retrieve exactly, so we will do it all
   If cData["fields"].Count >= 1 Then
     sList &= "+ext"
@@ -1555,7 +1533,7 @@ Private Sub Call_Device_List(cData As JSONCollection)
   rResult = Devices.GetDeviceList(sList)
   If Not rResult Or If Not rResult.Available Then
     Main.WriteLog(LogLabel & "ERROR: No devices found in table 'devices'! (Call_Device_List)")
-    SetReply(0, aValue)
+    SetReply(0, aDevices)
     Return
   Endif
 
@@ -1563,20 +1541,22 @@ Private Sub Call_Device_List(cData As JSONCollection)
   If cData["fields"].Count = 0 Then
     If InStr(sList, "ext") Then
       cData["fields"] = ["device_id", "name", "icon", "lastseen", "enabled", "hide", "dimable", "switchable", "batterystatus", "location_id", "locationname", "floorplan_id", "floorplanname", "floorplanimage", "x", "y", "devicetype_id", "devicetypename", "interface_id", "interfacename", "groups"]
+      cData["fields_values"] = New String[]
     Else
       cData["fields"] = ["device_id", "name", "icon", "lastseen", "enabled", "hide", "dimable", "switchable", "batterystatus", "location_id", "locationname"]
-      GetFieldValues = ["valuenum", "value", "units"]
+      cData["fields_values"] = ["valuenum", "value", "units"]
     Endif
   Else
-    ' If get "ALL", then just return all fields
+    ' If get "ALL", then just return all device+value fields
     If cData["fields"].Count = 1 And If cData["fields"].Exist("ALL") Then
-      BuildFilterFields(Type_Data_Device, rResult, MapField, cData["fields"])
+      cData["fields"] = New String[]
+      cData["fields_values"] = New String[]
     Endif
   Endif
 
   For Each rResult
 
-    cValue = New JSONCollection
+    cDevice = New JSONCollection
 
     ' If a group or groups are supplied, filter on them
     If GetGroup.Count >= 1 Then
@@ -1595,41 +1575,39 @@ Private Sub Call_Device_List(cData As JSONCollection)
     Endif
 
     ' Filter out the fields - if get get a False, an error happened
-    If Not FilterFields(Type_Data_Device, cData["fields"], rResult, MapField, cValue) Then Return
+    If Not FilterFields(Type_Data_Device, cData["fields"], rResult, MapField, cDevice) Then Return
 
     ' Add device values
-    aValueValue = New Collection[]
-    hValueValue = New JSONCollection
+    If cData["valuesformat"] = "hash" Then
+      aValues = New JSONCollection
+    Else
+      aValues = New Collection[]
+    Endif
 
     rResultValues = Devices.GetValues(["device_id": rResult!id])
     For Each rResultValues
-      cValueValue = New JSONCollection
+      cValue = New JSONCollection
 
-      FilterFields(Type_Data_DeviceValue, GetFieldValues, rResultValues, MapFieldValues, cValueValue) 
-      If sValuesFormat = "hash" Then
-        hValueValue.Add(cValueValue, rResultValues!valuenum)
+      FilterFields(Type_Data_DeviceValue, cData["fields_values"], rResultValues, MapFieldValues, cValue) 
+      If cData["valuesformat"] = "hash" Then
+        aValues.Add(cValue, rResultValues!valuenum)
       Else
-        aValueValue.Add(cValueValue)
+        aValues.Add(cValue)
       Endif
 
       ' Overrule the icon value if we have valuenum 1
       If rResultValues!valuenum = 1 Then
-        Try cValue.Add(Devices.GetStatusIcon(rResultValues!value, rResult!onicon, rResult!officon, rResult!dimicon), "icon")
+        Try cDevice.Add(Devices.GetStatusIcon(rResultValues!value, rResult!onicon, rResult!officon, rResult!dimicon), "icon")
       Endif
     Next
 
-    ' Add the values to the device
-    If sValuesFormat = "hash" Then
-      cValue.Add(hValueValue, "values")
-    Else
-      cValue.Add(aValueValue, "values")
-    Endif
+    cDevice.Add(aValues, "values")
 
     ' Finished, now add the device to the output list
-    aValue.Add(cValue)
+    aDevices.Add(cDevice)
   Next
 
-  SetReply(0, aValue)
+  SetReply(0, aDevices)
 
 End
 
