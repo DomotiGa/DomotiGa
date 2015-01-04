@@ -1,3 +1,8 @@
+--
+-- Update Somfy RFY address format from '0xf12ab 1' to 'F12AB 1'
+--
+
+UPDATE devicetypes SET addressformat = 'F12AB 1' WHERE protocol LIKE 'RFY%';
 
 --
 -- Make plugins protocols field bigger
