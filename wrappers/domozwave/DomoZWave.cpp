@@ -171,6 +171,20 @@ m_structCtrl* GetControllerInfo
 // Structure of internal Open Z-Wave node information
 ///////////////////////////////////////////////////////////////////////////////
 
+// Storage for configuration item modified for a certain amount of time. Otherwise
+// the Open Z-Wave Commander can show the "old" value instead of the new value.
+// Normally applicable for sleeping devices and during time-out of other devices.
+// For sleeping devices the expiry time is based on the wake-up time and for
+// listening devices we give it a minute orso.
+
+typedef struct
+{
+        uint8		m_valuetype; // Numeric or List (string)
+        int32		m_valuenumeric; // Store Bool, Byte, Integer, Short
+	string		m_valuestring; // Store List
+        time_t          m_expiretime; // When this value will expiry and the open-zwave stored value will be returned
+} m_configItem;
+
 // To enable polling we need a nodeId->ValueID mapping. I asked on the mailing
 // list and the only suggestion I got was to store them off when the values are
 // added. So we store a list of structs to hold this mapping.
@@ -187,6 +201,7 @@ typedef struct
 	std::map<int,string> instancecommandclass;
 	std::map<int,std::map<int,string> > instanceLabel;
 	list<ValueID>	m_values;
+	std::map<int,m_configItem*> m_config;
 } NodeInfo;
 
 static list<NodeInfo*> g_nodes;
@@ -3540,7 +3555,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 
 //-----------------------------------------------------------------------------
 // <DomoZWave_SetConfigParam>
-//
+// Set the configuration item to a certain numeric value
 //-----------------------------------------------------------------------------
 
 bool DomoZWave_SetConfigParam( uint32 home, int32 node, int32 param, int32 value, int32 size )
@@ -3553,6 +3568,50 @@ bool DomoZWave_SetConfigParam( uint32 home, int32 node, int32 param, int32 value
 	WriteLog( LogLevel_Debug, false, "Parameter=%d", param );
 	WriteLog( LogLevel_Debug, false, "Value=%d", value );
 	WriteLog( LogLevel_Debug, false, "Size=%d", size );
+
+	// Store value in cache list, used to resolve returning "old" config values
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		m_configItem* cachedconfig;
+		uint32 timeadd;
+
+		cachedconfig = new m_configItem();
+
+		// Check if it is a listening or sleeping device
+		if ( Manager::Get()->IsNodeListeningDevice( home, node ) == true )
+		{
+			// Lets wait 60 seconds
+			timeadd = 60;
+		}
+		else
+		{
+			// If nothing found, just wait 60 seconds
+			timeadd = 60;
+
+			// Check for wake-up commandclass
+			for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+			{
+				ValueID v = *it;
+
+				// Find the wake-up interval of this node
+				if (( v.GetCommandClassId() == COMMAND_CLASS_WAKE_UP ) && ( v.GetGenre() == ValueID::ValueGenre_System ) && ( v.GetInstance() == 1 ))
+				{
+					// Only return proper value if it is the right label and integer value
+					if (( Manager::Get()->GetValueLabel( v ) == "Wake-up Interval" ) && ( v.GetType() == ValueID::ValueType_Int )) {
+						int32 int_value;
+						Manager::Get()->GetValueAsInt( v, &int_value );
+						timeadd = int_value;
+						it = nodeInfo->m_values.end();
+					}
+				}
+			}
+		}
+
+		cachedconfig->m_valuetype = ValueID::ValueType_Int;
+		cachedconfig->m_valuenumeric = value;
+		cachedconfig->m_expiretime = time( NULL ) + timeadd;
+		nodeInfo->m_config[ param ] = cachedconfig;
+	}
 
 	response = Manager::Get()->SetConfigParam( home, node, param, value, size );
 	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
@@ -3585,7 +3644,52 @@ bool DomoZWave_SetConfigParamList( uint32 home, int32 node, int32 param, const c
 				{
 					if ( v.GetType() == ValueID::ValueType_List )
 					{
+						// Store value in cache list, used to resolve returning "old" config values
+						m_configItem* cachedconfig;
+						uint32 timeadd;
+
+						cachedconfig = new m_configItem();
+
+						// Check if it is a listening or sleeping device
+						if ( Manager::Get()->IsNodeListeningDevice( home, node ) == true )
+						{
+							// Lets wait 60 seconds
+							timeadd = 60;
+						}
+						else
+						{
+							// If nothing found, just wait 60 seconds
+							timeadd = 60;
+
+							// Check for wake-up commandclass
+							for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+							{
+								ValueID v = *it;
+
+								// Find the wake-up interval of this node
+								if (( v.GetCommandClassId() == COMMAND_CLASS_WAKE_UP ) && ( v.GetGenre() == ValueID::ValueGenre_System ) && ( v.GetInstance() == 1 ))
+								{
+									// Only return proper value if it is the right label and integer value
+									if (( Manager::Get()->GetValueLabel( v ) == "Wake-up Interval" ) && ( v.GetType() == ValueID::ValueType_Int )) {
+										int32 int_value;
+										Manager::Get()->GetValueAsInt( v, &int_value );
+										timeadd = int_value;
+										it = nodeInfo->m_values.end();
+									}
+								}
+							}
+						}
+
+						// Convert char* to string
 						string string_value(value);
+
+						// Setup cached entry and store it
+						cachedconfig->m_valuetype = ValueID::ValueType_List;
+						cachedconfig->m_expiretime = time( NULL ) + timeadd;
+						cachedconfig->m_valuestring = string_value; 
+						nodeInfo->m_config[ param ] = cachedconfig;
+
+						// Finally set the string/list value
 						return Manager::Get()->SetValueListSelection( v, string_value );
 					} else {
 						WriteLog( LogLevel_Error, true, "HomeId=0x%x Node=%d Param=%d isn't a list item", home, node, param );
@@ -3670,6 +3774,23 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 			{
 				count++;
 
+				// Check for cached items 
+				m_configItem* cachedconfig;
+				if ( nodeInfo->m_config.find( v.GetIndex() ) != nodeInfo->m_config.end() )
+				{
+					// We got a cached item, but check first if it didn't expire
+					// If expired, remove item and return NULL
+					cachedconfig = nodeInfo->m_config[ v.GetIndex() ];
+					if ( difftime( time( NULL ), cachedconfig->m_expiretime ) > 0 ) {
+						nodeInfo->m_config.erase( v.GetIndex() );
+						cachedconfig = NULL;	
+					};
+				}
+				else
+				{
+					cachedconfig = NULL;
+				}
+
 				jconfig = json_object_new_object();
 
 				// Add index to the node config item
@@ -3688,8 +3809,23 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 					{
 						jvalue = json_object_new_string( "bool" );
 						json_object_object_add( jconfig, "type", jvalue );
-						Manager::Get()->GetValueAsBool( v, &bool_value );
-						jvalue = json_object_new_boolean( bool_value );
+
+						if ( cachedconfig == NULL )
+						{
+							Manager::Get()->GetValueAsBool( v, &bool_value );
+							jvalue = json_object_new_boolean( bool_value );
+						}
+						else
+						{
+							if ( cachedconfig->m_valuenumeric == 0 )
+							{
+								jvalue = json_object_new_boolean( false );
+							}
+							else
+							{
+								jvalue = json_object_new_boolean( true );
+							}
+						}
 						json_object_object_add( jconfig, "value", jvalue );
 						break;
 					}
@@ -3697,9 +3833,18 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 					{
 						jvalue = json_object_new_string( "byte" );
 						json_object_object_add( jconfig, "type", jvalue );
-						Manager::Get()->GetValueAsByte( v, &byte_value );
-						jvalue = json_object_new_int( byte_value );
+
+						if ( cachedconfig == NULL ) 
+						{
+							Manager::Get()->GetValueAsByte( v, &byte_value );
+							jvalue = json_object_new_int( byte_value );
+						}
+						else
+						{
+							jvalue = json_object_new_int( cachedconfig->m_valuenumeric );
+						}
 						json_object_object_add( jconfig, "value", jvalue );
+
 						byte_value = Manager::Get()->GetValueMin( v );
 						jvalue = json_object_new_int( byte_value );
 						json_object_object_add( jconfig, "min", jvalue );
@@ -3721,9 +3866,18 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 					{
 						jvalue = json_object_new_string( "int" );
 						json_object_object_add( jconfig, "type", jvalue );
-						Manager::Get()->GetValueAsInt( v, &int_value );
-						jvalue = json_object_new_int( int_value );
+
+						if ( cachedconfig == NULL )
+						{
+							Manager::Get()->GetValueAsInt( v, &int_value );
+							jvalue = json_object_new_int( int_value );
+						}
+						else
+						{
+							jvalue = json_object_new_int( cachedconfig->m_valuenumeric );
+						}
 						json_object_object_add( jconfig, "value", jvalue );
+
 						int_value = Manager::Get()->GetValueMin( v );
 						jvalue = json_object_new_int( int_value );
 						json_object_object_add( jconfig, "min", jvalue );
@@ -3736,9 +3890,18 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 					{
 						jvalue = json_object_new_string( "short" );
 						json_object_object_add( jconfig, "type", jvalue );
-						Manager::Get()->GetValueAsShort( v, &short_value );
-						jvalue = json_object_new_int( short_value );
+
+						if ( cachedconfig == NULL )
+						{
+							Manager::Get()->GetValueAsShort( v, &short_value );
+							jvalue = json_object_new_int( short_value );
+						}
+						else
+						{
+							jvalue = json_object_new_int( cachedconfig->m_valuenumeric );
+						}
 						json_object_object_add( jconfig, "value", jvalue );
+
 						short_value = Manager::Get()->GetValueMin( v );
 						jvalue = json_object_new_int( short_value );
 						json_object_object_add( jconfig, "min", jvalue );
@@ -3757,8 +3920,16 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 					{
 						jvalue = json_object_new_string( "string" );
 						json_object_object_add( jconfig, "type", jvalue );
-						Manager::Get()->GetValueAsString( v, &string_value );
-						jvalue = json_object_new_string( string_value.c_str() );
+
+						if ( cachedconfig == NULL )
+						{
+							Manager::Get()->GetValueAsString( v, &string_value );
+							jvalue = json_object_new_string( string_value.c_str() );
+						}
+						else
+						{
+							jvalue = json_object_new_string( cachedconfig->m_valuestring.c_str() );
+						}
 						json_object_object_add( jconfig, "value", jvalue );
 						break;
 					}
@@ -3772,8 +3943,16 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 					{
 						jvalue = json_object_new_string( "list" );
 						json_object_object_add( jconfig, "type", jvalue );
-						Manager::Get()->GetValueListSelection( v, &list_value );
-						jvalue = json_object_new_string( list_value.c_str() );
+
+						if ( cachedconfig == NULL )
+						{
+							Manager::Get()->GetValueListSelection( v, &list_value );
+							jvalue = json_object_new_string( list_value.c_str() );
+						}
+						else
+						{
+							jvalue = json_object_new_string( cachedconfig->m_valuestring.c_str() );
+						}
 						json_object_object_add( jconfig, "value", jvalue );
 
 						json_object *jarraylist = json_object_new_array();
@@ -3800,6 +3979,24 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 						break;
 					}
 				}
+
+				// Add cachedconfig information
+				if ( cachedconfig == NULL )
+				{
+					jvalue = json_object_new_boolean( false );
+					json_object_object_add( jconfig, "cached", jvalue );
+				}
+				else
+				{
+					double seconds;
+					seconds = difftime( time( NULL ), cachedconfig->m_expiretime );
+					seconds = -seconds;
+
+					jvalue = json_object_new_boolean( true );
+					json_object_object_add( jconfig, "cached", jvalue );
+					jvalue = json_object_new_int( seconds );
+					json_object_object_add( jconfig, "expiry", jvalue );
+				}	
 
 				// Add help to the node config item
 				str = Manager::Get()->GetValueHelp( v );
