@@ -5246,8 +5246,8 @@ const char* DomoZWave_CommandClassIdName(int class_value)
 		case 0x29: return "COMMAND_CLASS_SWITCH_TOGGLE MULTILEVEL";
 		case 0x2A: return "COMMAND_CLASS_CHIMNEY_FAN";
 		case 0x2B: return "COMMAND_CLASS_SCENE_ACTIVATION";
-		case 0x2C: return "COMMAND_CLASS_SCENE_ACTUATOR CONF";
-		case 0x2D: return "COMMAND_CLASS_SCENE_CONTROLLER CONF";
+		case 0x2C: return "COMMAND_CLASS_SCENE_ACTUATOR_CONF";
+		case 0x2D: return "COMMAND_CLASS_SCENE_CONTROLLER_CONF";
 		case 0x2E: return "COMMAND_CLASS_ZIP_CLIENT";
 		case 0x2F: return "COMMAND_CLASS_ZIP_ADV_SERVICES";
 		case 0x30: return "COMMAND_CLASS_SENSOR_BINARY";
@@ -5268,6 +5268,7 @@ const char* DomoZWave_CommandClassIdName(int class_value)
 		case 0x4E: return "COMMAND_CLASS_SCHEDULE_ENTRY_LOCK";
 		case 0x50: return "COMMAND_CLASS_BASIC_WINDOW_COVERING";
 		case 0x51: return "COMMAND_CLASS_MTP_WINDOW_COVERING";
+		case 0x5B: return "COMMAND_CLASS_CENTRAL_SCENE";
 		case 0x60: return "COMMAND_CLASS_MULTI_INSTANCE";
 		case 0x62: return "COMMAND_CLASS_DOOR_LOCK";
 		case 0x63: return "COMMAND_CLASS_USER_CODE";
@@ -5278,7 +5279,7 @@ const char* DomoZWave_CommandClassIdName(int class_value)
 		case 0x75: return "COMMAND_CLASS_PROTECTION";
 		case 0x76: return "COMMAND_CLASS_LOCK";
 		case 0x77: return "COMMAND_CLASS_NODE_NAMING";
-		case 0x7A: return "COMMAND_CLASS_FIRMWARE_UPDATE MD";
+		case 0x7A: return "COMMAND_CLASS_FIRMWARE_UPDATE_MD";
 		case 0x7B: return "COMMAND_CLASS_GROUPING_NAME";
 		case 0x7C: return "COMMAND_CLASS_REMOTE_ASSOCIATION_ACTIVATE";
 		case 0x7D: return "COMMAND_CLASS_REMOTE_ASSOCIATION";
