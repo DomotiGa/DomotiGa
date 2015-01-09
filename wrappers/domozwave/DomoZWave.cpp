@@ -403,13 +403,11 @@ void RPC_ValueRemoved( uint32 homeID, int nodeID, ValueID valueID )
 	int id = valueID.GetCommandClassId();
 	int genre = valueID.GetGenre();
 
-	WriteLog(LogLevel_Debug, true, "ValueRemoved: HomeId=0x%x Node=%d", homeID, nodeID);
-	WriteLog(LogLevel_Debug, false, "Genre=%d", genre);
-	WriteLog(LogLevel_Debug, false, "GenreName=%s", DomoZWave_GenreIdName(genre));
-	WriteLog(LogLevel_Debug, false, "CommandClassId=%d", id);
-	WriteLog(LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id) );
-	WriteLog(LogLevel_Debug, false, "Instance=%d", valueID.GetInstance() );
-	WriteLog(LogLevel_Debug, false, "Index=%d", valueID.GetIndex() );
+	WriteLog( LogLevel_Debug, true, "ValueRemoved: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, false, "Genre=%s (%d)", DomoZWave_GenreIdName(genre), genre );
+	WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(id), id );
+	WriteLog( LogLevel_Debug, false, "Instance=%d", valueID.GetInstance() );
+	WriteLog( LogLevel_Debug, false, "Index=%d", valueID.GetIndex() );
 }
 
 //-----------------------------------------------------------------------------
@@ -433,10 +431,8 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 	NodeInfo* nodeInfo;
 
 	WriteLog( LogLevel_Debug, true, "%s: HomeId=0x%x Node=%d", (add)?"ValueAdded":"ValueChanged", homeID, nodeID );
-	WriteLog( LogLevel_Debug, false, "Genre=%d", genre );
-	WriteLog( LogLevel_Debug, false, "GenreName=%s", DomoZWave_GenreIdName( genre ) );
-	WriteLog( LogLevel_Debug, false, "CommandClassId=%d", id );
-	WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName( id ) );
+	WriteLog( LogLevel_Debug, false, "Genre=%s (%d)", DomoZWave_GenreIdName(genre), genre );
+	WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(id), id );
 	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
 	WriteLog( LogLevel_Debug, false, "Index=%d", valueID.GetIndex() );
 	WriteLog( LogLevel_Debug, false, "Label=%s", label.c_str() );
@@ -1413,7 +1409,7 @@ void RPC_NodeEvent( uint32 homeID, int nodeID, ValueID valueID, int value )
 	}
 
 	WriteLog( LogLevel_Debug, true, "NodeEvent: HomeId=0x%x Node=%d", homeID, nodeID );
-	WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName( id ) );
+	WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(id), id );
 	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
 	WriteLog( LogLevel_Debug, false, "Type=Byte (raw value=%d)", value );
 	snprintf( dev_value, 1024, "%d", value );
@@ -1463,7 +1459,7 @@ void RPC_NodeScene( uint32 homeID, int nodeID, ValueID valueID, int value )
 	}
 
 	WriteLog( LogLevel_Debug, true, "NodeScene: HomeId=0x%x Node=%d", homeID, nodeID );
-	WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName( id ) );
+	WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(id), id );
 	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
 	WriteLog( LogLevel_Debug, false, "Type=Byte (raw value=%d)", value );
 	snprintf( dev_value, 1024, "%d", value );
@@ -3519,8 +3515,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 						return false;
 					}
 
-					WriteLog( LogLevel_Debug, false, "CommandClassId=%d", id );
-					WriteLog( LogLevel_Debug, false, "CommandClassName=%s", DomoZWave_CommandClassIdName(id) );
+					WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(id), id );
 					WriteLog( LogLevel_Debug, false, "Instance=%d", instance );
 					if ( ValueID::ValueType_Decimal == (*it).GetType() ) {
 						WriteLog( LogLevel_Debug, false, "Value=%f (decimal)", float_value );
