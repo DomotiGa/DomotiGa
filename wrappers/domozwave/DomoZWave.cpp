@@ -621,6 +621,15 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 				dev_index = 2;
 				dev_label = "Switch-Level";
 
+				// Retrieve the value again, we need to check for >100
+				uint8 byte_value;
+				Manager::Get()->GetValueAsByte( valueID, &byte_value );
+
+				if ( byte_value > 100 )
+				{
+					strcpy( dev_value, "100" );
+				}
+
 				sprintf( dev_result, "Dim %s", dev_value );
 
 				if ( strcmp( dev_result, "Dim 0" ) == 0 )
