@@ -124,6 +124,17 @@ echo "</style>\n";
         }
       })
    }
+
+   function setpoint(dLocation,dName,dValue) {
+      var actionUrlsetpoint = "change_device.php?location="+dLocation+"&device="+dName+"&value=";
+      if ( dValue.indexOf('.') == -1) { actionUrlsetpoint += "SP "+dValue+".0" } else { actionUrlsetpoint += "SP "+dValue };
+      $.ajax({
+        url: actionUrlsetpoint,
+        success: function () {
+          window.location.href = "device.php?location="+dLocation;
+        }
+      })
+   }
 </script>
 <script type="text/javascript" charset="utf-8">
     window.onload = function() {
@@ -165,21 +176,33 @@ foreach ($data AS $item) {
 	 echo "</div>\n";
       }
    }
-   foreach ($datad AS $itemd) {
-      if ($itemd['devicevalue1'] == ""){ $dimlevel = "0"; };
-      if ($itemd['devicevalue1'] == "Off"){ $dimlevel = "0"; };
-      if ($itemd['devicevalue1'] == "On"){ $dimlevel = "100"; };
-      if (substr($itemd['devicevalue1'],0,3) == "Dim"){ preg_match_all('!\d+!', $itemd['devicevalue1'], $dimlevel); $dimlevel=implode($dimlevel[0]); };
-      if ($item['id'] == $itemd['id']) {
-         echo "<div id=\"optionpanel".$item['id']."\" style=\"display: none\">\n";
-         echo "<p><a class=\"green button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['id']."&value=On\">On</a></p>";
-         echo "<p><a class=\"red button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['id']."&value=Off\">Off</a></p>";
-         // Slider to dim lights
-         echo "<p id=\"dimmer".$item['id']."\" class=\"button slider\" style=\"width: 94%; height: 30px; margin-left: 3%;\">".$dimlevel."</p>\n";
-         echo "<p><a class=\"white button\" onclick=\"dim_light('".$item['devicelocation']."', '".$item['id']."', $('#dimmer".$item['id']."').text())\">Ok</a></p>";
-         echo "<p><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
-         echo "</div>\n";
-      }
+    foreach ($datad AS $itemd) {
+        if ($item['id'] == $itemd['id']) {
+            if (substr($itemd['devicevalue1'],0,3) == "Dim" || $itemd['devicevalue1'] == "" || $itemd['devicevalue1'] == "Off" || $itemd['devicevalue1'] == "On"){
+                preg_match_all('!\d+!', $itemd['devicevalue1'], $dimlevel); $dimlevel=implode($dimlevel[0]);
+                echo "<div id=\"optionpanel".$item['id']."\" style=\"display: none\">\n";
+                if ($itemd['devicevalue1'] == ""){ $dimlevel = "0"; };
+                if ($itemd['devicevalue1'] == "Off"){ $dimlevel = "0"; };
+                if ($itemd['devicevalue1'] == "On"){ $dimlevel = "100"; };
+                echo "<p><a class=\"green button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['id']."&value=On\">On</a></p>";
+                echo "<p><a class=\"red button\" href=\"change_device.php?location=".$item['devicelocation']."&device=".$item['id']."&value=Off\">Off</a></p>";
+                // Slider to Set Dim
+                echo "<p><a id=\"dimmer".$item['id']."\" class=\"button slider\" style=\"width: 94%; height: 20px; margin-left: 3%;\">".$dimlevel."</a></p>\n";
+                echo "<p><a class=\"white button\" onclick=\"dim_light('".$item['devicelocation']."', '".$item['id']."', $('#dimmer".$item['id']."').text())\">Ok</a></p>";
+                echo "<p><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
+                echo "</div>\n";
+            }
+            if (substr($itemd['devicevalue1'],0,2) == "SP"){
+                preg_match_all('!\d+\.*\d+!', $itemd['devicevalue1'], $dimlevel);
+                $dimlevel=implode($dimlevel[0]);
+                echo "<div id=\"optionpanel".$item['id']."\" style=\"display: none\">\n";
+                // Slider to Set Setpoint
+                echo "<p><a id=\"dimmer".$item['id']."\" class=\"button sliderSP\" style=\"width: 94%; height: 30px; margin-left: 3%;\">".$dimlevel."</a></p>\n";
+                echo "<p><a class=\"green button\" onclick=\"setpoint('".$item['devicelocation']."', '".$item['id']."', $('#dimmer".$item['id']."').text())\">Set</a></p>";
+                echo "<p><a href=\"#\" class=\"black button\" onclick=\"showhide('optionpanel".$item['id']."');\">Cancel</a></p>  \n";
+                echo "</div>\n";
+            }
+        }
    }
 }
 ?>
@@ -208,6 +231,26 @@ foreach ($data AS $item) {
                                }
                        });
                });
+
+               $( ".sliderSP" ).each(function() {
+                       var value = parseInt( $( this ).text(), 10 );
+                       $( this ).empty().slider({
+                               value: value,
+                               orientation: "horizontal",
+                               min: 4,
+                               max: 28,
+                               step: .5,
+                               slide: function(event, ui) {
+                                       m_val = ui.value;
+                                       if (m_val < 4) {
+                                               m_val = 4;
+                                               $(this).slider({ value: 4 });
+                                       }
+                                       $(this).find("a:first").text(m_val);
+                               }
+                       });
+               });
+
                //$("#amount").val(':' + $(".slider").slider("value"));
                $('.ui-slider-handle').height(40);
 
