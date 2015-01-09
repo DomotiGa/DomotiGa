@@ -1,10 +1,10 @@
 //-----------------------------------------------------------------------------
 //
 // DomoZWave a C++/C-wrapper to add open-zwave support to DomotiGa.
-// Special thanks to Jaren for creating the wrapper.
+// Special thanks to Jaren for creating the wrapper and Alexie for updating it.
 //
 // DomotiGa - an open source home automation program
-// Copyright(C) 2008-2012 Ron Klinkien
+// Copyright (C) Ron Klinkien, The Netherlands.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
