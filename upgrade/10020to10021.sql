@@ -19,6 +19,15 @@ UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI D
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (307,'SelectPlus Doorbell','Doorbell','SelectPlus','00F4');
 
 --
+-- Fix OWW plugin and devicetype
+--
+
+UPDATE plugins SET interface = 'OWW Gateway' WHERE id = 70;
+UPDATE plugins SET protocols = 'OWW' WHERE id = 70;
+
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (320,'OWW Station','OWW Station','OWW','Station');
+
+--
 -- Finally update to 1.0.021
 --
 

@@ -26,10 +26,11 @@ Public PluginFriendlyName As String = "One-Wire Weather"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Timo Sariwating"
 Public PluginProtocols As String[]
-Public PluginMaxInstances As Integer = 1
+Public PluginMaxInstances As Integer = 9
 
 Public KeyName As String
 Public LogLabel As String = "[OWW] "
+Public InterfaceId As Integer
 Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
@@ -47,6 +48,10 @@ Private $bDebug As Boolean
 Private hOWWTCP As New Socket
 Private hOWWUDP As New UdpSocket
 Private sBuffer As String
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -66,6 +71,19 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iTCPPort = cPl.Settings["tcpport"]
   $sServerType = cPl.Settings["servertype"]
   $bDebug = cPl.Settings["debug"]
+
+  InterfaceId = Devices.FindInterface("OWW Gateway")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
 
   ' Connect/Initialize connection
   Connect()
@@ -116,7 +134,7 @@ Catch ' some errors
     Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
   Endif
 
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -130,11 +148,42 @@ Public Sub OWW_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
 End
 
 Public Sub OWW_Closed()
 
   Main.WriteLog(LogLabel & "ERROR: socket connection is lost.")
+  If $sServerType <> "Henriksen WServer UDP" Then ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ReConnect()
+
+  If iReConnectRetry < aReConnectDelay.Max + 1 Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
+  Endif
+  Inc iReConnectRetry
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub OWW_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
@@ -144,6 +193,7 @@ End
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
+  Try tReConnect.Stop
   Try hOWWTCP.Close
   Try hOWWUDP.Close
 
@@ -169,7 +219,7 @@ Public Sub OWW_Read()
     HenriksenTCP_Read()
   Else If $sServerType = "Henriksen WServer UDP" Then
     HenriksenUDP_Read()
-  Else If $sServerType = "OWW text-format" Then
+  Else If $sServerType = "Oww text-format" Then
     OWWTxt_Read()
   Endif
 
@@ -204,8 +254,7 @@ Public Sub OWWTxt_Read()
 
   sData = Read #hOWWTCP, 1
   If sData = Chr(10) Then ' buffer until newline then parse
-    If Len(sBuffer) > 1 Then ParseOWWTxt(sBuffer & "\n")
-    sBuffer = Null
+    If Len(sBuffer) > 1 Then ParseOWWTxt(sBuffer)
   Else
     sBuffer &= sData
   Endif
@@ -229,11 +278,50 @@ End
 
 Private Sub ParseOWWTxt(sStr As String)
 
-  Dim aScan As String[] = Scan(sStr, "* , * , *,ï¿½* , *, *, * ,* , * , *, *")
-  If aScan.Count = 11 Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & aScan[0] & " " & aScan[1] & " " & aScan[2] & " " & aScan[3] & " " & aScan[4] & " " & aScan[5] & " " & aScan[6] & " " & aScan[7] & " " & aScan[8] & " " & aScan[9] & " " & aScan[10])
+  Dim aScan As String[] = Split(sStr, ",")
+  Dim sDate, sTime, sTemp, sWindSpeed, sWindDirName, sWindDirDegr, sWindDirPoint, sRain As String
+  Dim iDeviceId As Integer
+
+  ' date, time, temperature, wind speed, wind direction, ?, ?, ?
+  ' 10/01/15 , 15:56:58 ,    -7,9,�C   ,    3,07,  m/s,        NE   , 45,0  ,  2    , 0,00, mm
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & " < " & sStr)
+  If aScan.Count = 15 Then
+    sDate = Trim(aScan[0])
+    sTime = Trim(aScan[1])
+    sTemp = Trim(aScan[2]) & "." & Trim(aScan[3])
+    sWindSpeed = Trim(aScan[5]) & "." & Trim(aScan[6])
+    sWindDirName = Trim(aScan[8])
+    sWindDirDegr = Trim(aScan[9]) & "." & Trim(aScan[10])
+    sWindDirPoint = Trim(aScan[11])
+    sRain = Trim(aScan[12]) & "." & Trim(aScan[13])
+    If $bDebug Then
+      Main.WriteDebugLog(LogLabel & "Date: " & sDate)
+      Main.WriteDebugLog(LogLabel & "Time: " & sTime)
+      Main.WriteDebugLog(LogLabel & "Temperature: " & sTemp & " " & Trim(aScan[4]))
+      Main.WriteDebugLog(LogLabel & "Wind Speed: " & sWindSpeed & " " & Trim(aScan[7]))
+      Main.WriteDebugLog(LogLabel & "Wind Direction Name: " & sWindDirName)
+      Main.WriteDebugLog(LogLabel & "Wind Direction Degr: " & sWindDirDegr)
+      Main.WriteDebugLog(LogLabel & "Wind Direction Point: " & sWindDirPoint)
+      Main.WriteDebugLog(LogLabel & "Rain: " & sRain & " " & Trim(aScan[14]))
+    Endif
+
+    ' store the values in a device
+    iDeviceId = Devices.Find(Instance, "Station", InterfaceId, "OWW-Text", "OWW")
+    If iDeviceId Then
+      Devices.ValueUpdate(iDeviceId, 1, sTemp, Devices.ValueType_Temperature)
+      Devices.ValueUpdate(iDeviceId, 2, sWindSpeed, Devices.ValueType_WindSpeed)
+      Devices.ValueUpdate(iDeviceId, 3, sWindDirName, Devices.ValueType_WindDirection)
+      Devices.ValueUpdate(iDeviceId, 4, sWindDirDegr)
+      Devices.ValueUpdate(iDeviceId, 5, sWindDirPoint)
+      Devices.ValueUpdate(iDeviceId, 6, sRain, Devices.ValueType_RainTotal)
+      Devices.ValueUpdate(iDeviceId, 7, sTime & " " & sDate)
+    Endif
+    
   Else
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Wrong or unexpected data layout!")
   Endif
+  sBuffer = Null
 
 End
 
@@ -246,6 +334,7 @@ Public Sub OWW_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  If $sServerType <> "Henriksen WServer UDP" Then ReConnect()
 
 End
 
