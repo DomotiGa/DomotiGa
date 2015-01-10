@@ -28,6 +28,21 @@ UPDATE plugins SET protocols = 'OWW' WHERE id = 70;
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (320,'OWW Station','OWW Station','OWW','Station');
 
 --
+-- Update Z-Wave addressformat examples
+--
+
+UPDATE devicetypes SET `addressformat`='1 or 1:2' WHERE `id`='61' AND `addressformat`='1';
+UPDATE devicetypes SET `addressformat`='1 or 1:2' WHERE `id`='62' AND `addressformat`='3';
+UPDATE devicetypes SET `addressformat`='1 or 1:2' WHERE `id`='63' AND `addressformat`='1';
+UPDATE devicetypes SET `addressformat`='1 or 1:2' WHERE `id`='64' AND `addressformat`='2';
+
+--
+-- Standardize RaZberry name
+--
+
+UPDATE plugins SET `interface`='RaZberry Z-Wave Interface', `name`='RaZberry' WHERE `name`='RaZberry';
+
+--
 -- Finally update to 1.0.021
 --
 
