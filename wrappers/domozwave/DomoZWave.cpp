@@ -98,7 +98,7 @@ ofstream logfile;
 // Define serialport string, we require the serialport if we want to stop the Open Z-Wave library properly
 list<string> serialPortName;
 
-// 
+//
 int32 jsonrpcid = 0;
 
 // Enable/Disable DomoZWave debugging
@@ -5573,7 +5573,7 @@ const char* DomoZWave_SpecificTypeName( int32 generictype, int32 specifictype )
 			{
 				// Nothing yet
 			}
-			return "Non Interoperable";			
+			return "Non Interoperable";
 		default:
 		{
 			// We need to report unknown generic types, the value is in decimal
