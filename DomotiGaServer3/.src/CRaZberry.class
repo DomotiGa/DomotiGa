@@ -17,7 +17,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "RaZberry"
 Public PluginFriendlyName As String = "RaZberry Z-Wave"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "1.10"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -41,27 +41,17 @@ Private $sPassword As String
 Private $iPollTime As Integer
 Private $bDebug As Boolean
 
+' RaZberry controller and network information
+Private $cZWaveNetwork As New JSONCollection
+
 Public hRaZberryInit As HttpClient
 Public hRaZberryCmd As HttpClient
 Public bInit As Boolean
-Public iUpdateTime As Integer
+Public $iUpdateTime As Integer
 Public sBuffer As String
 Public tRaZberry As Timer
 
-Public bIsPrimary As Boolean
-Public bIsRealPrimary As Boolean
-Public iControllerID As Integer
-Public sHomeID As String
-
-Public sVendor As String
-Public sChip As String
-
 Public sLibraryType As String = ("Unknown")
-Public sSDKVersion As String
-Public sAPIVersion As String
-
-Public sSoftwareVersion As String
-Public sSoftwareDate As String
 
 ' node data
 Private cCommandClassId As New Collection
@@ -69,6 +59,37 @@ Private cCommandClassId As New Collection
 ' queue and command buffer stuff
 Private cQueue As New Collection   ' command buffer
 Private bHttpBusy As Boolean       ' already fetching?
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Z-Wave Constants
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Const BASIC_TYPE_CONTROLLER As Byte = &H01
+Private Const BASIC_TYPE_STATIC_CONTROLLER As Byte = &H02
+Private Const BASIC_TYPE_SLAVE As Byte = &H03
+Private Const BASIC_TYPE_ROUTING_SLAVE As Byte = &H04
+
+Private Const GENERIC_TYPE_GENERIC_CONTROLLER As Byte = &H01
+Private Const GENERIC_TYPE_STATIC_CONTROLLER As Byte = &H02
+Private Const GENERIC_TYPE_AV_CONTROL_POINT As Byte = &H03
+Private Const GENERIC_TYPE_DISPLAY As Byte = &H04
+Private Const GENERIC_TYPE_THERMOSTAT As Byte = &H08
+Private Const GENERIC_TYPE_WINDOW_COVERING As Byte = &H09
+Private Const GENERIC_TYPE_REPEATER_SLAVE As Byte = &H0F
+Private Const GENERIC_TYPE_SWITCH_BINARY As Byte = &H10
+Private Const GENERIC_TYPE_SWITCH_MULTILEVEL As Byte = &H11
+Private Const GENERIC_TYPE_SWITCH_REMOTE As Byte = &H12
+Private Const GENERIC_TYPE_SWITCH_TOGGLE As Byte = &H13
+Private Const GENERIC_TYPE_ZIP_GATEWAY As Byte = &H14
+Private Const GENERIC_TYPE_ZIP_NODE As Byte = &H15
+Private Const GENERIC_TYPE_VENTILATION As Byte = &H16
+Private Const GENERIC_TYPE_SENSOR_BINARY As Byte = &H20
+Private Const GENERIC_TYPE_SENSOR_MULTILEVEL As Byte = &H21
+Private Const GENERIC_TYPE_METER_PULSE As Byte = &H30
+Private Const GENERIC_TYPE_METER As Byte = &H31
+Private Const GENERIC_TYPE_ENTRY_CONTROL As Byte = &H40
+Private Const GENERIC_TYPE_SEMI_INTEROPERABLE As Byte = &H50
+Private Const GENERIC_TYPE_SENSOR_ALARM As Byte = &HA1
+Private Const GENERIC_TYPE_NON_INTEROPERABLE As Byte = &HFF
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -116,7 +137,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' init
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Function Run()
+Private Sub Run()
 
   bInit = True
   Initialize()
@@ -148,6 +169,9 @@ Public Sub tRaZberry_Timer()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub GetURL(sCmd As String) As String
 
   If $sUsername And If $sPassword Then
@@ -158,15 +182,19 @@ Private Sub GetURL(sCmd As String) As String
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Initialize() As Boolean
 
-  Dim sURL As String = GetURL("/ZWaveAPI/Data/" & iUpdateTime)
+  Dim sURL As String = GetURL("/ZWaveAPI/Data/" & $iUpdateTime)
   Dim sFile As String = Main.sBaseDir &/ "razberry.log"
 
   ' for development/debugging only
   If Exist(sFile) And If $bDebug Then
-    sBuffer = ReadJSON(sFile)
-    ParseInitData(sBuffer)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Initializing data read from file '" & sFile & "'")
+    sBuffer = File.Load(sFile)
+    ParseRaZberryData(sBuffer)
     sBuffer = Null
     Return
   Endif
@@ -178,28 +206,6 @@ Private Sub Initialize() As Boolean
   hRaZberryInit.Async = True
   hRaZberryInit.TimeOut = 3
   hRaZberryInit.Get
-
-Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' read init json from log file
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ReadJSON(sFile As String) As String
-
-  Dim hFile As File
-  Dim sContents As String
-
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Initializing data read from file '" & sFile & "'")
-  hFile = Open sFile For Read
-  While Not Eof(hFile)
-    sContents &= Read #hFile, Lof(hFile)
-  Wend
-  Close #hFile
-
-  Return sContents
 
 Catch ' some errors
   Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
@@ -242,7 +248,7 @@ Public Sub hRaZberryInit_Finished()
     Case 200
       ' too noisy
       ' If $bDebug Then Main.WriteDebugLog(LogLabel & "Received '" & sBuffer & "'")
-      ParseInitData(sBuffer)
+      ParseRaZberryData(sBuffer)
       If $bDebug Then WriteJSON(sBuffer)
     Case Else
       Main.WriteDebugLog(LogLabel & "Unknown error occured while trying to get razberry init data! HTTP=" & Last.Code & ", Buffer=" & sBuffer)
@@ -254,7 +260,7 @@ Public Sub hRaZberryInit_Finished()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Handle error
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub hRaZberryInit_Error()
 
@@ -264,101 +270,226 @@ Public Sub hRaZberryInit_Error()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Parse Controller Z-Way data
+' It is called for Initialization and Updates
+' If controller is changed, we get all the controller information again
+' If node(s) are added/updated/removed, we get all the node information again
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseInitData(sData As String)
+Private Sub ParseRaZberryData(sData As String)
 
-  Dim cInit As Collection = JSON.Decode(sData)
+  Dim cData As JSONCollection
 
-  If cInit Then
-    iControllerID = cInit["controller"]["data"]["nodeId"]["value"]
-    sHomeID = cInit["controller"]["data"]["homeId"]["value"]
-    sSDKVersion = cInit["controller"]["data"]["SDK"]["value"]
-    sSoftwareVersion = cInit["controller"]["data"]["softwareRevisionVersion"]["value"]
-    sSoftwareDate = cInit["controller"]["data"]["softwareRevisionDate"]["value"]
-    sLibraryType = cInit["controller"]["data"]["libType"]["value"]
-    sVendor = cInit["controller"]["data"]["vendor"]["value"]
-    sChip = cInit["controller"]["data"]["ZWaveChip"]["value"]
-    sAPIVersion = cInit["controller"]["data"]["APIVersion"]["value"]
-    bIsPrimary = cInit["controller"]["data"]["isPrimary"]["value"]
-    bIsRealPrimary = cInit["controller"]["data"]["isRealPrimary"]["value"]
-    iUpdateTime = cInit["updateTime"]
-    If $bDebug Then
-      Main.WriteDebugLog(LogLabel & "-------")
-      Main.WriteDebugLog(LogLabel & "Controller Info:")
-      Main.WriteDebugLog(LogLabel & "Node Id: " & iControllerID)
-      Main.WriteDebugLog(LogLabel & "Home Id: " & Hex(sHomeID, 7))
-      Main.WriteDebugLog(LogLabel & "Primary Role: " & Main.DisplayBool(bIsPrimary))
-      Main.WriteDebugLog(LogLabel & "Primary Capability: " & Main.DisplayBool(bIsRealPrimary))
-      Main.WriteDebugLog(LogLabel & "-------")
-      Main.WriteDebugLog(LogLabel & "Hardware:")
-      Main.WriteDebugLog(LogLabel & "Vendor: " & sVendor)
-      Main.WriteDebugLog(LogLabel & "Z-Wave Chip: " & sChip)
-      Main.WriteDebugLog(LogLabel & "-------")
-      Main.WriteDebugLog(LogLabel & "Firmware:")
-      Main.WriteDebugLog(LogLabel & "Library Type: " & sLibraryType)
-      Main.WriteDebugLog(LogLabel & "SDK Version: " & sSDKVersion)
-      Main.WriteDebugLog(LogLabel & "API Version: " & sAPIVersion)
-      Main.WriteDebugLog(LogLabel & "Z-Way Version:")
-      Main.WriteDebugLog(LogLabel & "Version: " & sSoftwareVersion)
-      Main.WriteDebugLog(LogLabel & "Date: " & sSoftwareDate)
-      Main.WriteDebugLog(LogLabel & "Update Timestamp: " & TimeSinceEpoch(iUpdateTime) & " (" & iUpdateTime & ")")
+  cData = JSON.Decode(sData, True) 
+
+  If cData Then
+    ' If we received new/update controller information, process it
+    If cData.Exist("controller") Then
+      ParseControllerInfo(cData["controller"], cData["updateTime"])
     Endif
-    If cInit["devices"] Then ParseInitDevices(cInit["devices"])
+
+    ' If we received new/update node(s) information, process it
+    If cData.Exist("devices") Then
+      ParseDeviceInfo(cData["devices"], cData["updateTime"])
+    Endif
+
+    ' Check for other updates
+ 
+    ' Finally update to our latest timestamp
+    ' we don 't want to do it earlier, because if an error happens, we loose track of changes
+    $iUpdateTime = cData["updateTime"]
   Else
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error received invalid JSON init data!")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Received invalid JSON data!")
   Endif
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Parse Controller Information
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseInitDevices(cDevices As Collection)
+Private Sub ParseControllerInfo(cData As JSONCollection, iUpdateTime As Integer)
 
-  Dim cNode, cInstance As New Collection
-  Dim iNode, iBasicType, iGenericType, iSpecificType, iInstance, iBattery, iScaleId, iSensorType, iScaleMulti, iDeviceId As Integer
-  Dim sVendorDevice, sDeviceType, sDeviceTypeAutoCreate, sScale As String
-  Dim bIsListening, bIsSensor250, bIsSensor1000, bHasWakeup, bHasBattery, bIsFLiRS, bHasMultiInstances As Boolean
+  Dim cController As New JSONCollection
+
+  Try cController.Add(cData["data"]["homeId"]["value"], "homeid")
+  If Error Then cController.Add(0, "homeid")
+  Try cController.Add(cData["data"]["nodeId"]["value"], "controllerid")
+  If Error Then cController.Add(0, "controllerid")
+  Try cController.Add(cData["data"]["SDK"]["value"], "sdkversion")
+  If Error Then cController.Add("", "sdkversion")
+  Try cController.Add(cData["data"]["APIVersion"]["value"], "apiversion")
+  If Error Then cController.Add("", "apiversion")
+  Try cController.Add(cData["data"]["softwareRevisionVersion"]["value"], "zwayversion")
+  If Error Then cController.Add("", "zwayversion")
+  Try cController.Add(cData["data"]["softwareRevisionDate"]["value"], "zwaydate")
+  If Error Then cController.Add("", "zwaydate")
+  Try cController.Add(cData["data"]["softwareRevisionId"]["value"], "zwayrevisionid")
+  If Error Then cController.Add("", "zwayrevisionid")
+  Try cController.Add(cData["data"]["vendor"]["value"], "vendor")
+  If Error Then cController.Add("", "vendor")
+  Try cController.Add(cData["data"]["ZWaveChip"]["value"], "zwavechip")
+  If Error Then cController.Add("", "zwavechip")
+  Try cController.Add(CBool(cData["data"]["isPrimary"]["value"]), "primary")
+  If Error Then cController.Add(False, "primary")
+  Try cController.Add(CBool(cData["data"]["isRealPrimary"]["value"]), "realprimary")
+  If Error Then cController.Add(False, "realprimary")
+
+  sLibraryType = cData["data"]["libType"]["value"]
+
+  ' Add the controller information to the internal Z-Wave Network
+  $cZWaveNetwork.Add(cController, "controller")
+
+  If $bDebug Then
+    Main.WriteDebugLog(LogLabel & "---")
+    Main.WriteDebugLog(LogLabel & "Controller Info")
+    Main.WriteDebugLog(LogLabel & "---")
+    Main.WriteDebugLog(LogLabel & "Home Id: 0x" & Hex(cController["homeid"], 7))
+    Main.WriteDebugLog(LogLabel & "Node Id: " & cController["controllerid"])
+    Main.WriteDebugLog(LogLabel & "Primary Role: " & Util.DisplayBool(cController["primary"]))
+    Main.WriteDebugLog(LogLabel & "Primary Capability: " & Util.DisplayBool(cController["realprimary"]))
+    Main.WriteDebugLog(LogLabel & "---")
+    Main.WriteDebugLog(LogLabel & "Hardware")
+    Main.WriteDebugLog(LogLabel & "---")
+    Main.WriteDebugLog(LogLabel & "Vendor: " & cController["vendor"])
+    Main.WriteDebugLog(LogLabel & "Z-Wave Chip: " & cController["zwavechip"])
+    Main.WriteDebugLog(LogLabel & "---")
+    Main.WriteDebugLog(LogLabel & "Firmware")
+    Main.WriteDebugLog(LogLabel & "---")
+    Main.WriteDebugLog(LogLabel & "Library Type: " & sLibraryType)
+    Main.WriteDebugLog(LogLabel & "SDK Version: " & cController["sdkversion"])
+    Main.WriteDebugLog(LogLabel & "API Version: " & cController["apiversion"])
+    Main.WriteDebugLog(LogLabel & "---")
+    Main.WriteDebugLog(LogLabel & "Z-Way Version")
+    Main.WriteDebugLog(LogLabel & "---")
+    Main.WriteDebugLog(LogLabel & "Version: " & cController["zwayversion"] & " (" & cController["zwayrevisionid"] & ")")
+    Main.WriteDebugLog(LogLabel & "Date: " & cController["zwaydate"])
+    Main.WriteDebugLog(LogLabel & "---")
+    Main.WriteDebugLog(LogLabel & "Update Timestamp: " & Util.TimeSinceEpoch(iUpdateTime) & " (" & iUpdateTime & ")")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Parse Device Information
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ParseDeviceInfo(cData As JSONCollection, iUpdateTime As Integer)
+
+  Dim cZWaveNode As JSONCollection
+  Dim cNode, cInstance As New JSONCollection
+  Dim iNodeId As Integer
+  Dim iInstanceId As Integer
+
+  Dim iBattery, iScaleId, iSensorType, iScaleMulti, iDeviceId As Integer
+  Dim sDeviceTypeAutoCreate, sScale As String
   Dim vValues, vValue, vValue2, vValue3, vValue4, vValueTemp As Variant
 
-  ' devices found?
-  If cDevices.Count Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Interface reported " & cDevices.Count & " nodes.")
+  ' Remove all nodes from the Z-Wave Network, they will be re-added automatically
+  ' The API doesn't tell us which devices are removed, just which nodes there are
+  For Each $cZWaveNetwork
+    ' Only skip the controller, we need to keep it
+    If $cZWaveNetwork.Key <> "controller" Then
+      $cZWaveNetwork.Remove($cZWaveNetwork.Key)
+    Endif
+  Next
+
+  ' Don't continue if the controller record is missing, something went horrorible wrong
+  If Not $cZWaveNetwork.Exist("controller") Then
+    Main.WriteLog(LogLabel & "ERROR: Device List supplied, but no controller information available. Looks like a bug?")
+    Return
+  Endif
+
+  ' devices found ...
+  If cData.Count Then
+    If $bDebug Then
+      Main.WriteDebugLog(LogLabel & "---")
+      Main.WriteDebugLog(LogLabel & "Interface Reported " & cData.Count & " device(s).")
+    Endif
 
     ' go through each node
-    For Each cNode In cDevices
+    For Each cNode In cData
+
+      cZWaveNode = New JSONCollection
 
       ' The Z-Wave NodeId is in the key
-      Try iNode = cDevices.Key
-      If iNode = iControllerID Then
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Detected controller as node #" & iNode & ", skipping...") 
+      Try iNodeId = CInt(cData.Key)
+      If Error Then
+        Main.WriteDebugLog(LogLabel & "ERROR: Skipping device, unable to detect Z-Wave NodeId '" & cData.Key & "'")
         Continue
       Endif
-      ' store it's info
-      sVendorDevice = cNode["data"]["vendorString"]["value"]
-      sDeviceType = cNode["data"]["deviceTypeString"]["value"]
-      iBasicType = cNode["data"]["basicType"]["value"]
-      iGenericType = cNode["data"]["genericType"]["value"]
-      iSpecificType = cNode["data"]["specificType"]["value"]
-      bIsListening = cNode["data"]["isListening"]["value"]
-      bIsSensor250 = cNode["data"]["sensor250"]["value"]
-      bIsSensor1000 = cNode["data"]["sensor1000"]["value"]
-      If bIsListening Then
-        If bIsSensor250 Or If bIsSensor1000 Then
-          bIsFLiRS = True
-        Else
-          bIsFLiRS = False
-        Endif
+
+      ' Only allow valid Z-Wave NodeIds
+      If iNodeId < 1 Or If iNodeId > 232 Then
+        Main.WriteDebugLog(LogLabel & "ERROR: Skipping device, invalid Z-Wave NodeId '" & iNodeId & "'")
+        Continue
       Endif
-      bHasWakeup = cNode["instances"]["0"]["commandClasses"]["132"]
-      bHasBattery = cNode["instances"]["0"]["commandClasses"]["128"]
+
+      cZWaveNode.Add(iNodeId, "node_id")
+
+      ' store it's info
+      Try cZWaveNode.Add(cNode["data"]["vendorString"]["value"], "manufacturername")
+      If Error Then cZWaveNode.Add("", "manufacturername")
+      Try cZWaveNode.Add(cNode["data"]["manufacturerId"]["value"], "manufacturerid")
+      If Error Then cZWaveNode.Add(0, "manufacturerid")
+      Try cZWaveNode.Add(CBool(cNode["data"]["isRouting"]["value"]), "routing")
+      If Error Then cZWaveNode.Add(False, "routing")
+      Try cZWaveNode.Add(CBool(cNode["data"]["isListening"]["value"]), "listening")
+      If Error Then cZWaveNode.Add(False, "listening")
+      If cZWaveNode["listening"] Then
+        cZWaveNode.Add(False, "frequentlistening")
+      Else
+        Try cZWaveNode.Add(CBool(IIf(cNode["data"]["sensor250"]["value"] Or cNode["data"]["sensor1000"]["value"], True, False)), "frequentlistening")
+        If Error Then cZWaveNode.Add(False, "frequentlistening")
+      Endif
+      Try cZWaveNode.Add(CBool(cNode["data"]["beam"]["value"]), "beaming")
+      If Error Then cZWaveNode.Add(False, "beaming")
+
+      Try cZWaveNode.Add(CBool(IIf(cNode["instances"]["0"]["commandClasses"]["132"], True, False)), "wakeup")
+      Try cZWaveNode.Add(CBool(IIf(cNode["instances"]["0"]["commandClasses"]["128"], True, False)), "battery")
+      Try cZWaveNode.Add(CBool(IIf(cNode["instances"]["0"]["commandClasses"]["152"], True, False)), "security")
+      Try cZWaveNode.Add(IIf(cNode["instances"].Count > 1, True, False), "multiinstance")
+      If Error Then cZWaveNode.Add(False, "multiinstance")
+      Try cZWaveNode.Add(cNode["data"]["neighbours"]["value"], "neighbors")
+      If Error Then cZWaveNode.Add(Integer[], "neighbors")
+      Try cZWaveNode.Add(cNode["data"]["basicType"]["value"], "basicid")
+      If Error Then cZWaveNode.Add(0, "basicid")
+      cZWaveNode.Add(GetBasicTypeName(cZWaveNode["basicid"]), "basic")
+      Try cZWaveNode.Add(cNode["data"]["genericType"]["value"], "genericid")
+      If Error Then cZWaveNode.Add(0, "genericid")
+      cZWaveNode.Add(GetGenericTypeName(cZWaveNode["genericid"]), "generic")
+      Try cZWaveNode.Add(cNode["data"]["specificType"]["value"], "specificid")
+      If Error Then cZWaveNode.Add(0, "specificid")
+      cZWaveNode.Add(GetSpecificTypeName(cZWaveNode["genericid"], cZWaveNode["specificid"]), "specific")
+      Try cZWaveNode.Add(cNode["data"]["deviceTypeString"]["value"], "devicetype")
+      If Error Then cZWaveNode.Add("", "devicetype")
+
+      Try cZWaveNode.Add(cNode["data"]["applicationMajor"]["value"] & "." & cNode["data"]["applicationMinor"]["value"], "applicationversion")
+      If Error Then cZWaveNode("", "applicationversion")
+      Try cZWaveNode.Add(cNode["data"]["ZWProtocolMajor"]["value"] & "." & cNode["data"]["ZWProtocolMinor"]["value"], "protocolversion")
+      If Error Then cZWaveNode("", "protocolversion")
+      Try cZWaveNode.Add(CStr(cNode["data"]["ZWLib"]["value"]), "libraryversion")
+      If Error Then cZWaveNode("", "libraryversion")
+      Try cZWaveNode.Add(IIf(cNode["data"]["isFailed"]["value"], "Dead", "Alive"), "state")
+      If Error Then cZWaveNode.Add("Alive", "state")
+      ' LastSeen ...
+
+      ' If device is the controller, just add it to the ZWaveNode and go to the next device
+      If iNodeId = $cZWaveNetwork["controller"]["controllerid"] Then
+        Try cZWaveNode.Add($cZWaveNetwork["controller"]["sdkversion"], "sdkversion")
+        If Error Then cZWaveNode.Add("", "sdkversion")
+
+        $cZWaveNetwork.Add(cZWaveNode, cZWaveNode["node_id"])
+
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Detected controller as node #" & iNodeId & ", skipping...") 
+        Continue
+      Endif
+
+      Try cZWaveNode.Add(cNode["data"]["SDK"]["value"], "sdkversion")
+      If Error Then cZWaveNode.Add("", "sdkversion")
 
       ' Determine auto-create devicetype
-      Select iGenericType
+      Select cZWaveNode["genericid"]
         Case &H01, &H02
           sDeviceTypeAutoCreate = "Z-Wave Controller"
         Case &H08
@@ -366,18 +497,18 @@ Private Sub ParseInitDevices(cDevices As Collection)
         Case &H10
           sDeviceTypeAutoCreate = "Z-Wave Switch"
         Case &H11
-          Select iSpecificType
+          Select cZWaveNode["specificid"]
             Case &H05, &H06, &H07
               sDeviceTypeAutoCreate = "Z-Wave Motor Control"
             Default
               sDeviceTypeAutoCreate = "Z-Wave Dimmer"
           End Select
         Case &H12
-          sDeviceType = "Z-Wave Remote Switch"
+          sDeviceTypeAutoCreate = "Z-Wave Remote Switch"
         Case &H20, &H21, &H30, &H31, &HA1
           sDeviceTypeAutoCreate = "Z-Wave Sensor"
         Case &H40
-          Select iSpecificType
+          Select cZWaveNode["specificid"]
             Case &H01, &H02, &H03
               sDeviceTypeAutoCreate = "Z-Wave Door Lock"
             Default
@@ -387,44 +518,48 @@ Private Sub ParseInitDevices(cDevices As Collection)
           sDeviceTypeAutoCreate = "Z-Wave Generic"
       End Select
 
-      If cNode["instances"].Count > 1 Then
-        bHasMultiInstances = True
-      Else
-        bHasMultiInstances = False
+      ' If the devicetype is empty, overrule it
+      If Not cZWaveNode["devicetype"] Then
+        cZWaveNode.Add(sDeviceTypeAutoCreate, "devicetype")
       Endif
+
       If $bDebug Then
-        Main.WriteDebugLog(LogLabel & "-------")
-        Main.WriteDebugLog(LogLabel & "Node #" & iNode)
-        Main.WriteDebugLog(LogLabel & "Vendor: " & sVendorDevice)
-        Main.WriteDebugLog(LogLabel & "DeviceType: " & sDeviceType)
-        Main.WriteDebugLog(LogLabel & "BasicType: " & iBasicType)
-        Main.WriteDebugLog(LogLabel & "GenericType: " & iGenericType)
-        Main.WriteDebugLog(LogLabel & "SpecificType: " & iSpecificType)
-        Main.WriteDebugLog(LogLabel & "Is Listening: " & DisplayBool(bIsListening))
-        Main.WriteDebugLog(LogLabel & "Does WakeUp: " & DisplayBool(bHasWakeup))
-        Main.WriteDebugLog(LogLabel & "Has Battery: " & DisplayBool(bHasBattery))
-        Main.WriteDebugLog(LogLabel & "Is FLiRS device: " & DisplayBool(bIsFLiRS))
-        Main.WriteDebugLog(LogLabel & "Has Multiple Instances: " & DisplayBool(bHasMultiInstances))
+        Main.WriteDebugLog(LogLabel & "---")
+        Main.WriteDebugLog(LogLabel & "Node #" & iNodeId)
+        Main.WriteDebugLog(LogLabel & "Vendor: " & cZWaveNode["manufacturername"])
+        Main.WriteDebugLog(LogLabel & "DeviceType: " & cZWaveNode["devicetype"])
+        Main.WriteDebugLog(LogLabel & "BasicType: " & cZWaveNode["basic"])
+        Main.WriteDebugLog(LogLabel & "GenericType: " & cZWaveNode["generic"])
+        Main.WriteDebugLog(LogLabel & "SpecificType: " & cZWaveNode["specific"])
+        Main.WriteDebugLog(LogLabel & "Listening: " & Util.DisplayBool(cZWaveNode["listening"]))
+        Main.WriteDebugLog(LogLabel & "Frequent Listening (FLiRS): " & Util.DisplayBool(cZWaveNode["frequentlistening"]))
+        Main.WriteDebugLog(LogLabel & "WakeUp: " & Util.DisplayBool(cZWaveNode["wakeup"]))
+        Main.WriteDebugLog(LogLabel & "Battery: " & Util.DisplayBool(cZWaveNode["battery"]))
+        Main.WriteDebugLog(LogLabel & "Multiple Instances: " & Util.DisplayBool(cZWaveNode["multiinstance"]))
       Endif
 
       ' go through each instance
       For Each cInstance In cNode["instances"]
 
         ' devices.2.instances.0.data
-        Try iInstance = cNode["instances"].Key
+        Try iInstanceId = CInt(cNode["instances"].Key)
+        If Error Then
+          Main.WriteDebugLog(LogLabel & "ERROR: Skipping device, invalid instance '" & cNode["instances"].Key & "' for node " & cZWaveNode["node_id"])
+          Continue
+        Endif
 
         ' skip instance 0 if it has more, since it should be mapped to other instances
-        If iInstance = 0 And If bHasMultiInstances Then Continue
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Instance #" & iInstance)
+        If iInstanceId = 0 And If cZWaveNode["multiinstance"] Then Continue
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Instance #" & iInstanceId)
 
         ' battery level if available
-        If bHasBattery Then Try iBattery = cInstance["commandClasses"]["128"]["data"]["last"]["value"]
+        If cZWaveNode["battery"] Then Try iBattery = cInstance["commandClasses"]["128"]["data"]["last"]["value"]
 
         ' dimmer
         ' use SwitchMultilevel first, if not available use SwitchBinary
         If cInstance["commandClasses"]["38"] Then
 
-          Try cCommandClassId.Add(38, iNode & ":" & iInstance)
+          Try cCommandClassId.Add(38, iNodeId & ":" & iInstanceId)
           vValue = cInstance["commandClasses"]["38"]["data"]["level"]["value"]
           If $bDebug Then Main.WriteDebugLog(LogLabel & "Dimmer Device: " & vValue)
           Select vValue
@@ -440,16 +575,16 @@ Private Sub ParseInitDevices(cDevices As Collection)
         ' switch
         Else If cInstance["commandClasses"]["37"] Then
 
-          Try cCommandClassId.Add(37, iNode & ":" & iInstance)
+          Try cCommandClassId.Add(37, iNodeId & ":" & iInstanceId)
           vValue = cInstance["commandClasses"]["37"]["data"]["level"]["value"]
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Switch Device: " & DisplayBool(vValue))
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Switch Device: " & Util.DisplayBool(vValue))
           vValue = IIf(vValue = 255, "On", "Off")
           ' update device
         Endif
 
         ' sensor multilevel, binary switch eg pir
         If cInstance["commandClasses"]["48"] Then
-          If sSoftwareVersion = "v1.3.1" Then
+          If $cZWaveNetwork["controller"]["zwayversion"] = "v1.3.1" Then
             vValue = cInstance["commandClasses"]["48"]["data"][cInstance["commandClasses"]["48"]["data"].Key]["level"]["value"]
           Else ' 1.4 or higher
             For Each vValues In cInstance["commandClasses"]["48"]["data"]
@@ -464,8 +599,8 @@ Private Sub ParseInitDevices(cDevices As Collection)
                 End Select
                 ' update device
 
-                If $bDebug Then Main.WriteDebugLog(LogLabel & "Multilevel binary switch device: " & DisplayBool(vValue))
-                Select Case sVendorDevice & " " & sDeviceType
+                If $bDebug Then Main.WriteDebugLog(LogLabel & "Multilevel binary switch device: " & Util.DisplayBool(vValue))
+                Select Case cZWaveNode["manufacturername"] & " " & cZWaveNode["devicetype"]
                   Case "Aeon Labs Routing Binary Sensor"
                     vValue = IIf(vValue = True, "Open", "Close")
                 End Select
@@ -569,21 +704,21 @@ Private Sub ParseInitDevices(cDevices As Collection)
 
         ' thermostat
         If cInstance["commandClasses"]["67"]
-          Try cCommandClassId.Add(67, iNode & ":" & iInstance)
+          Try cCommandClassId.Add(67, iNodeId & ":" & iInstanceId)
           vValue2 = cInstance["commandClasses"]["67"]["data"]["1"]["setVal"]["value"]
           If $bDebug Then Main.WriteDebugLog(LogLabel & "Thermostat SetValue: " & vValue2)
         Endif
 
-        If bHasBattery And If $bDebug Then Main.WriteDebugLog(LogLabel & "Battery Value: " & iBattery & "%")
+        If cZWaveNode["battery"] And If $bDebug Then Main.WriteDebugLog(LogLabel & "Battery Value: " & iBattery & "%")
 
         ' update device value(s)
-        iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId, sDeviceTypeAutoCreate, SVendorDevice & " " & sDeviceType)
+        iDeviceId = Devices.Find(Instance, iNodeId & IIf((iInstanceId > 1), ":" & iInstanceId, ""), InterfaceId, sDeviceTypeAutoCreate, cZWaveNode["manufacturername"] & " " & cZWaveNode["devicetype"])
         If iDeviceId Then
           If vValue Then Devices.ValueUpdate(iDeviceId, 1, vValue)
           If vValue2 Then Devices.ValueUpdate(iDeviceId, 2, vValue2)
           If vValue3 Then Devices.ValueUpdate(iDeviceId, 3, vValue3)
           If vValue4 Then Devices.ValueUpdate(iDeviceId, 4, vValue4)
-          If bHasBattery Then Devices.Battery(iDeviceId, iBattery)
+          If cZWaveNode["battery"] Then Devices.Battery(iDeviceId, iBattery)
         Endif
 
         If $bDebug Then
@@ -600,32 +735,25 @@ Private Sub ParseInitDevices(cDevices As Collection)
         vValue4 = ""
         sScale = ""
       Next
+
+      $cZWaveNetwork.Add(cZWaveNode, cZWaveNode["node_id"])
     Next
+
   Endif
+
   bInit = True
+
   ' start update timer
   If $iPollTime Then tRaZberry.Start
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
-Public Sub DisplayBool(bSwitch As Variant) As String
-
-  If TypeOf(bSwitch) = gb.Boolean Then
-    Select bSwitch
-      Case True
-          Return ("True")
-      Case Else
-          Return ("False")
-    End Select
-  Else
-    Return bSwitch
-  Endif
-
-End
-
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Send Command
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sCmd As String)
 
   Dim iLevel, iCommandClassId As Integer
@@ -668,9 +796,12 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetUpdates()
 
-  Dim sUrl As String = GetURL("/ZWaveAPI/Data/" & iUpdateTime)
+  Dim sUrl As String = GetURL("/ZWaveAPI/Data/" & $iUpdateTime)
 
   If $bDebug Then Main.WriteDebugLog(LogLabel & "Get update by fetching '" & sUrl & "'")
   QueueCommand(sUrl)
@@ -789,21 +920,24 @@ Public Sub HttpBusy(sKey As String)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Process Device Status update(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ParseUpdateData(sData As String)
 
-  Dim cUpdate As Collection
+  Dim cUpdate As JSONCollection
 
   If sData = "null" Then
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Got a device control response.")
     Return
   Else
-    cUpdate = JSON.Decode(sData)
+    cUpdate = JSON.Decode(sData, True)
   Endif
 
   If cUpdate Then
-    iUpdateTime = cUpdate["updateTime"]
+    $iUpdateTime = cUpdate["updateTime"]
     If $bDebug Then
-      Main.WriteDebugLog(LogLabel & "Update Timestamp: " & TimeSinceEpoch(iUpdateTime) & " (" & iUpdateTime & ")")
+      Main.WriteDebugLog(LogLabel & "Update Timestamp: " & Util.TimeSinceEpoch($iUpdateTime) & " (" & $iUpdateTime & ")")
     Endif
     If cUpdate.Count > 1 Then
       ParseUpdateDevices(cUpdate)
@@ -815,13 +949,16 @@ Private Sub ParseUpdateData(sData As String)
   Endif
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
+  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
-Private Sub ParseUpdateDevices(cUpdates As Collection)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ParseUpdateDevices(cUpdates As JSONCollection)
 
-  Dim cUpdate As New Collection
+  Dim cUpdate As New JSONCollection
   Dim aUpdate As String[]
   Dim vValue, vValue2, vValue3, vValue4, vValueTemp As Variant
   Dim sScale, sSensorType As String
@@ -834,7 +971,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
     ' skip controller node
     aUpdate = Split(cUpdates.Key, ".")
     If aUpdate.Count > 1 Then
-      If aUpdate[1] = iControllerID Then 
+      If aUpdate[1] = $cZWaveNetwork["controller"]["controllerid"] Then 
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Skipping controller node updates")
         Continue
       Endif
@@ -853,7 +990,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
             Main.WriteDebugLog(LogLabel & "Battery Value Update: " & iBattery)
           Endif
           ' update battery status
-          iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId)
+          iDeviceId = Devices.Find(Instance, iNode & IIf((iInstance > 1), ":" & iInstance, ""), InterfaceId)
           If iDeviceId Then
             Devices.Battery(iDeviceId, iBattery)
           Endif
@@ -867,7 +1004,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
           vValue = IIf((cUpdate["level"]["value"] = True), "On", "Off")
           iNode = aUpdate[1]
           iInstance = aUpdate[3]
-          iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId)
+          iDeviceId = Devices.Find(Instance, iNode & IIf((iInstance > 1), ":" & iInstance, ""), InterfaceId)
           If iDeviceId Then
             Devices.ValueUpdate(iDeviceId, 1, vValue)
           Endif
@@ -881,7 +1018,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
           vValue = IIf((cUpdate["value"] = 255), "On", "Off")
           iNode = aUpdate[1]
           iInstance = aUpdate[3]
-          iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId)
+          iDeviceId = Devices.Find(Instance, iNode & IIf((iInstance > 1), ":" & iInstance, ""), InterfaceId)
           If iDeviceId Then
             Devices.ValueUpdate(iDeviceId, 1, vValue)
           Endif
@@ -903,7 +1040,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
           Endif
           vValue = IIf((cUpdate["value"] = True), "Open", "Closed")
           ' update device value(s)
-          iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId)
+          iDeviceId = Devices.Find(Instance, iNode & IIf((iInstance > 1), ":" & iInstance, ""), InterfaceId)
           If iDeviceId Then
             Devices.ValueUpdate(iDeviceId, 1, vValue)
           Endif
@@ -923,7 +1060,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
             Main.WriteDebugLog(LogLabel & "Switch Value1 Update: " & vValue)
           Endif
           ' update device value(s)
-          iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId)
+          iDeviceId = Devices.Find(Instance, iNode & IIf((iInstance > 1), ":" & iInstance, ""), InterfaceId)
           If iDeviceId Then
             Devices.ValueUpdate(iDeviceId, 1, vValue)
           Endif
@@ -945,7 +1082,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
             Main.WriteDebugLog(LogLabel & "Dimmer Value1 Update: " & vValue)
           Endif
           ' update device value(s)
-          iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId)
+          iDeviceId = Devices.Find(Instance, iNode & IIf((iInstance > 1), ":" & iInstance, ""), InterfaceId)
           If iDeviceId Then
             Devices.ValueUpdate(iDeviceId, 1, vValue)
           Endif
@@ -965,7 +1102,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
             Main.WriteDebugLog(LogLabel & "Multilevel Sensor Value1 Update: " & vValue)
           Endif
           ' update device value(s)
-          iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId)
+          iDeviceId = Devices.Find(Instance, iNode & IIf((iInstance > 1), ":" & iInstance, ""), InterfaceId)
           If iDeviceId Then
             Devices.ValueUpdate(iDeviceId, 1, vValue)
           Endif
@@ -985,7 +1122,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
             Main.WriteDebugLog(LogLabel & "Thermostat Value2 (setVal) Update: " & vValue2)
           Endif
           ' update device value(s)
-          iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId)
+          iDeviceId = Devices.Find(Instance, iNode & IIf((iInstance), ":" & iInstance, ""), InterfaceId)
           If iDeviceId Then
             'Devices.ValueUpdate(iDeviceId, 1, vValue)
             Devices.ValueUpdate(iDeviceId, 2, vValue2)
@@ -1014,7 +1151,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
             Main.WriteDebugLog(LogLabel & "Type: " & sSensorType)
             If iScale = 4 Then Main.WriteDebugLog(LogLabel & "Power Sensor value4 Update: " & vValue4 & sScale)
           Endif
-          iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId)
+          iDeviceId = Devices.Find(Instance, iNode & IIf((iInstance > 1), ":" & iInstance, ""), InterfaceId)
           If iDeviceId Then
             Devices.ValueUpdate(iDeviceId, 1, vValue)
             Devices.ValueUpdate(iDeviceId, 2, vValue2)
@@ -1051,7 +1188,7 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
             If iScale = 0 Then Main.WriteDebugLog(LogLabel & "Sensor Multilevel Binary Value3 Update: " & vValue3 & sScale)
           Endif
           ' update device value(s)
-          iDeviceId = Devices.Find(Instance, iNode & If((iInstance), ":" & iInstance, ""), InterfaceId)
+          iDeviceId = Devices.Find(Instance, iNode & IIf((iInstance > 1), ":" & iInstance, ""), InterfaceId)
           If iDeviceId Then
             Devices.ValueUpdate(iDeviceId, 1, vValue)
             Devices.ValueUpdate(iDeviceId, 2, vValue2)
@@ -1074,24 +1211,10 @@ Private Sub ParseUpdateDevices(cUpdates As Collection)
 
 Catch ' some errors
   If Error.code <> 6 Then ' suppress reading updatetime as collection
-    Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where & " " & Error.Code)
+    Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "' " & Error.Code)
   Else
     Error.Clear
   Endif
-
-End
-
-Private Sub TimeSinceEpoch(sTime As String) As String
-
-  Dim gTime As Date
-
-  ' calculate time since epoch
-  gTime = DateAdd(Date(1970, 1, 1), gb.Second, Val(sTime))
-
-  Return Format$(gTime, "yyyy/mm/dd hh:nn:ss")
-
-Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text & " at " & Error.Where)
 
 End
 
@@ -1119,5 +1242,238 @@ Finally
 Catch
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display Z-Wave BasicType name
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub GetBasicTypeName(iBasic As Integer) As String
+
+  Select iBasic
+    Case BASIC_TYPE_CONTROLLER
+      Return "Controller"
+    Case BASIC_TYPE_STATIC_CONTROLLER
+      Return "Static Controller"
+    Case BASIC_TYPE_SLAVE
+      Return "Slave"
+    Case BASIC_TYPE_ROUTING_SLAVE
+      Return "Routing Slave"
+    Default
+      Return "Unknown (" & iBasic & ")"
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display Z-Wave GenericType name
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub GetGenericTypeName(iGeneric As Integer) As String
+
+  Return GetSpecificTypeName(iGeneric, 0)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display Z-Wave SpecificType name
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub GetSpecificTypeName(iGenericType As Integer, iSpecificType As Integer) As String
+
+  Select iGenericType 
+    Case GENERIC_TYPE_GENERIC_CONTROLLER
+      Select iSpecificType
+        Case &H01
+          Return "Portable Remote Controller"
+        Case &H02
+          Return "Portable Scene Controller"
+        Case &H03
+          Return "Portable Installer Tool"
+      End Select
+      Return "Generic Controller"
+    Case GENERIC_TYPE_STATIC_CONTROLLER
+      Select iSpecificType
+        Case &H01
+          Return "Static PC Controller"
+        Case &H02
+          Return "Static Scene Controller"
+        Case &H03
+          Return "Static Installer Tool"
+      End Select
+      Return "Static Controller"
+    Case GENERIC_TYPE_AV_CONTROL_POINT
+      Select iSpecificType
+        Case &H04
+          Return "Satellite Receiver"
+        Case &H11
+          Return "Satellite Receiver V2"
+        Case &H12
+          Return "Doorbell"
+      End Select
+      Return "AV Control Point"
+    Case GENERIC_TYPE_DISPLAY
+      Select iSpecificType
+        Case &H01
+          Return "Simple Display"
+      End Select
+      Return "Display"
+    Case GENERIC_TYPE_THERMOSTAT
+      Select iSpecificType
+        Case &H01
+          Return "Heating Thermostat"
+        Case &H02
+          Return "General Thermostat"
+        Case &H03
+          Return "Setback Schedule Thermostat"
+        Case &H04
+          Return "Setpoint Thermostat"
+        Case &H05
+          Return "Setback Thermostat"
+        Case &H06
+          Return "General Thermostat V2"
+      End Select
+      Return "Thermostat"
+    Case GENERIC_TYPE_WINDOW_COVERING
+      Select iSpecificType
+        Case &H01
+          Return "Simple Window Covering"
+      End Select
+      Return "Window Covering"
+    Case GENERIC_TYPE_REPEATER_SLAVE
+      Select iSpecificType
+        Case &H01
+          Return "Basic Repeater Slave"
+      End Select
+      Return "Repeating Slave"
+    Case GENERIC_TYPE_SWITCH_BINARY
+      Select iSpecificType
+        Case &H01
+          Return "Binary Power Switch"
+        Case &H03
+          Return "Binary Scene Switch"
+      End Select
+      Return "Binary Switch"
+    Case GENERIC_TYPE_SWITCH_MULTILEVEL
+      Select iSpecificType
+        Case &H01
+          Return "Multilevel Power Switch"
+        Case &H03
+          Return "Multiposition Motor"
+        Case &H04
+          Return "Multilevel Scene Switch"
+        Case &H05
+          Return "Motor Control Class A"
+        Case &H06
+          Return "Motor Control Class B"
+        Case &H07
+          Return "Motor Control Class C"
+      End Select
+      Return "Multilevel Switch"
+    Case GENERIC_TYPE_SWITCH_REMOTE
+      Select iSpecificType
+        Case &H01
+          Return "Binary Remote Switch"
+        Case &H02
+          Return "Multilevel Remote Switch"
+        Case &H03
+          Return "Binary Toggle Remote Switch"
+        Case &H04
+          Return "Multilevel Toggle Remote Switch"
+      End Select
+      Return "Remote Switch"
+    Case GENERIC_TYPE_SWITCH_TOGGLE
+      Select iSpecificType
+        Case &H01
+          Return "Binary Toggle Switch"
+        Case &H02
+          Return "Multilevel Toggle Switch"
+      End Select
+      Return "Toggle Switch"
+    Case GENERIC_TYPE_ZIP_GATEWAY
+      Select iSpecificType
+        Case &H01
+          Return "Z/IP Tunneling Gateway"
+        Case &H02
+          Return "Z/IP Advanced Gateway"
+      End Select
+      Return "Zip Gateway"
+    Case GENERIC_TYPE_ZIP_NODE
+      Select iSpecificType
+        Case &H01
+          Return "Z/IP Tunneling Node"
+        Case &H02
+          Return "Z/IP Advanced Node"
+      End Select
+      Return "Zip Node"
+    Case GENERIC_TYPE_VENTILATION
+      Select iSpecificType
+        Case &H01
+          Return "Residential Heat Recovery Ventilation"
+      End Select
+      Return "Ventilation"
+    Case GENERIC_TYPE_SENSOR_BINARY
+      Select iSpecificType
+        Case &H01
+          Return "Routing Binary Sensor"
+      End Select
+      Return "Binary Sensor"
+    Case GENERIC_TYPE_SENSOR_MULTILEVEL
+      Select iSpecificType
+        Case &H01
+          Return "Routing Multilevel Sensor"
+      End Select
+      Return "Multilevel Sensor"
+    Case GENERIC_TYPE_METER_PULSE
+      Return "Pulse Meter"
+    Case GENERIC_TYPE_METER
+      Select iSpecificType
+        Case &H01
+          Return "Simple Meter"
+      End Select
+      Return "Meter"
+    Case GENERIC_TYPE_ENTRY_CONTROL
+      Select iSpecificType
+        Case &H01
+          Return "Door Lock"
+        Case &H02
+          Return "Advanced Door Lock"
+        Case &H03
+          Return "Secure Keypad Door Lock"
+      End Select
+      Return "Entry Control"
+    Case GENERIC_TYPE_SEMI_INTEROPERABLE
+      Select iSpecificType
+        Case &H01
+          Return "Energy Production"
+      End Select
+      Return "Semi Interoperable"
+    Case GENERIC_TYPE_SENSOR_ALARM
+      Select iSpecificType
+        Case &H01
+          Return "Basic Routing Alarm Sensor"
+        Case &H02
+          Return "Routing Alarm Sensor"
+        Case &H03
+          Return "Basic Zensor Alarm Sensor"
+        Case &H04
+          Return "Zensor Alarm Sensor"
+        Case &H05
+          Return "Advanced Zensor Alarm Sensor"
+        Case &H06
+          Return "Basic Routing Smoke Sensor"
+        Case &H07
+          Return "Routing Smoke Sensor"
+        Case &H08
+          Return "Basic Zensor Smoke Sensor"
+        Case &H09
+          Return "Zensor Smoke Sensor"
+        Case &H0A
+          Return "Advanced Zensor Smoke Sensor"
+      End Select
+      Return "Alarm Sensor"
+    Case GENERIC_TYPE_NON_INTEROPERABLE
+      Return "Non Interoperable"
+    Default
+      Return "Unknown (" & iGenericType & ")"
+  End Select
 
 End
