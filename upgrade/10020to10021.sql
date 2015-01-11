@@ -43,6 +43,12 @@ UPDATE devicetypes SET `addressformat`='1 or 1:2' WHERE `id`='64' AND `addressfo
 UPDATE plugins SET `interface`='RaZberry Z-Wave Interface', `name`='RaZberry' WHERE `name`='RaZberry';
 
 --
+-- Network interface field
+--
+
+ALTER TABLE settings_networkdetect ADD COLUMN interface varchar(16) CHARACTER SET 'utf8' DEFAULT 'eth0' AFTER timeout;
+
+--
 -- Finally update to 1.0.021
 --
 

@@ -3122,6 +3122,7 @@ CREATE TABLE `settings_networkdetect` (
   `enable_ping` tinyint(1) NOT NULL DEFAULT '0',
   `enable_arpscan` tinyint(1) NOT NULL DEFAULT '0',
   `timeout` int(11) NOT NULL DEFAULT 100,
+  `interface` varchar(16) DEFAULT 'eth0',
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
