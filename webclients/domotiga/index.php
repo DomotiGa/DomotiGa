@@ -158,7 +158,7 @@ if ($_SESSION['view']=="main") {
    $thisrow="row1";
    foreach($data AS $item) {
       echo "<div class='$thisrow'>\n";
-      echo "<div class='imgcol' style='width:20px;' id='i".$item['id']."deviceicon'>&nbsp;".$item['deviceicon']."</div>\n";
+      echo "<div class='imgcol' style='width:22px;' id='i".$item['id']."deviceicon'>&nbsp;".$item['deviceicon']."</div>\n";
       echo "<div class='datacol' style='width:170px;' id='i".$item['id']."devicename'>&nbsp;".$item['devicename']."</div>\n";
       echo "<div class='datacol' style='width:110px;' id='i".$item['id']."devicelocation'>&nbsp;".$item['devicelocation']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue1'>&nbsp;".$item['devicevalue1']."</div>\n";
@@ -208,7 +208,7 @@ if ($_SESSION['view']=="control") {
       if ( $item['dimmable'] != "" || $item['switchable'] != "" )
       {
       echo "<div class='$thisrow'>\n";
-      echo "<div class='imgcol' style='width:20px;' id='i".$item['id']."deviceicon'>&nbsp;".$item['deviceicon']."</div>\n";
+      echo "<div class='imgcol' style='width:22px;' id='i".$item['id']."deviceicon'>&nbsp;".$item['deviceicon']."</div>\n";
       echo "<div class='datacol' style='width:170px;' id='i".$item['id']."devicename'>&nbsp;".$item['devicename']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue1'>&nbsp;".$item['devicevalue1']."</div>\n";
       echo "<div class='datacol' style='width:100px;' id='i".$item['id']."devicevalue2'>&nbsp;<a href='?action=On&deviceid=".urlencode($item['id'])."'>On</a></div>\n";
