@@ -756,129 +756,133 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		{
 			if ( type == ValueID::ValueType_Decimal )
 			{
-				if ( label == "Temperature" )
+				if ( label == "General" )
 				{
 					dev_index = 15;
 				}
-				else if ( label == "Relative Humidity" )
+				else if ( label == "Temperature" )
 				{
 					dev_index = 16;
 				}
-				else if ( label == "Luminance" )
+				else if ( label == "Relative Humidity" )
 				{
 					dev_index = 17;
 				}
-				else if ( label == "Power" )
+				else if ( label == "Luminance" )
 				{
 					dev_index = 18;
 				}
-				else if ( label == "Relative Humidity" )
+				else if ( label == "Power" )
 				{
 					dev_index = 19;
 				}
-				else if ( label == "Velocity" )
+				else if ( label == "Relative Humidity" )
 				{
 					dev_index = 20;
 				}
-				else if ( label == "Direction" )
+				else if ( label == "Velocity" )
 				{
 					dev_index = 21;
 				}
-				else if ( label == "Atmospheric Pressure" )
+				else if ( label == "Direction" )
 				{
 					dev_index = 22;
 				}
-				else if ( label == "Barometric Pressure" )
+				else if ( label == "Atmospheric Pressure" )
 				{
 					dev_index = 23;
 				}
-				else if ( label == "Solar Radiation" )
+				else if ( label == "Barometric Pressure" )
 				{
 					dev_index = 24;
 				}
-				else if ( label == "Dew Point" )
+				else if ( label == "Solar Radiation" )
 				{
 					dev_index = 25;
 				}
-				else if ( label == "Rain Rate" )
+				else if ( label == "Dew Point" )
 				{
 					dev_index = 26;
 				}
-				else if ( label == "Tide Level" )
+				else if ( label == "Rain Rate" )
 				{
 					dev_index = 27;
 				}
-				else if ( label == "Weight" )
+				else if ( label == "Tide Level" )
 				{
 					dev_index = 28;
 				}
-				else if ( label == "Voltage" )
+				else if ( label == "Weight" )
 				{
 					dev_index = 29;
 				}
-				else if ( label == "Current" )
+				else if ( label == "Voltage" )
 				{
 					dev_index = 30;
 				}
-				else if ( label == "CO2 Level" )
+				else if ( label == "Current" )
 				{
 					dev_index = 31;
 				}
-				else if ( label == "Air Flow" )
+				else if ( label == "CO2 Level" )
 				{
 					dev_index = 32;
 				}
-				else if ( label == "Tank Capacity" )
+				else if ( label == "Air Flow" )
 				{
 					dev_index = 33;
 				}
-				else if ( label == "Distance" )
+				else if ( label == "Tank Capacity" )
 				{
 					dev_index = 34;
 				}
-				else if ( label == "Angle Position" )
+				else if ( label == "Distance" )
 				{
 					dev_index = 35;
 				}
-				else if ( label == "Rotation" )
+				else if ( label == "Angle Position" )
 				{
 					dev_index = 36;
 				}
-				else if ( label == "Water Temperature" )
+				else if ( label == "Rotation" )
 				{
 					dev_index = 37;
 				}
-				else if ( label == "Soil Temperature" )
+				else if ( label == "Water Temperature" )
 				{
 					dev_index = 38;
 				}
-				else if ( label == "Seismic Intensity" )
+				else if ( label == "Soil Temperature" )
 				{
 					dev_index = 39;
 				}
-				else if ( label == "Seismic Magnitude" )
+				else if ( label == "Seismic Intensity" )
 				{
 					dev_index = 40;
 				}
-				else if ( label == "Utraviolet" )
+				else if ( label == "Seismic Magnitude" )
 				{
 					dev_index = 41;
 				}
-				else if ( label == "Electrical Resistivity" )
+				else if ( ( label == "Ultraviolet" ) || ( label == "Utraviolet" ) )
 				{
 					dev_index = 42;
 				}
-				else if ( label == "Electrical Conductivity" )
+				else if ( label == "Electrical Resistivity" )
 				{
 					dev_index = 43;
 				}
-				else if ( label == "Loudness" )
+				else if ( label == "Electrical Conductivity" )
 				{
 					dev_index = 44;
 				}
-				else if ( label == "Moisture" )
+				else if ( label == "Loudness" )
 				{
 					dev_index = 45;
+				}
+				else if ( label == "Moisture" )
+				{
+					dev_index = 46;
 				}
 
 				if ( dev_index > 0 )
@@ -894,7 +898,7 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		{
 			if ( label == "Alarm Level" )
 			{
-				dev_index = 46;
+				dev_index = 47;
 
 				if ( strcmp( dev_value, "0" ) == 0 )
 				{
@@ -914,27 +918,27 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 			{
 				if ( label == "Flood" )
 				{
-					dev_index = 47;
+					dev_index = 48;
 				}
 				else if ( label == "Smoke" )
 				{
-					dev_index = 48;
+					dev_index = 49;
 				}
 				else if ( label == "Carbon Monoxide" )
 				{
-					dev_index = 49;
+					dev_index = 50;
 				}
 				else if ( label == "Carbon Dioxide" )
 				{
-					dev_index = 50;
+					dev_index = 51;
 				}
 				else if ( label == "Heat" )
 				{
-					dev_index = 51;
+					dev_index = 52;
 				}
 				else if ( label == "General" )
 				{
-					dev_index = 52;
+					dev_index = 53;
 				}
 
 				// Only store the result if it is a valid valuenumber
@@ -962,55 +966,55 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 				// The heating temperature is stored in value2, because value1 is used to set the SETPOINT
 				if ( label == "Heating 1" )
 				{
-					dev_index = 53;
+					dev_index = 54;
 				}
 				else if ( label == "Cooling 1" )
 				{
-					dev_index = 54;
+					dev_index = 55;
 				}
 				else if ( label == "Unused 3" )
 				{
-					dev_index = 55;
+					dev_index = 56;
 				}
 				else if ( label == "Unused 4" )
 				{
-					dev_index = 56;
+					dev_index = 57;
 				}
 				else if ( label == "Unused 5" )
 				{
-					dev_index = 57;
+					dev_index = 58;
 				}
 				else if ( label == "Unused 6" )
 				{
-					dev_index = 58;
+					dev_index = 59;
 				}
 				else if ( label == "Furnace" )
 				{
-					dev_index = 59;
+					dev_index = 60;
 				}
 				else if ( label == "Dry Air" )
 				{
-					dev_index = 60;
+					dev_index = 61;
 				}
 				else if ( label == "Moist Air" )
 				{
-					dev_index = 61;
+					dev_index = 62;
 				}
 				else if ( label == "Auto Changeover" )
 				{
-					dev_index = 62;
+					dev_index = 63;
 				}
 				else if ( label == "Heating Econ" )
 				{
-					dev_index = 63;
+					dev_index = 64;
 				}
 				else if ( label == "Cooling Econ" )
 				{
-					dev_index = 64;
+					dev_index = 65;
 				}
 				else if ( label == "Away Heating" )
 				{
-					dev_index = 65;
+					dev_index = 66;
 				}
 
 				if ( dev_index > 0 )
@@ -1166,7 +1170,7 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		}
 
 		// Heating 1 requires to go in value2
-		if ( ( dev_index == 53 ) && ( valueid == 1 ) )
+		if ( ( dev_index == 54 ) && ( valueid == 1 ) )
 		{
 			valueid = 2;
 		}
