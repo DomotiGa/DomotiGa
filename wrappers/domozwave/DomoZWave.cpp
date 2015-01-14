@@ -654,38 +654,78 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 			{
 				if ( ( label == "Power" ) && ( unit == "W" ) )
 				{
-					dev_index = 3;
+					dev_index = 11;
 					dev_label = "Power|W";
 				}
 				else if ( ( label == "Energy" ) && ( unit == "kWh" ) )
 				{
-					dev_index = 4;
+					dev_index = 12;
 					dev_label = "Energy|kWh";
 				}
-				else if ( label == "Power" )
+				else if ( label == "Power" ) // ### Doesn't exist! Only W maps to Power ###
 				{
-					dev_index = 5;
+					dev_index = 13;
 					dev_label = label;
 				}
-				else if ( label == "Energy" )
+				else if ( label == "Energy" ) // ### kVAh ###
 				{
-					dev_index = 6;
+					dev_index = 14;
 					dev_label = label;
 				}
 				else if ( label == "Voltage" )
 				{
-					dev_index = 7;
+					dev_index = 15;
 					dev_label = label;
 				}
 				else if ( label == "Current" )
 				{
-					dev_index = 8;
+					dev_index = 16;
 					dev_label = label;
 				}
 				else if ( label == "Count" )
 				{
-					dev_index = 9;
+					dev_index = 17;
 					dev_label = label;
+				}
+				else if ( label == "Power Factor" )
+				{
+					dev_index = 18;
+					dev_label = label;
+				}
+				else if ( ( label == "Gas" ) & ( unit == "cubic meters" ) )
+				{
+					dev_index = 19;
+					dev_label = "Gas|cubic meters";
+				}
+				else if ( ( label == "Gas" ) & ( unit == "cubic feet" ) )
+				{
+					dev_index = 20;
+					dev_label = "Gas|cubic feet";
+				}
+				else if ( ( label == "Gas" ) & ( unit == "pulses" ) )
+				{
+					dev_index = 21;
+					dev_label = "Gas|pulses";
+				}
+				else if ( ( label == "Water" ) & ( unit == "cubic meters" ) )
+				{
+					dev_index = 22;
+					dev_label = "Water|cubic meters";
+				}
+				else if ( ( label == "Water" ) & ( unit == "cubic feet" ) )
+				{
+					dev_index = 23;
+					dev_label = "Water|cubic feet";
+				}
+				else if ( ( label == "Water" ) & ( unit == "US gallons" ) )
+				{
+					dev_index = 24;
+					dev_label = "Water|US gallons";
+				}
+				else if ( ( label == "Water" ) & ( unit == "pulses" ) )
+				{
+					dev_index = 25;
+					dev_label = "Water|pulses";
 				}
 
 				if ( dev_index > 0 )
@@ -702,23 +742,23 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 			{
 				if ( label == "Sensor" )
 				{
-					dev_index = 10;
+					dev_index = 31;
 				}
 				else if ( label == "Motion Sensor" )
 				{
-					dev_index = 11;
+					dev_index = 32;
 				}
 				else if ( label == "Door/Window Sensor" )
 				{
-					dev_index = 12;
+					dev_index = 33;
 				}
 				else if ( label == "Tamper Sensor" )
 				{
-					dev_index = 13;
+					dev_index = 34;
 				}
 				else if ( label == "Magnet open" )
 				{
-					dev_index = 14;
+					dev_index = 35;
 				}
 
 				// Only store the result if it is a valid valuenumber
@@ -758,131 +798,143 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 			{
 				if ( label == "General" )
 				{
-					dev_index = 15;
+					dev_index = 41;
 				}
 				else if ( label == "Temperature" )
 				{
-					dev_index = 16;
-				}
-				else if ( label == "Relative Humidity" )
-				{
-					dev_index = 17;
-				}
-				else if ( label == "Luminance" )
-				{
-					dev_index = 18;
-				}
-				else if ( label == "Power" )
-				{
-					dev_index = 19;
-				}
-				else if ( label == "Relative Humidity" )
-				{
-					dev_index = 20;
-				}
-				else if ( label == "Velocity" )
-				{
-					dev_index = 21;
-				}
-				else if ( label == "Direction" )
-				{
-					dev_index = 22;
-				}
-				else if ( label == "Atmospheric Pressure" )
-				{
-					dev_index = 23;
-				}
-				else if ( label == "Barometric Pressure" )
-				{
-					dev_index = 24;
-				}
-				else if ( label == "Solar Radiation" )
-				{
-					dev_index = 25;
-				}
-				else if ( label == "Dew Point" )
-				{
-					dev_index = 26;
-				}
-				else if ( label == "Rain Rate" )
-				{
-					dev_index = 27;
-				}
-				else if ( label == "Tide Level" )
-				{
-					dev_index = 28;
-				}
-				else if ( label == "Weight" )
-				{
-					dev_index = 29;
-				}
-				else if ( label == "Voltage" )
-				{
-					dev_index = 30;
-				}
-				else if ( label == "Current" )
-				{
-					dev_index = 31;
-				}
-				else if ( label == "CO2 Level" )
-				{
-					dev_index = 32;
-				}
-				else if ( label == "Air Flow" )
-				{
-					dev_index = 33;
-				}
-				else if ( label == "Tank Capacity" )
-				{
-					dev_index = 34;
-				}
-				else if ( label == "Distance" )
-				{
-					dev_index = 35;
-				}
-				else if ( label == "Angle Position" )
-				{
-					dev_index = 36;
-				}
-				else if ( label == "Rotation" )
-				{
-					dev_index = 37;
-				}
-				else if ( label == "Water Temperature" )
-				{
-					dev_index = 38;
-				}
-				else if ( label == "Soil Temperature" )
-				{
-					dev_index = 39;
-				}
-				else if ( label == "Seismic Intensity" )
-				{
-					dev_index = 40;
-				}
-				else if ( label == "Seismic Magnitude" )
-				{
-					dev_index = 41;
-				}
-				else if ( ( label == "Ultraviolet" ) || ( label == "Utraviolet" ) )
-				{
 					dev_index = 42;
 				}
-				else if ( label == "Electrical Resistivity" )
+				else if ( label == "Relative Humidity" )
 				{
 					dev_index = 43;
 				}
-				else if ( label == "Electrical Conductivity" )
+				else if ( label == "Luminance" )
 				{
 					dev_index = 44;
 				}
-				else if ( label == "Loudness" )
+				else if ( label == "Power" )
 				{
 					dev_index = 45;
 				}
-				else if ( label == "Moisture" )
+				else if ( label == "Relative Humidity" )
 				{
 					dev_index = 46;
+				}
+				else if ( label == "Velocity" )
+				{
+					dev_index = 47;
+				}
+				else if ( label == "Direction" )
+				{
+					dev_index = 48;
+				}
+				else if ( label == "Atmospheric Pressure" )
+				{
+					dev_index = 49;
+				}
+				else if ( label == "Barometric Pressure" )
+				{
+					dev_index = 50;
+				}
+				else if ( label == "Solar Radiation" )
+				{
+					dev_index = 51;
+				}
+				else if ( label == "Dew Point" )
+				{
+					dev_index = 52;
+				}
+				else if ( label == "Rain Rate" )
+				{
+					dev_index = 53;
+				}
+				else if ( label == "Tide Level" )
+				{
+					dev_index = 54;
+				}
+				else if ( label == "Weight" )
+				{
+					dev_index = 55;
+				}
+				else if ( label == "Voltage" )
+				{
+					dev_index = 56;
+				}
+				else if ( label == "Current" )
+				{
+					dev_index = 57;
+				}
+				else if ( label == "CO2 Level" )
+				{
+					dev_index = 58;
+				}
+				else if ( label == "Air Flow" )
+				{
+					dev_index = 59;
+				}
+				else if ( label == "Tank Capacity" )
+				{
+					dev_index = 60;
+				}
+				else if ( label == "Distance" )
+				{
+					dev_index = 61;
+				}
+				else if ( label == "Angle Position" )
+				{
+					dev_index = 62;
+				}
+				else if ( label == "Rotation" )
+				{
+					dev_index = 63;
+				}
+				else if ( label == "Water Temperature" )
+				{
+					dev_index = 64;
+				}
+				else if ( label == "Soil Temperature" )
+				{
+					dev_index = 65;
+				}
+				else if ( label == "Seismic Intensity" )
+				{
+					dev_index = 66;
+				}
+				else if ( label == "Seismic Magnitude" )
+				{
+					dev_index = 67;
+				}
+				else if ( ( label == "Ultraviolet" ) || ( label == "Utraviolet" ) )
+				{
+					dev_index = 68;
+				}
+				else if ( label == "Electrical Resistivity" )
+				{
+					dev_index = 69;
+				}
+				else if ( label == "Electrical Conductivity" )
+				{
+					dev_index = 70;
+				}
+				else if ( label == "Loudness" )
+				{
+					dev_index = 71;
+				}
+				else if ( label == "Moisture" )
+				{
+					dev_index = 72;
+				}
+				else if ( label == "Frequency" )
+				{
+					dev_index = 73;
+				}
+				else if ( label == "Time" )
+				{
+					dev_index = 74;
+				}
+				else if ( label == "Target Temperature" )
+				{
+					dev_index = 75;
 				}
 
 				if ( dev_index > 0 )
@@ -898,7 +950,7 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		{
 			if ( label == "Alarm Level" )
 			{
-				dev_index = 47;
+				dev_index = 81;
 
 				if ( strcmp( dev_value, "0" ) == 0 )
 				{
@@ -918,27 +970,27 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 			{
 				if ( label == "Flood" )
 				{
-					dev_index = 48;
+					dev_index = 91;
 				}
 				else if ( label == "Smoke" )
 				{
-					dev_index = 49;
+					dev_index = 92;
 				}
 				else if ( label == "Carbon Monoxide" )
 				{
-					dev_index = 50;
+					dev_index = 93;
 				}
 				else if ( label == "Carbon Dioxide" )
 				{
-					dev_index = 51;
+					dev_index = 94;
 				}
 				else if ( label == "Heat" )
 				{
-					dev_index = 52;
+					dev_index = 95;
 				}
 				else if ( label == "General" )
 				{
-					dev_index = 53;
+					dev_index = 96;
 				}
 
 				// Only store the result if it is a valid valuenumber
@@ -966,55 +1018,55 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 				// The heating temperature is stored in value2, because value1 is used to set the SETPOINT
 				if ( label == "Heating 1" )
 				{
-					dev_index = 54;
+					dev_index = 101;
 				}
 				else if ( label == "Cooling 1" )
 				{
-					dev_index = 55;
+					dev_index = 102;
 				}
 				else if ( label == "Unused 3" )
 				{
-					dev_index = 56;
+					dev_index = 103;
 				}
 				else if ( label == "Unused 4" )
 				{
-					dev_index = 57;
+					dev_index = 104;
 				}
 				else if ( label == "Unused 5" )
 				{
-					dev_index = 58;
+					dev_index = 105;
 				}
 				else if ( label == "Unused 6" )
 				{
-					dev_index = 59;
+					dev_index = 106;
 				}
 				else if ( label == "Furnace" )
 				{
-					dev_index = 60;
+					dev_index = 107;
 				}
 				else if ( label == "Dry Air" )
 				{
-					dev_index = 61;
+					dev_index = 108;
 				}
 				else if ( label == "Moist Air" )
 				{
-					dev_index = 62;
+					dev_index = 109;
 				}
 				else if ( label == "Auto Changeover" )
 				{
-					dev_index = 63;
+					dev_index = 110;
 				}
 				else if ( label == "Heating Econ" )
 				{
-					dev_index = 64;
+					dev_index = 111;
 				}
 				else if ( label == "Cooling Econ" )
 				{
-					dev_index = 65;
+					dev_index = 112;
 				}
 				else if ( label == "Away Heating" )
 				{
-					dev_index = 66;
+					dev_index = 113;
 				}
 
 				if ( dev_index > 0 )
@@ -1170,7 +1222,7 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		}
 
 		// Heating 1 requires to go in value2
-		if ( ( dev_index == 54 ) && ( valueid == 1 ) )
+		if ( ( dev_index == 101 ) && ( valueid == 1 ) )
 		{
 			valueid = 2;
 		}
@@ -3425,6 +3477,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 	float float_value;
 	bool response;
 	bool cmdfound = false;
+	uint8 usecc;
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetValue" ) == false ) return false;
 
@@ -3432,14 +3485,46 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 
 	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
 	{
+
+		// First check if the instance is known in our CommandClass list, else it is a problem
+		if ( nodeInfo->instancecommandclass.find(instance) != nodeInfo->instancecommandclass.end() )
+		{
+			// First try to detect the MULTILEVEL, then try SWITCH_BINARY and last THERMOSTAT_SETPOINT
+			// This should solve problems for device like Qubino, they advertise too many CommandClasses
+			if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_MULTILEVEL") != string::npos )
+			{
+				usecc = COMMAND_CLASS_SWITCH_MULTILEVEL;
+			}
+			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_BINARY") != string::npos )
+			{
+				usecc = COMMAND_CLASS_SWITCH_BINARY;
+			}
+			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_SETPOINT") != string::npos )
+			{
+				usecc = COMMAND_CLASS_THERMOSTAT_SETPOINT;
+			} else {
+				// Set to-use CommandClass to zero, because we didn't find anything :-(
+				WriteLog( LogLevel_Debug, false, "Return=false (instance doesn't have a CommandClass MULTILEVEL, SWITCH_BINARY or THERMOSTAT_SETPOINT)" );
+				return false;
+				usecc = 0;
+			} 
+
+		}
+		else
+		{
+			WriteLog( LogLevel_Debug, false, "Return=false (instance doesn't exist - it doesn't have a CommandClass list)" );
+			return false;
+		}
+
 		// Find the correct instance
 		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
 		{
-			int id = (*it).GetCommandClassId();
-			int inst = (*it).GetInstance();
+			uint8 id = (*it).GetCommandClassId();
+			uint8 inst = (*it).GetInstance();
 			string label = Manager::Get()->GetValueLabel( (*it) );
 
-			if ( id == COMMAND_CLASS_SWITCH_MULTILEVEL || id == COMMAND_CLASS_SWITCH_BINARY || id == COMMAND_CLASS_THERMOSTAT_SETPOINT )
+			// Now check the ValueIDs CommandClass id with the preferred CommandClass
+			if ( id == usecc )
 			{
 
 				switch ( id )
@@ -3471,12 +3556,12 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 					case COMMAND_CLASS_THERMOSTAT_SETPOINT:
 					{
 						// Currently we only support Heating 1
-						if ( label == "Heating 1" )
+						if ( label != "Heating 1" )
 						{
-							break;
+							continue;
 						}
 
-						continue;
+						break;
 					}
 					default:
 					{
@@ -5276,7 +5361,11 @@ const char* DomoZWave_CommandClassIdName(int class_value)
 		case 0x4E: return "COMMAND_CLASS_SCHEDULE_ENTRY_LOCK";
 		case 0x50: return "COMMAND_CLASS_BASIC_WINDOW_COVERING";
 		case 0x51: return "COMMAND_CLASS_MTP_WINDOW_COVERING";
+		case 0x56: return "COMMAND_CLASS_CRC_16_ENCAP";
+		case 0x59: return "COMMAND_CLASS_ASSOCIATION_GROUP_INFORMATION";
+		case 0x5A: return "COMMAND_CLASS_DEVICE_RESET_LOCALLY";
 		case 0x5B: return "COMMAND_CLASS_CENTRAL_SCENE";
+		case 0x5E: return "COMMAND_CLASS_ZWAVE_PLUS";
 		case 0x60: return "COMMAND_CLASS_MULTI_INSTANCE";
 		case 0x62: return "COMMAND_CLASS_DOOR_LOCK";
 		case 0x63: return "COMMAND_CLASS_USER_CODE";
