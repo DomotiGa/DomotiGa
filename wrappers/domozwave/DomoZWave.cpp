@@ -3491,7 +3491,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 		{
 			// First try to detect the MULTILEVEL, then try SWITCH_BINARY and last THERMOSTAT_SETPOINT
 			// This should solve problems for device like Qubino, they advertise too many CommandClasses
-			if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_MULTILEVEL") != string::npos )
+			if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_MULTILEVEL") != string::npos )
 			{
 				usecc = COMMAND_CLASS_SWITCH_MULTILEVEL;
 			}
