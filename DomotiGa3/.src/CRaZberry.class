@@ -3,6 +3,16 @@
 ' Description:
 ' CRaZberry.class
 ' Provide support for RaZberry Z-Wave interface.
+'
+' Supported CommandClasses:
+' - Switch Binary (37)
+' - Switch Multilevel (38)
+' - Sensor Binary (48)
+' - Sensor Multilevel (49)
+' - Meter (50)
+' - SetPoint (67)
+' - Battery (128)
+' - Sensor Alarm (156)
 
 ' Development Status:
 ' Working
@@ -48,10 +58,9 @@ Public hRaZberryInit As HttpClient
 Public hRaZberryCmd As HttpClient
 Public bInit As Boolean
 Public $iUpdateTime As Integer
+Public $iNewUpdateTime As Integer
 Public sBuffer As String
 Public tRaZberry As Timer
-
-Public sLibraryType As String = ("Unknown")
 
 ' node data
 Private cCommandClassId As New Collection
@@ -126,7 +135,11 @@ Private Const COMMAND_CLASS_DOOR_LOCK_LOGGING As Byte = &H4C ' 76
 Private Const COMMAND_CLASS_SCHEDULE_ENTRY_LOCK As Byte = &H4E ' 78
 Private Const COMMAND_CLASS_BASIC_WINDOW_COVERING As Byte = &H50 ' 80
 Private Const COMMAND_CLASS_MTP_WINDOW_COVERING As Byte = &H51 ' 81
+Private Const COMMAND_CLASS_CRC_16_ENCAP As Byte = &H56 ' 86
+Private Const COMMAND_CLASS_ASSOCIATION_GROUP_INFORMATION As Byte = &H59 ' 89
+Private Const COMMAND_CLASS_DEVICE_RESET_LOCALLY As Byte = &H5A ' 90
 Private Const COMMAND_CLASS_CENTRAL_SCENE As Byte = &H5B ' 91
+Private Const COMMAND_CLASS_ZWAVE_PLUS As Byte = &H5E ' 94
 Private Const COMMAND_CLASS_MULTI_INSTANCE As Byte = &H60 ' 96
 Private Const COMMAND_CLASS_DOOR_LOCK As Byte = &H62 ' 98
 Private Const COMMAND_CLASS_USER_CODE As Byte = &H63 ' 99
@@ -361,28 +374,95 @@ End
 Private Sub ParseRaZberryData(sData As String)
 
   Dim cData As JSONCollection
+  Dim aUpdate As New String[]
+  Dim iNodeId As Integer
 
-  cData = JSON.Decode(sData, True) 
-
-  If cData Then
-    ' If we received new/update controller information, process it
-    If cData.Exist("controller") Then
-      ParseControllerInfo(cData["controller"], cData["updateTime"])
-    Endif
-
-    ' If we received new/update node(s) information, process it
-    If cData.Exist("devices") Then
-      ParseDeviceInfo(cData["devices"], cData["updateTime"])
-    Endif
-
-    ' Check for other updates
- 
-    ' Finally update to our latest timestamp
-    ' we don 't want to do it earlier, because if an error happens, we loose track of changes
-    $iUpdateTime = cData["updateTime"]
-  Else
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Received invalid JSON data!")
+  Try cData = JSON.Decode(sData, True) 
+  If Error Then
+    Main.WriteLog(LogLabel & "ERROR: During decoding JSON data!")
+    Return
   Endif
+
+  ' Check if we got 
+  If Not cData Then
+    Main.WriteLog(LogLabel & "ERROR: Received invalid JSON data!")
+    Return
+  Endif
+
+  If Not cData.Exist("updateTime") Then
+    Main.WriteLog(LogLabel & "ERROR: Didn't receive mandatory 'updateTime' in JSON data!")
+    Return
+  Endif
+
+  $iNewUpdateTime = cData["updateTime"]
+
+  For Each cData
+
+    If cData.Key = "updateTime" Then
+    Else If cData.Key = "controller" Then
+      ' If we received new/update controller information, process it
+      ParseControllerInfo(cData["controller"])
+    Else If cData.Key = "devices" Then 
+      ' If we received new/update node(s) information, process it
+      ParseDeviceInfo(cData["devices"])
+    Else If InStr(cData.Key, ".") Then
+      ' This looks to be an update request, split it in an useable array
+      aUpdate = Split(cData.Key, ".")
+
+      ' Possible formats:
+      ' controller.data.controllerState
+      ' devices.6.data.genericType
+      ' devices.5.instances.1.commandClasses.37.data.level
+      ' devices.8.instances.0.commandClasses.48.data.1
+      ' devices.5.instances.1.commandClasses.50.data.2
+      ' devices.7.instances.0.commandClasses.156.data.5.sensorState
+
+      Select aUpdate[0]
+        Case "controller"
+          ' We ignore controller updates
+        Case "devices"
+
+          If aUpdate.Count >= 4 Then
+            ' Retrieve NodeId
+            Try iNodeId = aUpdate[1]
+            If Error Then
+              Main.WriteLog(LogLabel & "ERROR: Skipping device, unable to detect Z-Wave NodeId '" & aUpdate[1] & "'")
+              Continue
+            Endif
+
+            ' Only allow valid Z-Wave NodeIds
+            If iNodeId < 1 Or If iNodeId > 232 Then
+              Main.WriteLog(LogLabel & "ERROR: Skipping device, invalid Z-Wave NodeId '" & iNodeId & "'")
+              Continue
+            Endif
+
+            ' Lets check if the node is known by us, else there is a discover problem
+            If Not $cZWaveNetwork.Exist(iNodeId) Then
+              Main.WriteLog(LogLabel & "ERROR: Skipping device, Z-Wave NodeId '" & iNodeId & "' unknown in our list")
+              Continue
+            Endif
+
+            ' Device Node Info Update, can happen for sleeping device after inclusion
+            If aUpdate[2] = "data" Then
+              UpdateNodeInfo(aUpdate[3], cData[cData.Key], $cZWaveNetwork[iNodeId])
+            Else
+            Endif
+
+          Endif
+
+        Default
+          ' Unknown update
+      End Select
+
+    Else
+      ' Unknown update field
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Unknown Update key '" & cData.Key & "' received")
+    Endif
+  Next
+
+  ' Finally update to our latest timestamp
+  ' we don 't want to do it earlier, because if an error happens, we loose track of changes
+  $iUpdateTime = $iNewUpdateTime
 
 Catch ' some errors
   Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
@@ -390,36 +470,81 @@ Catch ' some errors
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Update Z-Wave Controller Information. It can be supplied during initial startup or during updates
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub UpdateControllerInfo(sKey As String, cData As JSONCollection, cZWaveNode As JSONCollection)
+
+  Dim sTag As String
+
+  Select sKey
+    Case "homeId"
+      sTag = "homeid"
+    Case "nodeId"
+      sTag = "controllerid"
+    Case "SDK"
+      sTag = "sdkversion"
+    Case "APIVersion"
+      sTag = "apiversion"
+    Case "softwareRevisionVersion"
+      sTag = "zwayversion"
+    Case "softwareRevisionDate"
+      sTag = "zwaybuilddate"
+    Case "softwareRevisionId"
+      sTag = "zwayrevisionid"
+    Case "vendor"
+      sTag = "manufacturername"
+    Case "ZWaveChip"
+      sTag = "zwavechip"
+    Case "isPrimary"
+      sTag = "primary"
+    Case "isRealPrimary"
+      sTag = "realprimary"
+    Case "libType"
+      sTag = "librarytype"
+  End Select
+
+  ' Only store a mapped name, all others we aren't interested in
+  If sTag Then
+
+    ' Check if the "value" exists, else there is something wrong with the data
+    If cData.Exist("value") Then
+
+      ' Now add the mapped value into the Z-Wave nodeinfo
+      cZWaveNode.Add(cData["value"], sTag)
+    Else
+      ' This is never a valid error scenario
+      Main.WriteDebugLog(LogLabel & "ERROR: Data doesn't contain a 'value' field. Z-Wave Controller, Data='" & JSON.Encode(cData) & "'")
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Parse Controller Information
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseControllerInfo(cData As JSONCollection, iUpdateTime As Integer)
+Private Sub ParseControllerInfo(cData As JSONCollection)
 
   Dim cController As New JSONCollection
 
-  Try cController.Add(cData["data"]["homeId"]["value"], "homeid")
-  If Error Then cController.Add(0, "homeid")
-  Try cController.Add(cData["data"]["nodeId"]["value"], "controllerid")
-  If Error Then cController.Add(0, "controllerid")
-  Try cController.Add(cData["data"]["SDK"]["value"], "sdkversion")
-  If Error Then cController.Add("", "sdkversion")
-  Try cController.Add(cData["data"]["APIVersion"]["value"], "apiversion")
-  If Error Then cController.Add("", "apiversion")
-  Try cController.Add(cData["data"]["softwareRevisionVersion"]["value"], "zwayversion")
-  If Error Then cController.Add("", "zwayversion")
-  Try cController.Add(cData["data"]["softwareRevisionDate"]["value"], "zwaydate")
-  If Error Then cController.Add("", "zwaydate")
-  Try cController.Add(cData["data"]["softwareRevisionId"]["value"], "zwayrevisionid")
-  If Error Then cController.Add("", "zwayrevisionid")
-  Try cController.Add(cData["data"]["vendor"]["value"], "vendor")
-  If Error Then cController.Add("", "vendor")
-  Try cController.Add(cData["data"]["ZWaveChip"]["value"], "zwavechip")
-  If Error Then cController.Add("", "zwavechip")
-  Try cController.Add(CBool(cData["data"]["isPrimary"]["value"]), "primary")
-  If Error Then cController.Add(False, "primary")
-  Try cController.Add(CBool(cData["data"]["isRealPrimary"]["value"]), "realprimary")
-  If Error Then cController.Add(False, "realprimary")
+  cController.Add(0, "homeid")
+  cController.Add(0, "controllerid")
+  cController.Add("", "sdkversion")
+  cController.Add("", "apiversion")
+  cController.Add("", "zwayversion")
+  cController.Add("", "zwaybuilddate")
+  cController.Add("", "zwayrevisionid")
+  cController.Add("", "manufacturername")
+  cController.Add("", "zwavechip")
+  cController.Add(False, "primary")
+  cController.Add(False, "realprimary")
+  cController.Add("", "librarytype")
 
-  sLibraryType = cData["data"]["libType"]["value"]
+  ' Go through all data entries and parse them
+  For Each cData["data"]
+    If TypeOf(cData["data"][cData["data"].Key]) = gb.Object And If Object.Type(cData["data"][cData["data"].Key]) = "JSONCollection" Then
+      UpdateControllerInfo(cData["data"].Key, cData["data"][cData["data"].Key], cController)
+    Endif
+  Next
 
   ' Add the controller information to the internal Z-Wave Network
   $cZWaveNetwork.Add(cController, "controller")
@@ -432,24 +557,126 @@ Private Sub ParseControllerInfo(cData As JSONCollection, iUpdateTime As Integer)
     Main.WriteDebugLog(LogLabel & "Node Id: " & cController["controllerid"])
     Main.WriteDebugLog(LogLabel & "Primary Role: " & Util.DisplayBool(cController["primary"]))
     Main.WriteDebugLog(LogLabel & "Primary Capability: " & Util.DisplayBool(cController["realprimary"]))
-    Main.WriteDebugLog(LogLabel & "---")
-    Main.WriteDebugLog(LogLabel & "Hardware")
-    Main.WriteDebugLog(LogLabel & "---")
-    Main.WriteDebugLog(LogLabel & "Vendor: " & cController["vendor"])
+    Main.WriteDebugLog(LogLabel & "ManufacturerName: " & cController["manufacturername"])
     Main.WriteDebugLog(LogLabel & "Z-Wave Chip: " & cController["zwavechip"])
-    Main.WriteDebugLog(LogLabel & "---")
-    Main.WriteDebugLog(LogLabel & "Firmware")
-    Main.WriteDebugLog(LogLabel & "---")
-    Main.WriteDebugLog(LogLabel & "Library Type: " & sLibraryType)
+    Main.WriteDebugLog(LogLabel & "Library Type: " & cController["librarytype"])
     Main.WriteDebugLog(LogLabel & "SDK Version: " & cController["sdkversion"])
     Main.WriteDebugLog(LogLabel & "API Version: " & cController["apiversion"])
     Main.WriteDebugLog(LogLabel & "---")
     Main.WriteDebugLog(LogLabel & "Z-Way Version")
-    Main.WriteDebugLog(LogLabel & "---")
     Main.WriteDebugLog(LogLabel & "Version: " & cController["zwayversion"] & " (" & cController["zwayrevisionid"] & ")")
-    Main.WriteDebugLog(LogLabel & "Date: " & cController["zwaydate"])
+    Main.WriteDebugLog(LogLabel & "Date: " & cController["zwaybuilddate"])
     Main.WriteDebugLog(LogLabel & "---")
-    Main.WriteDebugLog(LogLabel & "Update Timestamp: " & Util.TimeSinceEpoch(iUpdateTime) & " (" & iUpdateTime & ")")
+    Main.WriteDebugLog(LogLabel & "Update Timestamp: " & Util.TimeSinceEpoch($iNewUpdateTime) & " (" & $iNewUpdateTime & ")")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Update Z-Wave Node Information. It can be supplied during initial startup or during updates
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub UpdateNodeInfo(sKey As String, cData As JSONCollection, cZWaveNode As JSONCollection)
+
+  Dim sTag As String
+
+  If Not cZWaveNode Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Received a Node Info Update for key='" & sKey & "', but node doesn't exist")
+    Return
+  Endif
+
+  ' Map Z-Way names to internal
+  Select sKey
+    Case "vendorString"
+      sTag = "manufacturername"
+    Case "manufacturerId"
+      sTag = "manufacturerid"
+    Case "isRouting"
+      sTag = "routing"
+    Case "isListening"
+      sTag = "listening"
+    Case "sensor250"
+      sTag = "sensor250"
+    Case "sensor1000"
+      sTag = "sensor1000"
+    Case "beaming"
+      sTag = "beaming"
+    Case "nodeInfoFrame"
+      sTag = "nodeinfoframe"
+    Case "neighbours"
+      sTag = "neighbors"
+    Case "basicType"
+      sTag = "basicid"
+    Case "genericType"
+      sTag = "genericid"
+    Case "specificType"
+      sTag = "specificid"
+    Case "deviceTypeString"
+      sTag = "devicetype"
+    Case "ZWLib"
+      sTag = "libraryversion"
+    Case "SDK"
+      sTag = "sdkversion"
+    Case "isFailed"
+      sTag = "state"
+    Case "applicationMajor", "applicationMinor", "ZWProtocolMajor", "ZWProtocolMinor"
+      sTag = sKey
+  End Select
+
+  ' Only store a mapped name, all others we aren't interested in
+  If sTag Then
+
+    ' Node Info is updated with a RaZberry update, lets report it
+    If $iUpdateTime > 0 Then
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received Node Info Update for Z-Wave NodeId '" & cZWaveNode["node_id"] & "'" & ", Key '" & sTag & "', Value '" & cData["value"] & "'")
+    Endif
+
+    ' Check if the "value" exists, else there is something wrong with the data
+    If cData.Exist("value") Then
+
+      ' Now add the mapped value into the Z-Wave nodeinfo
+      cZWaveNode.Add(cData["value"], sTag)
+
+      ' Add other special (none Z-Way) values based on the input
+      Select sTag
+        Case "sensor250", "sensor1000"
+          If cData["value"] Then cZWaveNode.Add(True, "frequentlistening")
+        Case "basicid"
+          cZWaveNode.Add(GetBasicTypeName(cData["value"]), "basic")
+        Case "genericid"
+          cZWaveNode.Add(GetGenericTypeName(cData["value"]), "generic")
+        Case "specificid"
+          cZWaveNode.Add(GetSpecificTypeName(cZWaveNode["genericid"], cData["value"]), "specific")
+        Case "state"
+          cZWaveNode.Add(IIf(cData["value"], "Dead", "Alive"), "state")
+        Case "applicationMajor"
+          If InStr(cZWaveNode["applicationversion"], ".") Then
+            cZWaveNode["applicationversion"] = Mid(cZWaveNode["applicationversion"], InStr(cZWaveNode["applicationversion"], ".") + 1)
+          Endif
+          cZWaveNode.Add(cZWaveNode[sTag] & "." & cZWaveNode["applicationversion"], "applicationversion")
+          cZWaveNode.Remove(sTag)
+        Case "applicationMinor"
+          If InStr(cZWaveNode["applicationversion"], ".") Then
+            cZWaveNode["applicationversion"] = Left(cZWaveNode["applicationversion"], InStr(cZWaveNode["applicationversion"], ".") - 1)
+          Endif
+          cZWaveNode.Add(cZWaveNode["applicationversion"] & "." & cZWaveNode[sTag], "applicationversion")
+          cZWaveNode.Remove(sTag)
+        Case "ZWProtocolMajor"
+          If InStr(cZWaveNode["protocolversion"], ".") Then
+            cZWaveNode["protocolversion"] = Mid(cZWaveNode["protocolversion"], InStr(cZWaveNode["protocolversion"], ".") + 1)
+          Endif
+          cZWaveNode.Add(cZWaveNode[sTag] & "." & cZWaveNode["protocolversion"], "protocolversion")
+          cZWaveNode.Remove(sTag)
+        Case "ZWProtocolMinor"
+          If InStr(cZWaveNode["protocolversion"], ".") Then
+            cZWaveNode["protocolversion"] = Left(cZWaveNode["protocolversion"], InStr(cZWaveNode["protocolversion"], ".") - 1)
+          Endif
+          cZWaveNode.Add(cZWaveNode["protocolversion"] & "." & cZWaveNode[sTag], "protocolversion")
+          cZWaveNode.Remove(sTag)
+      End Select
+    Else
+      ' This is never a valid error scenario
+      Main.WriteDebugLog(LogLabel & "ERROR: Data doesn't contain a 'value' field. Z-Wave NodeId=" & CZWaveNode["node_id"] & ", Data='" & JSON.Encode(cData) & "'")
+    Endif
   Endif
 
 End
@@ -457,19 +684,20 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Parse Device Information
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseDeviceInfo(cData As JSONCollection, iUpdateTime As Integer)
+Private Sub ParseDeviceInfo(cData As JSONCollection)
 
   Dim cZWaveNode As JSONCollection
   Dim cNode, cInstance As New JSONCollection
   Dim iNodeId As Integer
   Dim iInstanceId As Integer
+  Dim aBytes As Byte[]
 
   Dim iBattery, iScaleId, iSensorType, iScaleMulti, iDeviceId As Integer
   Dim sDeviceTypeAutoCreate, sScale As String
   Dim vValues, vValue, vValue2, vValue3, vValue4, vValueTemp As Variant
 
   ' Remove all nodes from the Z-Wave Network, they will be re-added automatically
-  ' The API doesn't tell us which devices are removed, just which nodes there are
+  ' The API doesn't tell us which devices are removed, just which nodes there are (left)
   For Each $cZWaveNetwork
     ' Only skip the controller, we need to keep it
     If $cZWaveNetwork.Key <> "controller" Then
@@ -483,7 +711,7 @@ Private Sub ParseDeviceInfo(cData As JSONCollection, iUpdateTime As Integer)
     Return
   Endif
 
-  ' devices found ...
+  ' devices found
   If cData.Count Then
     If $bDebug Then
       Main.WriteDebugLog(LogLabel & "---")
@@ -508,54 +736,56 @@ Private Sub ParseDeviceInfo(cData As JSONCollection, iUpdateTime As Integer)
         Continue
       Endif
 
+      ' Add Z-Wave NodeId and default values into a new record
       cZWaveNode.Add(iNodeId, "node_id")
+      cZWaveNode.Add(0, "basicid")
+      cZWaveNode.Add("", "basic")
+      cZWaveNode.Add(0, "genericid")
+      cZWaveNode.Add("", "generic")
+      cZWaveNode.Add(0, "specificid")
+      cZWaveNode.Add("", "specific")
+      cZwaveNode.Add("", "manufacturername")
+      cZWaveNode.Add(0, "manufacturerid")
+      cZWaveNode.Add(False, "routing")
+      cZWaveNode.Add(False, "listening")
+      cZWaveNode.Add(False, "frequentlistening")
+      cZWaveNode.Add(False, "beaming")
+      aBytes = New Byte[]
+      cZWaveNode.Add(aBytes, "nodeinfoframe")
+      cZWaveNode.Add(False, "wakeup")
+      cZWaveNode.Add(False, "battery")
+      cZWaveNode.Add(False, "security")
+      cZWaveNode.Add(False, "multiinstance")
+      aBytes = New Byte[]
+      cZWaveNode.Add(aBytes, "neigbors")
+      cZWaveNode.Add("", "devicetype")
+      cZWaveNode.Add("", "libraryversion")
+      cZWaveNode.Add("", "sdkversion")
+      cZWaveNode.Add("", "applicationversion")
+      cZWaveNode.Add("", "protocolversion")
+      cZWaveNode.Add("", "state")
 
-      ' store it's info
-      Try cZWaveNode.Add(cNode["data"]["vendorString"]["value"], "manufacturername")
-      If Error Then cZWaveNode.Add("", "manufacturername")
-      Try cZWaveNode.Add(cNode["data"]["manufacturerId"]["value"], "manufacturerid")
-      If Error Then cZWaveNode.Add(0, "manufacturerid")
-      Try cZWaveNode.Add(CBool(cNode["data"]["isRouting"]["value"]), "routing")
-      If Error Then cZWaveNode.Add(False, "routing")
-      Try cZWaveNode.Add(CBool(cNode["data"]["isListening"]["value"]), "listening")
-      If Error Then cZWaveNode.Add(False, "listening")
-      If cZWaveNode["listening"] Then
-        cZWaveNode.Add(False, "frequentlistening")
+      ' Now process each node record
+      For Each cNode["data"]
+        If TypeOf(cNode["data"][cNode["data"].Key]) = gb.Object And If Object.Type(cNode["data"][cNode["data"].Key]) = "JSONCollection" Then
+          UpdateNodeInfo(cNode["data"].Key, cNode["data"][cNode["data"].Key], cZWaveNode)
+        Endif 
+      Next
+
+      ' Check for instances, battery, wakeup and security
+      If cNode.Exist("instances") Then
       Else
-        Try cZWaveNode.Add(CBool(IIf(cNode["data"]["sensor250"]["value"] Or cNode["data"]["sensor1000"]["value"], True, False)), "frequentlistening")
-        If Error Then cZWaveNode.Add(False, "frequentlistening")
       Endif
-      Try cZWaveNode.Add(CBool(cNode["data"]["beam"]["value"]), "beaming")
-      If Error Then cZWaveNode.Add(False, "beaming")
-
       Try cZWaveNode.Add(CBool(IIf(cNode["instances"]["0"]["commandClasses"]["132"], True, False)), "wakeup")
       Try cZWaveNode.Add(CBool(IIf(cNode["instances"]["0"]["commandClasses"]["128"], True, False)), "battery")
       Try cZWaveNode.Add(CBool(IIf(cNode["instances"]["0"]["commandClasses"]["152"], True, False)), "security")
       Try cZWaveNode.Add(IIf(cNode["instances"].Count > 1, True, False), "multiinstance")
       If Error Then cZWaveNode.Add(False, "multiinstance")
-      Try cZWaveNode.Add(cNode["data"]["neighbours"]["value"], "neighbors")
-      If Error Then cZWaveNode.Add(Integer[], "neighbors")
-      Try cZWaveNode.Add(cNode["data"]["basicType"]["value"], "basicid")
-      If Error Then cZWaveNode.Add(0, "basicid")
-      cZWaveNode.Add(GetBasicTypeName(cZWaveNode["basicid"]), "basic")
-      Try cZWaveNode.Add(cNode["data"]["genericType"]["value"], "genericid")
-      If Error Then cZWaveNode.Add(0, "genericid")
-      cZWaveNode.Add(GetGenericTypeName(cZWaveNode["genericid"]), "generic")
-      Try cZWaveNode.Add(cNode["data"]["specificType"]["value"], "specificid")
-      If Error Then cZWaveNode.Add(0, "specificid")
-      cZWaveNode.Add(GetSpecificTypeName(cZWaveNode["genericid"], cZWaveNode["specificid"]), "specific")
-      Try cZWaveNode.Add(cNode["data"]["deviceTypeString"]["value"], "devicetype")
-      If Error Then cZWaveNode.Add("", "devicetype")
 
-      Try cZWaveNode.Add(cNode["data"]["applicationMajor"]["value"] & "." & cNode["data"]["applicationMinor"]["value"], "applicationversion")
-      If Error Then cZWaveNode("", "applicationversion")
-      Try cZWaveNode.Add(cNode["data"]["ZWProtocolMajor"]["value"] & "." & cNode["data"]["ZWProtocolMinor"]["value"], "protocolversion")
-      If Error Then cZWaveNode("", "protocolversion")
-      Try cZWaveNode.Add(CStr(cNode["data"]["ZWLib"]["value"]), "libraryversion")
-      If Error Then cZWaveNode("", "libraryversion")
-      Try cZWaveNode.Add(IIf(cNode["data"]["isFailed"]["value"], "Dead", "Alive"), "state")
-      If Error Then cZWaveNode.Add("Alive", "state")
       ' LastSeen ...
+'XXXXXXXXXXXXXXX
+'X use basic = 32 In nodeinfoframe To determine If we need To put an empty value In value1? in instance=0/1
+'XXXXXXXXXXXXXXX
 
       ' If device is the controller, just add it to the ZWaveNode and go to the next device
       If iNodeId = $cZWaveNetwork["controller"]["controllerid"] Then
@@ -567,9 +797,6 @@ Private Sub ParseDeviceInfo(cData As JSONCollection, iUpdateTime As Integer)
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Detected controller as node #" & iNodeId & ", skipping...") 
         Continue
       Endif
-
-      Try cZWaveNode.Add(cNode["data"]["SDK"]["value"], "sdkversion")
-      If Error Then cZWaveNode.Add("", "sdkversion")
 
       ' Determine auto-create devicetype
       Select cZWaveNode["genericid"]
@@ -617,6 +844,9 @@ Private Sub ParseDeviceInfo(cData As JSONCollection, iUpdateTime As Integer)
         Main.WriteDebugLog(LogLabel & "SpecificType: " & cZWaveNode["specific"])
         Main.WriteDebugLog(LogLabel & "Listening: " & Util.DisplayBool(cZWaveNode["listening"]))
         Main.WriteDebugLog(LogLabel & "Frequent Listening (FLiRS): " & Util.DisplayBool(cZWaveNode["frequentlistening"]))
+        Main.WriteDebugLog(LogLabel & "SDK Version: " & cZWaveNode["sdkversion"])
+        Main.WriteDebugLog(LogLabel & "Application Version: " & cZWaveNode["applicationversion"])
+        Main.WriteDebugLog(LogLabel & "Protocol Version: " & cZWaveNode["protocolversion"])
         Main.WriteDebugLog(LogLabel & "WakeUp: " & Util.DisplayBool(cZWaveNode["wakeup"]))
         Main.WriteDebugLog(LogLabel & "Battery: " & Util.DisplayBool(cZWaveNode["battery"]))
         Main.WriteDebugLog(LogLabel & "Multiple Instances: " & Util.DisplayBool(cZWaveNode["multiinstance"]))
@@ -632,7 +862,7 @@ Private Sub ParseDeviceInfo(cData As JSONCollection, iUpdateTime As Integer)
           Continue
         Endif
 
-        ' skip instance 0 if it has more, since it should be mapped to other instances
+        ' Skip instance 0 if it has more, since it should be mapped to other instances
         If iInstanceId = 0 And If cZWaveNode["multiinstance"] Then Continue
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Instance #" & iInstanceId)
 
@@ -918,6 +1148,9 @@ Private Sub DoQueue()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub WriteCommand(sWBuffer As String, sKey As String)
 
   hRaZberryCmd = New HttpClient As "hRaZberryCmd"
@@ -1560,3 +1793,4 @@ Private Sub GetSpecificTypeName(iGenericType As Integer, iSpecificType As Intege
   End Select
 
 End
+
