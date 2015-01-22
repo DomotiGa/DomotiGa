@@ -2509,7 +2509,7 @@ void DomoZWave_Log( bool logging )
 
 	if ( logging )
 	{
-		Log::SetLoggingState( LogLevel_Detail, LogLevel_Debug, LogLevel_Error );
+		Log::SetLoggingState( LogLevel_Detail, LogLevel_Debug, LogLevel_None );
 	}
 	else
 	{
