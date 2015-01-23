@@ -691,6 +691,8 @@ Private Sub ParseDeviceInfo(cData As JSONCollection)
   Dim iNodeId As Integer
   Dim iInstanceId As Integer
   Dim aBytes As Byte[]
+  Dim iScale As Integer
+  Dim iType As Integer
 
   Dim iBattery, iScaleId, iSensorType, iScaleMulti, iDeviceId As Integer
   Dim sDeviceTypeAutoCreate, sScale As String
@@ -772,20 +774,19 @@ Private Sub ParseDeviceInfo(cData As JSONCollection)
         Endif 
       Next
 
-      ' Check for instances, battery, wakeup and security
-      If cNode.Exist("instances") Then
-      Else
+      ' We should always have instance(s)
+      If Not cNode.Exist("instances") Then
+        Return
       Endif
+
+      ' Check for instances, battery, wakeup and security
       Try cZWaveNode.Add(CBool(IIf(cNode["instances"]["0"]["commandClasses"]["132"], True, False)), "wakeup")
       Try cZWaveNode.Add(CBool(IIf(cNode["instances"]["0"]["commandClasses"]["128"], True, False)), "battery")
       Try cZWaveNode.Add(CBool(IIf(cNode["instances"]["0"]["commandClasses"]["152"], True, False)), "security")
       Try cZWaveNode.Add(IIf(cNode["instances"].Count > 1, True, False), "multiinstance")
       If Error Then cZWaveNode.Add(False, "multiinstance")
 
-      ' LastSeen ...
-'XXXXXXXXXXXXXXX
-'X use basic = 32 In nodeinfoframe To determine If we need To put an empty value In value1? in instance=0/1
-'XXXXXXXXXXXXXXX
+      ' LastSeen
 
       ' If device is the controller, just add it to the ZWaveNode and go to the next device
       If iNodeId = $cZWaveNetwork["controller"]["controllerid"] Then
@@ -865,6 +866,56 @@ Private Sub ParseDeviceInfo(cData As JSONCollection)
         ' Skip instance 0 if it has more, since it should be mapped to other instances
         If iInstanceId = 0 And If cZWaveNode["multiinstance"] Then Continue
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Instance #" & iInstanceId)
+
+        ' CommandClasses need to exist
+        If Not cInstance.Exist("commandClasses") Then
+          Continue
+        Endif
+
+        ' ### NEW CODE ####
+
+        ' Command_Class_Basic
+        ' Use basic = 32 In nodeinfoframe To determine If we need To put an empty value In value1? in instance=0/1
+
+        ' We should try Multilevel (dimmer) before a Switch
+        ' Command_Class_Switch_Multilevel (38)
+        If cInstance["commandClasses"].Exist(COMMAND_CLASS_SWITCH_MULTILEVEL) Then
+          UpdateNodeCommandClass_SwitchMultiLevel(iInstanceId, cInstance["commandClasses"][COMMAND_CLASS_SWITCH_MULTILEVEL]["data"]["level"], cZWaveNode)
+
+        ' Command_Class_Switch_Binary (37)
+        Else If cInstance["commandClasses"].Exist(COMMAND_CLASS_SWITCH_BINARY) Then
+          UpdateNodeCommandClass_SwitchBinary(iInstanceId, cInstance["commandClasses"][COMMAND_CLASS_SWITCH_BINARY]["data"]["level"], cZWaveNode)
+        Endif
+
+        ' Command_Class_Sensor_Binary (48)
+        If cInstance["commandClasses"].Exist(COMMAND_CLASS_SENSOR_BINARY) Then
+          For Each cInstance["commandClasses"][COMMAND_CLASS_SENSOR_BINARY]["data"]
+            If IsNumber(cInstance["commandClasses"][COMMAND_CLASS_SENSOR_BINARY]["data"].Key) Then
+              iType = CInt(cInstance["commandClasses"][COMMAND_CLASS_SENSOR_BINARY]["data"].Key)
+              UpdateNodeCommandClass_SensorBinary(iInstanceId, iScale, cInstance["commandClasses"][COMMAND_CLASS_SENSOR_BINARY]["data"][iType], cZWaveNode)
+            Endif
+          Next
+        Endif
+
+        ' Command_Class_Sensor_Multilevel (49)
+
+        ' Command_Class_Meter (50)
+        If cInstance["commandClasses"].Exist(COMMAND_CLASS_METER) Then
+          For Each cInstance["commandClasses"][COMMAND_CLASS_METER]["data"]
+            If IsNumber(cInstance["commandClasses"][COMMAND_CLASS_METER]["data"].Key) Then
+              iScale = CInt(cInstance["commandClasses"][COMMAND_CLASS_METER]["data"].Key)
+              UpdateNodeCommandClass_Meter(iInstanceId, iScale, cInstance["commandClasses"][COMMAND_CLASS_METER]["data"][iScale], cZWaveNode)
+            Endif
+          Next
+        Endif
+
+        ' Command_Class_SetPoint (67)
+
+        ' Command_Class_Battery (128)
+
+        ' Command_Class_Sensor_Alarm (156)
+
+        ' ### NEW CODE ####
 
         ' battery level if available
         If cZWaveNode["battery"] Then Try iBattery = cInstance["commandClasses"]["128"]["data"]["last"]["value"]
@@ -1057,10 +1108,311 @@ Private Sub ParseDeviceInfo(cData As JSONCollection)
   bInit = True
 
   ' start update timer
-  If $iPollTime Then tRaZberry.Start
+  If $iPollTime And If tRaZberry Then tRaZberry.Start
 
 Catch ' some errors
   Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub UpdateIntervalCCValue(iInstanceId As Integer, iMap As Integer, cData As JSONCollection, sPath As String, vValue As Variant, Optional sUnits As String = "")
+
+  Dim cInstance As JSONCollection
+  Dim cEntry As JSONCollection
+  Dim aMapList As Byte[]
+
+  ' Now check if our instance exists, else create it too
+  If Not cData.Exist(iInstanceId) Then
+    cInstance = New JSONCollection
+    cData.Add(cInstance, iInstanceId)
+  Endif
+
+  ' Check for index array, else create it
+  If Not cData[iInstanceId].Exist("index") Then
+    aMapList = New Byte[]
+    cData[iInstanceId].Add(aMapList, "index")
+  Endif
+
+  ' Try to find an existing mapping, then we just have to update the data
+  If cData[iInstanceId]["index"].Find(iMap) >= 0 Then
+    cData[iInstanceId][iMap]["value"] = vValue
+  Else
+    ' Doesn't exist, create a mapping and sort it
+    cData[iInstanceId]["index"].Add(iMap)
+    cData[iInstanceId]["index"] = cData[iInstanceId]["index"].Sort()
+
+    ' Create the value & units entry
+    cEntry = New JSONCollection
+    cEntry.Add(sPath, "path")
+    cEntry.Add(vValue, "value")
+    cEntry.Add(sUnits, "units")
+    cData[iInstanceId].Add(cEntry, iMap)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add or Update the CommandClass_Basic - sensors normally
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'Private Sub UpdateNodeCommandClass_Basic(iInstanceId As Integer, cData As JSONCollection, cZWaveNode As JSONCollection)
+
+'  Dim iMap As Integer
+'  Dim sUpdateKey As String
+
+'  iMap = 2
+
+'End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add or Update the CommandClass_Switch_Binary
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub UpdateNodeCommandClass_SwitchBinary(iInstanceId As Integer, cData As JSONCollection, cZWaveNode As JSONCollection)
+
+  Dim iMap As Integer
+  Dim sUpdateKey As String
+  Dim cInstance As JSONCollection
+  Dim sValue As String
+
+  iMap = 2
+
+  ' Check if the instances information already exist 
+  If Not cZWaveNode.Exist("instances") Then
+    cInstance = New JSONCollection
+    cZWaveNode.Add(cInstance, "instances")
+  Endif
+
+  Select cData["type"]
+    Case "bool"
+      sValue = IIf(cData["value"], "On", "Off")
+    Case "int"
+      sValue = IIf(cData["value"] > 99, "On", "Off")
+    Default
+      sValue = "Off"
+  End Select
+
+  ' Build up possible update key. E.g. devices.5.instances.1.commandClasses.50.data.2
+  sUpdateKey = "devices." & cZWaveNode["node_id"] & ".instances." & iInstanceId & ".commandClasses." & COMMAND_CLASS_SWITCH_BINARY & ".data.level"
+  UpdateIntervalCCValue(iInstanceId, iMap, cZWaveNode["instances"], sUpdateKey, sValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add or Update the CommandClass_Switch_MultiLevel
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub UpdateNodeCommandClass_SwitchMultiLevel(iInstanceId As Integer, cData As JSONCollection, cZWaveNode As JSONCollection)
+
+  Dim iMap As Integer
+  Dim sUpdateKey As String
+  Dim cInstance As JSONCollection
+  Dim sValue As String
+
+  iMap = 2
+
+  ' Check if the instances information already exist 
+  If Not cZWaveNode.Exist("instances") Then
+    cInstance = New JSONCollection
+    cZWaveNode.Add(cInstance, "instances")
+  Endif
+
+  Select cData["type"]
+    Case "bool"
+      sValue = IIf(cData["value"], "On", "Off")
+    Case "int"
+      If cData["value"] = 0 Then
+        sValue = "Off"
+      Else If cData["value"] > 99 Then
+        sValue = "On"
+      Else
+        sValue = "Dim " & cData["value"]
+      Endif
+    Default
+      sValue = "Off"
+  End Select
+
+  ' Build up possible update key. E.g. devices.5.instances.1.commandClasses.50.data.2
+  sUpdateKey = "devices." & cZWaveNode["node_id"] & ".instances." & iInstanceId & ".commandClasses." & COMMAND_CLASS_SWITCH_MULTILEVEL & ".data.level"
+  UpdateIntervalCCValue(iInstanceId, iMap, cZWaveNode["instances"], sUpdateKey, sValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add or Update the CommandClass_Sensor_Binary entry
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub UpdateNodeCommandClass_SensorBinary(iInstanceId As Integer, iType As Integer, cData As JSONCollection, cZWaveNode As JSONCollection)
+
+  Dim sSensorType As String
+  Dim sScale As String
+  Dim sUpdateKey As String
+  Dim iMap As Integer
+  Dim cInstance As JSONCollection
+  Dim sValue As String
+
+  ' Each Sensor Binary Collection should have:
+  ' - sensorTypeString/value = string representation of sensor Type 
+  ' - level/value = The actual binary true/false
+
+  Try sSensorType = cData["sensorTypeString"]["value"]
+  If Error Or If Not sSensorType Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Z-Wave NodeId '" & cZwaveNode["node_id"] & "' seem to have an invalid COMMAND_CLASS_SENSOR_BINARY sensorType for Type '" & iType & "'" & IIf(Error.Text, " '" & Error.Text & "'", ""))
+    Return
+  Endif
+
+  ' Now try to map the type to a known value
+  Select sSensorType
+    Case "General purpose"
+      iMap = 31
+    Case "Smoke"
+      iMap = 32
+    Case "CO"
+      iMap = 33
+    Case "CO2"
+      iMap = 34
+    Case "Heat"
+      iMap = 35
+    Case "Water"
+      iMap = 36
+    Case "Freeze"
+      iMap = 37
+    Case "Tamper"
+      iMap = 38
+    Case "Aux"
+      iMap = 39
+    Case "Door/Window"
+      iMap = 40
+    Case "Tilt"
+      iMap = 41
+    Case "Motion"
+      iMap = 42
+    Case "Glass Break"
+      iMap = 43
+    Default ' For Z-Way v1.31
+      iMap = 31
+  End Select
+
+  ' Only continue if we found a known type
+  If iMap Then
+
+    ' Check if val/value exist, else we can directly stop
+    If Not cData.Exist("level") Or If Not cData["level"].Exist("value") Then
+      Main.WriteDebugLog(LogLabel & "ERROR: Z-Wave NodeId '" & cZwaveNode["node_id"] & "' seem to not have a valid value for COMMAND_CLASS_SENSOR_BINARY, 'level' or 'value' is missing")
+      Return
+    Endif
+
+    ' Check if the instances information already exist 
+    If Not cZWaveNode.Exist("instances") Then
+      cInstance = New JSONCollection
+      cZWaveNode.Add(cInstance, "instances")
+    Endif
+
+    If cData["level"]["value"] = 255 Then
+      sValue = "On"
+    Else
+      sValue = "Off"
+    Endif
+
+    ' Build up possible update key. e.g. devices.5.instances.1.commandClasses.48.data.2
+    sUpdateKey = "devices." & cZWaveNode["node_id"] & ".instances." & iInstanceId & ".commandClasses." & COMMAND_CLASS_SENSOR_BINARY & ".data." & iType
+    UpdateIntervalCCValue(iInstanceId, iMap, cZWaveNode["instances"], sUpdateKey, sValue)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add or Update the CommandClass_Meter entry 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub UpdateNodeCommandClass_Meter(iInstanceId As Integer, iScale As Integer, cData As JSONCollection, cZWaveNode As JSONCollection)
+
+  Dim sSensorType As String
+  Dim sScale As String
+  Dim sUpdateKey As String
+  Dim iMap As Integer
+  Dim cInstance As JSONCollection
+
+  ' Each Meter Collection should have:
+  ' - delta/value = difference between last and actual meter value
+  ' - previous/value = previous meter value (gotten with last GET request
+  ' - rateType/value = meter rate type 
+  ' - scale/value = meter scale id
+  ' - scaleString/value = string representation of meter scale
+  ' - sensorType/value = sensor type id 
+  ' - sensorTypeString/value = string representation of sensor Type 
+  ' - val/value = The actual meter value
+
+  Try sSensorType = cData["sensorTypeString"]["value"]
+  If Error Or If Not sSensorType Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Z-Wave NodeId '" & cZwaveNode["node_id"] & "' seem to have an invalid COMMAND_CLASS_METER sensorType for Scale '" & iScale & "'" & IIf(Error.Text, " '" & Error.Text & "'", ""))
+    Return
+  Endif
+
+  Try sScale = cData["scaleString"]["value"]
+  If Error Or If Not sScale Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Z-Wave NodeId '" & cZwaveNode["node_id"] & "' seem to have an invalid COMMAND_CLASS_METER scale for Scale '" & iScale & "'" & IIf(Error.Text, " '" & Error.Text & "'", ""))
+    Return
+  Endif
+
+  ' Now try to map the type to a known value
+  Select sSensorType
+    Case "Electric", "Electric "
+      Select sScale
+        Case "W"
+          iMap = 11
+        Case "kWh"
+          iMap = 12
+        Case "kVAh"
+          iMap = 14
+        Case "V"
+          iMap = 15
+        Case "A"
+          iMap = 16
+        Case "Pulse Count"
+          iMap = 17
+        Case "Power Factor"
+          iMap = 18
+      End Select
+    Case "Gas"
+      Select sScale
+        Case "Qubic meter"
+          iMap = 19
+        Case "Qubic feet"
+          iMap = 20
+        Case "Pulse Count"
+          iMap = 21
+      End Select
+    Case "Water"
+      Select sScale
+        Case "Cubic meter"
+          iMap = 22
+        Case "Cubic feet"
+          iMap = 23
+        Case "US Gallon"
+          iMap = 24
+        Case "Pulse Count"
+          iMap = 25
+      End Select
+  End Select
+
+  ' Only continue if we found a known type
+  If iMap Then
+
+    ' Check if val/value exist, else we can directly stop
+    If Not cData.Exist("val") Or If Not cData["val"].Exist("value") Then
+      Main.WriteDebugLog(LogLabel & "ERROR: Z-Wave NodeId '" & cZwaveNode["node_id"] & "' seem to not have a valid value for COMMAND_CLASS_METER, 'val' or 'value' is missing")
+      Return
+    Endif
+
+    ' Check if the instances information already exist 
+    If Not cZWaveNode.Exist("instances") Then
+      cInstance = New JSONCollection
+      cZWaveNode.Add(cInstance, "instances")
+    Endif
+
+    ' Build up possible update key. e.g. devices.5.instances.1.commandClasses.50.data.2
+    sUpdateKey = "devices." & cZWaveNode["node_id"] & ".instances." & iInstanceId & ".commandClasses." & COMMAND_CLASS_METER & ".data." & iScale
+    UpdateIntervalCCValue(iInstanceId, iMap, cZWaveNode["instances"], sUpdateKey, cData["val"]["value"], sScale)
+  Endif
 
 End
 
