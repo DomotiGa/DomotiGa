@@ -49,6 +49,18 @@ UPDATE plugins SET `interface`='RaZberry Z-Wave Interface', `name`='RaZberry' WH
 ALTER TABLE settings_networkdetect ADD COLUMN interface varchar(16) CHARACTER SET 'utf8' DEFAULT 'eth0' AFTER timeout;
 
 --
+-- Set control and valuetypes of value1
+--
+
+UPDATE device_values JOIN devices SET device_values.control = True WHERE devices.id = device_values.device_id AND device_values.valuenum = 1 AND devices.switchable IS True;
+
+UPDATE device_values JOIN devices SET device_values.control = True WHERE devices.id = device_values.device_id AND device_values.valuenum = 1 AND devices.dimable IS True;
+
+UPDATE device_values JOIN devices SET device_values.type_id = 1 WHERE devices.id = device_values.device_id AND device_values.valuenum = 1 AND devices.switchable IS True;
+
+UPDATE device_values JOIN devices SET device_values.type_id = 20 WHERE devices.id = device_values.device_id AND device_values.valuenum = 1 AND devices.dimable IS True;
+
+--
 -- Finally update to 1.0.021
 --
 
