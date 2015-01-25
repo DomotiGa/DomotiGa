@@ -49,6 +49,12 @@ UPDATE plugins SET `interface`='RaZberry Z-Wave Interface', `name`='RaZberry' WH
 ALTER TABLE settings_networkdetect ADD COLUMN interface varchar(16) CHARACTER SET 'utf8' DEFAULT 'eth0' AFTER timeout;
 
 --
+-- Add missing GPS plugin
+--
+
+INSERT INTO plugins (`id`, `interface`, `name`, `type`) VALUES (94, 'GPS', 'GPS', 'class');
+
+--
 -- Finally update to 1.0.021
 --
 
