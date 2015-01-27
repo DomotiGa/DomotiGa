@@ -2287,6 +2287,7 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 	{
 		m_structCtrl* ctrl = GetControllerInfo( homeID );
 		curl_easy_setopt( curl, CURLOPT_INTERFACE, "127.0.0.1" );
+		curl_easy_setopt( curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4 );
 		curl_easy_setopt( curl, CURLOPT_NOSIGNAL, 1 );
 		curl_easy_setopt( curl, CURLOPT_URL, ctrl->m_jsonrpcurl );
 
