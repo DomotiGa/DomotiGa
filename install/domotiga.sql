@@ -2628,6 +2628,7 @@ CREATE TABLE `settings_main` (
   `homerightpanel` varchar(256) DEFAULT NULL,
   `homebottompanel` varchar(256) DEFAULT NULL,
   `autodevicecreate` tinyint(1) NOT NULL DEFAULT '0',
+  `logallvalueupdates` tinyint(1) NOT NULL DEFAULT '0',
   `logprefix` varchar(16) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;

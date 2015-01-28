@@ -55,6 +55,12 @@ ALTER TABLE settings_networkdetect ADD COLUMN interface varchar(16) CHARACTER SE
 INSERT INTO plugins (`id`, `interface`, `name`, `type`) VALUES (94, 'GPS', 'GPS', 'class');
 
 --
+-- Add column to settings-main
+--
+
+ALTER TABLE settings_main ADD COLUMN logallvalueupdates tinyint(1) NOT NULL DEFAULT '0' AFTER autodevicecreate;
+
+--
 -- Finally update to 1.0.021
 --
 
