@@ -420,8 +420,8 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 {
 	int id = valueID.GetCommandClassId();
 	int genre = valueID.GetGenre();
-	string label = Manager::Get()->GetValueLabel( valueID );
-	string unit = Manager::Get()->GetValueUnits( valueID );
+	string label;
+	string unit;
 	int instanceID = valueID.GetInstance();
 	int type = valueID.GetType();
 	char dev_value[1024];
@@ -429,6 +429,18 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 	string dev_label;
 	int dev_index = 0;
 	NodeInfo* nodeInfo;
+
+	try
+	{
+	label = Manager::Get()->GetValueLabel( valueID );
+	}
+	catch(...) {}
+
+	try
+	{
+	unit = Manager::Get()->GetValueUnits( valueID );
+	}
+	catch(...) {}
 
 	WriteLog( LogLevel_Debug, true, "%s: HomeId=0x%x Node=%d", (add)?"ValueAdded":"ValueChanged", homeID, nodeID );
 	WriteLog( LogLevel_Debug, false, "Genre=%s (%d)", DomoZWave_GenreIdName(genre), genre );
@@ -451,7 +463,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		case ValueID::ValueType_Bool:
 		{
 			bool bool_value;
-			Manager::Get()->GetValueAsBool( valueID, &bool_value );
+			try { Manager::Get()->GetValueAsBool( valueID, &bool_value ); } catch(...) {}
 			snprintf( dev_value, 1024, "%i", bool_value );
 			WriteLog( LogLevel_Debug, false, "Type=Bool (raw value=%s)", dev_value );
 			break;
@@ -459,7 +471,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		case ValueID::ValueType_Byte:
 		{
 			uint8 byte_value;
-			Manager::Get()->GetValueAsByte( valueID, &byte_value );
+			try { Manager::Get()->GetValueAsByte( valueID, &byte_value ); } catch(...) {}
 			snprintf( dev_value, 1024, "%i", byte_value );
 			WriteLog( LogLevel_Debug, false, "Type=Byte (raw value=%s)", dev_value );
 			break;
@@ -467,7 +479,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		case ValueID::ValueType_Decimal:
 		{
 			string decimal_value;
-			Manager::Get()->GetValueAsString( valueID, &decimal_value );
+			try { Manager::Get()->GetValueAsString( valueID, &decimal_value ); } catch(...) {}
 			snprintf( dev_value, 1024, "%s", strdup( decimal_value.c_str() ) );
 			WriteLog( LogLevel_Debug, false, "Type=Decimal (raw value=%s)", dev_value );
 			break;
@@ -475,7 +487,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		case ValueID::ValueType_Int:
 		{
 			int int_value;
-			Manager::Get()->GetValueAsInt( valueID, &int_value );
+			try { Manager::Get()->GetValueAsInt( valueID, &int_value ); } catch(...) {}
 			snprintf( dev_value, 1024, "%d", int_value );
 			WriteLog( LogLevel_Debug, false, "Type=Integer (raw value=%s)", dev_value );
 			break;
@@ -483,7 +495,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		case ValueID::ValueType_Short:
 		{
 			int16 short_value;
-			Manager::Get()->GetValueAsShort( valueID, &short_value );
+			try { Manager::Get()->GetValueAsShort( valueID, &short_value ); } catch(...) {}
 			snprintf( dev_value, 1024, "%d", short_value );
 			WriteLog( LogLevel_Debug, false, "Type=Short (raw value=%s)", dev_value );
 			break;
@@ -497,7 +509,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		case ValueID::ValueType_String:
 		{
 			string string_value;
-			Manager::Get()->GetValueAsString( valueID, &string_value );
+			try { Manager::Get()->GetValueAsString( valueID, &string_value ); } catch(...) {}
 			snprintf( dev_value, 1024, "%s", strdup( string_value.c_str() ) );
 			WriteLog( LogLevel_Debug, false, "Type=String (raw value=%s)", dev_value );
 			break;
@@ -511,7 +523,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		case ValueID::ValueType_List:
 		{
 			string list_value;
-			Manager::Get()->GetValueListSelection( valueID, &list_value );
+			try { Manager::Get()->GetValueListSelection( valueID, &list_value ); } catch(...) {}
 			snprintf( dev_value, 1024, "%s", strdup( list_value.c_str() ) );
 			WriteLog( LogLevel_Debug, false, "Type=List (raw value=%s)", dev_value );
 			break;
@@ -520,7 +532,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		{
 			// We can use AsString on a Raw
 			string string_value;
-			Manager::Get()->GetValueAsString( valueID, &string_value );
+			try { Manager::Get()->GetValueAsString( valueID, &string_value ); } catch(...) {}
 			snprintf( dev_value, 1024, "%s", strdup( string_value.c_str() ) );
 			WriteLog( LogLevel_Debug, false, "Type=Raw (raw value=%s)", dev_value );
 			break;
@@ -545,7 +557,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 			{
 				// No need to convert from Byte to Bool
 				id = v.GetCommandClassId();
-				label = Manager::Get()->GetValueLabel( v );
+				try { label = Manager::Get()->GetValueLabel( v ); } catch(...) {}
 				found = true;
 				break;
 			}
@@ -623,7 +635,7 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 				// Retrieve the value again, we need to check for >100
 				uint8 byte_value;
-				Manager::Get()->GetValueAsByte( valueID, &byte_value );
+				try { Manager::Get()->GetValueAsByte( valueID, &byte_value ); } catch(...) {}
 
 				if ( byte_value > 100 )
 				{
@@ -1100,13 +1112,27 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 	if ( ( add ) || ( missedvalueadd ) )
 	{
-		WriteLog( LogLevel_Debug, false, "ValueKnown=%s, ReadOnly=%s, WriteOnly=%s", ( Manager::Get()->IsValueSet( valueID ) )?"true":"false", ( Manager::Get()->IsValueReadOnly( valueID ) )?"true":"false", ( Manager::Get()->IsValueWriteOnly( valueID ) )?"true":"false" );
+		bool valueset;
+		bool readonly;
+		bool writeonly;
+
+		try { valueset = Manager::Get()->IsValueSet( valueID ); } catch(...) {}
+		try { readonly = Manager::Get()->IsValueReadOnly( valueID ); } catch(...) {}
+		try { writeonly = Manager::Get()->IsValueWriteOnly( valueID ); } catch(...) {}
+
+		WriteLog( LogLevel_Debug, false, "ValueKnown=%s, ReadOnly=%s, WriteOnly=%s", valueset?"true":"false", readonly?"true":"false", writeonly?"true":"false" );
 
 		// Only show min and max when it is numeric
 		if ( ( type == ValueID::ValueType_Byte ) || ( type == ValueID::ValueType_Short ) || ( type = ValueID::ValueType_Int ) )
 		{
-			WriteLog( LogLevel_Debug, false, "Min=%d", Manager::Get()->GetValueMin( valueID ) );
-			WriteLog( LogLevel_Debug, false, "Max=%d", Manager::Get()->GetValueMax( valueID ) );
+			int32 valuemin;
+			int32 valuemax;
+
+			try { valuemin = Manager::Get()->GetValueMin( valueID ); } catch(...) {}
+			try { valuemax = Manager::Get()->GetValueMax( valueID ); } catch(...) {}
+
+			WriteLog( LogLevel_Debug, false, "Min=%d", valuemin );
+			WriteLog( LogLevel_Debug, false, "Max=%d", valuemax );
 		}
 
 		// Report the index if the type is something we want to send to DomotiGa
@@ -1119,9 +1145,12 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 			WriteLog( LogLevel_Debug, false, "Value=%s", dev_value );
 		}
 
-		if ( Manager::Get()->GetValueHelp( valueID ) != "" )
+		string help;
+		try { help = Manager::Get()->GetValueHelp( valueID ); } catch(...) {}
+
+		if ( help != "" )
 		{
-			WriteLog( LogLevel_Debug, false, "Help=%s", Manager::Get()->GetValueHelp( valueID ).c_str() );
+			WriteLog( LogLevel_Debug, false, "Help=%s", help.c_str() );
 		}
 
 		// Check how many instance we got per node, if we got a higher instanceID, store it
@@ -1273,7 +1302,7 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 					if ( v.GetIndex() >= 1 )
 					{
 						string string_value;
-						Manager::Get()->GetValueAsString( v, &string_value );
+						try { Manager::Get()->GetValueAsString( v, &string_value ); } catch(...) {}
 
 						// We assume if the value starts with "0x00" that it is empty
 						if ( string_value.find("0x00") == 0 )
@@ -1343,26 +1372,40 @@ void RPC_NodeNew( uint32 homeID, int nodeID )
 
 //-----------------------------------------------------------------------------
 // <RPC_NodeProtocolInfo>
-// We got results to a Protocol Info query, send them over to domotiga.
+// We got results to a Protocol Info query, send them over to DomotiGa
 //-----------------------------------------------------------------------------
 
 void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
 {
-	int32 basic = Manager::Get()->GetNodeBasic( homeID, nodeID );
-	int32 generic = Manager::Get()->GetNodeGeneric( homeID, nodeID );
-	int32 specific = Manager::Get()->GetNodeSpecific( homeID, nodeID );
-	bool listening = Manager::Get()->IsNodeListeningDevice( homeID, nodeID );
-	bool frequentlistening = Manager::Get()->IsNodeFrequentListeningDevice( homeID, nodeID );
-	bool beaming = Manager::Get()->IsNodeBeamingDevice( homeID, nodeID );
-	bool routing = Manager::Get()->IsNodeRoutingDevice( homeID, nodeID );
-	bool security = Manager::Get()->IsNodeSecurityDevice( homeID, nodeID );
-	int32 maxbaudrate = Manager::Get()->GetNodeMaxBaudRate( homeID, nodeID );
-	const char* nodetype = Manager::Get()->GetNodeType( homeID, nodeID).c_str();
-	const char* name = Manager::Get()->GetNodeName( homeID, nodeID).c_str();
-	const char* location = Manager::Get()->GetNodeLocation( homeID, nodeID).c_str();
-	uint8 version = Manager::Get()->GetNodeVersion( homeID, nodeID ); 
+	int32 basic;
+	int32 generic;
+	int32 specific;
+	bool listening;
+	bool frequentlistening;
+	bool beaming;
+	bool routing;
+	bool security;
+	int32 maxbaudrate;
+	const char* nodetype;
+	const char* name;
+	const char* location;
+	uint8 version;
 	uint8 basicmapping = 0;
 	char buffer[50];
+
+        try { basic = Manager::Get()->GetNodeBasic( homeID, nodeID ); } catch(...) {}
+        try { generic = Manager::Get()->GetNodeGeneric( homeID, nodeID ); } catch(...) {}
+        try { specific = Manager::Get()->GetNodeSpecific( homeID, nodeID ); } catch(...) {}
+        try { listening = Manager::Get()->IsNodeListeningDevice( homeID, nodeID ); } catch(...) {}
+        try { frequentlistening = Manager::Get()->IsNodeFrequentListeningDevice( homeID, nodeID ); } catch(...) {}
+        try { beaming = Manager::Get()->IsNodeBeamingDevice( homeID, nodeID ); } catch(...) {}
+        try { routing = Manager::Get()->IsNodeRoutingDevice( homeID, nodeID ); } catch(...) {}
+        try { security = Manager::Get()->IsNodeSecurityDevice( homeID, nodeID ); } catch(...) {}
+        try { maxbaudrate = Manager::Get()->GetNodeMaxBaudRate( homeID, nodeID ); } catch(...) {}
+        try { nodetype = Manager::Get()->GetNodeType( homeID, nodeID).c_str(); } catch(...) {}
+        try { name = Manager::Get()->GetNodeName( homeID, nodeID).c_str(); } catch(...) {}
+        try { location = Manager::Get()->GetNodeLocation( homeID, nodeID).c_str(); } catch(...) {}
+        try { version = Manager::Get()->GetNodeVersion( homeID, nodeID ); } catch(...) {}
 
 	// Get NodeInfo information
 	if ( NodeInfo* nodeInfo = GetNodeInfo( homeID, nodeID ) )
@@ -1575,11 +1618,23 @@ void RPC_PollingDisabled( uint32 homeID, int nodeID )
 
 void RPC_NodeNaming( uint32 homeID, int nodeID )
 {
+	string manufacturerid;
+	string manufacturername;
+	string producttype;
+	string productid;
+	string productname;
+
+	try { manufacturerid =  Manager::Get()->GetNodeManufacturerId( homeID, nodeID ); } catch(...) {}
+	try { manufacturername = Manager::Get()->GetNodeManufacturerName( homeID, nodeID ); } catch(...) {}
+	try { producttype = Manager::Get()->GetNodeProductType( homeID, nodeID ); } catch(...) {}
+	try { productid = Manager::Get()->GetNodeProductId( homeID, nodeID ); } catch(...) {}
+	try { productname = Manager::Get()->GetNodeProductName( homeID, nodeID ); } catch(...) {}
+
 	WriteLog( LogLevel_Debug, true, "NodeNaming: HomeId=0x%x Node=%d", homeID, nodeID );
-	WriteLog( LogLevel_Debug, false, "ManufacturerId=%s", Manager::Get()->GetNodeManufacturerId( homeID, nodeID ).c_str() );
-	WriteLog( LogLevel_Debug, false, "ManufacturerName=%s", Manager::Get()->GetNodeManufacturerName( homeID, nodeID ).c_str() );
-	WriteLog( LogLevel_Debug, false, "ProductType=%s, ProductId=%s", Manager::Get()->GetNodeProductType( homeID, nodeID ).c_str(), Manager::Get()->GetNodeProductId( homeID, nodeID ).c_str() );
-	WriteLog( LogLevel_Debug, false, "ProductName=%s", Manager::Get()->GetNodeProductName( homeID, nodeID ).c_str() );
+	WriteLog( LogLevel_Debug, false, "ManufacturerId=%s", manufacturerid.c_str() );
+	WriteLog( LogLevel_Debug, false, "ManufacturerName=%s", manufacturername.c_str() );
+	WriteLog( LogLevel_Debug, false, "ProductType=%s, ProductId=%s", producttype.c_str(), productid.c_str() );
+	WriteLog( LogLevel_Debug, false, "ProductName=%s", productname.c_str() );
 }
 
 //-----------------------------------------------------------------------------
@@ -1590,7 +1645,9 @@ void RPC_NodeNaming( uint32 homeID, int nodeID )
 void RPC_DriverReady( uint32 homeID, int nodeID )
 {
 	// Retrieve the serialport name of this homeid
-	string controllerPath = Manager::Get()->GetControllerPath( homeID );
+	string controllerPath;
+
+	try { controllerPath = Manager::Get()->GetControllerPath( homeID ); } catch(...) {}
 
 	for ( list<m_structCtrl*>::iterator it = g_allControllers.begin(); it != g_allControllers.end(); ++it )
 	{
@@ -1709,7 +1766,7 @@ void OnNotification
 
 				if ( seconds > 3600 )
 				{
-					Manager::Get()->WriteConfig( data->GetHomeId() );
+					try { Manager::Get()->WriteConfig( data->GetHomeId() ); } catch(...) {}
 					WriteLog( LogLevel_Debug, true, "DomoZWave_WriteConfig: HomeId=0x%x (%.f seconds)", data->GetHomeId(), seconds );
 					ctrl->m_lastWriteXML = time( NULL );
 				}
@@ -1817,7 +1874,7 @@ void OnNotification
 			if ( ctrl->m_controllerAllQueried == 0 )
 			{ 
 				// Write zwcfg*xml file
-				Manager::Get()->WriteConfig( data->GetHomeId() );
+				try { Manager::Get()->WriteConfig( data->GetHomeId() ); } catch(...) {}
 
 				// The zwcfg*xml is written, save the current time
 				ctrl->m_lastWriteXML = time( NULL );
@@ -1889,7 +1946,8 @@ void OnNotification
 
 			// We require the configuration parameters when the device is essentially queried
 			// This still need to be optimized, because we do it with every startup now
-			Manager::Get()->RequestAllConfigParams( data->GetHomeId(), data->GetNodeId() );
+			try { Manager::Get()->RequestAllConfigParams( data->GetHomeId(), data->GetNodeId() ); } catch(...) {}
+
 			break;
 		}
 		case Notification::Type_NodeQueriesComplete:
@@ -1939,7 +1997,10 @@ void OnNotification
 					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
 					{
 						// Only report timeout if it is a listening device. If it is a sleeping device, most likely the device went to sleep already
-						if ( Manager::Get()->IsNodeListeningDevice( data->GetHomeId(), data->GetNodeId() ) ) {
+						bool listening;
+						try { listening = Manager::Get()->IsNodeListeningDevice( data->GetHomeId(), data->GetNodeId() ); } catch(...) {}
+
+						if ( listening ) {
 							str = "Listening Device";
 							nodeInfo->m_DeviceState = DZType_Timeout;
 						}
@@ -2691,7 +2752,7 @@ void DomoZWave_WriteConfig( uint32 home )
 {
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_WriteConfig" ) == false ) return;
 	WriteLog( LogLevel_Debug, true, "DomoZWave_WriteConfig: HomeId=0x%x", home );
-	Manager::Get()->WriteConfig( home );
+	try { Manager::Get()->WriteConfig( home ); } catch(...) {}
 }
 
 //-----------------------------------------------------------------------------
@@ -2705,7 +2766,7 @@ const char* DomoZWave_GetLibraryVersion( uint32 home )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetLibraryVersion" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetLibraryVersion: HomeId=0x%x", home );
-	LibraryVersion =  Manager::Get()->GetLibraryVersion( home );
+	try { LibraryVersion =  Manager::Get()->GetLibraryVersion( home ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "LibraryVersion=%s", LibraryVersion.c_str() );
 	return LibraryVersion.c_str();
 }
@@ -2721,7 +2782,7 @@ const char* DomoZWave_GetLibraryTypeName( uint32 home )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetLibraryTypeName" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetLibraryTypeName: HomeId=0x%x", home );
-	LibraryTypeName = Manager::Get()->GetLibraryTypeName( home );
+	try { LibraryTypeName = Manager::Get()->GetLibraryTypeName( home ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "LibraryTypeName=%s", LibraryTypeName.c_str() );
 	return LibraryTypeName.c_str();
 }
@@ -2739,13 +2800,21 @@ const char* DomoZWave_ControllerType( uint32 home )
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_ControllerType" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_ControllerType: HomeId=0x%x", home );
 
-	if ( Manager::Get()->IsStaticUpdateController ( home ) )
+	bool staticcontroller;
+
+	try { staticcontroller = Manager::Get()->IsStaticUpdateController ( home ); } catch(...) {}
+
+	if ( staticcontroller )
 	{
 		ctype = "SUC";
 	}
 	else
 	{
-		if ( Manager::Get()->IsPrimaryController ( home ) )
+		bool primarycontroller;
+
+		try { primarycontroller = Manager::Get()->IsPrimaryController ( home ); } catch(...) {}
+
+		if ( primarycontroller )
 		{
 			ctype = "Primary";
 		}
@@ -2767,7 +2836,7 @@ int32 DomoZWave_GetPollInterval( )
 {
 	int32 milliseconds;
 
-	milliseconds = Manager::Get()->GetPollInterval();
+	try { milliseconds = Manager::Get()->GetPollInterval(); } catch(...) {}
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetPollInterval: Interval=%d msec", milliseconds );
 
 	return milliseconds;
@@ -2781,7 +2850,7 @@ void DomoZWave_SetPollInterval( int32 milliseconds, bool intervalbetweenpolls )
 {
 	WriteLog( LogLevel_Debug, true, "DomoZWave_SetPollInterval: Interval=%d msec", milliseconds );
 
-	Manager::Get()->SetPollInterval( milliseconds, intervalbetweenpolls );
+	try { Manager::Get()->SetPollInterval( milliseconds, intervalbetweenpolls ); } catch(...) {}
 }
 
 //-----------------------------------------------------------------------------
@@ -2797,7 +2866,11 @@ void DomoZWave_EnablePolling( uint32 home, int32 node, int32 polltime )
 
 	WriteLog( LogLevel_Debug, true, "DomoZWave_EnablePolling: HomeId=0x%x Node=%d", home, node );
 
-	if ( Manager::Get()->GetNodeBasic( home, node ) < 0x03 )
+	int32 basic;
+
+	try { basic = Manager::Get()->GetNodeBasic( home, node ); } catch(...) {}
+
+	if ( basic < 0x03 )
 	{	
 		WriteLog( LogLevel_Debug, false, "Polltime=None (node is a controller)" );
 		return;
@@ -2834,7 +2907,7 @@ void DomoZWave_EnablePolling( uint32 home, int32 node, int32 polltime )
 					}
 				}
 
-				Manager::Get()->EnablePoll( *it, 2 );
+				try { Manager::Get()->EnablePoll( *it, 2 ); } catch(...) {}
 
 				if ( found == false )
 				{
@@ -2871,10 +2944,15 @@ void DomoZWave_DisablePolling( uint32 home, int32 node )
 	   	// disable polling for all values of this node
 		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
 		{
+
 			// Check if the ValueID is polled, to prevent warnings in OZW_Log.txt
-			if ( Manager::Get()->isPolled( *it ) )
+			bool polled;
+
+			try { polled = Manager::Get()->isPolled( *it ); } catch(...) {}
+			
+			if ( polled )
 			{
-				Manager::Get()->DisablePoll( *it );	
+				try { Manager::Get()->DisablePoll( *it ); } catch(...) {}
 			}
 		}
 	}
@@ -2891,7 +2969,7 @@ const char* DomoZWave_GetNodeQueryStage( uint32 home, int32 node )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeQueryStage" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeQueryStage: HomeId=0x%x Node=%d", home, node );
-	QueryStage = Manager::Get()->GetNodeQueryStage( home, node );
+	try { QueryStage = Manager::Get()->GetNodeQueryStage( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "QueryStage=%s", QueryStage.c_str() );
 	return QueryStage.c_str();
 
@@ -2908,7 +2986,7 @@ const char* DomoZWave_GetNodeManufacturerName( uint32 home, int32 node )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeManufacturerName" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeManufacturerName: HomeId=0x%x Node=%d", home, node );
-	ManufacturerName = Manager::Get()->GetNodeManufacturerName( home, node );
+	try { ManufacturerName = Manager::Get()->GetNodeManufacturerName( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ManufacturerName=%s", ManufacturerName.c_str() );
 	return ManufacturerName.c_str();
 
@@ -2925,7 +3003,7 @@ const char* DomoZWave_GetNodeProductName( uint32 home, int32 node )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeProductName" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductName: HomeId=0x%x Node=%d", home, node );
-	ProductName = Manager::Get()->GetNodeProductName( home, node );
+	try { ProductName = Manager::Get()->GetNodeProductName( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ProductName=%s", ProductName.c_str() );
 	return ProductName.c_str();
 }
@@ -2942,7 +3020,7 @@ const char* DomoZWave_GetNodeName( uint32 home, int32 node )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeName" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeName: HomeId=0x%x Node=%d", home, node );
-	NodeName = Manager::Get()->GetNodeName( home, node );
+	try { NodeName = Manager::Get()->GetNodeName( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "NodeName=%s", NodeName.c_str() );
 	return NodeName.c_str();
 }
@@ -2959,7 +3037,7 @@ const char* DomoZWave_GetNodeLocation( uint32 home, int32 node )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeLocation" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeLocation: HomeId=0x%x Node=%d", home, node );
-	NodeLocation = Manager::Get()->GetNodeLocation( home, node );
+	try { NodeLocation = Manager::Get()->GetNodeLocation( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "NodeLocation=%s", NodeLocation.c_str() );
 	return NodeLocation.c_str();
 }
@@ -2975,7 +3053,7 @@ const char* DomoZWave_GetNodeManufacturerId( uint32 home, int32 node )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeManufacturerId" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeManufacturerId: HomeId=0x%x Node=%d", home, node );
-	ManufacturerId = Manager::Get()->GetNodeManufacturerId( home, node );
+	try { ManufacturerId = Manager::Get()->GetNodeManufacturerId( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ManufacturerId=%s", ManufacturerId.c_str() );
 	return ManufacturerId.c_str();
 }
@@ -2991,7 +3069,7 @@ const char* DomoZWave_GetNodeProductType( uint32 home, int32 node )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeProductType" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductType: HomeId=0x%x Node=%d", home, node );
-	ProductType = Manager::Get()->GetNodeProductType( home, node );
+	try { ProductType = Manager::Get()->GetNodeProductType( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ProductType=%s", ProductType.c_str() );
 	return ProductType.c_str();
 }
@@ -3007,7 +3085,7 @@ const char* DomoZWave_GetNodeProductId( uint32 home, int32 node )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_GetNodeProductId" ) == false ) return "";
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductId: HomeId=0x%x Node=%d", home, node );
-	ProductId = Manager::Get()->GetNodeProductId( home, node );
+	try { ProductId = Manager::Get()->GetNodeProductId( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ProductId=%s",ProductId.c_str() );
 	return ProductId.c_str();
 }
@@ -3276,9 +3354,12 @@ const char* DomoZWave_GetNodeStatus( uint32 home, int32 node )
 
 bool DomoZWave_RequestNodeState( uint32 home, int32 node )
 {
+	bool nodestate;
+
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RequestNodeState" ) == false ) return false;
 	WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNodeState: HomeId=0x%x Node=%d", home, node );
-	return Manager::Get()->RequestNodeState( home, node );
+	try { nodestate = Manager::Get()->RequestNodeState( home, node ); } catch(...) {}
+	return nodestate;
 }
 
 //-----------------------------------------------------------------------------
@@ -3288,9 +3369,12 @@ bool DomoZWave_RequestNodeState( uint32 home, int32 node )
 
 bool DomoZWave_RequestNodeDynamic( uint32 home, int32 node )
 {
+	bool nodedynamic;
+
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RequestNodeDynamic" ) == false ) return false;
 	WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNodeDynamic: HomeId=0x%x Node=%d", home, node );
-	return Manager::Get()->RequestNodeDynamic( home, node );
+	try { nodedynamic = Manager::Get()->RequestNodeDynamic( home, node ); } catch(...) {}
+	return nodedynamic;
 }
 
 //-----------------------------------------------------------------------------
@@ -3316,7 +3400,7 @@ bool DomoZWave_RequestNodeNeighborUpdate( uint32 home, int32 node, bool addqueue
 			ctrl->m_nodeId = node;
 			ctrl->m_controllerBusy = true;
 
-			response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNodeNeighborUpdate, OnControllerUpdate, ctrl, false, node );
+			try { response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNodeNeighborUpdate, OnControllerUpdate, ctrl, false, node ); } catch(...) {}
 			WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
 		}
 		else
@@ -3388,7 +3472,7 @@ bool DomoZWave_RefreshNodeInfo( uint32 home, int32 node )
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_RefreshNodeInfo" ) == false ) return false;
 	WriteLog( LogLevel_Debug, true, "DomoZWave_RefreshNodeInfo: HomeId=0x%x Node=%d", home, node );
-	response = Manager::Get()->RefreshNodeInfo( home, node );
+	try { response = Manager::Get()->RefreshNodeInfo( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
 	return response;
 }
@@ -3417,7 +3501,7 @@ bool DomoZWave_RequestNodeVersion( uint32 home, int32 node )
 			// Find the versions of this node
 			if ( v.GetCommandClassId() == COMMAND_CLASS_VERSION )
 			{
-				Manager::Get()->RefreshValue( v );
+				try { Manager::Get()->RefreshValue( v ); } catch(...) {}
 				response = true;
 			}
 		}
@@ -3450,7 +3534,7 @@ bool DomoZWave_RequestNodeMeter( uint32 home, int32 node )
 			// Find the versions of this node
 			if ( v.GetCommandClassId() == COMMAND_CLASS_METER )
 			{
-				Manager::Get()->RefreshValue( v );
+				try { Manager::Get()->RefreshValue( v ); } catch(...) {}
 				response = true;
 			}
 		}
@@ -3520,7 +3604,9 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 		{
 			uint8 id = (*it).GetCommandClassId();
 			uint8 inst = (*it).GetInstance();
-			string label = Manager::Get()->GetValueLabel( (*it) );
+			string label;
+
+			try { label = Manager::Get()->GetValueLabel( (*it) ); } catch(...) {}
 
 			// Now check the ValueIDs CommandClass id with the preferred CommandClass
 			if ( id == usecc )
@@ -3573,37 +3659,37 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 			        	if ( ValueID::ValueType_Bool == (*it).GetType() )
 					{
 						bool_value = (bool)value;
-						response = Manager::Get()->SetValue( *it, bool_value );
+						try { response = Manager::Get()->SetValue( *it, bool_value ); } catch(...) {}
 						cmdfound = true;
 					}
 					else if ( ValueID::ValueType_Byte == (*it).GetType() )
 					{
 						uint8_value = (uint8)value;
-						response = Manager::Get()->SetValue( *it, uint8_value );
+						try { response = Manager::Get()->SetValue( *it, uint8_value ); } catch(...) {}
 						cmdfound = true;
 					}
 					else if ( ValueID::ValueType_Short == (*it).GetType() )
 					{
 						uint16_value = (uint16)value;
-						response = Manager::Get()->SetValue( *it, uint16_value );
+						try { response = Manager::Get()->SetValue( *it, uint16_value ); } catch(...) {}
 						cmdfound = true;
 					}
 					else if ( ValueID::ValueType_Int == (*it).GetType() )
 					{
 						int_value = value;
-						response = Manager::Get()->SetValue( *it, int_value );
+						try { response = Manager::Get()->SetValue( *it, int_value ); } catch(...) {}
 						cmdfound = true;
 					}
 					else if ( ValueID::ValueType_List == (*it).GetType() )
 					{
-						response = Manager::Get()->SetValue( *it, value );
+						try { response = Manager::Get()->SetValue( *it, value ); } catch(...) {}
 						cmdfound = true;
 	       				}
 					else if ( ValueID::ValueType_Decimal == (*it).GetType() )
 					{
 						// We don't get a float, so divide by 1000 to get the right value
 						float_value = (float)value / 1000;
-						response = Manager::Get()->SetValue( *it, float_value );
+						try { response = Manager::Get()->SetValue( *it, float_value ); } catch(...) {}
 						cmdfound = true;
 					}
 					else
@@ -3670,7 +3756,10 @@ bool DomoZWave_SetConfigParam( uint32 home, int32 node, int32 param, int32 value
 		cachedconfig = new m_configItem();
 
 		// Check if it is a listening or sleeping device
-		if ( Manager::Get()->IsNodeListeningDevice( home, node ) == true )
+		bool listening;
+
+		try { listening = Manager::Get()->IsNodeListeningDevice( home, node ); } catch(...) {}
+		if ( listening )
 		{
 			// Lets wait 60 seconds
 			timeadd = 60;
@@ -3689,9 +3778,12 @@ bool DomoZWave_SetConfigParam( uint32 home, int32 node, int32 param, int32 value
 				if (( v.GetCommandClassId() == COMMAND_CLASS_WAKE_UP ) && ( v.GetGenre() == ValueID::ValueGenre_System ) && ( v.GetInstance() == 1 ))
 				{
 					// Only return proper value if it is the right label and integer value
-					if (( Manager::Get()->GetValueLabel( v ) == "Wake-up Interval" ) && ( v.GetType() == ValueID::ValueType_Int )) {
+					string label;
+
+					try { label = Manager::Get()->GetValueLabel( v ); } catch(...) {}
+					if (( label == "Wake-up Interval" ) && ( v.GetType() == ValueID::ValueType_Int )) {
 						int32 int_value;
-						Manager::Get()->GetValueAsInt( v, &int_value );
+						try { Manager::Get()->GetValueAsInt( v, &int_value ); } catch(...) {}
 						timeadd = int_value;
 						it = nodeInfo->m_values.end();
 					}
