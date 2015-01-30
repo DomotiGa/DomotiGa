@@ -2640,7 +2640,7 @@ CREATE TABLE `settings_main` (
 
 LOCK TABLES `settings_main` WRITE;
 /*!40000 ALTER TABLE `settings_main` DISABLE KEYS */;
-INSERT INTO `settings_main` VALUES (0,250,10000,0,15000,0,'FLogfiles',0,0,0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',1,NULL),(1,250,10000,0,15000,0,'FLogfiles',0,0,0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',1,NULL);
+INSERT INTO `settings_main` VALUES (0,250,10000,0,15000,0,'FLogfiles',0,0,0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',1,0,NULL),(1,250,10000,0,15000,0,'FLogfiles',0,0,0,0,0,'TagLine|Power Usage','House Mode','Outside','Main log',1,0,NULL);
 /*!40000 ALTER TABLE `settings_main` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -3153,7 +3153,7 @@ CREATE TABLE `settings_networkdetect` (
 
 LOCK TABLES `settings_networkdetect` WRITE;
 /*!40000 ALTER TABLE `settings_networkdetect` DISABLE KEYS */;
-INSERT INTO `settings_networkdetect` VALUES (0,0,300,0,0,100,0),(1,0,300,0,0,100,0);
+INSERT INTO `settings_networkdetect` VALUES (0,0,300,0,0,100,'eth0',0),(1,0,300,0,0,100,'eth0',0);
 /*!40000 ALTER TABLE `settings_networkdetect` ENABLE KEYS */;
 UNLOCK TABLES;
 
