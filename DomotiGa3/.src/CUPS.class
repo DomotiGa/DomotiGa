@@ -40,13 +40,14 @@ Private $iTCPPort As Integer
 Private $iPollTime As Integer
 Private $bDebug As Boolean
 
-Public hTCPSocket As New Socket
+Public hUPS As New Socket
 Public tUPS As Timer
+Public tUPSKeepAlive As Timer
 Private $sBuffer As String
 
 Public tReConnect As Timer
-Private $iReConnectRetry As Integer = 0 ' retries
-Private $aReConnectDelay As Integer[] = [0, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -95,11 +96,11 @@ End
 Public Sub ConnectTCP() As Boolean
 
   ' try to close the connection
-  Try hTCPSocket.Close
+  Try hUPS.Close
 
   ' get a new one
-  hTCPSocket = New Socket As "hTCPSocket"
-  hTCPSocket.Connect($sTCPHost, $iTCPPort)
+  hUPS = New Socket As "UPS"
+  hUPS.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
   Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
@@ -108,7 +109,7 @@ Public Sub ConnectTCP() As Boolean
 
   ' Define timer for TCP reconnect
   tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = $iReConnectRetry
+  tReConnect.Delay = iReConnectRetry
   tReConnect.Stop
 
   ' All went ok
@@ -133,7 +134,8 @@ Public Sub Disconnect() As Boolean
   ' try to stop the timer and close the connection
   Try tReConnect.Stop
   Try tUPS.Stop
-  Try hTCPSocket.Close
+  Try tUPSKeepAlive.Stop
+  Try hUPS.Close
 
   Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
 
@@ -165,22 +167,22 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub ReConnect()
 
-  If $iReConnectRetry < $aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf($aReConnectDelay[$iReConnectRetry] > 60000, CStr($aReConnectDelay[$iReConnectRetry] / 60000) & " minutes.", CStr($aReConnectDelay[$iReConnectRetry] / 1000) & " seconds"))
-    tReConnect.Delay = $aReConnectDelay[$iReConnectRetry]
+  If iReConnectRetry < aReConnectDelay.Max + 1 Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds"))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
     tReConnect.Start
   Else
     tReConnect.Stop
     Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying")
   Endif
-  Inc $iReConnectRetry
+  Inc iReConnectRetry
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  ' TCP Socket successfully connected
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub TCPSocket_Ready()
+Public Sub UPS_Ready()
 
   ' start poll timer for UPS
   If Not tUPS Then
@@ -195,9 +197,14 @@ Public Sub TCPSocket_Ready()
     Endif
   Endif
 
+  ' Start the keepalive timer, normally upsd seem to drop connection after 60 seconds
+  tUPSKeepAlive = New Timer As "tUPSKeepAlive"
+  tUPSKeepAlive.Delay = 30000
+  tUPSKeepAlive.Start
+
   ' connected so reset retry counter
   tReConnect.Stop
-  $iReConnectRetry = 0
+  iReConnectRetry = 0
 
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
@@ -207,7 +214,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  ' Handle TCP Socket Error
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub hTCPSocket_Error()
+Public Sub UPS_Error()
 
   Dim sMsg As String
 
@@ -223,7 +230,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
  ' Handle TCP Socket Error
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub hTCPSocket_Closed()
+Public Sub UPS_Closed()
 
   Main.WriteLog(LogLabel & "ERROR: TCP Socket closed by peer.")
   ReConnect()
@@ -233,15 +240,15 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Read TCP data from Port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub hTCPSocket_Read()
+Public Sub UPS_Read()
 
   Dim bData As Byte
   Dim sData As New Byte[]
   Dim iSize As Integer
 
-  iSize = Lof(hTCPSocket)
+  iSize = Lof(hUPS)
   sData.Resize(iSize)
-  Try sData.Read(hTCPSocket, 0, iSize)
+  Try sData.Read(hUPS, 0, iSize)
 
   If Error Then
     Main.WriteDebugLog(LogLabel & "ERROR: Problem reading data from TCP network socket! (ReadSize=" & iSize & ") ->" & Error.Text)
@@ -256,6 +263,11 @@ Public Sub hTCPSocket_Read()
     Next
   Endif
 
+  ' Reset the keepalive timer
+  tUPSKeepAlive = New Timer As "tUPSKeepAlive"
+  tUPSKeepAlive.Delay = 30000
+  tUPSKeepAlive.Start
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -266,7 +278,7 @@ Public Sub ParseLine(sBuf As String)
   Dim sValue, sAddress As String
   Dim iDeviceId As Integer
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & sBuf)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sBuf)
 
   ' try to find address and deviceid
   If InStr(sBuf, "ERR") = 0 Then
@@ -317,26 +329,46 @@ Public Sub tUPS_Timer()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' The keepalive timer expired, send something
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tUPSKeepAlive_Timer()
+
+  ' Only do a keepalive if we got a connection
+  If hUPS.Status = Net.Connected Then
+
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "> Keepalive Send")
+
+    Try Print #hUPS, ""
+
+    ' Reset the keepalive timer
+    tUPSKeepAlive = New Timer As "tUPSKeepAlive"
+    tUPSKeepAlive.Delay = 30000
+    tUPSKeepAlive.Start
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 '
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub CheckUPS()
 
   Dim rResult As Result
 
-  If hTCPSocket.Status = Net.Connected Then
+  If hUPS.Status = Net.Connected Then
     Try rResult = Devices.FindDevicesForInterface(InterfaceId)
     If Not Error Then
       If rResult.Count Then
         For Each rResult
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "checking UPS named '" & rResult!name & "' with address '" & rResult!address & "'")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking UPS named '" & rResult!name & "' with address '" & rResult!address & "'")
           Check(rResult!address, rResult!id)
         Next
       Else
-        Main.WriteLog(LogLabel & "no UPS(s) found in device table!")
+        Main.WriteLog(LogLabel & "ERROR: No UPS(s) found in device table!")
       Endif
     Endif
   Else
-    Main.WriteLog(LogLabel & "ERROR: TCP Socket not connected (" & hTCPSocket.Status & ").")
+    Main.WriteLog(LogLabel & "ERROR: TCP Socket not connected (" & hUPS.Status & ").")
   Endif
 
 End
@@ -349,13 +381,13 @@ Public Sub Check(sAddress As String, iDeviceId As Integer)
   Dim sCmd As String 
 
   sCmd = "GET VAR " & sAddress & " ups.status"
-  If $bDebug Then Main.WriteDebugLog(LogLabel & sCmd)
-  Try Print #hTCPSocket, sCmd
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
+  Try Print #hUPS, sCmd
   If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to network socket! -> " & Error.Text)
 
   sCmd = "GET VAR " & sAddress & " ups.load"
-  If $bDebug Then Main.WriteDebugLog(LogLabel & sCmd)
-  Try Print #hTCPSocket, sCmd
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
+  Try Print #hUPS, sCmd
   If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to network socket! -> " & Error.Text)
 
   Select Case Devices.FindDeviceTypeDescriptionForDeviceId(iDeviceId)
@@ -366,8 +398,8 @@ Public Sub Check(sAddress As String, iDeviceId As Integer)
     Case Else ' APC SmartUPS
       sCmd = "GET VAR " & sAddress & " ups.temperature"
   End Select
-  If $bDebug Then Main.WriteDebugLog(LogLabel & sCmd)
-  Try Print #hTCPSocket, sCmd
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
+  Try Print #hUPS, sCmd
   If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to network socket! -> " & Error.Text)
 
 End
