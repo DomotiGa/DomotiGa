@@ -124,7 +124,16 @@ Private VMSG_DL_GET As Byte[] = [&H0A] '&H33
 Private VMSG_DL_EXIT As Byte[] = [&H0F] 'NONE
 
 ' ### PowerMax download/config items (some apply to PowerMaster too) ###
-' 1=Index, 2=Page, 3=Low Length, 4=High Length
+' ---
+' Pos.  0  1  2  3  4  5  6  7  8  9  A
+' E.g. 3E 00 04 20 00 B0 00 00 00 00 00
+' 1=Index, 2=Page, 3=Low Length, 4=High Length, 5=Always B0?
+' ---
+' PowerMaster30:
+' Pos.  0  1  2  3  4  5  6  7  8  9  A
+' E.g. 3E FF FF 42 1F B0 05 48 01 00 00
+' 1=FF 2=FF 3=Low Length, 4=High Length, 5=Always B0, 6=Index, 7=Page
+' ---
 Private VMSG_DL_PANELFW As Byte[] = [&H3E, &H00, &H04, &H20, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
 Private VMSG_DL_ZONESTR As Byte[] = [&H3E, &H00, &H19, &H00, &H02, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
 Private VMSG_DL_SERIAL As Byte[] = [&H3E, &H30, &H04, &H08, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
@@ -152,6 +161,8 @@ Private VMSG_DL_MASTER_SIRENS As Byte[] = [&H3E, &HE2, &HB6, &H50, &H00, &HB0, &
 Private VMSG_DL_MASTER_KEYPADS As Byte[] = [&H3E, &H32, &HB7, &H40, &H01, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
 Private VMSG_DL_MASTER_ZONENAMES As Byte[] = [&H3E, &H60, &H09, &H40, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
 Private VMSG_DL_MASTER_ZONES As Byte[] = [&H3E, &H72, &HB8, &H80, &H02, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+Private VMSG_DL_MASTER10_EVENTLOG As Byte[] = [&H3E, &HFF, &HFF, &HD2, &H07, &HB0, &H05, &H48, &H01, &H00, &H00] '&H3F
+Private VMSG_DL_MASTER30_EVENTLOG As Byte[] = [&H3E, &HFF, &HFF, &H42, &H1F, &HB0, &H05, &H48, &H01, &H00, &H00] '&H3F
 
 Private VMSG_SET_DATETIME As Byte[] = [&H46, &HF8, &H00, &H00, &H00, &H00, &H00, &H00, &H00, &HFF, &HFF] '&H46
 
@@ -483,8 +494,8 @@ Private Sub ProcessQueue(Optional bResend As Boolean = False)
                   iCode = $iMasterCode
                 Case "DownloadCode"
                   iCode = $iDownloadCode
-		Case "DisarmArmCode"
-		  iCode = $iDisarmArmCode
+                Case "DisarmArmCode"
+                  iCode = $iDisarmArmCode
                 Default
                   Main.WriteDebugLog(LogLabel & "ERROR: Unknown Code defined (" & aStr[1] & ")")
               End Select
@@ -782,7 +793,10 @@ Private Function ProcessReceivedPacket(sData As Byte[])
     Case &HB0 ' PowerMaster
       bAck = True
       bResponse = True
-      Handle_MsgTypeB0()
+      ' Strangly we can get B0 messages in download mode, ignore them
+      If Not $bDownloadMode Then
+        Handle_MsgTypeB0()
+      Endif
     Default ' Anything else ...
       bAck = True
       If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown message type: " & Hex$($sReceiveData[0], 2))
@@ -867,6 +881,13 @@ Private Sub PowerLinkEnrolled()
    ' Retrieve extra info if this is a PowerMaster
    If $bPowerMaster Then 
      SendMsg_DL_MASTER_SIRENKEYPADSZONE()
+
+     Select $iPanelType
+       Case &H07 ' PowerMaster10
+         SendMsg_DL_MASTER10_EVENTLOG()
+       Case &H08 ' PowerMaster30
+         SendMsg_DL_MASTER30_EVENTLOG()
+     End Select
    Endif
 
    ' Request all other relevant information
@@ -908,12 +929,25 @@ Private Sub ProcessSettings()
   Dim bEnabled As Boolean
   Dim bLog As Boolean
   Dim bX10ZoneType As Byte
+  Dim iEventLog As Integer
+  Dim sEventLog As New Byte[]
+  Dim sEventDate As String
+  Dim iEventType As Integer
+  Dim sEventType As String
+  Dim iEventZone As Integer
+  Dim sEventZone As String
 
-  ' Dump MemoryMap first to logfile
+  ' Dump MemoryMap first to logfile. We can have standard and extended ones
   If $bDebug Then 
-    For Each $cMemoryMap
-      Main.WriteDebugLog(LogLabel & "MemoryMap " & Hex$(CInt($cMemoryMap.Key), 2) & ": " & ByteToHex($cMemoryMap[$cMemoryMap.Key], True))
-    Next
+    If $cMemoryMap.Count Then
+      For Each $cMemoryMap[0]
+        Main.WriteDebugLog(LogLabel & "MemoryMap Standard " & Hex$(CInt($cMemoryMap[0].Key), 2) & ": " & ByteToHex($cMemoryMap[0][$cMemoryMap[0].Key], True))
+      Next
+
+      For Each $cMemoryMap[1]
+        Main.WriteDebugLog(LogLabel & "MemoryMap Extended " & Hex$(CInt($cMemoryMap[1].Key), 2) & ": " & ByteToHex($cMemoryMap[1][$cMemoryMap[1].Key], True))
+      Next
+    Endif
   Endif
 
   ' Re-initialize the configuration
@@ -1425,6 +1459,55 @@ Private Sub ProcessSettings()
 
   Endif
 
+  ' ------------------------------------------------------
+  ' Retrieve EventLogs for PowerMaster10 or 30
+  ' ------------------------------------------------------
+
+  ' Currently only reporting, information isn't stored
+  If $bDebug Then
+
+    sData.Clear()
+    Select $iPanelType
+      Case &H07
+        sData = ReadMemoryMap(VMSG_DL_MASTER10_EVENTLOG)
+      Case &H08
+        sData = ReadMemoryMap(VMSG_DL_MASTER30_EVENTLOG)
+    End Select
+
+    Main.WriteDebugLog(LogLabel & "EventLog:")
+
+    If sData.Count Then
+
+      ' Number of events is in Byte 2 and 1
+      iEventLog = CInt(sData[2]) * &H100 + sData[1]
+
+      Main.WriteDebugLog(LogLabel & "  Event Count: " & iEventLog)
+
+      ' Remove first 3 bytes, then the eventlog are accessible
+      sData.Extract(0, 3)
+
+      For iCnt = 1 To iEventLog
+        ' Format: 00 D5 71 6E 38 00 00 60
+        sEventLog = sData.Extract(0, 8)
+
+        ' The timestamp is in Unixtime format
+        sEventDate = Util.TimeSinceEpoch(Hex$(sEventLog[4], 2) & Hex$(sEventLog[3], 2) & Hex$(sEventLog[2], 2) & Hex$(sEventLog[1], 2), False, True)
+        iEventZone = sEventLog[6]
+        iEventType = sEventLog[7]
+
+        Try sEventZone = $cConfig["zoneinfo"][iEventZone]["zonename"]
+        If Error Then sEventZone = ""
+        sEventType = DisplayLogEvent(iEventType)
+
+        Main.WriteDebugLog(LogLabel & "  " & sEventDate & " " & sEventType & IIf(iEventZone <> 0 And iEventZone <= 64, ", Zone: " & iEventZone & IIf(sEventZone, " (" & sEventZone & ")", ""), ""))
+      Next
+
+    Else
+      Main.WriteDebugLog(LogLabel & "  No EventLog found for panel")
+    Endif
+
+  Endif
+
   ' --- DONE with ReadSettings ---
 
 Finally
@@ -1581,6 +1664,24 @@ Private Sub SendMsg_DL_MASTER_SIRENKEYPADSZONE()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Retrieve extra eventlog if this is a PowerMaster10
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub SendMsg_DL_MASTER10_EVENTLOG()
+
+  QueueCommand(VMSG_DL_MASTER10_EVENTLOG.Copy(), "DL: PowerMaster10 EventLog", &H3F)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Retrieve extra eventlog if this is a PowerMaster30
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub SendMsg_DL_MASTER30_EVENTLOG()
+
+  QueueCommand(VMSG_DL_MASTER30_EVENTLOG.Copy(), "DL: PowerMaster30 EventLog", &H3F)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Request status update
 ' Only done when we are not in PowerLink mode
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1612,21 +1713,42 @@ Private Sub WriteMemoryMap(iPage As Integer, iIndex As Integer, sData As Byte[])
 
   Dim dPage As New Byte[]
   Dim iFree As Integer
+  Dim iPMType As Integer
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received Settings Page=" & Hex$(iPage, 2) & ", Index=" & Hex$(iIndex, 2) & ", Length=" & sData.Count)
+  If iPage = &HFF And If iIndex = &HFF Then
+    iPMType = 1
+  Else
+    iPMType = 0
+  Endif
+
+  ' Overrule page/index/data if we have an extended message
+  If iPMType = 1 Then
+    iPage = sData[1]
+    iIndex = sData[0]
+    ' Remove page/index and other 2 bytes, unknown usage
+    sData = sData.Copy(4, sData.Count - 4)
+  Endif
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received Settings " & IIf(iPMType = 0, "Standard", "Extended") & " Page=" & Hex$(iPage, 2) & ", Index=" & Hex$(iIndex, 2) & ", Length=" & sData.Count)
+
+  ' Create standard/extended placeholders
+  If Not $cMemoryMap.Count Then
+    $cMemoryMap[0] = New Collection
+    $cMemoryMap[1] = New Collection
+  Endif
 
   ' Repeat until we put all the data into the MemoryMap
   While sData.Count > 0
 
-    If $cMemoryMap.Exist(iPage) Then
+    If $cMemoryMap[iPMType].Exist(iPage) Then
       ' Place Byte[] data in a local variable
-      dPage = $cMemoryMap[iPage]
+      dPage = $cMemoryMap[iPMType][iPage]
     Else
       ' Create empty page with 255 values
       dPage = New Byte[]
       dPage.Resize(&H100)
       dPage.Fill(&HFF, &H00, &H100)
-      $cMemoryMap[iPage] = dPage
+      $cMemoryMap[iPMType][iPage] = dPage
     Endif
 
 'Main.WriteDebugLog(LogLabel & "### BEGIN ### " & ByteToHex(dPage, True))
@@ -1669,6 +1791,7 @@ Private Sub ReadMemoryMap(aMsg As Byte[]) As Byte[]
   Dim iIndex As Integer
   Dim iLength As Integer
   Dim iTemp As Integer
+  Dim iPMType As Integer
 
   ' The aMsg is in the regular download format, ignore the SubType and only use page, index and length
   ' NOTE: Length can be more then &HFF bytes, in such we got multiple 3F responses with a "real" download
@@ -1676,11 +1799,28 @@ Private Sub ReadMemoryMap(aMsg As Byte[]) As Byte[]
   iIndex = aMsg[1]
   iLength = CInt(aMsg[4]) * &H100 + aMsg[3]
 
+  If iPage = &HFF And If iIndex = &HFF Then
+    iPMType = 1
+  Else
+    iPMType = 0
+  Endif 
+
+  ' We got a PowerMaster extended message, overrule page/index/length
+  If iPMType = 1 Then
+    iPage = aMsg[7]
+    iIndex = aMsg[6]
+  Endif
+
+  If Not $cMemoryMap.Count Then
+    $cMemoryMap[0] = New Collection
+    $cMemoryMap[1] = New Collection
+  Endif
+
   While iLength > 0
 
-    If Not $cMemoryMap.Exist(iPage) Then Return Null
+    If Not $cMemoryMap[iPMType].Exist(iPage) Then Return Null
 
-    dPage = $cMemoryMap[iPage]
+    dPage = $cMemoryMap[iPMType][iPage]
 
     If iIndex + iLength <= &H100 Then
       aResult.Insert(dPage.Copy(iIndex, iLength))
@@ -1831,12 +1971,20 @@ Private Sub Handle_MsgType3F()
 
   Dim iPage As Integer
   Dim iIndex As Integer
+  Dim iLength As Integer
 
-  ' Format is: <MsgType> <index> <page> <length> <data ...>
+  ' Format is normally: <MsgType> <index> <page> <length> <data ...>
+  ' If the <index> <page> = FF, then it is an additional PowerMaster MemoryMap
   iIndex = $sReceiveData[1]
   iPage = $sReceiveData[2]
+  iLength = $sReceiveData[3]
 
-  ' Write to memory map structure, but remove the first 4 bytes from the data
+  ' Check length and data-length
+  If iLength <> ($sReceiveData.Count - 4) Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Type=3F has an invalid length, Received: " & $sReceiveData.Count - 4 & ", Expected: " & iLength)
+  Endif
+
+  ' Write to memory map structure, but remove the first 4 bytes (3F/index/page/length) from the data
   WriteMemoryMap(iPage, iIndex, $sReceiveData.Copy(4, $sReceiveData.Count - 4))
 
 End
@@ -1873,18 +2021,17 @@ Private Sub Handle_MsgTypeA0()
       iMonth = 1
       iYear = 2000
 
-      dDate = Now()
       ' timestamp looks unixtime
-      'sDate = "&H" & Hex$($sReceiveData[6], 2) & Hex$($sReceiveData[5], 2) & Hex$($sReceiveData[4], 2) & Hex$($sReceiveData[3], 2)
-      'Try dDate = DateAdd(CDate("1/1/1970"), Val(sDate), gb.Second)
-      'If Not Error Then
-      '  iSec = Second(dDate)
-      '  iMin = Minute(dDate)
-      '  iHour = Hour(dDate)
-      '  iDay = Day(dDate)
-      '  iMonth = Month(dDate)
-      '  iYear = Year(dDate)
-      'Endif
+      sDate = "&H" & Hex$($sReceiveData[7], 2) & Hex$($sReceiveData[6], 2) & Hex$($sReceiveData[5], 2) & Hex$($sReceiveData[4], 2)
+      Try dDate = DateAdd(CDate("1/1/1970"), gb.Second, Val(sDate))
+      If Not Error Then
+        iSec = Second(dDate)
+        iMin = Minute(dDate)
+        iHour = Hour(dDate)
+        iDay = Day(dDate)
+        iMonth = Month(dDate)
+        iYear = Year(dDate)
+      Endif
     Else
       iSec = $sReceiveData[3]
       iMin = $sReceiveData[4]
@@ -1898,12 +2045,11 @@ Private Sub Handle_MsgTypeA0()
     iLogEvent = $sReceiveData[10]
     Try sEventZone = $cConfig["zonenname"][iEventZone]
     If Error Then sEventZone = "Unknown (" & iEventZone & ")"
-    Try sLogEvent = DisplayLogEvent(iLogEvent)
-    If Error Then sLogEvent = "Unknown (" & iLogEvent & ")"
+    sLogEvent = DisplayLogEvent(iLogEvent)
 
     If $bDebug Then
       sDate = CStr(iYear) & "/" & Format$(iMonth, "00") & "/" & Format$(iDay, "00") & " " & Format$(iHour, "00") & ":" & Format$(iMin, "00") & ":" & Format$(iSec, "00")
-      Main.WriteDebugLog(LogLabel & "  " & sDate & " Zone: " & Format$(iEventZone) & ", Msg=" & sLogEvent)
+      Main.WriteDebugLog(LogLabel & "  " & sDate & " " & sLogEvent & IIf(iEventZone <> 0 And iEventZone <= 64, ", Zone: " & iEventZone & IIf(sEventZone, " (" & sEventZone & ")", ""), ""))
     Endif
   Endif
 
@@ -3290,19 +3436,19 @@ Public Sub ArmDisarm(sMode As String)
 
   bCommand = VMSG_ARMDISARM.Copy()
   
-  SELECT CASE sMode
-    CASE "Disarm"
+  Select Case sMode
+    Case "Disarm"
       bCommand[3] = &H00
-    CASE "ArmHome"
+    Case "ArmHome"
       bCommand[3] = &H04
-    CASE "ArmAway"
+    Case "ArmAway"
       bCommand[3] = &H05
-    CASE "ArmInstant"
+    Case "ArmInstant"
       bCommand[3] = &H14
-    CASE ELSE
-      if $bDebug then Main.WriteDebugLog(LogLabel & "Error arming alarm, unknown arm command: " & sMode)
-      return
-  END SELECT
+    Case Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Error arming alarm, unknown arm command: " & sMode)
+      Return
+  End Select
   
   ' Send the request, the pin will be added when the command is send
   QueueCommand(bCommand, "Disarm/Arm of the PowerMax/Master", &H00, "PIN:MasterCode:4")
