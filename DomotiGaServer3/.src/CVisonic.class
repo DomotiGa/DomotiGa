@@ -435,7 +435,11 @@ Public Sub tQueueDelay_Timer()
   $tQueueDelay.Stop
 
   ' Timer expired, kick off the processing of the queue
-  ProcessQueue()
+  If $cSendLastCommand Then
+    ProcessQueue(True)
+  Else
+    ProcessQueue()
+  Endif
 
 End
 
@@ -451,6 +455,7 @@ Private Sub ProcessQueue(Optional bResend As Boolean = False)
   ' Resend the request, but reset the receive counter to the original value
   If bResend Then
     If $cSendLastCommand Then
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Resending Request '" & $cSendLastCommand.Msg & "' " & ByteToHex($cSendLastCommand.Command.Copy()))
       $cSendLastCommand.ReceiveCnt = $cSendLastCommand.ReceiveCntFixed
       $cSendQueue.Add($cSendLastCommand, 0)
     Else
@@ -458,7 +463,10 @@ Private Sub ProcessQueue(Optional bResend As Boolean = False)
     Endif
   Endif
 
-  If $cSendQueue.Count = 0 Then Return
+  If $cSendQueue.Count = 0 Then
+    $cSendLastCommand = Null
+    Return
+  Endif
 
   ' Check the timer again - possible something is received
   iMSec = DateDiff($dReceiveLastPacket, Now(), gb.Millisecond)
@@ -809,7 +817,7 @@ Private Function ProcessReceivedPacket(sData As Byte[])
     If $cSendLastCommand.Receive <> &H00 Then
 
     ' Log expect and received responses for debug purposes
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Received: " & Hex$($sReceiveData[0]) & ", Expected: " & Hex$($cSendLastCommand.Receive) & ", Count=" & $cSendLastCommand.ReceiveCnt & ", Retries=" & $cSendLastCommand.ReceiveRetries)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Received: " & Hex$($sReceiveData[0], 2) & ", Expected: " & Hex$($cSendLastCommand.Receive, 2) & ", Count=" & $cSendLastCommand.ReceiveCnt & ", Retries=" & $cSendLastCommand.ReceiveRetries)
 
       ' &H33 can be any number of messages, but we get a &0B when it is finished
       If $cSendLastCommand.Receive = &H33 And If $sReceiveData[0] = &H0B Then
@@ -869,10 +877,10 @@ Private Sub PowerLinkEnrolled()
 
    If $bDebug Then Main.WriteDebugLog(LogLabel & "PowerLink is Enrolled, retrieving PowerMax/Master information")
 
-   ' Request the panel FW
+     ' Request the panel FW - Only in debug mode
    SendMsg_DL_PANELFW()
 
-   ' Request serial & type (not always sent by default)
+     ' Request serial & type (not always sent by default) - Only in debug mode
    SendMsg_DL_SERIAL()
 
    ' Read the names of the zones
@@ -882,12 +890,15 @@ Private Sub PowerLinkEnrolled()
    If $bPowerMaster Then 
      SendMsg_DL_MASTER_SIRENKEYPADSZONE()
 
-     Select $iPanelType
-       Case &H07 ' PowerMaster10
-         SendMsg_DL_MASTER10_EVENTLOG()
-       Case &H08 ' PowerMaster30
-         SendMsg_DL_MASTER30_EVENTLOG()
-     End Select
+     ' Only request eventlog in debug mode
+     If $bDebug Then
+       Select $iPanelType
+           Case &H07 ' PowerMaster10
+             SendMsg_DL_MASTER10_EVENTLOG()
+           Case &H08 ' PowerMaster30
+             SendMsg_DL_MASTER30_EVENTLOG()
+         End Select
+       Endif
    Endif
 
    ' Request all other relevant information
@@ -897,11 +908,10 @@ Private Sub PowerLinkEnrolled()
    SendMsg_DL_EXIT()
 
    ' auto-sync date/time
-   SetDateTime()
+   SendMsg_SetDateTime()
 
-' TBD if next command is really handy
    ' Lets request the eventlogs
-   SendMsg_EVENTLOG()
+   If $bDebug Then SendMsg_EVENTLOG()
 
 End
 
@@ -1619,7 +1629,6 @@ End
 Private Sub SendMsg_DL_EXIT()
 
   If $bDownloadMode Then
-    $bDownloadMode = False
     QueueCommand(VMSG_DL_EXIT.Copy(), "Exit Download Mode", &H00)
   Else
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Not in Download Mode?")
@@ -1861,6 +1870,15 @@ Private Sub Handle_MsgType02()
   ' Check if the last message is Download Exit, if this is the case, process the settings
   If $cSendLastCommand Then
     If $cSendLastCommand.Command[0] = &H0F Then
+
+      $bDownloadMode = False
+
+      ' We received a download exit message, restart timer
+      $tPowerLinkKeepAlive.Stop
+      $tPowerLinkKeepAlive = New Timer As "tPowerLinkKeepAlive"
+      $tPowerLinkKeepAlive.Delay = $iPowerLinkTimeOut
+      $tPowerLinkKeepAlive.Start
+
       ProcessSettings()
     Endif
   Endif
@@ -2044,7 +2062,7 @@ Private Sub Handle_MsgTypeA0()
     iEventZone = $sReceiveData[9]
     iLogEvent = $sReceiveData[10]
     Try sEventZone = $cConfig["zonenname"][iEventZone]
-    If Error Then sEventZone = "Unknown (" & iEventZone & ")"
+    If Error Then sEventZone = ""
     sLogEvent = DisplayLogEvent(iLogEvent)
 
     If $bDebug Then
@@ -2301,6 +2319,8 @@ Private Sub Handle_MsgTypeAB()
     Case &H03 ' PowerLink keep-alive
       If $bDebug Then Main.WriteDebugLog(LogLabel & "PowerLink Keep-Alive (" & ByteToString($sReceiveData.Copy(5, 4)) & ")")
 
+      $bDownloadMode = False
+
       ' We received a keep-alive, restart timer
       $tPowerLinkKeepAlive.Stop
       $tPowerLinkKeepAlive = New Timer As "tPowerLinkKeepAlive"
@@ -2350,7 +2370,7 @@ Private Sub Handle_MsgTypeB0()
   ' Only do it in this scenario
   If $sReceiveData[1] = &H03 And If $sReceiveData[2] = &H39 Then
     QueueCommand(VMSG_PMASTER_STAT1, "PowerMaster Msg1", &HB0)
-    QueueCommand(VMSG_PMASTER_STAT2, "PowerMaster Msg2", &HB0)
+    'QueueCommand(VMSG_PMASTER_STAT2, "PowerMaster Msg2", &HB0)
   Endif
 
 End
@@ -3431,11 +3451,11 @@ End
 ' 0x05 Arm away
 ' 0x14 Arm home instantly
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ArmDisarm(sMode As String)
+Private Sub SendMsg_ArmDisarm(sMode As String)
   Dim bCommand As Byte[]
 
   bCommand = VMSG_ARMDISARM.Copy()
-  
+
   Select Case sMode
     Case "Disarm"
       bCommand[3] = &H00
@@ -3449,10 +3469,10 @@ Public Sub ArmDisarm(sMode As String)
       If $bDebug Then Main.WriteDebugLog(LogLabel & "Error arming alarm, unknown arm command: " & sMode)
       Return
   End Select
-  
+
   ' Send the request, the pin will be added when the command is send
   QueueCommand(bCommand, "Disarm/Arm of the PowerMax/Master", &H00, "PIN:MasterCode:4")
-  
+
 End
 
 
@@ -3465,12 +3485,13 @@ End
 ' Byte 7 Month (1-12)
 ' Byte 8 Year since 2000
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SetDateTime()
+Private Sub SendMsg_SetDateTime()
+
   Dim bCommand As Byte[]
   Dim dNow As Date
 
   bCommand = VMSG_SET_DATETIME.Copy()
-  
+
   dNow = Now()
   bCommand[4] = Minute(dNow)
   bCommand[5] = Hour(dNow)
@@ -3480,8 +3501,5 @@ Public Sub SetDateTime()
   
   ' Send the request, the pin will be added when the command is send
   QueueCommand(bCommand, "Set Date & Time on PowerMax/Master", &H00)
-  
+
 End
-
-
-
