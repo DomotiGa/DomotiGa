@@ -611,7 +611,7 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		}
 		case COMMAND_CLASS_SWITCH_BINARY:
 		{
-			if (( label == "Switch" ) && ( type == ValueID::ValueType_Bool ) )
+			if ( ( label == "Switch" ) && ( type == ValueID::ValueType_Bool ) )
 			{
 				dev_index = 2;
 				dev_label = "Switch-Level";
@@ -656,6 +656,30 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 				{
 					strcpy( dev_result, "On" );
 				}
+			}
+
+			break;
+		}
+		case COMMAND_CLASS_DOOR_LOCK:
+		{
+			if ( ( label == "Locked" ) && ( type == ValueID::ValueType_Bool ) )
+			{
+				dev_index = 3;
+				dev_label = "Lock";
+
+				if ( strcmp( dev_value, "0" ) == 0 )
+				{
+					strcpy( dev_result, "Off" );
+				} else {
+					strcpy( dev_result, "On" );
+				}
+			}
+
+			if ( ( label == "Locked (Advanced)" ) && ( type = ValueID::ValueType_List ) )
+			{
+				dev_index = 4;
+				dev_label = "Lock-Info";
+				strcpy( dev_result, dev_value );
 			}
 
 			break;
@@ -3572,7 +3596,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 		// First check if the instance is known in our CommandClass list, else it is a problem
 		if ( nodeInfo->instancecommandclass.find(instance) != nodeInfo->instancecommandclass.end() )
 		{
-			// First try to detect the MULTILEVEL, then try SWITCH_BINARY and last THERMOSTAT_SETPOINT
+			// First try to detect the MULTILEVEL, then SWITCH_BINARY, then DOOR_LOCK and last THERMOSTAT_SETPOINT
 			// This should solve problems for device like Qubino, they advertise too many CommandClasses
 			if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_MULTILEVEL") != string::npos )
 			{
@@ -3581,6 +3605,10 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_BINARY") != string::npos )
 			{
 				usecc = COMMAND_CLASS_SWITCH_BINARY;
+			}
+			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_DOOR_LOCK") != string::npos )
+			{
+				usecc = COMMAND_CLASS_DOOR_LOCK;
 			}
 			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_SETPOINT") != string::npos )
 			{
@@ -3637,6 +3665,19 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 						}
 
 						break;
+					}
+					case COMMAND_CLASS_DOOR_LOCK:
+					{
+						// label="Locked" is mandatory, else it isn't a supported door lock
+						if ( label == "Locked" )
+						{
+							// If it is a Door Lock CommandClass, then we only allow 0 (unlock) or 255 (lock)
+							if ( value > 0 && value < 255 )
+							{
+								continue;
+							}
+							break;
+						}
 					}
 					case COMMAND_CLASS_THERMOSTAT_SETPOINT:
 					{
