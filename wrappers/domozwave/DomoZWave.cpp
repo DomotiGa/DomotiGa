@@ -3302,7 +3302,7 @@ uint32 DomoZWave_GetNodeLastSeen( uint32 home, int32 node )
 		else
 		{
 			char buf[20];
-			strftime( buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", localtime(&nodeInfo->m_LastSeen) );
+			strftime( buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", gmtime(&nodeInfo->m_LastSeen) );
 			WriteLog( LogLevel_Debug, false, "LastSeen=%d (%s)", nodeInfo->m_LastSeen, buf);
 		}
 
