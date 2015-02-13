@@ -92,10 +92,15 @@ Private $bPowerMaster As Boolean
 Private $tQueueDelay As New Timer As "tQueueDelay"
 Private $tQueueTimeout As New Timer As "tQueueTimeout"
 Private $oTripTimers As New Object[]
-Public $tTripTimer As CTimerGeneric
+Public tTripTimer As CTimerGeneric
 
 Private $cConfig As New Collection
 Private $cMemoryMap As New Collection
+
+Private $dB00304FirstPacket As Date = 0 ' First B0 03 04 packet
+Private $dB00304LastPacket As Date = 0 ' last B0 03 04 packet
+Private $bB00304ZoneNumber As Byte ' Zone number
+Private $bB00304ZoneInfo As Byte[] ' Zone info
 
 '########################################################
 ' PowerMax/Master send messages
@@ -116,7 +121,8 @@ Private VMSG_EVENTLOG As Byte[] = [&HA0, &H00, &H00, &H00, &H00, &H00, &H00, &H0
 
 ' #### PowerMaster message ###
 Private VMSG_PMASTER_STAT1 As Byte[] = [&HB0, &H01, &H04, &H06, &H02, &HFF, &H08, &H03, &H00, &H00, &H43] 'B0 STAT1
-Private VMSG_PMASTER_STAT2 As Byte[] = [&HB0, &H01, &H07, &H06, &H02, &HFF, &H08, &H03, &H00, &H00, &H43] 'B0 STAT2
+'Private VMSG_PMASTER_STAT2 As Byte[] = [&HB0, &H01, &H05, &H06, &H02, &HFF, &H08, &H03, &H00, &H00, &H43] 'B0 STAT2
+'Private VMSG_PMASTER_STAT3 As Byte[] = [&HB0, &H01, &H07, &H06, &H02, &HFF, &H08, &H03, &H00, &H00, &H43] 'B0 STAT3
 
 ' ### Start/stop download information ###
 Private VMSG_DL_START As Byte[] = [&H24, &H00, &H00, &H01, &H00, &H00, &H00, &H00, &H00, &H00, &H00] '&H3C - DownloadCode: 3 & 4
@@ -911,7 +917,7 @@ Private Sub PowerLinkEnrolled()
    SendMsg_SetDateTime()
 
    ' Lets request the eventlogs
-   If $bDebug Then SendMsg_EVENTLOG()
+   If $bDebug And If Not $bPowerMaster Then SendMsg_EVENTLOG()
 
 End
 
@@ -2111,6 +2117,11 @@ Private Sub Handle_MsgTypeA5()
         ' Only do it, when the zone information is known
         If $cConfig And If $cConfig["zoneinfo"].Exist(iCnt) And If $cConfig["zoneinfo"][iCnt]["sensortype"] Then
 
+          ' Only process magnets if we are a PowerMaster
+          If $bPowerMaster Then
+            If $cConfig["zoneinfo"][iCnt]["sensortype"] <> "Magnet" Then Continue
+          Endif
+
           ' Check the zone status
           If ($sReceiveData[3 + bByte] And CInt(2 ^ bBit)) <> $cConfig["zoneinfo"][iCnt]["tripstatus"] Then
 
@@ -2120,8 +2131,10 @@ Private Sub Handle_MsgTypeA5()
             If ($sReceiveData[3 + bByte] And CInt(2 ^ bBit)) = 0 Then
               If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "Off")
             Else
-              If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "On")
-              EnableTripTimer("Z" & Format$(iCnt, "00"))
+              If iDeviceId Then
+                Devices.ValueUpdate(iDeviceId, 1, "On")
+                EnableTripTimer("Z" & Format$(iCnt, "00"))
+              Endif
             Endif
 
             $cConfig["zoneinfo"][iCnt]["tripstatus"] = ($sReceiveData[3 + bByte] And CInt(2 ^ bBit))
@@ -2264,17 +2277,19 @@ Private Sub Handle_MsgTypeA5()
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Bit 7 set, Alarm!")
       Endif
 
-      ' Trigger a zone event
-      If $sReceiveData[7] = 3 Or If $sReceiveData[7] = 4 Or If $sReceiveData[7] = 5 Then
+      ' Trigger a zone event will only work for PowerMax and not for PowerMaster
+      If Not $bPowerMaster Then
+        If $sReceiveData[7] = 3 Or If $sReceiveData[7] = 4 Or If $sReceiveData[7] = 5 Then
 
-        If $cConfig And If $cConfig["zoneinfo"][$sReceiveData[5]]["sensortype"] Then
+          If $cConfig And If $cConfig["zoneinfo"][$sReceiveData[5]]["sensortype"] Then
 
-          ' Try to find it, it will autocreate the device if needed
-          iDeviceId = Devices.Find(Instance, "Z" & Format$(iCnt, "00"), InterfaceId, $cConfig["zoneinfo"][$sReceiveData[5]]["autocreate"])
-          If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "On")
-          EnableTripTimer("Z" & Format$(iCnt, "00"))
-        Else
-          Main.WriteLog(LogLabel & "ERROR: Zone information for zone '" & $sReceiveData[5] & "' is unknown, possible the Plugin couldn't retrieve the information from the panel?")
+            ' Try to find it, it will autocreate the device if needed
+            iDeviceId = Devices.Find(Instance, "Z" & Format$(iCnt, "00"), InterfaceId, $cConfig["zoneinfo"][$sReceiveData[5]]["autocreate"])
+            If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "On")
+            EnableTripTimer("Z" & Format$(iCnt, "00"))
+          Else
+            Main.WriteLog(LogLabel & "ERROR: Zone information for zone '" & $sReceiveData[5] & "' is unknown, possible the Plugin couldn't retrieve the information from the panel?")
+          Endif
         Endif
 
       Endif
@@ -2363,14 +2378,64 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Handle_MsgTypeB0()
 
+  Dim iDiff As Integer
+  Dim iCnt As Integer
+  Dim iDeviceId As Integer
+
   If $bDebug Then Main.WriteDebugLog(LogLabel & "PowerMaster Message")
 
   ' Format: <Type> <SubType> <Length> <Data>
 
-  ' Only do it in this scenario
+  ' B0 03 39 - Normally send when movement is detect
   If $sReceiveData[1] = &H03 And If $sReceiveData[2] = &H39 Then
+    ' Send a new B0 status message, to retrieve zone information
     QueueCommand(VMSG_PMASTER_STAT1, "PowerMaster Msg1", &HB0)
-    'QueueCommand(VMSG_PMASTER_STAT2, "PowerMaster Msg2", &HB0)
+  Endif
+
+  ' B0 03 04 - Zone information
+  If $sReceiveData[1] = &H03 And If $sReceiveData[2] = &H04 Then
+    '
+    ' Determine difference between now and last B0 03 04 packet
+    Try iDiff = DateDiff($dB00304LastPacket, Now(), gb.Second)
+    If Error Or If iDiff > 30 Then
+
+      ' Reset the information
+      $bB00304ZoneNumber = 0
+      $dB00304FirstPacket = Now()
+
+      ' Copy the zone information
+      $bB00304ZoneInfo = $sReceiveData.Copy(8, $sReceiveData[7])
+     Else
+       ' Only continue if we didn't notice a zone change
+       If Not $bB00304ZoneNumber Then
+
+        ' Determine different of first packet and now, has to be within 5 seconds
+        Try iDiff = DateDiff($dB00304FirstPacket, Now(), gb.Second)
+         If Error Or If iDiff <= 5 Then
+           For iCnt = 1 To $sReceiveData[7]
+             If $sReceiveData[7 + iCnt] <> $bB00304ZoneInfo[iCnt - 1] Then
+
+               ' Check if the zone exists and it has to be a PIR
+               If $cConfig.Exist("zoneinfo") And If $cConfig["zoneinfo"].Exist(iCnt) And If $cConfig["zoneinfo"][iCnt]["sensortype"] = "Motion" Then
+                 $bB00304ZoneNumber = iCnt
+
+                 iDeviceId = Devices.Find(Instance, "Z" & Format$(iCnt, "00"), InterfaceId, $cConfig["zoneinfo"][iCnt]["autocreate"])
+                 If iDeviceId Then
+                   Devices.ValueUpdate(iDeviceId, 1, "On")
+                   EnableTripTimer("Z" & Format$(iCnt, "00"))
+                 Endif
+
+                 If $bDebug Then Main.WriteDebugLog(LogLabel & "PowerMaster PIR zone " & Format$($bB00304ZoneNumber, "00") & ", Motion detected")
+                 Break
+               Endif
+             Endif
+           Next
+         Endif
+      Endif
+    Endif
+
+    ' Set last packet timestamp
+    $dB00304LastPacket = Now()
   Endif
 
 End
@@ -2382,7 +2447,6 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Enable or restart the trip timer
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 Private Sub EnableTripTimer(sZone As String)
 
   Dim oObject As Object
@@ -2396,11 +2460,12 @@ Private Sub EnableTripTimer(sZone As String)
   Next
 
   ' Start the timer (again)
-  $tTripTimer = New CTimerGeneric As "tTripTimer"
-  $oTripTimers.Add($tTripTimer)
+  tTripTimer = New CTimerGeneric As "tTripTimer"
+  $oTripTimers.Add(tTripTimer)
 
-  $tTripTimer.Delay = $iTripReset * 1000
-  $tTripTimer.Start
+  tTripTimer.Delay = $iTripReset * 1000
+  tTripTimer.Start
+  tTripTimer.Tag = sZone 
 
 End
 
@@ -2415,11 +2480,13 @@ Public Sub tTripTimer_Timer()
 
   ' Retrieve the zone information, stop and remove the timer
   sZone = Last.Tag
-  Try iZone = CInt(Mid$(sZone, 1))
+  Try iZone = CInt(Mid$(sZone, 2))
   Last.Stop
   $oTripTimers.Remove($oTripTimers.Find(Last))
 
   If $cConfig And If $cConfig["zoneinfo"].Exist(iZone) And If $cConfig["zoneinfo"][iZone]["sensortype"] Then
+
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Timer expired for zone " & Format$(iZone, "00") & ", resetting to 'Off'")
 
     ' Try to find it, it will autocreate the device if needed
     iDeviceId = Devices.Find(Instance, sZone, InterfaceId, $cConfig["zoneinfo"][iZone]["autocreate"])
