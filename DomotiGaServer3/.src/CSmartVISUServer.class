@@ -17,7 +17,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "SmartVisuServer"
 Public PluginFriendlyName As String = "SmartVISU Server"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "1.01"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -43,7 +43,7 @@ Public client As CWebSocket
 Private oClients As New CWebSocket[]
 Private cMonitors As New Collection
 
-Private cOutput As New Collection
+Private sProtocolVersion As String = "0.4"
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -232,17 +232,16 @@ Catch
 
 End
 
-Private Sub UpdateSeries(sItem As String, sSeries As String, sMode As String, vValueData As Variant[][])
+Private Sub UpdateSeries(sItem As String, sName As String, vValueData As Variant[][])
 
   Dim aCmd As New Collection
 
   If vValueData Then
-    aCmd.Add(Replace(sItem, " ", "_") & "." & sSeries & "." & sMode & ".0", "ID")
+    aCmd.Add(Replace(sItem, " ", "_") & sName, "id")
     aCmd.Add(vValueData, "plotdata")
     SendSeriesUpdate(aCmd)
-    aCmd.Clear
   Else
-    If $bDebug Then Main.WriteDebugLog(LogLabel & " UpdateSeries: No data !")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "UpdateSeries: No data given!")
   Endif
 
 End
@@ -326,23 +325,24 @@ End
 
 Public Sub VisuClient_Ready()
 
-  SendProtoVersion("0.3", Last)
+  SendProtoVersion(sProtocolVersion, Last)
 
 End
 
 Public Sub VisuClient_Read(sMsg As String)
 
   Dim cData As New Collection
-  Dim vPlotData As New Variant[][]
-  Dim sItem, sDevice, sDeviceName, sValue, sVersion, sCmd, sType, sMonitorDevice, sVar, sVarValue, sMode, sSeries, sValNum, sInterval As String
-  Dim sDuration As String[]
-  Dim iUnder, iBrightness, iDim, iDeviceId, iValue, iValueNum, iId As Integer
+  Dim vPlotData, vLogData As New Variant[][]
+  Dim sItem, sDevice, sDeviceName, sValue, sVersion, sCmd, sType, sMonitorDevice, sVar, sVarValue, sMode, sTmin, sTmax, sCount, sValNum, sInterval, sLog, sMaxLines As String
+  Dim aTmin, aTmax As String[]
+  Dim iUnder, iBrightness, iDim, iDeviceId, iValueNum, iId As Integer
   Dim aMonitor As Variant[]
   Dim dStart, dEnd As Date
 
   If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sMsg)
 
   cData = JSON.Decode(sMsg)
+
   Select cData["cmd"]
     Case "item"
       sItem = cData["id"]
@@ -488,12 +488,14 @@ Public Sub VisuClient_Read(sMsg As String)
           Endif
         Endif
       Next
-    Case "series"
-      sDevice = cData["item"]
-      sMode = cData["mode"]
-      sSeries = cData["series"]
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Start series: item:" & sDevice & ", mode:" & sMode & ", series:" & sSeries)
+    Case "series" ' plot
+      sDevice = cData["item"] ' name of plot item
+      sMode = cData["mode"] ' avg, sum
+      sTmin = cData["tmin"] ' start time calculated from now
+      sTmax = cData["tmax"] ' end time calculated from now (now or 0 means until now)
+      sCount = cData["count"] ' max number of records to fetch (default 100)
 
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Plot Item:" & sDevice & ", mode:" & sMode & ", tmin:" & sTmin & ", tmax:" & sTmax & ", count:" & sCount)
       iUnder = RInStr(sDevice, "_")
       If iUnder > 0 Then
         sDeviceName = Replace(Mid(sDevice, 1, iUnder - 1), "_", " ")
@@ -501,30 +503,25 @@ Public Sub VisuClient_Read(sMsg As String)
 
         iDeviceId = Devices.FindIdForDevice(sDeviceName)
         If iDeviceId Then
-          sDuration = Split(sMode, " ")
-          dEnd = Now()
-          dStart = dEnd
-          For Each sItem In sDuration
-            iValue = CInt(Left(sItem, Len(sItem) - 1)) * -1
-            Select Case UCase(Right(sItem, 1))
-              Case "S"  'Seconds
-                dStart = DateAdd(dStart, gb.Second, iValue)
-              Case "I"  'Minutes
-                dStart = DateAdd(dStart, gb.Minute, iValue)
-              Case "H"  'hours
-                dStart = DateAdd(dStart, gb.Hour, iValue)
-              Case "D"  'Day
-                dStart = DateAdd(dStart, gb.Day, iValue)
-              Case "W"  'Week
-                dStart = DateAdd(dStart, gb.Week, iValue)
-              Case "M"  'Month
-                dStart = DateAdd(dStart, gb.Month, iValue)
-              Case "Y"  'Year
-                dStart = DateAdd(dStart, gb.Year, iValue)
-              Case Else
-                If $bDebug Then main.WriteDebugLog(LogLabel & "Invalid duration format: " & sItem)
-            End Select
-          Next
+
+          ' end
+          aTmax = Split(sTmax, " ")
+          If aTmax.Count > 1 Then
+            If $bDebug Then Main.WriteDebugLog(LogLabel & "tmax parameter can only contain one item: " & sTmax)
+            Return
+          Else
+            If sTmax == "now" Or If sTmax = "0" Then
+              dEnd = Now()
+            Else
+              dEnd = ConvertDuration(aTmax, Now())
+            Endif
+          Endif
+
+          ' start
+          aTmin = Split(sTmin, " ")
+          dStart = ConvertDuration(aTmin, dEnd)
+
+          ' interval
           If DateDiff(dStart, dEnd, gb.Hour) <= 2 Then
             sInterval = "MINUTE"
           Else
@@ -542,26 +539,30 @@ Public Sub VisuClient_Read(sMsg As String)
               Endif
             Endif
           Endif
+
+          ' device value
           If sType == "value" Then
             sValNum = 1
           Else
             sValNum = Right(sType, Len(sType) - IIf(InStr(sType, "value"), 5, 4))
           Endif
+
           If $bDebug Then
-            Main.WriteDebugLog(LogLabel & "Graph info")
-            Main.WriteDebugLog(LogLabel & " - Start date = " & dStart)
-            Main.WriteDebugLog(LogLabel & " - End date = " & dEnd)
+            Main.WriteDebugLog(LogLabel & "Plot Parameters:")
+            Main.WriteDebugLog(LogLabel & " - Plot type = " & sMode)
+            Main.WriteDebugLog(LogLabel & " - Start time = " & dStart)
+            Main.WriteDebugLog(LogLabel & " - End time = " & dEnd)
             Main.WriteDebugLog(LogLabel & " - Interval = " & sInterval)
+            Main.WriteDebugLog(LogLabel & " - Count = " & sCount)
             Main.WriteDebugLog(LogLabel & " - Device id = " & iDeviceId)
             Main.WriteDebugLog(LogLabel & " - Value number = " & sValNum)
-            Main.WriteDebugLog(LogLabel & " - Graph type = " & sSeries)
           Endif
 
           If CInt(sValNum) > 0 Then
-            vPlotData = GetPlotData(iDeviceId, sSeries, sInterval, sValNum, dStart, dEnd)
-            UpdateSeries(sDevice, sSeries, sMode, vPlotData)
+            vPlotData = GetPlotData(iDeviceId, sMode, sInterval, sValNum, dStart, dEnd, sCount)
+            UpdateSeries(sDevice, "." & sMode & "." & sTmin & "." & sTmax & "." & sCount, vPlotData)
           Else
-            If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid plot value " & sValNum)
+            If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid plot value: " & sValNum)
           Endif
 
         Else
@@ -570,6 +571,7 @@ Public Sub VisuClient_Read(sMsg As String)
       Else
         If $bDebug Then main.WriteDebugLog(LogLabel & "Invalid series item received: " & sItem)
       Endif
+
     Case "trigger"
       iId = cData["id"]
       sType = cData["type"]
@@ -579,16 +581,66 @@ Public Sub VisuClient_Read(sMsg As String)
         Case "action"
           Events.RunAction(iId, 0, 0)
       End Select
+
     Case "proto"
       sVersion = cData["ver"]
       If $bDebug Then Main.WriteDebugLog(LogLabel & "Protocol Version: '" & sVersion & "'")
 
+    Case "log"
+      sLog = LCase(cData["name"])
+      sMaxLines = cData["max"]
+      If $bDebug Then 
+        Main.WriteDebugLog(LogLabel & "Status Log Parameters:")
+        Main.WriteDebugLog(LogLabel & " - Name: " & sLog)
+        Main.WriteDebugLog(LogLabel & " - Lines: " & sMaxLines)
+      Endif
+      Select sLog
+        Case "main_log", "debug_log", "speak_log", "razberry_log", "ozw_log"
+          ' TODO: implement log
+        Case Else
+          Main.WriteDebugLog(LogLabel & "Invalid logname: " & sLog)
+          Return
+      End Select
+
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown Cmd received: '" & cData["cmd"] & "'")
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown item type received: '" & cData["cmd"] & "'")
   End Select
 
 Catch
   If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Convert dateformat
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertDuration(aRange As String[], dDate As Date) As Date
+
+  Dim sRange As String
+  Dim iValue As Integer
+
+  For Each sRange In aRange
+    iValue = CInt(Left(sRange, Len(sRange) - 1)) * -1
+    Select Case LCase(Right(sRange, 1))
+      Case "s" ' second
+        dDate = DateAdd(dDate, gb.Second, iValue)
+      Case "i" ' minute
+        dDate = DateAdd(dDate, gb.Minute, iValue)
+      Case "h" ' hour
+        dDate = DateAdd(dDate, gb.Hour, iValue)
+      Case "d" ' day
+        dDate = DateAdd(dDate, gb.Day, iValue)
+      Case "w" ' week
+        dDate = DateAdd(dDate, gb.Week, iValue)
+      Case "m" ' month
+        dDate = DateAdd(dDate, gb.Month, iValue)
+      Case "y" ' year
+        dDate = DateAdd(dDate, gb.Year, iValue)
+      Case Else
+        If $bDebug Then main.WriteDebugLog(LogLabel & "Invalid duration format: " & sRange)
+    End Select
+  Next
+  Return dDate
 
 End
 
@@ -625,11 +677,11 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' get log values of device
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Function GetPlotData(iDeviceId As Integer, sType As String, sInterval As String, sValueNum As String, dStartTime As Date, dEndTime As Date) As Variant[][]
+Private Function GetPlotData(iDeviceId As Integer, sType As String, sInterval As String, sValueNum As String, dStartTime As Date, dEndTime As Date, sCount As String) As Variant[][]
 
   Dim rDevice As Result
   Dim vPlotData As New Variant[][]
-  Dim record As Variant[]
+  Dim vRecord As Variant[]
   Dim sSQL, sStartTime, sEndTime, sSQL_Pre, sSQL_Post As String
   Dim bSkip As Boolean
 
@@ -639,12 +691,12 @@ Private Function GetPlotData(iDeviceId As Integer, sType As String, sInterval As
   Select Case UCase(sType)
     Case "AVG"
       bSkip = False
-      sSQL = "SELECT lastchanged, unix_timestamp(lastchanged) * 1000 AS unixtime, value FROM device_values_log "
+      sSQL = "SELECT * FROM (SELECT lastchanged, unix_timestamp(lastchanged) * 1000 AS unixtime, value FROM device_values_log "
       sSQL &= "WHERE device_id='" & iDeviceId & "' AND valuenum = '" & sValueNum & "' AND lastchanged between '" & sStartTime & "' AND '" & sEndTime & "' "
-      sSQL &= "ORDER BY lastchanged"
+      sSQL &= "ORDER BY lastchanged DESC LIMIT " & sCount & ") AS tbl ORDER BY tbl.lastchanged ASC"
     Case "SUM"
       bSkip = True
-      sSQL = "SELECT lastchanged, unix_timestamp("
+      sSQL = "SELECT * FROM (SELECT lastchanged, unix_timestamp("
       Select Case sInterval
         Case "MINUTE"
           sSQL_Pre = "CONCAT(Date(lastchanged), ' ', maketime(HOUR(lastchanged), MINUTE(lastchanged), 0))) * 1000 AS unixtime, SUM(calc_value) AS 'value'from ( "
@@ -662,7 +714,7 @@ Private Function GetPlotData(iDeviceId As Integer, sType As String, sInterval As
           sSQL_Pre = "CONCAT(YEAR(lastchanged), '-', MONTH(lastchanged), '-', DAY(lastchanged))) * 1000 as unixtime, SUM(calc_value) AS 'value' FROM ( "
           sSQL_Post = "GROUP BY EXTRACT(MONTH FROM lastchanged) "
         Case Else
-          If $bDebug Then Main.WriteDebugLog(LogLabel & " Invalid interval for plot query: " & sInterval)
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid interval for plot query: " & sInterval)
       End Select
       sSQL &= sSQL_Pre
       sSQL &= "SELECT lastchanged, value, round(value-@tempvalue, 3) as calc_value, @tempvalue:=value "
@@ -671,89 +723,32 @@ Private Function GetPlotData(iDeviceId As Integer, sType As String, sInterval As
       sSQL &= "ORDER by lastchanged "
       sSQL &= ") AS TempTable "
       sSQL &= sSQL_Post
-      sSQL &= "ORDER by unixtime"
+      sSQL &= "ORDER by unixtime DESC LIMIT " & sCount & ") AS tbl ORDER BY tbl.lastchanged ASC"
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & " Received invalid sType '" & sType & "' in GetPlotData()")
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported plot type '" & sType & "' in GetPlotData()!")
+      Return
   End Select
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & " GetPlotData query: " & sSQL)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "GetPlotData query: " & sSQL)
 
   Try rDevice = Main.hDB.Exec(sSQL)
   If rDevice = Null Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & " No record found!")
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Error occured executing SQL query!")
   Else
     For Each rDevice
       If bSkip Then
-        bSkip = False   'Skip first record
+        bSkip = False ' skip first record
       Else
-        record = [CLong(rDevice!unixtime), CFloat(rDevice!value)]
-        vPlotData.push(record)
+        vRecord = [CLong(rDevice!unixtime), CFloat(rDevice!value)]
+        vPlotData.Push(vRecord)
       Endif
     Next
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Query returned " & vPlotData.Count & " records.")
     Return vPlotData
   Endif
 
 Catch
   If $bDebug Then main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' read rrdtool fetch output and store it in collection
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Fetch_Read()
-
-  Dim sBuffer As String
-  Dim iId As Integer
-
-  sBuffer = Read #Last, -256
-  iId = Last.Tag
-
-  If cOutput.Exist(iId) Then cOutput[iId] &= sBuffer
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' get id and return value, 0 means ok, anything else is not reached
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Fetch_Kill()
-
-  Dim iId, iRc As Integer
-  Dim sLine, sOutput As String
-  Dim aData As String[]
-  Dim cData As New Collection
-
-  iId = Last.Tag
-  iRc = Last.Value
-
-  If iId Then
-    If iRc = 0 Then
-      ' save output
-      sOutput = cOutput[iId]
-      cOutput.Remove(iId)
-
-      For Each sLine In Split(sOutput, "\n")
-        ' 1369479300: 2,2600000000e+01
-        If InStr(sLine, "-nan") Then Continue
-
-        aData = Scan(sLine, "*:*")
-        If aData.Count = 2 Then
-          Print aData[0]
-          Print aData[1]
-          cData.Add(Trim(aData[1]), aData[0])
-        Endif
-
-      Next
-      UpdateSeries("bath_plot3.avg.1h.0", cData)
-    Else
-      Print (("[Fetch] Returned error!"))
-    Endif
-  Else
-    Print (("[Fetch] Returned invalid device id!"))
-  Endif
-
-Catch
-  Print (("ERROR: Parsing Fetch Result: ") & "'" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -768,4 +763,3 @@ Catch
   If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
-
