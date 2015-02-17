@@ -1101,6 +1101,9 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 					dev_index = 143;
 				}
 
+				// dev_index = 144 - Away Cooling
+				// dev_index = 145 - Full Power
+
 				if ( dev_index > 0 )
 				{
 					dev_label = label;
