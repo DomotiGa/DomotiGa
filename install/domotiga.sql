@@ -3231,7 +3231,7 @@ CREATE TABLE `settings_plugwise` (
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
-  `busytime` int(11) DEFAULT NULL,
+  `busytime` int(11) NO NULL DEFAULT 300,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
