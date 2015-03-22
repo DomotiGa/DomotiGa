@@ -1,4 +1,10 @@
 --
+-- Plugwise add busytime field
+--
+
+ALTER TABLE settings_plugwise ADD COLUMN busytime int(11) NOT NULL DEFAULT 300 AFTER polltime;
+
+--
 -- Update Somfy RFY address format from '0xf12ab 1' to 'F12AB 1'
 --
 

@@ -3231,6 +3231,7 @@ CREATE TABLE `settings_plugwise` (
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
+  `busytime` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
@@ -3242,7 +3243,7 @@ CREATE TABLE `settings_plugwise` (
 
 LOCK TABLES `settings_plugwise` WRITE;
 /*!40000 ALTER TABLE `settings_plugwise` DISABLE KEYS */;
-INSERT INTO `settings_plugwise` VALUES (0,0,'/dev/ttyUSB7',300,0),(1,0,'/dev/ttyUSB7',300,0);
+INSERT INTO `settings_plugwise` VALUES (0,0,'/dev/ttyUSB7',300,100,0),(1,0,'/dev/ttyUSB7',300,100,0);
 /*!40000 ALTER TABLE `settings_plugwise` ENABLE KEYS */;
 UNLOCK TABLES;
 

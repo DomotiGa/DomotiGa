@@ -58,7 +58,7 @@ Public PluginFriendlyName As String = "OpenTherm Gateway"
 Public PluginVersion As String = "1.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
-Public PluginMaxInstances As Integer = 1
+Public PluginMaxInstances As Integer = 9
 
 Public KeyName As String
 Public LogLabel As String = "[OpenTherm] "
@@ -136,6 +136,11 @@ Private iDayOfMonth As Integer
 Public tReConnect As Timer
 Private iReConnectRetry As Integer = 0 ' retries
 Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+
+' queue and command buffer stuff
+Private cQueue As New Collection    ' command buffer
+Private bInterfaceBusy As Boolean   ' waiting for busy timer to finish
+Public tInterfaceBusy As Timer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -469,7 +474,7 @@ Public Sub Socket_Read()
     If Len(sBufferSocket) > 1 Then
       sBufferSocket = Left(sBufferSocket, Len(sBufferSocket) - 1)
       Main.WriteDebugLog(LogLabel & "Relay Received command from relay client '" & sBufferSocket & "'")
-      WriteCmd(sBufferSocket)
+      QueueCommand(sBufferSocket)
     Endif
     sBufferSocket = Null
   Else
@@ -533,6 +538,10 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Run()
 
+  ' define timer for interface busy
+  tInterfaceBusy = New Timer As "tInterfaceBusy"
+  tInterfaceBusy.Delay = 150 ' default time between cmds
+
   If $iPollTime > 0 Then
     ' start poll timer
     tOpenTherm = New Timer As "tOpenTherm"
@@ -540,7 +549,7 @@ Public Sub Run()
     tOpenTherm.Start
   Else
     ' don't turn on polling, just process all messages received via OpenTherm gateway connection
-    WriteCmd("PS=0")
+    QueueCommand("PS=0")
   Endif
 
 End
@@ -559,7 +568,7 @@ Public Sub GetStatus()
   Dim sDay As String
 
   ' request new status report
-  WriteCmd("PS=1")
+  QueueCommand("PS=1")
   If $bSyncClock Then
     If iDayOfMonth <> Day(Now) Then
       bClockSyncedToday = False
@@ -572,7 +581,7 @@ Public Sub GetStatus()
         bClockSyncedToday = True
         sDay = CStr(WeekDay(Now))
         If sDay = "0" Then sDay = "7" ' correct sundays
-        WriteCmd("SC=" & Format(Now, "h:n") & "/" & sDay)
+        QueueCommand("SC=" & Format(Now, "h:n") & "/" & sDay)
       Endif
     Endif
   Endif
@@ -615,10 +624,10 @@ Private Sub ParseLine(sData As String)
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'SE' response: The command contained an unexpected character or was incomplete.")
         bParseLine = False
       Case "BV"
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'BV' response: The command contained a value that is not allowed")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'BV' response: The command contained a value that is not allowed.")
         bParseLine = False
       Case "OR"
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'OR' response: A number was specified outside of the allowed range")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'OR' response: A number was specified outside of the allowed range.")
         bParseLine = False
       Case "NS"
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'NS' response: The alternative Data-ID could not be added because the table is full.")
@@ -630,7 +639,7 @@ Private Sub ParseLine(sData As String)
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'IP' response: The device cannot perform the action at this time, but will do so as soon as possible.")
         bParseLine = False
       Case "OE"
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'OE' response: Overrun error in command")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'OE' response: Overrun error in command.")
         bParseLine = False
       Case "PF"
         'IF $bDebug THEN Main.WriteDebugLog(LogLabel & "Received 'PF' response: The requested information will be printed in a separate report."))
@@ -639,22 +648,22 @@ Private Sub ParseLine(sData As String)
 
     Select Case Right(sLine, 8)
       Case "Error 01"
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 01' response: A bit transistion happend at an unexpected time")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 01' response: A bit transistion happend at an unexpected time.")
         bParseLine = False
       Case "Error 02"
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 02' response: The stop bit was 0 while it should be 1")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 02' response: The stop bit was 0 while it should be 1.")
         bParseLine = False
       Case "Error 03"
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 03' response: A bit was not received when it was expected")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 03' response: A bit was not received when it was expected.")
         bParseLine = False
       Case "Error 04"
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 04' response: A parity error was detected on a received opentherm message")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'Error 04' response: A parity error was detected on a received opentherm message.")
         bParseLine = False
     End Select
 
     If InStr(sLine, ":") Then
       ' If OTGW is running firmware 4.0 or later it will report the accepted command send to the OTGW
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Command '" & sline & "' accepted by gateway")
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Command '" & sline & "' accepted by gateway.")
       bParseLine = False
     Else
       If Len(sLine) = 9 Then 'AND NOT (bIgnoreAbout) THEN
@@ -669,15 +678,15 @@ Private Sub ParseLine(sData As String)
               If $bDebug Then Main.WriteDebugLog(LogLabel & "Received status message: " & sLine)
               bTemp = Val("&" & Right(sMsgData, 2)) ' Lower byte
               If $bDebug Then
-                If BTst(bTemp, 0) Then Main.WriteDebugLog(LogLabel & " - status = Error")
+                If BTst(bTemp, 0) Then Main.WriteDebugLog(LogLabel & " - status = Error.")
                 If BTst(bTemp, 3) Then
                   Main.WriteDebugLog(LogLabel & " - status = Flame on")
                 Else
                   Main.WriteDebugLog(LogLabel & " - status = Flame off")
                 Endif
-                If BTst(bTemp, 1) Then Main.WriteDebugLog(LogLabel & " - status = Heating up room")
-                If BTst(bTemp, 2) Then Main.WriteDebugLog(LogLabel & " - status = Heating boiler")
-                If BTst(bTemp, 4) Then Main.WriteDebugLog(LogLabel & " - status = Cooling down room")
+                If BTst(bTemp, 1) Then Main.WriteDebugLog(LogLabel & " - status = Heating up room.")
+                If BTst(bTemp, 2) Then Main.WriteDebugLog(LogLabel & " - status = Heating boiler.")
+                If BTst(bTemp, 4) Then Main.WriteDebugLog(LogLabel & " - status = Cooling down room.")
               Endif
               If (BTst(bTemp, 1) <> bCH) Then ' Central Heating state
                 bCH = BTst(bTemp, 1)
@@ -738,35 +747,35 @@ Private Sub ParseLine(sData As String)
                 If $bDebug Then Main.WriteDebugLog(LogLabel & "Received 'application specific fault flags' message: " & sLine)
                 sErrorDescription = ""
                 If BTst(bTemp, 0) Then
-                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = service required")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = service required.")
                   sErrorDescription &= ", Service required"
                 Endif
                 If BTst(bTemp, 1) Then
-                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = remote reset enabled")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = remote reset enabled.")
                   sErrorDescription &= ", remote reset enabled"
                 Endif
                 If BTst(bTemp, 2) Then
-                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = water pressure fault")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = water pressure fault.")
                    sErrorDescription &= ", water pressure fault"
                 Endif
                 If BTst(bTemp, 3) Then
-                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = gas/flame fault")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = gas/flame fault.")
                    sErrorDescription &= ", gas/flame fault"
                 Endif
                 If BTst(bTemp, 4) Then
-                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = air pressure fault")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = air pressure fault.")
                   sErrorDescription &= ", air pressure fault"
                 Endif
                 If BTst(bTemp, 5) Then
-                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = water over temperature fault")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = water over temperature fault.")
                   sErrorDescription &= ", water over temperature fault"
                 Endif
                 If BTst(bTemp, 6) Then
-                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = <unknown> (bit 7 set)")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = <unknown> (bit 7 set).")
                   sErrorDescription &= ", unknown fault"
                 Endif
                 If BTst(bTemp, 7) Then
-                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = <unknown> (bit 8 set)")
+                  If $bDebug Then Main.WriteDebugLog(LogLabel & " - fault = <unknown> (bit 8 set).")
                   sErrorDescription &= ", unknown fault"
                 Endif
                 If Len(sErrorDescription) > 0 Then
@@ -776,7 +785,7 @@ Private Sub ParseLine(sData As String)
               Else
                 If $bDebug Then
                   Main.WriteDebugLog(LogLabel & "Received 'application specific fault flags' message: " & sLine)
-                  Main.WriteDebugLog(LogLabel & " - No fault flags set")
+                  Main.WriteDebugLog(LogLabel & " - No fault flags set.")
                 Endif
                 bApplicationError = False
               Endif
@@ -1121,7 +1130,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
               If $bDebug Then Main.WriteDebugLog(LogLabel & "Thermostat setpoint already set to '" & sCmd & "'")
             Else
               If $bDebug Then Main.WriteDebugLog(LogLabel & "send new thermostat setpoint command: '" & sCmdPrefix & sCmd & "'")
-              WriteCmd(sCmdPrefix & CStr(fOverrideSetPoint))
+              QueueCommand(sCmdPrefix & CStr(fOverrideSetPoint))
               If sCmd = "0" Or sCmd = "0.0" Then
                 sTemperatureOverrideStatus = ""
                 fOriginalSetPoint = 0
@@ -1143,7 +1152,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
       Case "BOILER"           ' Set the domestic hot water setpoint
         If CFloat(Val(sCmd)) > 0 And CFloat(Val(sCmd)) < 100 Then
           fOverrideBoilerSetPoint = CFloat(Val(sCmd))
-          WriteCmd("SW=" & CStr(fOverrideBoilerSetPoint))
+          QueueCommand("SW=" & CStr(fOverrideBoilerSetPoint))
         Else
           If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid boiler setpoint value '" & CStr(fOverrideBoilerSetPoint) & "'. Valid values are between 0.0 and 100.0")
         Endif
@@ -1151,7 +1160,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
       Case "CENTRALHEATING"   ' Set the maximum central heating setpoint
         If CFloat(Val(sCmd)) > 0 And CFloat(Val(sCmd)) < 100 Then
           fCentralHeatingSetPoint = CFloat(Val(sCmd))
-          WriteCmd("SH=" & CStr(fCentralHeatingSetPoint))
+          QueueCommand("SH=" & CStr(fCentralHeatingSetPoint))
         Else
           If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid central heating setpoint value '" & CStr(fCentralHeatingSetPoint) & "'. Valid values are between 0.0 and 100.0")
         Endif
@@ -1159,16 +1168,16 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
       Case "OUTSIDE"          ' Send new outside temperature to thermostat
         If CFloat(Val(sCmd)) > -40 And CFloat(Val(sCmd)) < 127 Then
           fOutsideTemp = CFloat(Val(sCmd))
-          WriteCmd("OT=" & CStr(fOutsideTemp))
+          QueueCommand("OT=" & CStr(fOutsideTemp))
         Else
           If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid outside temperature '" & CStr(fOutsideTemp) & "'. Valid values are between -40.0 and +127.0")
         Endif
 
-      Case "CLOCK"            ' Synchonize clock with local clock by sending current time
+      Case "CLOCK"            ' Synchronize clock with local clock by sending current time
         If sCmd = "sync" Then
           sDay = CStr(WeekDay(Now))
           If sDay = "0" Then sDay = "7" ' Correct sundays
-          WriteCmd("SC=" & Format(Now, "hh:nn") & "/" & sDay)
+          QueueCommand("SC=" & Format(Now, "hh:nn") & "/" & sDay)
         Else
           If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid command for 'Clock' device: " & sCmd)
         Endif
@@ -1182,7 +1191,34 @@ Catch
 
 End
 
-Private Sub WriteCmd(sCommand As String)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(sCmd As String)
+
+  ' add command to queue
+  cQueue.Add(sCmd, Rnd)
+
+  ' if interface is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
+
+  Dim sCmd As String
+
+  For Each sCmd In cQueue
+    WriteCmd(sCmd, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+Private Sub WriteCmd(sCommand As String, sKey As String)
 
   If $bDebug Then
     If sCommand <> "PS=1" Then ' Don't log default report request
@@ -1208,6 +1244,9 @@ Private Sub WriteCmd(sCommand As String)
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid command: " & sCommand)
   Endif
 
+  ' remove command from queue
+  cQueue.Remove(sKey)
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1215,15 +1254,15 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Disconnect() As Boolean
 
-  ' try to close the connection
+  ' try to stop timers and close the connection
+  Try tInterfaceBusy.Stop
   Try tReConnect.Stop
   Try tOpenTherm.Stop
   Try hOpenThermRelay.Close
   Try hOpenThermTCP.Close
-  Try tOpenTherm.Stop
   Try hOpenThermSer.Close
 
- If InStr($sInterface, "tcp") Then
+  If InStr($sInterface, "tcp") Then
     Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
     Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
@@ -1238,4 +1277,3 @@ Catch ' some errors
   ErrorWhere = ""
 
 End
-
