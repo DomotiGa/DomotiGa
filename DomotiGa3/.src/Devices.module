@@ -35,6 +35,7 @@ Public Const ValueType_Blinds As Integer = 16
 Public Const ValueType_Energy_kWh As Integer = 17
 Public Const ValueType_Power_Watt As Integer = 18
 Public Const ValueType_Chime As Integer = 19
+Public Const ValueType_Dimmer As Integer = 20
 
 'Public Const ValueType_ As Integer = X
 ' barometric, datetime, current, gas, water, volt, camera
@@ -890,7 +891,7 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
   If vValue = "Dim 99" Then vValue = "On"
   If vValue = "Dim 0" Then vValue = "Off"
 
-  Try rDevice = Main.hDB.Exec("SELECT device_values.value, device_values.log, device_values.logdisplay, devices.name, devices.dimable, devices.switchable, devices.instance_id, devices.hide FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
+  Try rDevice = Main.hDB.Exec("SELECT device_values.value, device_values.control, device_values.type_id, device_values.log, device_values.logdisplay, devices.name, devices.instance_id, devices.hide FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
   ' data for device cannot be retrieved the device probably doesn't exist
   If Not rDevice Then
     If Main.bDevicesDebug Then Main.WriteDebugLog("[Devices] ValueUpdate called for device with id '" & iDeviceId & "' that doesn't exists")
@@ -898,8 +899,9 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
   Endif
   ' devicevalue doesn't exist we need to do an insert instead of an update
   If rDevice.Count = 0 Then
+    ' TODO: VALUETYPE use valuetype control to set device_value control
     rResultInsert = Main.hDB.Exec("INSERT INTO device_values (device_id, value, valuenum, lastchanged) values (&1, &2, &3, &4)", iDeviceId, vValue, iValueNum, sTimeNow)
-    rDevice = Main.hDB.Exec("SELECT device_values.value, device_values.log, device_values.logdisplay, devices.name, devices.dimable, devices.switchable FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
+    rDevice = Main.hDB.Exec("SELECT device_values.value, device_values.control, device_values.type_id, device_values.log, device_values.logdisplay, devices.name FROM device_values JOIN devices ON device_values.device_id = devices.id WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
   Else
     sValue = rDevice!value
   Endif
@@ -908,9 +910,10 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
   sName = rDevice!name
   bHidden = rDevice!hide
 
-  If rDevice!switchable Then
+  ' TODO: VALUETYPE
+  If rDevice!type_id = ValueType_Switch Then
     sType = "switch"
-  Else If rDevice!dimable Then
+  Else If rDevice!type_id = ValueType_Dimmer Then
     sType = "dimmer"
   Endif
 
@@ -920,7 +923,7 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
 
       rResult = Main.hDB.Exec("UPDATE devices, device_values SET devices.lastseen = &1, device_values.lastseen = &1, devices.lastchanged = &1, device_values.lastchanged = &1, device_values.value = &4 WHERE devices.id = &2 AND device_values.device_id = &2 AND device_values.valuenum = &3", sTimeNow, iDeviceId, iValueNum, vValue)
       If Main.bDevicesDebug Then Main.WriteDebugLog(("[Devices] Device change triggered for device '") & sName & ("' with 'value") & iValueNum & "' = '" & vValue & "'")
-      If rDevice!dimable = True Or If rDevice!switchable = True Then Main.RefreshControlPage()
+      If rDevice!control = True Then Main.RefreshControlPage()
       If rDevice!logdisplay Then Main.WriteLog("[Devices] " & sName & " status changed to " & vValue & IIf(sLabel, " " & sLabel, "") & ".")
 
       Events.CheckDeviceChangeEvents(iDeviceId, iValueNum, vValue)
@@ -1510,8 +1513,6 @@ Public Sub AutoCreateDevice(sAddress As String, iInterface As Integer, iInstance
   rResult!dimicon = "new.png"
   rResult!officon = "new.png"
   rResult!hide = False
-  rResult!dimable = False
-  rResult!switchable = False
   rResult!firstseen = Now()
   rResult!lastseen = Now()
   rResult!location_id = 1
@@ -1566,6 +1567,7 @@ Public Sub CheckResetDevice()
 
 End
 
+' TODO: VALUETYPE remove methode or extend with valuenum
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' return type of control for device
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1573,11 +1575,11 @@ Public Sub CheckControlDevice(sAddress As String, iInterface As Integer) As Stri
 
   Dim rDeviceFind As Result
 
-  Try rDeviceFind = Main.hDB.Exec("SELECT switchable, dimable FROM devices WHERE address LIKE &1 AND interface_id = &2 AND enabled is TRUE", sAddress, iInterface)
+  Try rDeviceFind = Main.hDB.Exec("SELECT device_values.type_id FROM devices JOIN device_values ON devices.id = device_values.device_id WHERE address LIKE &1 AND interface_id = &2 AND enabled is TRUE AND valuenum = 1", sAddress, iInterface)
   If rDeviceFind.Available Then
-    If rDeviceFind!switchable Then
+    If rDeviceFind!type_id = ValueType_Switch Then
       Return "Switch"
-    Else If rDeviceFind!dimable Then
+    Else If rDeviceFind!type_id = ValueType_Dimmer Then
       Return "Dimmer"
     Else
       Return "Other"
@@ -2164,15 +2166,15 @@ Public Sub GetValueType(iId As Integer) As Result
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' return if dimable
+' return if controllable
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub CheckIfDimable(iDeviceId As Integer) As Boolean
+Public Sub CheckIfControllable(iDeviceId As Integer, iValueNum As Integer) As Boolean
 
-  Dim rDeviceFind As Result
+  Dim rDeviceValueFind As Result
 
-  Try rDeviceFind = Main.hDB.Exec("SELECT dimable FROM devices WHERE id = &1 AND enabled is TRUE", iDeviceId)
-  If rDeviceFind.Available Then
-    Return rDeviceFind!dimable
+  Try rDeviceValueFind = Main.hDB.Exec("SELECT control FROM device_values WHERE device_id = &1 AND valuenum = &2", iDeviceId, iValueNum)
+  If rDeviceValueFind.Available Then
+    Return rDeviceValueFind!control
   Endif
   Return False
 
