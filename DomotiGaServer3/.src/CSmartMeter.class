@@ -23,7 +23,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "SmartMeter"
 Public PluginFriendlyName As String = "SmartMeter"
-Public PluginVersion As String = "1.01"
+Public PluginVersion As String = "1.02"
 Public PluginAuthor As String = "Ron Klinkien, Jesse Kerkhoven"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -53,6 +53,10 @@ Private $bDebug As Boolean
 Public hSmartMeter As New Socket
 Public hSmartMeterSer As New SerialPort
 Private sBuffer As String
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -85,6 +89,12 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     IsRunning = False
     Return
   Endif
+
+  ' Define timer for reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
 
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
@@ -164,6 +174,10 @@ Public Function ConnectSerial() As Boolean
   Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
   ' All went ok
   Return True
 
@@ -196,6 +210,7 @@ Public Sub SmartMeter_Error()
 
   IsRunning = False
   ErrorText = sMsg
+  ReConnect()
 
 End
 
@@ -207,6 +222,10 @@ Public Sub SmartMeter_Ready()
   Main.WriteLog(LogLabel & "TCP interface connected.")
   IsRunning = True
 
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -217,7 +236,8 @@ Public Function Disconnect() As Boolean
   ' try to close the connection
   Try hSmartMeter.Close
   Try hSmartMeterSer.Close
-
+  Try tReConnect.Stop
+  
   If InStr($sInterface, "tcp") Then
     Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
@@ -238,13 +258,49 @@ Catch
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ' Connect/Initialize connection
+  If InStr($sInterface, "tcp") Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
+
+End
+
+
+Public Sub ReConnect()
+
+  If iReConnectRetry < aReConnectDelay.Max + 1 Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
+  Endif
+  Inc iReConnectRetry
+
+End
+
 ' got data on serial port
 Public Sub SmartMeterSer_Read()
 
   Dim sData As String
 
   Try sData = Read #hSmartMeterSer, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from serial port! -> " & Error.Text)
+  If Error Then
+    Main.WriteDebugLog(LogLabel & "Error reading data from serial port! -> " & Error.Text)
+    sBuffer = Null
+    IsRunning = False
+    ReConnect()
+    Return
+  Endif
+
   If sData = "!" Then ' buffer until end of record
     sBuffer &= sData
     ProcessData(sBuffer)
@@ -261,7 +317,14 @@ Public Sub SmartMeter_Read()
   Dim sData As String
 
   Try sData = Read #hSmartMeter, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from tcp port! -> " & Error.Text)
+  If Error Then 
+    Main.WriteDebugLog(LogLabel & "Error reading data from tcp port! -> " & Error.Text)
+    sBuffer = Null
+    IsRunning = False
+    ReConnect()
+    Return
+  Endif
+  
   If sData = "!" Then ' buffer until end of record
     sBuffer &= sData
     ProcessData(sBuffer)
