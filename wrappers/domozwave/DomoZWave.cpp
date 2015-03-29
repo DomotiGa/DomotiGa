@@ -3829,7 +3829,6 @@ bool DomoZWave_SetConfigParam( uint32 home, int32 node, int32 param, int32 value
 						int32 int_value;
 						try { Manager::Get()->GetValueAsInt( v, &int_value ); } catch(...) {}
 						timeadd = int_value;
-						it = nodeInfo->m_values.end();
 					}
 				}
 			}
@@ -3902,7 +3901,6 @@ bool DomoZWave_SetConfigParamList( uint32 home, int32 node, int32 param, const c
 										int32 int_value;
 										Manager::Get()->GetValueAsInt( v, &int_value );
 										timeadd = int_value;
-										it = nodeInfo->m_values.end();
 									}
 								}
 							}
