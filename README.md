@@ -141,4 +141,4 @@ HAVE FUN NOW!
 Regards,
 Ron Klinkien aka RDNZL
 support@domotiga.nl
-Dordrecht, The Netherlands
+The Netherlands
