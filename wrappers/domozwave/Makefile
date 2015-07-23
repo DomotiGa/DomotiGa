@@ -9,7 +9,7 @@ CC     := gcc
 CXX    := g++
 LD     := g++
 
-DEBUG_CFLAGS    := -Wall -Wno-format -g -DDEBUG -fPIC
+DEBUG_CFLAGS    := -Wall -Wno-format -Wno-unknown-pragmas -g -DDEBUG -fPIC
 RELEASE_CFLAGS  := -Wall -Wno-unknown-pragmas -Wno-format -O3
 DEBUG_LDFLAGS	:= -g
 
