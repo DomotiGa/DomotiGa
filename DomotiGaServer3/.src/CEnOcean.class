@@ -1,0 +1,919 @@
+' Gambas class file
+
+' Description:
+' CEnOcean.class
+' Connect to EnOcean interface via tcp socket or serial port.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "EnOcean"
+Public PluginFriendlyName As String = "EnOcean"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Ron Klinkien"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[EnOcean] "
+Public InterfaceId As Integer
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
+Private $sSerPort As String
+Private $sBaud As String
+Private $bEnOceanDebug As Boolean
+Private $iRelayPort As Integer
+Private $bRelayEnabled As Boolean
+
+Private $iFirmWareVersion As Integer
+Private $sHardwareVersion As String
+
+Public hEnOcean As New Socket
+Public hEnOceanSer As New SerialPort
+Public hEnOceanRelay As New ServerSocket
+Public hRelayEnOceanClient As Object[]
+Public hRelayEnOceanSocket As New Socket
+Public tEnOceanBusy As Timer
+
+Private RecBuf As New Byte[30]
+Private RecBytes As Byte
+Private cQueue As New Collection    ' command buffer
+Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
+
+' counters to prevent logfile to fill up the disk
+Private iReadErrorCount As Integer
+Private dReadErrorSDate As Date
+Private dReadErrorLDate As Date
+
+Public tReConnect As Timer
+Private iReConnectRetry As Integer = 0 ' retries
+Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+
+' packet bytes
+Const bSyncByte As Byte = &H55
+
+' packet types
+Const bPktTypeReserved1 As Byte = &H00
+Const bPktTypeRadio As Byte = &H01
+Const bPktTypeResponse As Byte = &H02
+Const bPktTypeRadioSubTel As Byte = &H03
+Const bPktTypeEvent As Byte = &H04
+Const bPktTypeCommonCmd As Byte = &H05
+Const bPktTypeSmartAckCmd As Byte = &H06
+Const bPktTypeRemoteManCmd As Byte = &H07
+Const bPktTypeReserved2 As Byte = &H08
+Const bPktTypeRadioMsg As Byte = &H09
+Const bPktTypeRadioAdvanced As Byte = &H0A
+
+Const RORG_1BS As Byte = &HD5
+Const RORG_4BS As Byte = &HA5
+Const RORG_RPS As Byte = &HF6
+Const RORG_VLD As Byte = &HD2
+Const RORG_VLL As Byte = &HD4
+Const RORG_MSC As Byte = &HD1
+Const RORG_ADT As Byte = &HA6
+Const RORG_SM_LRN_REQ As Byte = &HC6
+Const RORG_SM_LRN_ANS As Byte = &HC7
+Const RORG_SM_REC As Byte = &HA7
+Const RORG_SYS_EX As Byte = &HC5
+
+Private aCRC8Table As New Integer[256] ' CRC-8 table with Poly = 0x10210
+Private bTableInit As Boolean
+Private bCRC As Byte
+
+Private iDataLenght As Integer
+
+Public Struct enOceanESP3
+  HeaderDataLength As Short
+  HeaderOptionalLength As Byte
+  HeaderPacketType As Byte
+  HeaderCRC8 As Byte
+  Data As Byte[]
+  OptionalData As Byte[]
+  DataCRC8 As Byte
+End Struct
+
+Public Struct enOcean4B
+  ROrg As Byte  ' R-ORG = 0xA5
+  Data0 As Byte ' 0xb0000n000 -> bit3 = Learn Bit, Normal mode = 1 / Teach-In = 0
+  Data1 As Byte ' value 255...0
+  Data2 As Byte ' unused
+  Data3 As Byte ' unused
+  Programkey As Boolean
+  SenderID As Byte[]
+  Status As Byte ' telegram control bits – used for repeating, switch telegram encapsulation, checksum type
+End Struct
+
+' Radio telegram optional data
+'  0    : Subtelegram Number, 3 for set, 1..n for receive
+'  1..4 : destination address, FFFFFFFF = broadcast
+'  5    : dBm, send: set to FF, receive: best RSSI value of all subtelegrams
+'  6    : security level: 0 = unencrypted, 1..F = type of encryption
+Public Struct enOceanESP3OptionalData
+  SubTelNum As Byte
+  DestinationID As Byte[]
+  DBm As Byte
+  SecurityLevel As Byte
+End Struct
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sInterface = cPl.Settings["type"]
+  $sSerPort = cPl.Settings["serialport"]
+  $sBaud = cPl.Settings["baudrate"]
+  $bRelayEnabled = cPl.Settings["relayenabled"]
+  $iRelayPort = cPl.Settings["relayport"]
+  $bEnOceanDebug = cPl.Settings["debug"]
+
+  ' Define timer for TCP reconnect
+  tReConnect = New Timer As "tReConnect"
+  tReConnect.Delay = iReConnectRetry
+  tReConnect.Stop
+
+  InterfaceId = Devices.FindInterface("EnOcean Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Connect/Initialize connection
+  If InStr($sInterface, "tcp") Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
+
+  ' Initialise checksum table
+  If Not bTableInit Then InitCrc8Table()
+
+  ' Start Relaying
+  If $bRelayEnabled Then
+    If StartRelay() Then
+      Main.WriteLog(LogLabel & "Relay listening for client on port " & $iRelayPort)
+    Else
+      Main.WriteLog(LogLabel & "ERROR: Relay FAILED to listen on port " & $iRelayPort)
+    Endif
+  Else
+    Main.WriteLog(LogLabel & "Relay disabled.")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' reconnect routine
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub EnOcean_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  ' connected so reset retry counter
+  tReConnect.Stop
+  iReConnectRetry = 0
+
+  ' define timer for Interface busy
+  tEnOceanBusy = New Timer As "tEnOceanBusy"
+  tEnOceanBusy.Stop
+
+  ' TODO: Request BaseID
+  ' TODO: Request Version
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(aPacket As Byte[])
+
+  ' add command to queue
+  cQueue.Add(aPacket, Rnd)
+
+  ' if controller is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
+
+  Dim aPacket As Byte[] = Null
+
+  For Each aPacket In cQueue
+    WriteCommand(aPacket, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+Public Function StartRelay() As Boolean
+
+  hEnOceanRelay = New ServerSocket As "EnOceanRelay"
+  hEnOceanRelay.Type = Net.Internet
+  hEnOceanRelay.Port = $iRelayPort
+  ' we start listening for max 1 connection
+  hEnOceanRelay.Listen(1)
+
+  If hEnOceanRelay.Status = Net.Active Then
+    hRelayEnOceanClient = New Object[]
+    ' all ok
+    Return True
+  Else
+    Return False
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
+
+  ' try to close the connection
+  Try hEnOcean.Close
+
+  ' get a new one
+  hEnOcean = New Socket As "EnOcean"
+  hEnOcean.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectSerial() As Boolean
+
+  ' try to close the connection
+  Try hEnOceanSer.Close
+
+  ' Reset error counter
+  iReadErrorCount = 0
+  dReadErrorSDate = 0
+  dReadErrorLDate = 0
+
+  ' get a new one
+  hEnOceanSer = New Serialport As "EnOceanSer"
+  With hEnOceanSer
+    .PortName = $sSerPort
+    .Speed = $sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' define timer for Interface busy
+  tEnOceanBusy = New Timer As "tEnOceanBusy"
+  tEnOceanBusy.Stop
+
+  ' Write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to Port " & $sSerPort)
+  IsRunning = True
+
+  ' TODO: Request BaseID
+  ' TODO: Request Version
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to Port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+Public Sub EnOceanRelay_Connection(sHost As String)
+
+  hRelayEnOceanSocket = New Socket As "EnOceanSocket"
+  ' accept client
+  If hEnOceanRelay.Status <= Net.Inactive Then Return
+  If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & "Relay connection request from client " & sHost)
+
+  hRelayEnOceanSocket = hEnOceanRelay.Accept()
+  hRelayEnOceanClient.Add(hRelayEnOceanSocket)
+  If $bEnOceanDebug Then
+    If hRelayEnOceanSocket.Status = Net.Connected Then Main.WriteLog(LogLabel & "Relay client connection from ip address " & hRelayEnOceanSocket.RemoteHost & " (" & DNS.ResolveHost(hRelayEnOceanSocket.RemoteHost) & " ) accepted.")
+  Endif
+
+End
+
+Public Sub Socket_Read()
+
+  Dim sBuf As Byte
+
+  If Last.Status <> Net.Connected Then Return
+  Try sBuf = Read #Last, Lof(Last)
+
+End
+
+Public Sub EnOceanRelay_Error()
+
+  ' handle error
+  Select Case hEnOceanRelay.Status
+    Case Net.CannotCreateSocket
+      Main.WriteDebugLog(LogLabel & "Relay the system does not allow to create a socket.")
+    Case Net.CannotBindSocket
+      Main.WriteDebugLog(LogLabel & "Relay cannot bind socket.")
+    Case Net.CannotListen
+      Main.WriteDebugLog(LogLabel & "Relay cannot listen on port.")
+  End Select
+
+End
+
+Public Sub Socket_Closed()
+
+  Main.WriteLog(LogLabel & "Relay client connection closed.")
+  hRelayEnOceanClient.Remove(hRelayEnOceanClient.Find(Last))
+
+End
+
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send a command to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function WriteCommand(bBuffer As Byte[], sKey As String)
+
+  Dim iCnt As Integer
+  Dim sMessage As String
+
+  For iCnt = 0 To bBuffer[0]
+    sMessage &= Hex(bBuffer[iCnt], 2)
+  Next
+  If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
+
+  If $sInterface = "tcp" Then
+    ' send the message to the tcp stream
+    Try bBuffer.Write(hEnOcean, 0, bBuffer.Length)
+    If Error Then Main.WriteDebugLogChars(LogLabel & "Unable to write to TCP port! -> " & Error.Text)
+  Else
+    ' send the message to the serial port
+    Try bBuffer.Write(hEnOceanSer, 0, bBuffer.Length)
+    If Error Then Main.WriteDebugLogChars(LogLabel & "Unable to write to serial port! -> " & Error.Text)
+  Endif
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  tEnOceanBusy.Delay = 50 ' 50mS (initial test value)
+  tEnOceanBusy.Start
+  bInterfaceBusy = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tEnOceanBusy_Timer()
+
+  bInterfaceBusy = False
+  tEnOceanBusy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    DoQueue()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try tReConnect.Stop
+  Try tEnOceanBusy.Stop
+  Try hEnOcean.Close
+  Try hEnOceanSer.Close
+  Try hEnOceanRelay.Close
+  Try hRelayEnOceanClient.Remove
+
+  If InStr($sInterface, "tcp") Then
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
+  Else
+    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  Endif
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
+
+Public Sub ReConnect()
+
+  If iReConnectRetry < aReConnectDelay.Max + 1 Then
+    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
+    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
+    tReConnect.Start
+  Else
+    tReConnect.Stop
+    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
+  Endif
+  Inc iReConnectRetry
+
+End
+
+Public Sub EnOcean_Closed()
+
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub EnOcean_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+Public Sub EnOcean_Error()
+
+  Dim sMsg As String
+
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+  ReConnect()
+
+End
+
+Public Sub EnOcean_Read()
+
+  Dim bData As Byte
+
+  Try bData = Read #hEnOcean As Byte
+  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
+  ProcessReceivedByte(bData)
+
+End
+
+Public Sub EnOceanSer_Read()
+
+  Dim bData As Byte
+  Dim iStart, iLast As Integer
+  Dim bWriteToLog As Boolean
+
+  Try bData = Read #hEnOceanSer As Byte
+  If Error Then
+    bWriteToLog = False
+    Inc iReadErrorCount
+    If iReadErrorCount = 1 Then
+      dReadErrorSDate = Now
+      bWriteToLog = True
+    Else
+      iStart = DateDiff(dReadErrorSDate, Now, gb.Second)
+      iLast = DateDiff(dReadErrorLDate, Now, gb.Second)
+
+      ' First minute we report every second
+      If iStart < 60 And iLast >= 1 Then bWriteToLog = True
+      ' First hour we report every 5 seconds
+      If iStart >= 60 And iStart < 3600 And iLast >= 5 Then bWriteToLog = True
+      ' After first hour, we only report every minute
+      If iStart >= 3600 And iLast >= 60 Then bWriteToLog = True
+    Endif
+
+    If bWriteToLog Then
+      dReadErrorLDate = Now
+      Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! -> " & Error.Text & " (Count: " & iReadErrorCount & ")")
+    Endif
+
+  Else If iReadErrorCount > 0 Then
+    iReadErrorCount = 0
+    dReadErrorSDate = 0
+    dReadErrorLDate = 0
+  Endif
+  ProcessReceivedByte(bData)
+
+End
+
+Private Sub ProcessReceivedByte(bRX As Byte)
+
+  ' relay incoming data to relay port
+  If $bRelayEnabled Then Try Write #hRelayEnOceanSocket, bRX As Byte
+
+  ' Main.ControlLed("EnOcean", "On")
+  If RecBytes = 0 Then ' 1st byte of a packet received
+    If bRX = bSyncByte Then
+      If $bEnOceanDebug Then Main.WriteDebugLogChars(LogLabel & "<", 0)
+    Else
+      Return ' ignore 1st byte if not sync byte
+    Endif
+  Endif
+
+  Try RecBuf[RecBytes] = bRX ' store received byte
+  If Error Then
+    RecBytes = 0 ' temp hack (overflow)
+    RecBuf = Null
+    Return
+  Endif
+  Inc RecBytes  ' increment byte counter
+
+  If RecBytes = 6 Then ' all bytes of the header received
+    iDataLenght = 7 + RecBuf[1] * 256 + RecBuf[2] + RecBuf[3]
+  Else If RecBytes = iDataLenght Then ' all bytes of the packet received
+    RecBytes = 0  ' set to zero to receive next message
+    If $bEnOceanDebug Then Main.WriteDebugLogChars("\n", 1)
+    ProcessReceivedPacket()
+  Else
+    If $bEnOceanDebug Then Main.WriteDebugLogChars(" " & Hex(bRX, 2), 1) ' write the output to the screen
+  Endif
+
+End
+
+Public Sub ProcessReceivedPacket(Optional bPacket As Byte[])
+
+  Dim enOceanPacket As New EnOceanESP3
+  Dim bCRC, bByte As Byte
+  Dim iCnt As Integer
+
+  ' got injected packet from commander
+  If bPacket Then
+    If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & "<", True)
+    For Each bByte In bPacket
+      RecBuf[iCnt] = bByte
+      Inc iCnt
+      If $bEnOceanDebug Then Main.WriteDebugLogChars(" " & Hex(bByte, 2), True)
+    Next
+    If $bEnOceanDebug Then Main.WriteDebugLogChars("\n", True)
+  Endif
+
+  ' ESP3 Header
+  '  0 : 0x55 sync byte
+  '  1 : data length MSB
+  '  2 : data length LSB
+  '  3 : optional data length
+  '  4 : packet type
+  '  5 : CRC over bytes 1..4
+
+  ' store lengths and packettype
+  enOceanPacket.HeaderDataLength = RecBuf[1] * 256 + RecBuf[2]
+  enOceanPacket.HeaderOptionalLength = RecBuf[3]
+  enOceanPacket.HeaderPacketType = RecBuf[4]
+
+  ' calculate header checksum
+  enOceanPacket.HeaderCRC8 = RecBuf[5]
+  bCRC = aCRC8Table[bCRC Xor RecBuf[1]]
+  bCRC = aCRC8Table[bCRC Xor RecBuf[2]]
+  bCRC = aCRC8Table[bCRC Xor RecBuf[3]]
+  bCRC = aCRC8Table[bCRC Xor RecBuf[4]]
+
+  ' compare header checksum
+  If enOceanPacket.HeaderCRC8 = bCRC Then
+    'If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " Valid CRC on packet header!" & " (" & Hex(bCRC, 2) & ")")
+  Else
+    If $bEnOceanDebug Then
+      Main.WriteDebugLog(LogLabel & " Invalid CRC on packet header!")
+      Main.WriteDebugLog(LogLabel & " Received: " & Hex(RecBuf[5], 2) & " Calculated CRC: " & Hex(enOceanPacket.HeaderCRC8, 2))
+    Endif
+    Return
+  Endif
+
+  ' calculate data checksum
+  enOceanPacket.DataCRC8 = RecBuf[6 + enOceanPacket.HeaderDataLength + enOceanPacket.HeaderOptionalLength]
+  bCRC = CheckDataCRC(enOceanPacket.HeaderOptionalLength + enOceanPacket.HeaderDataLength)
+
+  ' compare data checksum
+  If enOceanPacket.DataCRC8 = bCRC Then
+    'If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " Valid CRC on packet data!" & " (" & Hex(enOceanPacket.DataCRC8, 2) & ")")
+    ' all ok, decode message
+    DecodeMessage(enOceanPacket.HeaderDataLength)
+  Else
+    If $bEnOceanDebug Then
+      Main.WriteDebugLog(LogLabel & " Invalid CRC on packet data!")
+      Main.WriteDebugLog(LogLabel & " Received: " & Hex(enOceanPacket.DataCRC8, 2) & " Calculated CRC: " & Hex(bCRC, 2))
+    Endif
+    Return
+  Endif
+
+End
+
+Private Function DecodeMessage(bHeaderDataLength As Byte)
+
+  Dim sDestAddress, sAddress, sFirstButton, sSecondButton, sFirstPressed, sSecondPressed, sStatusT21, sStatusNu, sStatusRc As String
+  Dim enOceanData4BS As New EnOcean4B
+  Dim enOceanOptionalData As New EnOceanESP3OptionalData
+  Dim iManufacturer, iProfile, iType As Integer
+  Dim bFirstAction, bSecondAction, bFirstPressed, bSecondPressed, bStatusT21, bStatusNu, bStatusRc As Byte
+
+  If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " Decoding " & DecodePacketType(RecBuf[4]) & " (" & Hex(RecBuf[4], 2) & ")" & " packet.")
+  Select Case RecBuf[4]
+    Case bPktTypeRadio
+
+      ' rorg data
+      enOceanData4BS.ROrg = RecBuf[6]
+      enOceanData4BS.Data3 = RecBuf[7]
+      enOceanData4BS.Data2 = RecBuf[8]
+      enOceanData4BS.Data1 = RecBuf[9]
+      enOceanData4BS.Data0 = RecBuf[10]
+
+      enOceanData4BS.Programkey = enOceanData4BS.Data0 And &H8
+      enOceanData4BS.SenderID = [RecBuf[8], RecBuf[9], RecBuf[10], RecBuf[11]]
+      'enOceanData4BS.SenderID = [RecBuf[11], RecBuf[12], RecBuf[13], RecBuf[14]]
+      enOceanData4BS.Data0 = RecBuf[15]
+      enOceanData4BS.Status = RecBuf[12]
+
+      ' optional data
+      enOceanOptionalData.SubTelNum = RecBuf[6 + bHeaderDataLength]
+      enOceanOptionalData.DestinationID = [RecBuf[7 + bHeaderDataLength], RecBuf[8 + bHeaderDataLength], RecBuf[9 + bHeaderDataLength], RecBuf[10 + bHeaderDataLength]]
+      enOceanOptionalData.Dbm = RecBuf[11 + bHeaderDataLength]
+      enOceanOptionalData.SecurityLevel = RecBuf[12 + bHeaderDataLength]
+
+      sAddress = Hex(enOceanData4BS.SenderID[0], 2) & Hex(enOceanData4BS.SenderID[1], 2) & Hex(enOceanData4BS.SenderID[2], 2) & Hex(enOceanData4BS.SenderID[3], 2)
+      sDestAddress = Hex(enOceanOptionalData.DestinationID[0], 2) & Hex(enOceanOptionalData.DestinationID[1], 2) & Hex(enOceanOptionalData.DestinationID[2], 2) & Hex(enOceanOptionalData.DestinationID[3], 2)
+
+      Select Case enOceanData4BS.rOrg
+
+        Case RORG_RPS ' repeated switch communication
+          ' decode first button behavior
+          bFirstAction = Lsr(enOceanData4BS.Data3 And &HE0, 5)
+          ' Print enOceanData4BS.Data3
+          sFirstButton = ParseButtons(bFirstAction)
+          bFirstPressed = Lsr(enOceanData4BS.Data3 And &H10, 4)
+          If bFirstPressed = 0 Then
+            sFirstPressed = "released"
+          Else
+            sFirstPressed = "pressed"
+          Endif
+          ' second action
+          bSecondAction = Lsr(enOceanData4BS.Data3 And &H0E, 1)
+          sSecondButton = ParseButtons(bSecondAction)
+          bSecondPressed = enOceanData4BS.Data3 And &H01
+          If bSecondPressed = 0 Then
+            sSecondPressed = "with no action"
+          Else
+            sSecondPressed = "is valid action"
+          Endif
+
+          ' status
+          bStatusT21 = Lsr(enOceanData4BS.Status And &H20, 5)
+          bStatusNu = Lsr(enOceanData4BS.Status And &H10, 4)
+          bStatusRc = enOceanData4BS.Status And &H0F
+          If bStatusT21 = 0 Then
+            sStatusT21 = "PTM Type 1"
+          Else
+            sStatusT21 = "PTM Type 2"
+          Endif
+          If bStatusNu = 0 Then
+            sStatusNu = ", Unassigned"
+          Else
+            sStatusNu = ", Normal"
+          Endif
+          sStatusRc = ", repeating " & bStatusRc
+
+          If $bEnOceanDebug Then
+            Main.WriteDebugLog(LogLabel & " Found RORG_RPS message.")
+            Main.WriteDebugLog(LogLabel & " SrcID: " & sAddress)
+            Main.WriteDebugLog(LogLabel & " Signal Strenght: -" & enOceanOptionalData.Dbm & "dB")
+            Main.WriteDebugLog(LogLabel & " Teach-In Mode: " & Main.DisplayBool(enOceanData4BS.Programkey))
+            Main.WriteDebugLog(LogLabel & " DstID: " & sDestAddress)
+            Main.WriteDebugLog(LogLabel & " SubTelNum: " & enOceanOptionalData.SubTelNum)
+            Main.WriteDebugLog(LogLabel & " SecurityLevel: " & IIf(enOceanOptionalData.SecurityLevel = 0, "Unencrypted", "Encrypted (" & enOceanOptionalData.SecurityLevel & ")"))
+            Main.WriteDebugLog(LogLabel & " First Action: Button " & sFirstButton & " " & sFirstPressed)
+            Main.WriteDebugLog(LogLabel & " Second Action: Button " & sSecondButton & " " & sSecondPressed)
+            Main.WriteDebugLog(LogLabel & " Status: " & sStatusT21 & " " & sStatusNu & " " & sStatusRc)
+           Endif
+
+        Case RORG_4BS ' 4 byte communication
+          If $bEnOceanDebug Then
+            Main.WriteDebugLog(LogLabel & " Found RORG_4BS message.")
+            Main.WriteDebugLog(LogLabel & " SrcID: " & sAddress)
+            Main.WriteDebugLog(LogLabel & " Signal Strenght: -" & enOceanOptionalData.Dbm & "dB")
+            Main.WriteDebugLog(LogLabel & " Teach-In Mode: " & Main.DisplayBool(enOceanData4BS.Programkey))
+            Main.WriteDebugLog(LogLabel & " Status: " & Hex(enOceanData4BS.Data1, 2))
+            Main.WriteDebugLog(LogLabel & " DstID: " & sDestAddress)
+            Main.WriteDebugLog(LogLabel & " SubTelNum: " & enOceanOptionalData.SubTelNum)
+            Main.WriteDebugLog(LogLabel & " SecurityLevel: " & IIf(enOceanOptionalData.SecurityLevel = 0, "Unencrypted", "Encrypted (" & enOceanOptionalData.SecurityLevel & ")"))
+            Main.WriteDebugLog(LogLabel & " New status: " & enOceanData4BS.Status)
+          Endif
+
+          If enOceanData4BS.Programkey Then
+
+          Else
+            iManufacturer = Lsl((enOceanData4BS.Data2 And &H7), 8) Or enOceanData4BS.Data1
+            iProfile = Lsr(enOceanData4BS.Data3, 2)
+          ' Print iManufacturer
+          ' Print iProfile
+          Endif
+        Case RORG_1BS ' 1 byte communication
+          If $bEnOceanDebug Then
+            Main.WriteDebugLog(LogLabel & " Found RORG_1BS message.")
+            Main.WriteDebugLog(LogLabel & " SrcID: " & sAddress)
+            Main.WriteDebugLog(LogLabel & " Signal Strenght: -" & enOceanOptionalData.Dbm & "dB")
+              Main.WriteDebugLog(LogLabel & " Teach-In Mode: " & Main.DisplayBool(enOceanData4BS.Programkey))
+              Main.WriteDebugLog(LogLabel & " Status: " & Hex(enOceanData4BS.Data1, 2))
+              Main.WriteDebugLog(LogLabel & " DstID: " & sDestAddress)
+              Main.WriteDebugLog(LogLabel & " SubTelNum: " & enOceanOptionalData.SubTelNum)
+              Main.WriteDebugLog(LogLabel & " SecurityLevel: " & IIf(enOceanOptionalData.SecurityLevel = 0, "Unencrypted", "Encrypted (" & enOceanOptionalData.SecurityLevel & ")"))
+            Main.WriteDebugLog(LogLabel & "Value: " & enOceanData4BS.Data3)
+            Main.WriteDebugLog(LogLabel & " Command: " & enOceanData4BS.Data3 And &H1)
+
+          Endif
+        Case RORG_VLD ' var length communication
+          If $bEnOceanDebug Then
+            Main.WriteDebugLog(LogLabel & " Found RORG_VLD message.")
+          Endif
+        Case RORG_VLL ' var length communication
+          If $bEnOceanDebug Then
+            Main.WriteDebugLog(LogLabel & " Found RORG_VLL message.")
+          Endif
+        Case Else
+          If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " Unknown telegram format received! (" & Hex(RecBuf[6], 2) & ")")
+
+      End Select
+    Case bPktTypeResponse
+      If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " Response packet received!")
+      ' TODO: parse result
+    Case bPktTypeRadioSubTel
+      If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " RadioSubTel packet received!")
+      ' TODO: parse result
+    Case bPktTypeEvent
+      If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " Event packet received!")
+      ' TODO: parse result
+    Case bPktTypeCommonCmd
+      If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " Common Command packet received!")
+      ' TODO: parse result
+    Case bPktTypeSmartAckCmd
+      If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " SmartAck Command packet received!")
+      ' TODO: parse result
+    Case bPktTypeRemoteManCmd
+      If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " RemoteMan Command packet received!")
+      ' TODO: parse result
+    Case Else
+      If $bEnOceanDebug Then Main.WriteDebugLog(LogLabel & " Unknown packet type received! " & Hex(RecBuf[4], 2) & ")")
+  End Select
+
+End
+
+Private Function ParseButtons(bAction As Byte) As String
+
+  Select bAction
+    Case &H0
+      Return "AI"
+    Case &H1
+      Return "AO"
+    Case &H2
+      Return "BI"
+    Case &H3
+      Return "BO"
+    Case Else
+      Return "Unknown Button!"
+  End Select
+
+End
+
+Private Function DecodePacketType(btype As Byte) As String
+
+  Select Case btype
+    Case bPktTypeReserved1
+      Return "RESERVED1"
+    Case bPktTypeRadio
+      Return "RADIO"
+    Case bPktTypeResponse
+      Return "RESPONSE"
+    Case bPktTypeRadioSubTel
+      Return "RADIO_SUB_TEL"
+    Case bPktTypeEvent
+      Return "EVENT"
+    Case bPktTypeCommonCmd
+      Return "COMMON_COMMAND"
+    Case bPktTypeSmartAckCmd
+      Return "SMART_ACK_COMMAND"
+    Case bPktTypeRemoteManCmd
+      Return "REMOTE_MAN_COMMAND"
+    Case bPktTypeReserved2
+      Return "RESERVED2"
+    Case bPktTypeRadioMsg
+      Return "RADIO_MESSAGE"
+    Case bPktTypeRadioAdvanced
+      Return "RADIO_ADVANCED"
+    Case &HB To &H7F
+      Return "RESERVED"
+    Case &H80 To &HFF
+      Return "MANUFACTURER SPECIFIC"
+  End Select
+
+Catch
+  Return "UNKNOWN"
+
+End
+
+Private Function CheckDataCRC(iLen As Integer) As Byte
+
+  Dim iCnt As Integer
+  Dim bCRC As Byte
+
+  For iCnt = 6 To 5 + iLen
+    bCRC = aCRC8Table[bCRC Xor RecBuf[iCnt]]
+  Next
+  Return bCRC
+
+End
+
+Private Sub InitCRC8Table()
+
+  Dim iTableIndex, iIndex, iAccumulator, iMask As Integer
+
+  For iTableIndex = 0 To 255
+    iMask = iTableIndex
+    iAccumulator = 0
+    For iIndex = 0 To 7
+      If ((iMask Xor iAccumulator) And &H80) Then
+        iAccumulator = Lsl(iAccumulator, 1) Xor &H07
+      Else
+        iAccumulator = Lsl(iAccumulator, 1)
+      Endif
+      iMask = Lsl(iMask, 1)
+    Next
+    aCRC8Table[iTableIndex] = iAccumulator And &HFF
+  Next
+  bTableInit = True
+
+End

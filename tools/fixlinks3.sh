@@ -18,6 +18,7 @@ ln -s ../../DomotiGa3/.src/CallerID.module
 ln -s ../../DomotiGa3/.src/CAsterisk.class
 ln -s ../../DomotiGa3/.src/CBluetooth.class
 ln -s ../../DomotiGa3/.src/CBroadcastUDP.class
+ln -s ../../DomotiGa3/.src/CCaddx.class
 ln -s ../../DomotiGa3/.src/CCUL.class
 ln -s ../../DomotiGa3/.src/CBwiredMap.class
 ln -s ../../DomotiGa3/.src/CCTX35.class
@@ -28,6 +29,7 @@ ln -s ../../DomotiGa3/.src/CDeviceDiscover.class
 ln -s ../../DomotiGa3/.src/CDigitemp.class
 ln -s ../../DomotiGa3/.src/CDMXPlayer.class
 ln -s ../../DomotiGa3/.src/CDSC.class
+ln -s ../../DomotiGa3/.src/CEnOcean.class
 ln -s ../../DomotiGa3/.src/CELVMAX.class
 ln -s ../../DomotiGa3/.src/CEZcontrol.class
 ln -s ../../DomotiGa3/.src/CForecastIo.class
@@ -51,6 +53,7 @@ ln -s ../../DomotiGa3/.src/CKMTronicUDP.class
 ln -s ../../DomotiGa3/.src/CKNX.class
 ln -s ../../DomotiGa3/.src/CLEDMatrix.class
 ln -s ../../DomotiGa3/.src/CMochad.class
+ln -s ../../DomotiGa3/.src/CModbus.class
 ln -s ../../DomotiGa3/.src/CMQTT.class
 ln -s ../../DomotiGa3/.src/CMeteohub.class
 ln -s ../../DomotiGa3/.src/CMySensors.class
