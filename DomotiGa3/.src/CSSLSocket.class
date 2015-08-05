@@ -1,0 +1,452 @@
+' Gambas class file
+
+' Description:
+' CSSLSocket.class
+' Support none-SSL and SSL TCP sockets
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Define external OpenSSL library calls. We support 0.9.8/1.0.x/1.1.x
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Library "libssl"
+Private Extern SSL_new(pCTX As Pointer) As Pointer
+Private Extern SSL_free(pSSL As Pointer)
+Private Extern SSL_shutdown(pSSL As Pointer) As Integer
+Private Extern SSL_set_fd(pSSL As Pointer, iFd As Integer) As Integer
+Private Extern SSL_read(pSSL As Pointer, pData As Pointer, iLen As Integer) As Integer
+Private Extern SSL_write(pSSL As Pointer, pData As Pointer, iLen As Integer) As Integer
+Private Extern SSL_accept(pSSL As Pointer) As Integer
+Private Extern SSL_get_error(pSSL As Pointer, iRC As Integer) As Integer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' My events
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Event Read(sData As String)
+Event Closed
+'Event Error
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Constants
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Const SSL_ERROR_NONE As Integer = 0
+Public Const SSL_ERROR_SSL As Integer = 1
+Public Const SSL_ERROR_WANT_READ As Integer = 2
+Public Const SSL_ERROR_WANT_WRITE As Integer = 3
+Public Const SSL_ERROR_WANT_X509_LOOKUP As Integer = 4
+Public Const SSL_ERROR_SYSCALL As Integer = 5
+Public Const SSL_ERROR_ZERO_RETURN As Integer = 6
+Public Const SSL_ERROR_WANT_CONNECT As Integer = 7
+Public Const SSL_ERROR_WANT_ACCEPT As Integer = 8
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Property EndOfLine As Integer
+Property Timeout As Integer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $iEndOfLine As Integer = gb.Unix
+Private $iTimeout As Integer = 0
+Private $iEncrypt As Integer = Net.None ' 0=Net.None, 1=Net.SSL
+Private $iSSLBufferSize As Integer = 1024 ' The SSL buffer size for reading the socket
+Private $pCTX As Pointer
+Private $pSSL As Pointer
+Private $bSSLAcceptHandshake As Boolean
+Private $sData As String
+Static Private MySocket As Socket
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when Class is created
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub _new()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when Class is destroyed, free/close used variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub _free()
+
+  If $pSSL <> Null Then
+    Try SSL_shutdown($pSSL)
+    Try SSL_free($pSSL)
+    $pSSL = Null
+  Endif
+
+  Try Close #MySocket
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read None-SSL and SSL data from socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read()
+
+  Dim sData As String
+  Dim pData As Pointer
+  Dim iLen As Integer
+  Dim iRet As Integer
+
+  If $iEncrypt = Net.SSL Then
+
+    If Not $bSSLAcceptHandshake Then
+      iRet = SSL_accept($pSSL)
+      If iRet = 1 Then
+        $bSSLAcceptHandshake = True
+      Else
+        If iRet = -1 Then
+          Try iRet = SSL_get_error($pSSL, iRet)
+          If iRet <> SSL_ERROR_WANT_READ Then
+            If $pSSL <> Null Then
+              Try SSL_shutdown($pSSL)
+              Try SSL_free($pSSL)
+              $pSSL = Null
+            Endif
+
+            Try Close #MySocket
+
+            'Print "SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")"
+            'Raise Error
+            Return
+          Endif
+        Endif
+
+      Endif
+    Endif
+
+    ' Don't continue if the handshake didn succeed
+    If Not $bSSLAcceptHandshake Then Return
+
+    ' Allocate a read buffer for the read routine
+    pData = Alloc($iSSLBufferSize)
+
+    Repeat
+      iLen = SSL_read($pSSL, pData, $iSSLBufferSize)
+
+      If iLen < 0 Then
+        '
+        iRet = SSL_get_error($pSSL, iLen)
+
+      Else If iLen = 0 Then
+        ' Socket gone or almost gone
+      Else
+        ' We have read data from the socket, append it to our string
+        sData &= String@(pData, iLen)
+      Endif
+
+    Until iLen <= 0
+
+    Free(pData)
+
+  Else
+    ' No SSL, just read the socket
+    Read #Last, sData, Lof(Last)
+  Endif
+
+  ' Data read, raise the read event for further processing
+  If sData Then
+    Raise Read(sData)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Start a new line/print session
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Begin()
+
+  $sData = ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add the line with a proper linefeed character(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Print(sData As String)
+
+  Select $iEndOfLine
+    Case gb.Unix
+      $sData &= sData & Chr$(10)
+    Case gb.Windows
+      $sData &= sData & Chr$(13) & Chr$(10)
+    Case gb.Mac
+      $sData &= sData & Chr$(13)
+    Default
+      $sData &= sData & Chr$(10)
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Drop the data stored in the internal buffer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Drop()
+
+  $sData = ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Send the data in the internal buffer, as line/print
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Send()
+
+  Dim pData As Pointer
+  Dim iRet As Integer
+  Dim sStream As Stream
+
+  ' don't call write, that costs 50% performance!
+
+  If Not $sData Then Return
+
+  If $iEncrypt = Net.SSL Then
+
+    If Not $bSSLAcceptHandshake Then
+      iRet = SSL_accept($pSSL)
+      If iRet = 1 Then
+        $bSSLAcceptHandshake = True
+      Endif
+    Endif
+
+    ' Don't continue if the handshake didn't succeed
+    If Not $bSSLAcceptHandshake Then Return
+
+    pData = Alloc(Len($sData))
+    sStream = Memory pData For Read Write
+    Write #sStream, $sData, Len($sData)
+    Try iRet = SSL_write($pSSL, pData, Len($sData))
+    Free(pData)
+
+    If iRet <= 0 Then
+      Try iRet = SSL_get_error($pSSL, iRet)
+      Error.Raise("SSL Write Failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
+      Return
+    Endif
+
+  Else
+    MySocket.Blocking = True
+    Write #MySocket, $sData, Len($sData)
+    MySocket.Blocking = False
+  Endif
+
+  $sData = ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Write data as binary
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Write(sData As String)
+
+  Dim pData As Pointer
+  Dim iRet As Integer
+  Dim sStream As Stream
+
+  If Not sData Then Return
+
+  If $iEncrypt = Net.SSL Then
+
+    If Not $bSSLAcceptHandshake Then
+      iRet = SSL_accept($pSSL)
+      If iRet = 1 Then
+        $bSSLAcceptHandshake = True
+      Endif
+    Endif
+
+    ' Don't continue if the handshake didn't succeed
+    If Not $bSSLAcceptHandshake Then Return
+
+    pData = Alloc(Len(sData))
+    sStream = Memory pData For Read Write
+    Write #sStream, sData, Len(sData)
+    Try iRet = SSL_write($pSSL, pData, Len(sData))
+    Free(pData)
+
+    Try iRet = SSL_write($pSSL, pData, Len(sData))
+
+    If iRet <= 0 Then
+      Try iRet = SSL_get_error($pSSL, iRet)
+      Error.Raise("SSL Write Failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
+      Return
+    Endif
+
+  Else
+    MySocket.Blocking = True
+    Write #MySocket, sData, Len(sData)
+    MySocket.Blocking = False
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Socket is closed by server
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Close()
+
+  If $iEncrypt = Net.SSL Then
+    If $pSSL <> Null Then
+      Try SSL_shutdown($pSSL)
+      Try SSL_free($pSSL)
+      $pSSL = Null
+    Endif
+    Try Close #MySocket
+  Else
+    Try Close #MySocket
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Socket is closed by client
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  Raise Closed
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Assigns the just created socket to our SSLSocket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub AssignSocket(sServerSocket As CSSLServerSocket)
+
+  Dim iRet As Integer
+
+  MySocket = sServerSocket.Accept()
+  $iTimeout = sServerSocket.Timeout
+  $iEncrypt = sServerSocket.Encrypt
+  $pCTX = sServerSocket.SSLCTX
+  Object.Attach(MySocket, Me, "MySocket")
+
+  If $iEncrypt = Net.SSL Then
+
+    If $pCTX = Null Then
+      Error.Raise("SSL CTX is NULL value")
+      Return
+    Endif
+
+    $pSSL = SSL_new($pCTX)
+
+    If $pSSL = Null Then
+      Error.Raise("SSL is NULL value")
+      Return
+    Endif
+
+    iRet = SSL_set_fd($pSSL, MySocket.Handle)
+
+    ' When <> 1, then something went wrong during set fd
+    If iRet = 0 Then
+      Try Close #MySocket
+
+      Error.Raise("SSL set_fd failed")
+      Return
+    Endif
+
+    ' File-Handle assigned, now try to accept the connection
+    iRet = SSL_accept($pSSL)
+
+    ' Check return value of SSL_accept
+    Select iRet
+      Case 0 ' Handshake failed, stop the SSL session
+        Try SSL_shutdown($pSSL)
+        Try SSL_free($pSSL)
+        $pSSL = Null
+        Try Close #MySocket
+
+        Try iRet = SSL_get_error($pSSL, iRet)
+        Error.Raise("SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
+        Return
+      Case 1 ' Succesfull
+        $bSSLAcceptHandshake = True
+      Default ' Error happened, maybe we should retry
+        $bSSLAcceptHandshake = False
+        Try iRet = SSL_get_error($pSSL, iRet)
+        If iRet <> SSL_ERROR_WANT_READ Then 
+          ' Something went wrong, just stop the SSL session
+          Try SSL_shutdown($pSSL)
+          Try SSL_free($pSSL)
+          $pSSL = Null
+          Try Close #MySocket
+
+          Try iRet = SSL_get_error($pSSL, iRet)
+          Error.Raise("SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
+          Return
+        Endif
+    End Select
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display a readable SSL_ERROR
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Display_SSL_ERROR(iRet As Integer) As String
+
+  Select iRet
+    Case SSL_ERROR_NONE
+    Case SSL_ERROR_SSL
+      Return "ERROR_SSL"
+    Case SSL_ERROR_WANT_READ
+      Return "ERROR_WANT_READ"
+    Case SSL_ERROR_WANT_WRITE
+      Return "ERROR_WANT_WRITE"
+    Case SSL_ERROR_WANT_X509_LOOKUP
+      Return "ERROR_WANT_X509_LOOKUP"
+    Case SSL_ERROR_SYSCALL
+      Return "ERROR_SYSCALL"
+    Case SSL_ERROR_ZERO_RETURN
+      Return "ERROR_ZERO_RETURN"
+    Case SSL_ERROR_WANT_CONNECT
+      Return "ERROR_WANT_CONNECT"
+    Case SSL_ERROR_WANT_ACCEPT
+      Return "ERROR_WANT_ACCEPT"
+    Default
+      Return "UNKNOWN"
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Function EndOfLine_Read() As Integer
+
+  Return $iEndOfLine
+
+End
+
+Function EndOfLine_Write(iEndOfLine As Integer)
+
+  Select iEndOfLine
+    Case gb.Unix
+      $iEndOfLine = gb.Unix
+    Case gb.Windows
+      $iEndOfLine = gb.Windows
+    Case gb.Mac
+      $iEndOfLine = gb.Mac
+    Default
+      $iEndOfLine = gb.Unix
+  End Select
+
+End
+
+Function TimeOut_Read() As Integer
+
+  Return $iTimeout
+
+End
+
+Function TimeOut_Write(iTimeout As Integer)
+
+  $iTimeout = iTimeout
+
+End

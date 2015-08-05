@@ -1,0 +1,345 @@
+' Gambas class file
+
+Export
+
+Inherits ServerSocket
+
+' Description:
+' CSocketServer.class
+' Support none-SSL and SSL TCP sockets
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Define external OpenSSL library calls. We support 0.9.8/1.0.x/1.1.x
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Library "libcrypto"
+Private Extern SSLeay_version(iInt As Integer) As String
+
+Library "libssl"
+Private Extern SSL_library_init()
+Private Extern SSL_load_error_strings()
+Private Extern SSLv23_method() As Pointer ' deprecated in OpenSSL 1.1.x
+Private Extern TLS_method() As Pointer ' new in OpenSSL 1.1.x
+Private Extern SSL_CTX_new(pCTX As Pointer) As Pointer
+Private Extern SSL_CTX_free(pCTX As Pointer)
+Private Extern SSL_CTX_ctrl(pCTX As Pointer, iCmd As Integer, lOptions As Long, pParm As Pointer) As Long
+Private Extern SSL_CTX_use_certificate_file(pCTX As Pointer, sFile As String, iType As Integer) As Integer
+Private Extern SSL_CTX_use_PrivateKey_file(pCTX As Pointer, sFile As String, iType As Integer) As Integer
+Private Extern SSL_CTX_check_private_key(pCTX As Pointer) As Integer
+'Private Extern SSL_CTX_set_options(pCTX As Pointer, lOptions As Long) As Long
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Constants
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Const SSL_OP_NO_SSLv2 As Long = &H01000000
+Public Const SSL_OP_NO_SSLv3 As Long = &H02000000
+Public Const SSL_OP_NO_TLSv1 As Long = &H04000000
+Public Const SSL_OP_NO_TLSv1_1 As Long = &H10000000
+Public Const SSL_OP_NO_TLSv1_2 As Long = &H08000000
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Property Timeout As Integer
+Property Encrypt As Integer
+Property SSLCertificate As String
+Property SSLPrivateKey As String
+Property Read SSLVersion As String
+Property SSLMethod As Long
+Property Read SSLCTX As Pointer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $iTimeout As Integer = 0
+Private $iEncrypt As Integer = Net.None ' 0=Net.None, 1=Net.SSL
+Private $sSSLCertificate As String
+Private $sSSLPrivateKey As String
+Private $sSSLVersion As String
+Private $sSSLVersionId As String
+Private $lSSLMethod As Long
+Private $pCTX As Pointer
+'Static Private MyServerSocket As ServerSocket
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub _new()
+
+'  MyServerSocket = New ServerSocket
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub _free()
+
+  If $pCTX <> Null Then
+    Try SSL_CTX_free($pCTX)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' SSLStart
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SSLStart()
+
+  Dim pMethod As Pointer
+  Dim iVal As Integer
+
+  ' Do nothing if SSL isn't enabled
+  If $iEncrypt = Net.None Then Return
+
+  ' Check if certificate/privatekey can be valid
+  If Not $sSSLCertificate Then
+    Error.Raise("SSL Certificate filename is empty")
+    Return
+  Endif
+
+  If Not $sSSLPrivateKey Then
+    Error.Raise("SSL PrivateKey filename is empty")
+    Return
+  Endif
+
+  If Not Exist($sSSLCertificate) Then
+    Error.Raise("SSL Certificate file '" & $sSSLCertificate & "' doesn't exist")
+    Return
+  Endif
+
+  If Not Access($sSSLCertificate, gb.Read) Then
+    Error.Raise("SSL Certificate file '" & $sSSLCertificate & "' can't be read")
+    Return
+  Endif
+
+  If Not Exist($sSSLPrivateKey) Then
+    Error.Raise("SSL PrivateKey file '" & $sSSLPrivateKey & "' doesn't exist")
+    Return
+  Endif
+
+  If Not Access($sSSLPrivateKey, gb.Read) Then
+    Error.Raise("SSL PrivateKey file '" & $sSSLPrivateKey & "' can't be read")
+    Return
+  Endif
+
+  ' Check if the OpenSSL library is installed
+  Try $sSSLVersion = SSLeay_version(0)
+  If Error Then
+    Error.Raise("Unable to initialize the OpenSSL library, 'libcrypto.so' is missing or incorrect call to 'SSLeay_version'")
+    Return
+  Endif
+
+  If $sSSLVersion Then
+    If InStr($sSSLVersion, "OpenSSL 0.9") Then
+      $sSSLVersionId = "0.9"
+    Else If InStr($sSSLVersion, "OpenSSL 1.0") Then
+      $sSSLVersionId = "1.0"
+    Else If InStr($sSSLVersion, "OpenSSL 1.1") Then
+      $sSSLVersionId = "1.1"
+    Else
+      $sSSLVersionId = "NA"
+    Endif
+  Else
+    $sSSLVersionId = "NA"
+  Endif
+
+  ' Initialize the library
+  Try SSL_library_init()
+  If Error Then
+    Error.Raise(Error.Text)
+    Return
+  Endif
+
+  ' Initialize the error strings
+  Try SSL_load_error_strings()
+  If Error Then
+    Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_load_error_strings'")
+    Return
+  Endif
+
+  ' Here we initiaze the CTX, but it is different depending on the OpenSSL version.
+  ' 0.9.8/1.0.x call SSLv23_method, but 1.1.x call TLS_method
+
+  Select $sSSLVersionId
+    Case "0.9", "1.0"
+      Try pMethod = SSLv23_method()
+      If Error Then
+        Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSLv23_method'")
+        Return
+      Endif
+    Case "1.1"
+      Try pMethod = TLS_method()
+      If Error Then
+        Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'TLS_method'")
+        Return
+      Endif
+    Default
+      ' We first try the SSLv23, if that fails, try the TLS
+      Try pMethod = SSLv23_method()
+      If Error Then
+        Try pMethod = TLS_method()
+        If Error Then
+          Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSLv23_method' or 'TLS_method'")
+          Return
+        Endif
+      Endif
+  End Select
+
+  If pMethod = Null Then
+    Error.Raise("Unable to initialize the OpenSSL library, call to 'SSLv23_method' or 'TLS_method' returned NULL")
+    Return
+  Endif
+
+  Try $pCTX = SSL_CTX_new(pMethod)
+  If Error Then
+    Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_CTX_new'")
+    Return
+  Endif
+
+  If $pCTX = Null Then
+    Error.Raise("Unable to initialize the OpenSSL library, call to 'SSL_CTX_new' returned NULL")
+    Return
+  Endif
+
+  'Try lVal = SSL_CTX_set_options($pCTX, lVal)
+  Try SSL_CTX_ctrl($pCTX, 32, $lSSLMethod, Null)
+  If Error Then
+    Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_CTX_set_options'")
+    Try SSL_CTX_free($pCTX)
+    Return
+  Endif
+
+  Try iVal = SSL_CTX_use_certificate_file($pCTX, $sSSLCertificate, 1)
+  If Error Then
+    Try SSL_CTX_free($pCTX)
+    Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_CTX_use_certificate_file'")
+    Return
+  Endif
+  If iVal <= 0 Then
+    Try SSL_CTX_free($pCTX)
+    Error.Raise("Unable to initialize SSL with the Certificate file '" & $sSSLCertificate & "' RC=" & iVal)
+    Return
+  Endif
+
+  Try iVal = SSL_CTX_use_PrivateKey_file($pCTX, $sSSLPrivateKey, 1)
+  If Error Then
+    Try SSL_CTX_free($pCTX)
+    Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_CTX_use_PrivateKey_file'")
+    Return
+  Endif
+  If iVal <= 0 Then
+    Try SSL_CTX_free($pCTX)
+    Error.Raise("Unable to initialize SSL with the PrivateKey file '" & $sSSLPrivateKey & "' RC=" & iVal)
+    Return
+  Endif
+
+  Try iVal = SSL_CTX_check_private_key($pCTX)
+  If Error Then
+    Try SSL_CTX_free($pCTX)
+    Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_CTX_check_private_key'")
+    Return
+  Endif
+  If iVal <= 0 Then
+    Try SSL_CTX_free($pCTX)
+    Error.Raise("Unable to initialize SSL, the certificate '" & $sSSLCertificate & "' and PrivateKey '" & $sSSLPrivateKey & "' don't match. RC=" & iVal)
+    Return
+  Endif
+
+  ' All done, it should be able to setup SSL sessions now
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Function Timeout_Read() As Integer
+
+  Return $iTimeout
+
+End
+
+Function Timeout_Write(iTimeout As Integer)
+
+  $iTimeout = iTimeout
+
+End
+
+Function Encrypt_Read() As Integer
+
+  Return $iEncrypt
+
+End
+
+Function Encrypt_Write(iEncrypt As Integer)
+
+  Select iEncrypt
+    Case Net.None
+      $iEncrypt = Net.None
+    Case Net.SSL
+      $iEncrypt = Net.SSL
+    Default
+      $iEncrypt = Net.None
+  End Select
+
+End
+
+Function SSLCertificate_Read() As String
+
+  Return $sSSLCertificate
+
+End
+
+Function SSLCertificate_Write(sSSLCertificate As String)
+
+  $sSSLCertificate = sSSLCertificate
+
+End
+
+Function SSLPrivateKey_Read() As String
+
+  Return $sSSLPrivateKey
+
+End
+
+Function SSLPrivateKey_Write(sSSLPrivateKey As String)
+
+  $sSSLPrivateKey = sSSLPrivateKey
+
+End
+
+Function SSLMethod_Read() As Long
+
+  Return $lSSLMethod
+
+End
+
+Function SSLMethod_Write(lSSLMethod As Long)
+
+  ' Reset the Method if we supply 0
+  If lSSLMethod = 0 Then
+    $lSSLMethod = 0
+  Else
+    $lSSLMethod += lSSLMethod
+  Endif
+
+End
+
+Function SSLVersion_Read() As String
+
+  Return $sSSLVersion
+
+End
+
+Function SSLCTX_Read() As Pointer
+
+  Return $pCTX
+
+End

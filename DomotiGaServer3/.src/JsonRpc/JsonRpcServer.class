@@ -19,18 +19,32 @@ Private Const InvalidParams As Integer = -32602
 Private Const InternalError As Integer = -32603
 
 '***************************************************************************
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Property Read Listening As Boolean
+Property Encrypt As Integer
+Property SSLCertificate As String
+Property SSLPrivateKey As String
+Property SSLMethod As Long
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $iEncrypt As Integer ' 0=Net.None, 1=Net.SSL
+Private $sSSLCertificate As String
+Private $sSSLPrivateKey As String
+Private $lSSLMethod As Long
 Private $bListening As Boolean
 Private $IPWhiteList As New String[]
 Private $Methods As New Object[]
 Private $SockColl As New Collection
-Private JsonRpcSocket As ServerSocket
+Private JsonRpcSocket As CSSLServerSocket
 Private $bDebug As Boolean
 Private $hReply As Variant
 Private $iReply As Integer
 Private $bSubDeviceUpdate As Boolean
 Private $bSubLogUpdate As Boolean
-
-Property Read Listening As Boolean
 
 ' JSON-RPC is correctly received, method exist
 ' Call the subroutine to process it on application level
@@ -173,16 +187,16 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Send HTTP error, something wrong in the packet
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub hError(hS As Socket, hErr As String)
+Private Sub hError(hS As CSSLSocket, hErr As String)
 
-  hS.Begin
+  hS.Begin()
   hS.EndOfLine = gb.Windows
-  Print #hS, "HTTP/1.1 " & hErr
-  Print #hS, "Server: Gambas JSON-RPC Server"
-  Print #hS, "Connection: close"
-  Print #hS, ""
+  hS.Print("HTTP/1.1 " & hErr)
+  hS.Print("Server: Gambas JSON-RPC Server")
+  hS.Print("Connection: close")
+  hS.Print("")
 
-  Try hS.Send
+  Try hS.Send()
 
 Catch
   ' Catch any errors with a closed stream
@@ -252,7 +266,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Write the JSON data to the socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub JsonSend(sType As String, hS As Socket, vJsonData As Variant, Optional cData As Collection)
+Private Sub JsonSend(sType As String, hS As CSSLSocket, vJsonData As Variant, Optional cData As Collection)
 
   Dim sJsonData As String
   Dim sDeflateData As String
@@ -295,35 +309,33 @@ Private Sub JsonSend(sType As String, hS As Socket, vJsonData As Variant, Option
       Endif
     Endif
 
-    hS.Begin
+    hS.Begin()
     hS.EndOfLine = gb.Windows
-    Print #hS, "HTTP/1.1 200 OK"
+    hS.Print("HTTP/1.1 200 OK")
     'Print #hS, "Date: " & Format$(DateAdd(Now, gb.Minute, CInt(Main.fAstroAutoTimezone * -60)), "ddd dd mmm yyyy hh:nn:ss") & " GMT"
-    Print #hS, "Connection: close"
+    hS.Print("Connection: close")
     If bDeflate Then
-      Print #hS, "Content-Length: " & Len(sDeflateData)
+      hS.Print("Content-Length: " & Len(sDeflateData))
     Else
-      Print #hS, "Content-Length: " & Len(sJsonData)
+      hS.Print("Content-Length: " & Len(sJsonData))
     Endif
-    Print #hS, "Content-Type: application/json; charset=utf-8"
-    If bDeflate Then Print #hS, "Content-Encoding: deflate"
-    If sCrossOrigin Then Print #hS, "Access-Control-Allow-Origin: " & sCrossOrigin
-    Print #hS, "Server: Gambas JSON-RPC Server"
-    Print #hS, ""
+    hS.Print("Content-Type: application/json; charset=utf-8")
+    If bDeflate Then hS.Print("Content-Encoding: deflate")
+    If sCrossOrigin Then hS.Print("Access-Control-Allow-Origin: " & sCrossOrigin)
+    hS.Print("Server: Gambas JSON-RPC Server")
+    hS.Print("")
 
     ' Writes compress data when possible
     If bDeflate Then
-      Write #hS, sDeflateData, Len(sDeflateData)
+      hS.Print(sDeflateData)
     Else
-      Write #hS, sJsonData, Len(sJsonData)
+      hS.Print(sJsonData)
     Endif
 
-    Try hS.Blocking = True
-    Try hS.Send
-    Try hS.Blocking = False
+    Try hS.Send()
 
   Else If sType = "RAW" Then
-    Try Write #hS, sJsonData, Len(sJsonData)
+    Try hS.Write(sJsonData)
   Endif
 
 Catch
@@ -371,7 +383,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Process JSON-RPC request. The sType can be "HTTP", "HTTPURL" or "RAW"
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ProcessQuery(sType As String, hS As Socket, Buf As String, Optional cData As Collection)
+Private Sub ProcessQuery(sType As String, hS As CSSLSocket, Buf As String, Optional cData As Collection)
 
   Dim sJsonData As String
   Dim vTestData As Variant
@@ -532,11 +544,11 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Read data from the Socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Socket_Read()
+Public Sub SSLSocket_Read(sData As String)
 
   Dim Buf As String
   Dim sCad As String
-  Dim hS As Socket
+  Dim hS As CSSLSocket
   Dim cCount As Integer
   Dim cLen As Integer
   Dim cWait As Integer = 1
@@ -552,10 +564,9 @@ Public Sub Socket_Read()
   If hS = Null Then Return
 
   If cCol["buffer"] = "" Then
-    If Lof(hS) >= 5 Then
+    If Len(sData) >= 5 Then
 
-      Try Read #hS, Buf, Lof(hS)
-      cCol["buffer"] &= Buf
+      cCol["buffer"] &= sData
 
       ' Reject a HTTP GET request properly
       If Left(cCol["buffer"], 4) = "GET " Then
@@ -588,8 +599,7 @@ Public Sub Socket_Read()
     Endif
 
   Else
-    Try Read #hS, Buf, Lof(hS)
-    cCol["buffer"] &= Buf
+    cCol["buffer"] &= sData
 
     ' Don't continue, because this is the second (or more) iteration to read the data
     ' The first iteration will handle the complete request
@@ -735,11 +745,11 @@ Public Sub Socket_Read()
         If cCol["protocol"] = 1 And InStr(UCase(Buf), "EXPECT: 100-CONTINUE") > 0 Then
           ' Do a special check if no body is received - only then reply
           If InStr(cCol["buffer"], Chr(13) & Chr(10) & Chr(13) & Chr(10)) + 3 = Len(cCol["buffer"]) Then
-            hS.Begin
+            hS.Begin()
             hS.EndOfLine = gb.Windows
-            Print #hS, "HTTP/1.1 100 Continue"
-            Print #hS, ""
-            Try hS.Send
+            hS.Print("HTTP/1.1 100 Continue")
+            hS.Print("")
+            Try hS.Send()
           Endif
         Endif
 
@@ -774,19 +784,19 @@ Public Sub Socket_Read()
         If cLen >= cCol["length"] Then 
 
           If cCol["method"] = "OPTIONS" Then
-            hS.Begin
+            hS.Begin()
             hS.EndOfLine = gb.Windows
-            Print #hS, "HTTP/1.1 200 OK"
+            hS.Print("HTTP/1.1 200 OK")
             'Print #hS, "Date: " & Format$(DateAdd(Now, gb.Minute, CInt(Main.fAstroAutoTimezone * -60)), "ddd dd mmm yyyy hh:nn:ss") & " GMT"
             If cCol["cross-origin"] Then
-              Print #hS, "Access-Control-Allow-Origin: " & cCol["cross-origin"]
-              Print #hS, "Access-Control-Allow-Methods: POST, PUT, OPTIONS"
-              If cCol["access-control-request-headers"] Then Print #hS, "Access-Control-Allow-Headers: " & cCol["access-control-request-headers"] 
+              hS.Print("Access-Control-Allow-Origin: " & cCol["cross-origin"])
+              hS.Print("Access-Control-Allow-Methods: POST, PUT, OPTIONS")
+              If cCol["access-control-request-headers"] Then hS.Print("Access-Control-Allow-Headers: " & cCol["access-control-request-headers"])
             Else
-              Print #hS, "Allow: POST, PUT, OPTIONS"
+              hS.Print("Allow: POST, PUT, OPTIONS")
             Endif
-            Print #hS, "Content-Length: 0"
-            Print #hS, ""
+            hS.Print("Content-Length: 0")
+            hS.Print("")
             Try hS.Send
           Else
             ProcessQuery("HTTP", hS, cCol["buffer"], ["cross-origin": cCol["cross-origin"], "deflate": cCol["deflate"]])
@@ -841,7 +851,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Remove a suddenly socket from the list
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Socket_Closed()
+Public Sub SSLSocket_Closed()
 
   RemoveSocket(Last)
 
@@ -850,7 +860,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Close and remove Socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub RemoveSocket(hS As Socket)
+Private Sub RemoveSocket(hS As CSSLSocket)
 
   Dim cCol As Collection
   Dim bDeviceUpdate As Boolean = False
@@ -858,7 +868,7 @@ Private Sub RemoveSocket(hS As Socket)
 
   For Each cCol In $SockColl
     If hS = cCol["socket"] Then
-      Try Close #hS
+      Try hS.Close()
       $SockColl.Remove(cCol["id"])
       Continue
     Endif
@@ -891,13 +901,15 @@ Public Sub JsonRpcSocket_Connection(RemoteHost As String)
 
   Dim SockCollEntry As New Collection
   Dim iId As Integer
-  Dim hS As Socket
+  Dim hS As CSSLSocket
+
+  hS = New CSSLSocket As "SSLSocket"
 
   ' If a whitelist exist, reject all other IP address
   If $IPWhiteList.Count >= 1 Then
     If Not $IPWhiteList.Exist(RemoteHost) Then
-      hS = JsonRpcSocket.Accept()
-      Try Close #hS
+      hS.AcceptSocket(JsonRpcSocket)
+      hS.Close()
       Return
     Endif
   Endif
@@ -907,8 +919,10 @@ Public Sub JsonRpcSocket_Connection(RemoteHost As String)
     iId = Int(Rnd(1, 32768))
   Loop Until Not $SockColl.Exist(iId)
 
+  hS.AssignSocket(JsonRpcSocket)
+
   SockCollEntry.Add("", "buffer")
-  SockCollEntry.Add(JsonRpcSocket.Accept(), "socket")
+  SockCollEntry.Add(hS, "socket")
   SockCollEntry.Add("", "protocol")
   SockCollEntry.Add(-1, "length")
   SockCollEntry.Add(0, "type")
@@ -943,6 +957,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Listen(Port As Integer, MaxConn As Integer, bDebug As Boolean, Optional WhiteList As String = "")
 
+  Dim iRet As Integer
+
   $bListening = False
 
   If Port < 1 Or Port > 65535 Then
@@ -956,9 +972,25 @@ Public Sub Listen(Port As Integer, MaxConn As Integer, bDebug As Boolean, Option
   Endif
 
   If Not JsonRpcSocket Then
-    JsonRpcSocket = New ServerSocket As "JsonRpcSocket"
+    JsonRpcSocket = New CSSLServerSocket As "JsonRpcSocket"
   Else
-    If JsonRpcSocket.Status <> 0 Then JsonRpcSocket.Close()
+    iRet = JsonRpcSocket.Status
+    If iRet <> 0 Then
+      Try JsonRpcSocket.Close()
+      Error.Raise("ServerSocket can't be started, RC=" & iRet)
+      Return
+    Endif
+  Endif
+
+  If $iEncrypt = Net.SSL Then
+    JsonRpcSocket.Encrypt = Net.SSL
+    JsonRpcSocket.SSLCertificate = $sSSLCertificate
+    JsonRpcSocket.SSLPrivateKey = $sSSLPrivateKey
+    Try JsonRpcSocket.SSLStart()
+    If Error Then
+      Error.Raise("SSL start failed (" & Error.Text & ")")
+      Return
+    Endif
   Endif
 
   ' Store debug flag
@@ -980,12 +1012,12 @@ Public Sub Listen(Port As Integer, MaxConn As Integer, bDebug As Boolean, Option
   Endif
 
   If Error Then
-    Error.Raise("Unable to listen at TCP port " & Port)
+    Error.Raise("Unable to listen at TCP port " & Port & " (" & Error.Text & ")")
     Return
   Endif
 
   If JsonRpcSocket.Status < 0 Then
-    Error.Raise("Unable to listen at TCP port " & Port)
+    Error.Raise("Unable to listen at TCP port " & Port & "(Status=" & JsonRpcSocket.Status & ")")
     Return
   Endif
 
@@ -1053,3 +1085,65 @@ Public Sub DeviceUpdate(cData As JSONCollection)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Function Encrypt_Read() As Integer
+
+  Return $iEncrypt
+
+End
+
+Function Encrypt_Write(iEncrypt As Integer)
+
+  Select iEncrypt
+    Case Net.None
+      $iEncrypt = Net.None
+    Case Net.SSL
+      $iEncrypt = Net.SSL
+    Default
+      $iEncrypt = Net.None
+  End Select
+
+End
+
+Function SSLCertificate_Read() As String
+
+  Return $sSSLCertificate
+
+End
+
+Function SSLCertificate_Write(sSSLCertificate As String)
+
+  $sSSLCertificate = sSSLCertificate
+
+End
+
+Function SSLPrivateKey_Read() As String
+
+  Return $sSSLPrivateKey
+
+End
+
+Function SSLPrivateKey_Write(sSSLPrivateKey As String)
+
+  $sSSLPrivateKey = sSSLPrivateKey
+
+End
+
+Function SSLMethod_Read() As Long
+
+  Return $lSSLMethod
+
+End
+
+Function SSLMethod_Write(lSSLMethod As Long)
+
+  ' Reset the Method if we supply 0
+  If lSSLMethod = 0 Then
+    $lSSLMethod = 0
+  Else
+    $lSSLMethod += lSSLMethod
+  Endif
+
+End

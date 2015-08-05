@@ -4,6 +4,12 @@
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (671,'VMB4RYLD','Velbus - 4 Channel relay module','Velbus','13|2');
 
 --
+-- Modify settings_jsonrpc
+--
+ALTER TABLE settings_jsonrpc DROP COLUMN `sslcertificate` , DROP COLUMN `httpsenabled` , DROP COLUMN `httpenabled` , DROP COLUMN `httpsport`;
+ALTER TABLE settings_jsonrpc ADD COLUMN `sslenabled` TINYINT(1) NOT NULL DEFAULT '0'  AFTER `debug` ;
+
+--
 -- Finally update to 1.0.022
 --
 
