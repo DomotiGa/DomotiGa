@@ -95,8 +95,8 @@ cp ../../DomotiGa3/.src/CSMS.class .
 cp ../../DomotiGa3/.src/CSmartMeter.class .
 cp ../../DomotiGa3/.src/CSmartVISUServer.class .
 cp ../../DomotiGa3/.src/CSqueezeServer.class .
-cp ../../DomotiGa3/.src/CSSLServerSocket.class .
-cp ../../DomotiGa3/.src/CSSLSocket.class .
+cp ../../DomotiGa3/.src/CServerSocket.class .
+cp ../../DomotiGa3/.src/CSocket.class .
 cp ../../DomotiGa3/.src/CTelnetServer.class .
 cp ../../DomotiGa3/.src/CTemp08.class .
 cp ../../DomotiGa3/.src/CTemperaturNu.class .

@@ -1,7 +1,7 @@
 ' Gambas class file
 
 ' Description:
-' CSSLSocket.class
+' CSocket.class
 ' Support none-SSL and SSL TCP sockets
 
 ' Development Status:
@@ -28,9 +28,12 @@ Private Extern SSL_get_error(pSSL As Pointer, iRC As Integer) As Integer
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' My events
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Event Read(sData As String)
 Event Closed
-'Event Error
+Event Found
+Event MyError(sError As String)
+Event Read(sData As String)
+Event Ready
+Event Write
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Constants
@@ -49,22 +52,30 @@ Public Const SSL_ERROR_WANT_ACCEPT As Integer = 8
 ' Properties
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Property EndOfLine As Integer
+Property Read Handle As Integer
+Property Host As String
+Property Read LocalHost As String
+Property Read LocalPort As Integer
+Property Path As String
+Property Port As Integer
+Property Read RemoteHost As String
+Property Read RemotePort As Integer
+Property Read Status As Integer
 Property Timeout As Integer
-Property Tag As String
+Property Tag As Variant
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $iEndOfLine As Integer = gb.Unix
 Private $iTimeout As Integer = 0
-Private $sTag As String
 Private $iEncrypt As Integer = Net.None ' 0=Net.None, 1=Net.SSL
 Private $iSSLBufferSize As Integer = 1024 ' The SSL buffer size for reading the socket
 Private $pCTX As Pointer
 Private $pSSL As Pointer
 Private $bSSLAcceptHandshake As Boolean
 Private $sData As String
-Public MySocket As Socket
+Public MySocket As New Socket
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Called when Class is created
@@ -100,14 +111,24 @@ Public Sub MySocket_Read()
 
   If $iEncrypt = Net.SSL Then
 
+    If $pSSL = Null Then
+      Raise MyError("SSL Object has Null value (SSL_read)")
+      Return
+    Endif 
+
     If Not $bSSLAcceptHandshake Then
       iRet = SSL_accept($pSSL)
       If iRet = 1 Then
         $bSSLAcceptHandshake = True
+
+        ' Raise Ready event if we are a client, SSL handshake is done
+        If MySocket.Server = Null Then
+          Raise Ready
+        Endif
       Else
         If iRet = -1 Then
           Try iRet = SSL_get_error($pSSL, iRet)
-          If iRet <> SSL_ERROR_WANT_READ Then
+          If iRet <> SSL_ERROR_WANT_READ And If iRet <> SSL_ERROR_WANT_WRITE Then
             If $pSSL <> Null Then
               Try SSL_shutdown($pSSL)
               Try SSL_free($pSSL)
@@ -116,8 +137,7 @@ Public Sub MySocket_Read()
 
             Try Close #MySocket
 
-            'Print "SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")"
-            'Raise Error
+            Raise MyError("SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
             Return
           Endif
         Endif
@@ -157,6 +177,20 @@ Public Sub MySocket_Read()
   ' Data read, raise the read event for further processing
   If sData Then
     Raise Read(sData)
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Raise a Write event if the socket is ready for writing
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Write()
+
+  If $iEncrypt = Net.SSL Then
+    ' Not sure this works?
+    Raise Write
+  Else
+    Raise Write
   Endif
 
 End
@@ -212,10 +246,31 @@ Public Sub Send()
 
   If $iEncrypt = Net.SSL Then
 
+    If $pSSL = Null Then
+      Error.Raise("SSL Object has Null value (SSL_write)")
+      Return
+    Endif 
+
     If Not $bSSLAcceptHandshake Then
       iRet = SSL_accept($pSSL)
       If iRet = 1 Then
         $bSSLAcceptHandshake = True
+      Else
+        If iRet = -1 Then
+          Try iRet = SSL_get_error($pSSL, iRet)
+          If iRet <> SSL_ERROR_WANT_READ And If iRet <> SSL_ERROR_WANT_WRITE Then
+            If $pSSL <> Null Then
+              Try SSL_shutdown($pSSL)
+              Try SSL_free($pSSL)
+              $pSSL = Null
+            Endif
+
+            Try Close #MySocket
+
+            Error.Raise("SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
+            Return
+          Endif
+        Endif
       Endif
     Endif
 
@@ -236,7 +291,7 @@ Public Sub Send()
 
   Else
     MySocket.Blocking = True
-    Write #MySocket, $sData, Len($sData)
+    Try Write #MySocket, $sData, Len($sData)
     MySocket.Blocking = False
   Endif
 
@@ -257,10 +312,31 @@ Public Sub Write(sData As String)
 
   If $iEncrypt = Net.SSL Then
 
+    If $pSSL = Null Then
+      Error.Raise("SSL Object has Null value (SSL_write)")
+      Return
+    Endif 
+
     If Not $bSSLAcceptHandshake Then
       iRet = SSL_accept($pSSL)
       If iRet = 1 Then
         $bSSLAcceptHandshake = True
+      Else
+        If iRet = -1 Then
+          Try iRet = SSL_get_error($pSSL, iRet)
+          If iRet <> SSL_ERROR_WANT_READ And If iRet <> SSL_ERROR_WANT_WRITE Then
+            If $pSSL <> Null Then
+              Try SSL_shutdown($pSSL)
+              Try SSL_free($pSSL)
+              $pSSL = Null
+            Endif
+
+            Try Close #MySocket
+
+            Error.Raise("SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
+            Return
+          Endif
+        Endif
       Endif
     Endif
 
@@ -312,6 +388,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Socket is closed by client
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  If $iEncrypt <> Net.SSL Then
+    Raise Ready
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Socket is closed by client
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub MySocket_Closed()
 
   Raise Closed
@@ -321,7 +408,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Assigns the just created socket to our SSLSocket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub AssignSocket(sServerSocket As CSSLServerSocket)
+Public Sub AssignSocket(sServerSocket As CServerSocket)
 
   Dim iRet As Integer
 
@@ -391,6 +478,21 @@ Public Sub AssignSocket(sServerSocket As CSSLServerSocket)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Connect as a client to a server
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Connection(Optional sHostOrPath As String, Optional iPort As Integer = 0)
+
+  If sHostOrPath And iPort Then
+    MySocket.Connect(sHostOrPath, iPort)
+  Else If sHostOrPath Then
+    MySocket.Connect(sHostOrPath)
+  Else
+    MySocket.Connect()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Display a readable SSL_ERROR
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Display_SSL_ERROR(iRet As Integer) As String
@@ -422,6 +524,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Properties
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Function EndOfLine_Read() As Integer
 
   Return $iEndOfLine
@@ -455,15 +558,87 @@ Function TimeOut_Write(iTimeout As Integer)
 
 End
 
-Function Tag_Read() As String
+Function Tag_Read() As Variant
 
-  Return $sTag
-
-End
-
-Function Tag_Write(sTag As String)
-
-  $sTag = sTag
+  Return MySocket.Tag
 
 End
 
+Function Tag_Write(vTag As Variant)
+
+  MySocket.Tag = vTag
+
+End
+
+Function Host_Read() As String
+
+  Return MySocket.Host
+
+End
+
+Function Host_Write(sHost As String)
+
+  MySocket.Host = sHost
+
+End
+
+Function Port_Read() As Integer
+
+  Return MySocket.Port
+
+End
+
+Function Port_Write(iPort As Integer)
+
+  MySocket.Port = iPort
+
+End
+
+Function Handle_Read() As Integer
+
+  Return MySocket.Handle
+
+End
+
+Function LocalHost_Read() As String
+
+  Return MySocket.LocalHost
+
+End
+
+
+Function LocalPort_Read() As Integer
+
+  Return MySocket.LocalPort
+
+End
+
+Function RemoteHost_Read() As String
+
+  Return MySocket.RemoteHost
+
+End
+
+Function RemotePort_Read() As Integer
+
+  Return MySocket.RemotePort
+
+End
+
+Function Status_Read() As Integer
+
+  Return MySocket.Status
+
+End
+
+Function Path_Read() As String
+
+  Return MySocket.Path
+
+End
+
+Function Path_Write(sPath As String)
+
+  MySocket.Path = sPath
+
+End
