@@ -28,12 +28,12 @@ Private Extern SSL_get_error(pSSL As Pointer, iRC As Integer) As Integer
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' My events
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Event Closed
-Event Found
-Event MyError(sError As String)
-Event Read(sData As String)
-Event Ready
-Event Write
+Event {Closed}
+Event {Found}
+Event {Error}(sError As String)
+Event {Read}(sData As String)
+Event {Ready}
+Event {Write}
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Constants
@@ -47,6 +47,11 @@ Public Const SSL_ERROR_SYSCALL As Integer = 5
 Public Const SSL_ERROR_ZERO_RETURN As Integer = 6
 Public Const SSL_ERROR_WANT_CONNECT As Integer = 7
 Public Const SSL_ERROR_WANT_ACCEPT As Integer = 8
+
+Public Const PROTOCOL_NONE As Integer = 0
+Public Const PROTOCOL_HTTP As Integer = 1
+Public Const PROTOCOL_HTTP_WEBSOCKET As Integer = 2
+Public Const PROTOCOL_WEBSOCKET As Integer = 3
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Properties
@@ -63,6 +68,16 @@ Property Read RemotePort As Integer
 Property Read Status As Integer
 Property Timeout As Integer
 Property Tag As Variant
+Property Protocol As Integer
+
+Property HTTPCode As Integer
+Property HTTPTimeOut As Integer
+Property HTTPKeepAlive As Integer
+Property HTTPSize As Integer
+Property HTTPMethods As String[]
+Property HTTPContentTypes As String[]
+Property HTTPHeaders As String[]
+Property HTTPRequestInUrl As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Variables
@@ -70,17 +85,36 @@ Property Tag As Variant
 Private $iEndOfLine As Integer = gb.Unix
 Private $iTimeout As Integer = 0
 Private $iEncrypt As Integer = Net.None ' 0=Net.None, 1=Net.SSL
+Private $iProtocol As Integer = PROTOCOL_NONE
 Private $iSSLBufferSize As Integer = 1024 ' The SSL buffer size for reading the socket
 Private $pCTX As Pointer
 Private $pSSL As Pointer
 Private $bSSLAcceptHandshake As Boolean
-Private $sData As String
+Private $sDataIn As String
+Private $sDataOut As String
 Public MySocket As New Socket
+
+Private $iHTTPCode As Integer
+Private $iHTTPSize As Integer = 65535
+Private $cHTTPMethods As New String[]
+Private $cHTTPContentTypes As New String[]
+Private $cHTTPHeaders As New String[]
+Private $sHTTPRequestInUrl As String
+Private $iHTTPTimeOut As Integer = 200 '*0.005
+Private $iHTTPKeepAlive As Integer = 15000
+Private $sHTTPMethod As String
+Private $cHTTPConnection As New String[]
+Private $bHTTPDeflate As Boolean = False
+Private $sHTTPCrossOrigin As String
+Private $sHTTPAccessControlRequestHeaders As String
+Public $tHTTPTimer As Timer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Called when Class is created
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub _new()
+
+  $cHTTPMethods.Insert(["POST", "GET", "OPTIONS", "HEAD", "PUT", "DELETE", "TRACE", "CONNECT"])
 
 End
 
@@ -95,6 +129,7 @@ Public Sub _free()
     $pSSL = Null
   Endif
 
+  Try $tHTTPTimer.Stop
   Try Close #MySocket
 
 End
@@ -112,7 +147,7 @@ Public Sub MySocket_Read()
   If $iEncrypt = Net.SSL Then
 
     If $pSSL = Null Then
-      Raise MyError("SSL Object has Null value (SSL_read)")
+      Raise Error("SSL Object has Null value (SSL_read)")
       Return
     Endif 
 
@@ -137,7 +172,7 @@ Public Sub MySocket_Read()
 
             Try Close #MySocket
 
-            Raise MyError("SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
+            Raise Error("SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
             Return
           Endif
         Endif
@@ -176,8 +211,513 @@ Public Sub MySocket_Read()
 
   ' Data read, raise the read event for further processing
   If sData Then
-    Raise Read(sData)
+
+    If $iProtocol = PROTOCOL_HTTP Then
+
+      If $sDataIn Then
+        ' Don't continue, the other loop will pick of the changes
+        $sDataIn &= sData
+        Return
+      Else
+        $sHTTPMethod = ""
+        $cHTTPConnection.Clear()
+        $bHTTPDeflate = False
+        $sHTTPCrossOrigin = ""
+        $sHTTPAccessControlRequestHeaders = ""
+
+        $sDataIn &= sData
+
+        If Protocol_HTTP_Read() Then
+          Raise Read($sDataIn)
+        Endif
+
+        $sDataIn = ""
+      Endif
+
+    Else
+      $sDataIn = ""
+      Raise Read(sData)
+    Endif
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle HTTP data and only return the body of the request upstream
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Protocol_HTTP_Read() As Boolean
+
+  Dim iWait As Integer = 1
+  Dim iCount As Integer
+  Dim iPos As Integer
+  Dim iLen As Integer
+  Dim sHTTPHeader As String
+  Dim sHTTPHeaderTemp As String
+  Dim sHTTPProtocol As String
+  Dim iHTTPContentLength As Integer = -1
+  Dim sHTTPContentType As String
+  Dim bHTTPChunked As Boolean = False
+
+  Try $tHTTPTimer.Stop
+
+  ' At least wait until we retrieve the http headers
+  For iCount = iWait To ($iHTTPTimeOut + 1) Step 1
+    If InStr($sDataIn, gb.CrLf & gb.CrLf) Then Break
+    Wait 0.005
+  Next
+
+  ' Problem with reading valid http data
+  If iWait > $iHTTPTimeOut Then
+    Close()
+    Raise Closed()
+    Return False
+  Endif
+
+  sHTTPHeader = Left($sDataIn, InStr($sDataIn, gb.CrLf & gb.CrLf))
+  sHTTPHeaderTemp = Left(sHTTPHeader, InStr(sHTTPHeader, Chr(13)) - 1)
+
+  ' Look for the http method
+  iPos = InStr(sHTTPHeaderTemp, " ") - 1
+  If iPos >= 1 Then
+    $sHTTPMethod = Left(sHTTPHeaderTemp, iPos)
+  Else
+    Close()
+    Raise Closed()
+    Return False
+  Endif
+
+  iPos = RInStr(sHTTPHeaderTemp, " ") + 1
+  If iPos > 1 Then
+    sHTTPProtocol = Mid(sHTTPHeaderTemp, iPos)
+
+    If sHTTPProtocol <> "HTTP/1.0" And If sHTTPProtocol <> "HTTP/1.1" Then
+      $iHTTPCode = 505 'HTTP Version Not Supported
+      Send()
+      Close()
+      Return False
+    Endif
+  Else
+    Close()
+    Return False
+  Endif
+
+  ' Only allow certain methods
+  If Not $cHTTPMethods.Exist($sHTTPMethod) Then
+    $iHTTPCode = 405 'Not Allowed
+    Send()
+    Close()
+    Return False
+  Endif
+
+  iPos = InStr(UCase(sHTTPHeader), Chr(10) & "ACCEPT-ENCODING:")
+  If iPos > 0 Then
+    sHTTPHeaderTemp = UCase(Mid(sHTTPHeader, iPos + 17))
+    sHTTPHeaderTemp = Trim(Left(sHTTPHeaderTemp, InStr(sHTTPHeaderTemp, Chr(13))))
+
+    ' The client support gzip
+    If InStr(sHTTPHeaderTemp, "DEFLATE") Then $bHTTPDeflate = True
+  Endif
+
+  iPos = InStr(UCase(sHTTPHeader), Chr(10) & "CONTENT-LENGTH:")
+  If iPos > 0 Then
+    sHTTPHeaderTemp = Mid(sHTTPHeader, iPos + 16)
+    sHTTPHeaderTemp = Trim(Left(sHTTPHeaderTemp, InStr(sHTTPHeaderTemp, Chr(13))))
+    Try iHTTPContentLength = CInt(sHTTPHeaderTemp)
+    If Error Then
+      $iHTTPCode = 411 'Length Required
+      Send()
+      Close()
+      Return False
+    Endif
+
+    If iHTTPContentLength < 0 Then
+      $iHTTPCode = 400 'Bad Request
+      Send()
+      Close()
+      Return False
+    Endif
+  Else
+
+    iPos = InStr(UCase(sHTTPHeader), Chr(10) & "TRANSFER-ENCODING:")
+    If iPos > 0 Then
+      sHTTPHeaderTemp = UCase(Mid(sHTTPHeader, iPos + 19))
+      sHTTPHeaderTemp = Trim(Left(sHTTPHeaderTemp, InStr(sHTTPHeaderTemp, Chr(13))))
+      If InStr(sHTTPHeaderTemp, "CHUNKED") Then bHTTPChunked = True
+    Endif
+
+    If Not bHTTPChunked Then
+      $iHTTPCode = 400 'Bad Request
+      Send()
+      Close()
+      Return False
+    Endif
+
+  Endif
+
+  iPos = InStr(UCase(sHTTPHeader), Chr(10) & "CONTENT-TYPE:")
+  If iPos > 0 Then
+    sHTTPContentType = UCase(Mid(sHTTPHeader, iPos + 14))
+    sHTTPContentType = Trim(Left(sHTTPContentType, InStr(sHTTPContentType, Chr(13))))
+    ' Check if we got "Content-Type: type; charset=..."
+    If InStr(sHTTPContentType, ";") Then sHTTPContentType = Left(sHTTPContentType, InStr(sHTTPContentType, ";") - 1)
+
+    sHTTPHeaderTemp = UCase($cHTTPContentTypes.Join(";"))
+    $cHTTPContentTypes = Split(sHTTPHeaderTemp, ";")
+  Endif
+
+  If $cHTTPContentTypes.Count > 0 Then
+    If sHTTPContentType Or If Not $cHTTPContentTypes.Exist(sHTTPContentType) Then
+      $iHTTPCode = 415 'Unsupported Media Type
+      Send()
+      Close()
+      Return False
+    Endif
+  Endif
+
+  iPos = InStr(UCase(sHTTPHeader), Chr(10) & "ORIGIN:")
+  If iPos > 0 Then
+    $sHTTPCrossOrigin = Mid(sHTTPHeader, iPos + 9)
+    $sHTTPCrossOrigin = Trim(Left($sHTTPCrossOrigin, InStr($sHTTPCrossOrigin, Chr(13))))
+
+    If InStr($sHTTPCrossOrigin, "http://localhost") = 1 Then $sHTTPCrossOrigin = "*"
+
+      ' Maybe we got a "Access-Control-Request-Headers" too?
+      iPos = InStr(UCase(sHTTPHeader), Chr(10) & "ACCESS-CONTROL-REQUEST-HEADERS:")
+      If iPos > 0 Then
+      $sHTTPAccessControlRequestHeaders = Mid(sHTTPHeader, iPos + 33)
+      $sHTTPAccessControlRequestHeaders = Trim(Left($sHTTPAccessControlRequestHeaders, InStr($sHTTPAccessControlRequestHeaders, Chr(13))))
+    Endif
+  Endif
+
+  iPos = InStr(UCase(sHTTPHeader), Chr(10) & "CONNECTION:")
+  If iPos > 0 Then
+    sHTTPHeaderTemp = Mid(sHTTPHeader, iPos + 13)
+    sHTTPHeaderTemp = Trim(Left(sHTTPHeaderTemp, InStr(sHTTPHeaderTemp, Chr(13))))
+    sHTTPHeaderTemp = UCase(Replace(sHTTPHeaderTemp, " ", ""))
+    $cHTTPConnection = Split(sHTTPHeaderTemp, ",")
+
+    ' Don't accept upgrades on normal HTTP requests
+    If $cHTTPConnection.Exist("UPGRADE") And If $iProtocol = PROTOCOL_HTTP Then
+      $iHTTPCode = 400 'Bad Request
+      Send()
+      Close()
+      Return False
+    Endif
+  Endif
+
+  ' HTTP/1.0 doesn't support keep-alive properly
+  If sHTTPProtocol = "HTTP/1.0" Then
+    $cHTTPConnection.Clear()
+    $cHTTPConnection.Add("CLOSE")
+  Endif
+
+  ' Any HTTP/1.1 request is required to have "Host: ..." field
+  If sHTTPProtocol = "HTTP/1.1" And If InStr(UCase(sHTTPHeader), Chr(10) & "HOST:") = 0 Then
+    $iHTTPCode = 400 'Bad Request
+    Send()
+    Close()
+    Return False
+  Endif
+
+  ' Check for "Expect: 100-continue" option & HTTP/1.1
+  If sHTTPProtocol = "HTTP/1.1" And If InStr(UCase(sHTTPHeader), Chr(10) & "EXPECT: 100-CONTINUE" & Chr(13)) > 0 Then
+
+    ' When it isn't chunked mode, reject the request if the body is too large
+    If Not bHTTPChunked Then
+      If iHTTPContentLength > $iHTTPSize Then
+        $iHTTPCode = 417 'Expectation Failed
+        Send()
+        Close()
+        Return False
+      Endif
+   Endif
+
+    ' Do a special check if no body is received - only then reply
+    If (Len(sHTTPHeader) + 3) = Len($sDataIn) Then
+      Begin()
+      $iEndOfLine = gb.Windows
+      Print("HTTP/1.1 100 Continue")
+      Print("")
+      Try Send(False)
+    Endif
+  Endif
+
+  ' When it isn't chunked mode, reject the request if the body is too large
+  If Not bHTTPChunked Then
+    If iHTTPContentLength > $iHTTPSize Then
+      $iHTTPCode = 413 'Request Entity Too Large
+      Send()
+      Close()
+      Return False
+    Endif
+  Endif
+
+  ' Check for possible URL requests
+  If iHTTPContentLength = 0 And If $sHTTPRequestInUrl Then
+    ' First get the first line, this is the URL and remove the HTTP/1.x
+    sHTTPHeaderTemp = Trim(Left(sHTTPHeader, InStr(sHTTPHeader, Chr(13)) - 9))
+    iPos = InStr(sHTTPHeaderTemp, $sHTTPRequestInUrl)
+    If iPos >= 1 Then
+      sHTTPHeaderTemp = Mid(sHTTPHeaderTemp, iPos + Len($sHTTPRequestInUrl))
+      Try $sDataIn = URL.Decode(sHTTPHeaderTemp)
+      If Error Then
+        $iHTTPCode = 400
+        Send()
+        Close()
+        Return False
+      Endif
+      Return True
+    Endif
+  Endif
+
+  ' It is possible we didn't receive all data, so loop until we think we have it
+  iPos = InStr($sDataIn, gb.CrLf & gb.CrLf) - 3
+  sHTTPHeaderTemp = gb.CrLf & "0" & gb.CrLf & gb.CrLf
+
+  For iCount = iWait To ($iHTTPTimeOut + 2) Step 1
+
+    If bHTTPChunked Then
+      If Right($sDataIn, Len(sHTTPHeaderTemp)) = sHTTPHeaderTemp Then Break
+    Else
+      iLen = Len($sDataIn) - iPos
+      If iLen >= iHTTPContentLength Then Break
+    Endif
+
+    Wait 0.005
+  Next
+
+  ' Check for possible timeout
+  If iCount > ($iHTTPTimeOut + 1) Then
+    $iHTTPCode = 408 'Request Timeout
+    Send()
+    Close()
+    Return False
+  Endif
+
+  If bHTTPChunked Then
+    sHTTPHeaderTemp = Mid($sDataIn, InStr($sDataIn, gb.CrLf & gb.CrLf) + 4)
+    $sDataIn = ""
+
+    While sHTTPHeaderTemp
+      iPos = InStr(sHTTPHeaderTemp, gb.CrLf)
+      Try iLen = Val("&H" & Left(sHTTPHeaderTemp, iPos - 1))
+      If Error Then
+        $iHTTPCode = 400 'Bad Request
+        Send()
+        Close()
+        Return False
+      Endif
+
+      sHTTPHeaderTemp = Mid(sHTTPHeaderTemp, iPos + 2)
+
+      If iLen + 2 > Len(sHTTPHeaderTemp) Then
+        $iHTTPCode = 400 'Bad Request
+        Send()
+        Close()
+        Return False
+      Endif
+
+      ' Copy the data into our input buffer and remove it
+      $sDataIn &= Left(sHTTPHeaderTemp, iLen)
+      sHTTPHeaderTemp = Mid(sHTTPHeaderTemp, iLen + 3)
+
+      ' Check if we are still inside the expected size
+      If Len($sDataIn) > $iHTTPSize Then
+        $iHTTPCode = 413 'Request Entity Too Large
+        Send()
+        Close()
+        Return False
+      Endif
+
+      ' Check if the buffer still looks ok
+      If sHTTPHeaderTemp And If InStr(sHTTPHeaderTemp, gb.CrLf) = 0 Then
+        $iHTTPCode = 400 'Bad Request
+        Send()
+        Close()
+        Return False
+      Endif
+    Wend
+
+    If $sHTTPMethod = "OPTIONS" Then
+      Send()
+      Return False
+    Endif
+
+  Else
+    If iLen < iHTTPContentLength Then
+      $iHTTPCode = 500 'Internal Server Error
+      Send()
+      Close()
+      Return False
+    Endif
+
+    If $sHTTPMethod = "OPTIONS" Then
+      Send()
+      Return False
+    Else
+      $sDataIn = Mid($sDataIn, InStr($sDataIn, gb.CrLf & gb.CrLf) + 4)
+    Endif
+  Endif
+
+  ' We are a persistent connection, start our timer
+  ' We need to exclude HTTP/1.0 and upgraded connections
+  If Not $cHTTPConnection.Exist("CLOSE") And Not $cHTTPConnection.Exist("UPGRADE") Then
+    If $tHTTPTimer = Null Then
+      $tHTTPTimer = New Timer As "HTTPTimer"
+      $tHTTPTimer.Delay = $iHTTPKeepAlive
+      $tHTTPTimer.Start
+    Else
+      $tHTTPTimer.Delay = $iHTTPKeepAlive
+      $tHTTPTimer.Start
+    Endif
+  Endif
+
+  Return True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Create HTTP data, upstream is unaware of HTTP
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Protocol_HTTP_Write()
+
+  Dim sDataOut As String
+  Dim cCz As New Compress
+  Dim sDeflateData As String
+  Dim sStr As String
+  Dim bServer As Boolean
+  Dim bContentType As Boolean
+
+  ' Check if we should respond with an error
+  Select $iHTTPCode
+    Case 100 ' Continue
+    Case 101 ' Switching Protocols
+    Case 200 ' OK
+    Case 400 ' Bad Request
+      sDataOut = "400 Bad Request"
+    Case 405 ' Not Allowed
+      sDataOut = "405 Not Allowed"
+    Case 408 ' Request Timeout
+      sDataOut = "408 Request Timeout"
+    Case 411 ' Length Required
+      sDataOut = "411 Length Required"
+    Case 413 ' Request Entity Too Large
+      sDataOut = "413 Request Entity Too Large"
+    Case 415 ' Unsupported Media Type
+      sDataOut = "415 Unsupported Media Type"
+    Case 417 'Exceptation Failed
+      sDataOut = "417 Expectation Failed"
+    Case 500 ' Internal Server Error
+      sDataOut = "500 Internal Server Error"
+    Case 505 ' HTTP Version Not Supported
+      sDataOut = "505 HTTP Version Not Supported"
+  End Select
+
+  ' Reset code to zero, it needs to be set with every send call
+  $iHTTPCode = 0
+
+  ' Something went wrong, construct output and quit
+  If sDataOut Then
+    sDataOut = "HTTP/1.1 " & sDataOut & gb.CrLf
+    bServer = False
+    For Each sStr In $cHTTPHeaders
+      If InStr(UCase(sStr), "SERVER:") = 1 Then
+        sDataOut &= sStr & gb.CrLf
+        bServer = True
+        Break
+      Endif
+    Next
+
+    If Not bServer Then sDataOut &= "Server: Gambas Server" & gb.CrLf
+    sDataOut &= "Connection: close" & gb.CrLf
+
+    If $iHTTPCode = 405 And $cHTTPMethods.Count > 0 Then
+      sDataOut &= "Allow: " & $cHTTPMethods.Join(", ") & gb.CrLf
+    Endif
+
+    sDataOut &= gb.CrLf
+    $sDataOut = sDataOut
+    Return
+  Endif
+
+  ' With an Options request, just respond and don't process further
+  If $sHTTPMethod = "OPTIONS" Then
+    sDataOut = "HTTP/1.1 200 OK" & gb.CrLf
+    If $sHTTPCrossOrigin Then
+      sDataOut &= "Access-Control-Allow-Origin: " & $sHTTPCrossOrigin & gb.CrLf
+      sDataOut &= "Access-Control-Allow-Methods: " & $cHTTPMethods.Join(", ") & gb.CrLf
+      If $sHTTPAccessControlRequestHeaders Then 
+        sDataOut &= "Access-Control-Allow-Headers: " & $sHTTPAccessControlRequestHeaders & gb.CrLf
+      Endif
+    Else
+      sDataOut &= "Allow: " & $cHTTPMethods.Join(", ") & gb.CrLf
+    Endif
+
+    sDataOut &= "Content-Length: 0" & gb.CrLf
+    sDataOut &= gb.CrLf
+    $sDataOut = sDataOut
+    Return
+  Endif
+
+  ' If we *send* send a compressed stream, try to compress
+  If $bHTTPDeflate Then
+    cCz.Type = "zlib"
+    Try sDeflateData = cCz.String($sDataOut)
+    If Not Error Then
+      If Len(sDeflateData) >= Len($sDataOut) Then
+        ' Most likely the string/data is to small
+        $bHTTPDeflate = False
+      Endif
+    Else
+      ' don't do anything
+      $bHTTPDeflate = False
+    Endif
+  Endif
+
+  sDataOut = "HTTP/1.1 200 OK" & gb.CrLf
+  'Print "Date: " & Format$(DateAdd(Now, gb.Minute, CInt(Main.fAstroAutoTimezone * -60)), "ddd dd mmm yyyy hh:nn:ss") & " GMT"
+
+  If $cHTTPConnection.Exist("CLOSE") Then
+    sDataOut &= "Connection: close" & gb.CrLf
+  Else
+    sDataOut &= "Connection: keep-alive" & gb.CrLf
+  Endif
+
+  If $bHTTPDeflate Then
+    sDataOut &= "Content-Length: " & Len(sDeflateData) & gb.CrLf
+  Else
+    sDataOut &= "Content-Length: " & Len($sDataOut) & gb.CrLf
+  Endif
+  If $bHTTPDeflate Then sDataOut &= "Content-Encoding: deflate" & gb.CrLf
+  If $sHTTPCrossOrigin Then sDataOut &= "Access-Control-Allow-Origin: " & $sHTTPCrossOrigin & gb.CrLf
+
+  For Each sStr In $cHTTPHeaders
+    sDataOut &= sStr & gb.CrLf
+    sStr = UCase(sStr)
+    If InStr(sStr, "SERVER:") = 1 Then bServer = True
+    If InStr(sStr, "CONTENT-TYPE:") = 1 Then bContentType = True
+  Next
+
+  If Not bServer Then sDataOut &= "Server: Gambas Server" & gb.CrLf
+  If Not bContentType Then sDataOut &= "Content-Type: text/plain" & gb.CrLf
+
+  sDataOut &= gb.CrLf
+
+  ' Writes compress data when possible
+  If $bHTTPDeflate Then
+    $sDataOut = sDataOut & sDeflateData
+  Else
+    $sDataOut = sDataOut & $sDataOut
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' HTTP Timer to terminate inactive persistent connections
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub HTTPTimer_Timer()
+
+  Close()
 
 End
 
@@ -200,25 +740,29 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Begin()
 
-  $sData = ""
+  $sDataOut = ""
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Add the line with a proper linefeed character(s)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Print(sData As String)
+Public Sub Print(sData As String, Optional bEOL As Boolean = True)
 
-  Select $iEndOfLine
-    Case gb.Unix
-      $sData &= sData & Chr$(10)
-    Case gb.Windows
-      $sData &= sData & Chr$(13) & Chr$(10)
-    Case gb.Mac
-      $sData &= sData & Chr$(13)
-    Default
-      $sData &= sData & Chr$(10)
-  End Select
+  If bEOL Then
+    Select $iEndOfLine
+      Case gb.Unix
+        $sDataOut &= sData & Chr$(10)
+      Case gb.Windows
+        $sDataOut &= sData & Chr$(13) & Chr$(10)
+      Case gb.Mac
+        $sDataOut &= sData & Chr$(13)
+      Default
+        $sDataOut &= sData & Chr$(10)
+    End Select
+  Else
+    $sDataOut &= sData
+  Endif
 
 End
 
@@ -227,22 +771,27 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Drop()
 
-  $sData = ""
+  $sDataOut = ""
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Send the data in the internal buffer, as line/print
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Send()
+Public Sub Send(Optional bProtocol As Boolean = True)
 
   Dim pData As Pointer
   Dim iRet As Integer
   Dim sStream As Stream
 
-  ' don't call write, that costs 50% performance!
+  If bProtocol Then
+    If $iProtocol = PROTOCOL_HTTP Then
+      Protocol_HTTP_Write()
+    Else
+    Endif
+  Endif
 
-  If Not $sData Then Return
+  If Not $sDataOut Then Return
 
   If $iEncrypt = Net.SSL Then
 
@@ -277,10 +826,10 @@ Public Sub Send()
     ' Don't continue if the handshake didn't succeed
     If Not $bSSLAcceptHandshake Then Return
 
-    pData = Alloc(Len($sData))
+    pData = Alloc(Len($sDataOut))
     sStream = Memory pData For Read Write
-    Write #sStream, $sData, Len($sData)
-    Try iRet = SSL_write($pSSL, pData, Len($sData))
+    Write #sStream, $sDataOut, Len($sDataOut)
+    Try iRet = SSL_write($pSSL, pData, Len($sDataOut))
     Free(pData)
 
     If iRet <= 0 Then
@@ -291,76 +840,22 @@ Public Sub Send()
 
   Else
     MySocket.Blocking = True
-    Try Write #MySocket, $sData, Len($sData)
+    Try Write #MySocket, $sDataOut, Len($sDataOut)
     MySocket.Blocking = False
   Endif
 
-  $sData = ""
+  $sDataOut = ""
 
-End
+  ' If HTTP Protocol, please run a Close() here
+  If bProtocol Then
+    If $iProtocol = PROTOCOL_HTTP Then
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Write data as binary
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Write(sData As String)
-
-  Dim pData As Pointer
-  Dim iRet As Integer
-  Dim sStream As Stream
-
-  If Not sData Then Return
-
-  If $iEncrypt = Net.SSL Then
-
-    If $pSSL = Null Then
-      Error.Raise("SSL Object has Null value (SSL_write)")
-      Return
-    Endif 
-
-    If Not $bSSLAcceptHandshake Then
-      iRet = SSL_accept($pSSL)
-      If iRet = 1 Then
-        $bSSLAcceptHandshake = True
-      Else
-        If iRet = -1 Then
-          Try iRet = SSL_get_error($pSSL, iRet)
-          If iRet <> SSL_ERROR_WANT_READ And If iRet <> SSL_ERROR_WANT_WRITE Then
-            If $pSSL <> Null Then
-              Try SSL_shutdown($pSSL)
-              Try SSL_free($pSSL)
-              $pSSL = Null
-            Endif
-
-            Try Close #MySocket
-
-            Error.Raise("SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
-            Return
-          Endif
-        Endif
+      ' Close the connection if the client requested it
+      If $cHTTPConnection.Exist("CLOSE") Then
+        Close()
       Endif
+    Else
     Endif
-
-    ' Don't continue if the handshake didn't succeed
-    If Not $bSSLAcceptHandshake Then Return
-
-    pData = Alloc(Len(sData))
-    sStream = Memory pData For Read Write
-    Write #sStream, sData, Len(sData)
-    Try iRet = SSL_write($pSSL, pData, Len(sData))
-    Free(pData)
-
-    Try iRet = SSL_write($pSSL, pData, Len(sData))
-
-    If iRet <= 0 Then
-      Try iRet = SSL_get_error($pSSL, iRet)
-      Error.Raise("SSL Write Failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
-      Return
-    Endif
-
-  Else
-    MySocket.Blocking = True
-    Write #MySocket, sData, Len(sData)
-    MySocket.Blocking = False
   Endif
 
 End
@@ -369,6 +864,8 @@ End
 ' Socket is closed by server
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Close()
+
+  Try $tHTTPTimer.Stop
 
   If $iEncrypt = Net.SSL Then
     If $pSSL <> Null Then
@@ -381,7 +878,9 @@ Public Sub Close()
     Try Close #MySocket
   Endif
 
-  Object.Deattach(MySocket)
+  Object.Detach(MySocket)
+
+  Raise Closed()
 
 End
 
@@ -400,6 +899,8 @@ End
 ' Socket is closed by client
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub MySocket_Closed()
+
+  Try $tHTTPTimer.Stop
 
   Raise Closed
 
@@ -640,5 +1141,113 @@ End
 Function Path_Write(sPath As String)
 
   MySocket.Path = sPath
+
+End
+
+Function Protocol_Read() As Integer
+
+  Return $iProtocol
+
+End
+
+Function Protocol_Write(iProtocol As Integer)
+
+  $iProtocol = iProtocol
+
+End
+
+Function HTTPCode_Read() As Integer
+
+  Return $iHTTPCode
+
+End
+
+Function HTTPCode_Write(iHTTPCode As Integer)
+
+  $iHTTPCode = iHTTPCode
+
+End
+
+Function HTTPSize_Read() As Integer
+
+  Return $iHTTPSize
+
+End
+
+Function HTTPSize_Write(iHTTPSize As Integer)
+
+  $iHTTPSize = iHTTPSize
+
+End
+
+Function HTTPMethods_Read() As String[]
+
+  Return $cHTTPMethods
+
+End
+
+Function HTTPMethods_Write(cHTTPMethods As String[])
+
+  $cHTTPMethods = cHTTPMethods
+
+End
+
+Function HTTPContentTypes_Read() As String[]
+
+  Return $cHTTPContentTypes
+
+End
+
+Function HTTPContentTypes_Write(cHTTPContentTypes As String[])
+
+  $cHTTPContentTypes = cHTTPContentTypes
+
+End
+
+Function HTTPHeaders_Read() As String[]
+
+  Return $cHTTPHeaders
+
+End
+
+Function HTTPHeaders_Write(cHTTPHeaders As String[])
+
+  $cHTTPHeaders = cHTTPHeaders
+
+End
+
+Function HTTPRequestInUrl_Read() As String
+
+  Return $cHTTPHeaders
+
+End
+
+Function HTTPRequestInUrl_Write(sHTTPRequestInUrl As String)
+
+  $sHTTPRequestInUrl = sHTTPRequestInUrl
+
+End
+
+Function HTTPTimeOut_Read() As Integer
+
+  Return $iHTTPTimeOut * 5
+
+End
+
+Function HTTPTimeOut_Write(iHTTPTimeOut As Integer)
+
+  $iHTTPTimeOut = iHTTPTimeOut / 5
+
+End
+
+Function HTTPKeepAlive_Read() As Integer
+
+  Return $iHTTPKeepAlive
+
+End
+
+Function HTTPKeepAlive_Write(iHTTPKeepAlive As Integer)
+
+  $iHTTPKeepAlive = iHTTPKeepAlive
 
 End
