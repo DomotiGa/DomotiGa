@@ -94,6 +94,7 @@ Private $sDataIn As String
 Private $sDataOut As String
 Public MySocket As New Socket
 
+Public $tHTTPTimer As Timer
 Private $iHTTPCode As Integer
 Private $iHTTPSize As Integer = 65535
 Private $cHTTPMethods As New String[]
@@ -107,7 +108,10 @@ Private $cHTTPConnection As New String[]
 Private $bHTTPDeflate As Boolean = False
 Private $sHTTPCrossOrigin As String
 Private $sHTTPAccessControlRequestHeaders As String
-Public $tHTTPTimer As Timer
+
+Private $sWebSocketProtocol As String
+Private $bWebSocketEnabled As Boolean
+Private $sWebSocketHandShake As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Called when Class is created
@@ -212,7 +216,7 @@ Public Sub MySocket_Read()
   ' Data read, raise the read event for further processing
   If sData Then
 
-    If $iProtocol = PROTOCOL_HTTP Then
+    If $iProtocol = PROTOCOL_HTTP Or If ($iProtocol = PROTOCOL_HTTP_WEBSOCKET And Not $bWebSocketEnabled) Or If ($iProtocol = PROTOCOL_WEBSOCKET And Not $bWebSocketEnabled) Then
 
       If $sDataIn Then
         ' Don't continue, the other loop will pick of the changes
@@ -235,8 +239,11 @@ Public Sub MySocket_Read()
       Endif
 
     Else
-      $sDataIn = ""
-      Raise Read(sData)
+      If $bWebSocketEnabled Then
+      Else
+        $sDataIn = ""
+        Raise Read(sData)
+      Endif
     Endif
   Endif
 
@@ -252,6 +259,7 @@ Private Sub Protocol_HTTP_Read() As Boolean
   Dim iPos As Integer
   Dim iLen As Integer
   Dim sHTTPHeader As String
+  Dim cHTTPHeader As New Collection
   Dim sHTTPHeaderTemp As String
   Dim sHTTPProtocol As String
   Dim iHTTPContentLength As Integer = -1
@@ -262,7 +270,8 @@ Private Sub Protocol_HTTP_Read() As Boolean
 
   ' At least wait until we retrieve the http headers
   For iCount = iWait To ($iHTTPTimeOut + 1) Step 1
-    If InStr($sDataIn, gb.CrLf & gb.CrLf) Then Break
+    iPos = InStr($sDataIn, gb.CrLf & gb.CrLf)
+    If iPos >= 1 Then Break
     Wait 0.005
   Next
 
@@ -273,8 +282,15 @@ Private Sub Protocol_HTTP_Read() As Boolean
     Return False
   Endif
 
-  sHTTPHeader = Left($sDataIn, InStr($sDataIn, gb.CrLf & gb.CrLf))
-  sHTTPHeaderTemp = Left(sHTTPHeader, InStr(sHTTPHeader, Chr(13)) - 1)
+  sHTTPHeader = Left($sDataIn, iPos)
+  iPos = InStr(sHTTPHeader, Chr(13))
+  If iPos >= 1 Then
+    sHTTPHeaderTemp = Left(sHTTPHeader, iPos - 1)
+  Else
+    Close()
+    Raise Closed()
+    Return False
+  Endif
 
   ' Look for the http method
   iPos = InStr(sHTTPHeaderTemp, " ") - 1
@@ -309,20 +325,19 @@ Private Sub Protocol_HTTP_Read() As Boolean
     Return False
   Endif
 
-  iPos = InStr(UCase(sHTTPHeader), Chr(10) & "ACCEPT-ENCODING:")
-  If iPos > 0 Then
-    sHTTPHeaderTemp = UCase(Mid(sHTTPHeader, iPos + 17))
-    sHTTPHeaderTemp = Trim(Left(sHTTPHeaderTemp, InStr(sHTTPHeaderTemp, Chr(13))))
+  For Each sHTTPHeaderTemp In Split(Mid(sHTTPHeader, iPos + Len(sHTTPProtocol) + 1), gb.CrLf)
+    iPos = InStr(sHTTPHeaderTemp, ":")
+    If iPos > 0
+      cHTTPHeader[UCase(Left(sHTTPHeaderTemp, iPos - 1))] = Trim(Right(sHTTPHeaderTemp, -1 * (iPos + 1)))
+    Endif
+  Next
 
-    ' The client support gzip
-    If InStr(sHTTPHeaderTemp, "DEFLATE") Then $bHTTPDeflate = True
+  If cHTTPHeader.Exist("ACCEPT-ENCODING") Then
+    If InStr(UCase(cHTTPHeader["ACCEPT-ENCODING"]), "DEFLATE") Then $bHTTPDeflate = True
   Endif
 
-  iPos = InStr(UCase(sHTTPHeader), Chr(10) & "CONTENT-LENGTH:")
-  If iPos > 0 Then
-    sHTTPHeaderTemp = Mid(sHTTPHeader, iPos + 16)
-    sHTTPHeaderTemp = Trim(Left(sHTTPHeaderTemp, InStr(sHTTPHeaderTemp, Chr(13))))
-    Try iHTTPContentLength = CInt(sHTTPHeaderTemp)
+  If cHTTPHeader.Exist("CONTENT-LENGTH") Then
+    Try iHTTPContentLength = CInt(cHTTPHeader["CONTENT-LENGTH"])
     If Error Then
       $iHTTPCode = 411 'Length Required
       Send()
@@ -337,36 +352,27 @@ Private Sub Protocol_HTTP_Read() As Boolean
       Return False
     Endif
   Else
+    If cHTTPHeader.Exist("TRANSFER-ENCODING") Then
+      If InStr(UCase(cHTTPHeader["TRANSFER-ENCODING"]), "CHUNKED") Then bHTTPChunked = True
 
-    iPos = InStr(UCase(sHTTPHeader), Chr(10) & "TRANSFER-ENCODING:")
-    If iPos > 0 Then
-      sHTTPHeaderTemp = UCase(Mid(sHTTPHeader, iPos + 19))
-      sHTTPHeaderTemp = Trim(Left(sHTTPHeaderTemp, InStr(sHTTPHeaderTemp, Chr(13))))
-      If InStr(sHTTPHeaderTemp, "CHUNKED") Then bHTTPChunked = True
+      If Not bHTTPChunked Then
+        $iHTTPCode = 400 'Bad Request
+        Send()
+        Close()
+        Return False
+      Endif
     Endif
-
-    If Not bHTTPChunked Then
-      $iHTTPCode = 400 'Bad Request
-      Send()
-      Close()
-      Return False
-    Endif
-
   Endif
 
-  iPos = InStr(UCase(sHTTPHeader), Chr(10) & "CONTENT-TYPE:")
-  If iPos > 0 Then
-    sHTTPContentType = UCase(Mid(sHTTPHeader, iPos + 14))
-    sHTTPContentType = Trim(Left(sHTTPContentType, InStr(sHTTPContentType, Chr(13))))
-    ' Check if we got "Content-Type: type; charset=..."
-    If InStr(sHTTPContentType, ";") Then sHTTPContentType = Left(sHTTPContentType, InStr(sHTTPContentType, ";") - 1)
+  If cHTTPHeader.Exist("CONTENT-TYPE") Then
+    If InStr(cHTTPHeader["CONTENT-TYPE"], ";") Then cHTTPHeader["CONTENT-TYPE"] = Left(cHTTPHeader["CONTENT-TYPE"], InStr(cHTTPHeader["CONTENT-TYPE"], ";") - 1)
 
     sHTTPHeaderTemp = UCase($cHTTPContentTypes.Join(";"))
     $cHTTPContentTypes = Split(sHTTPHeaderTemp, ";")
   Endif
 
   If $cHTTPContentTypes.Count > 0 Then
-    If sHTTPContentType Or If Not $cHTTPContentTypes.Exist(sHTTPContentType) Then
+    If cHTTPHeader.Exist("CONTENT-TYPE") Or If Not $cHTTPContentTypes.Exist(sHTTPContentType) Then
       $iHTTPCode = 415 'Unsupported Media Type
       Send()
       Close()
@@ -374,27 +380,22 @@ Private Sub Protocol_HTTP_Read() As Boolean
     Endif
   Endif
 
-  iPos = InStr(UCase(sHTTPHeader), Chr(10) & "ORIGIN:")
-  If iPos > 0 Then
-    $sHTTPCrossOrigin = Mid(sHTTPHeader, iPos + 9)
-    $sHTTPCrossOrigin = Trim(Left($sHTTPCrossOrigin, InStr($sHTTPCrossOrigin, Chr(13))))
+  If cHTTPHeader.Exist("ORIGIN") Then
+    If InStr(cHTTPHeader["ORIGIN"], "http://localhost") Then
+      $sHTTPCrossOrigin = "*"
+    Else
+      $sHTTPCrossOrigin = cHTTPHeader["ORIGIN"]
+    Endif
 
-    If InStr($sHTTPCrossOrigin, "http://localhost") = 1 Then $sHTTPCrossOrigin = "*"
-
-      ' Maybe we got a "Access-Control-Request-Headers" too?
-      iPos = InStr(UCase(sHTTPHeader), Chr(10) & "ACCESS-CONTROL-REQUEST-HEADERS:")
-      If iPos > 0 Then
-      $sHTTPAccessControlRequestHeaders = Mid(sHTTPHeader, iPos + 33)
-      $sHTTPAccessControlRequestHeaders = Trim(Left($sHTTPAccessControlRequestHeaders, InStr($sHTTPAccessControlRequestHeaders, Chr(13))))
+    ' Maybe we got a "Access-Control-Request-Headers" too?
+    If cHTTPHeader.Exist("ACCESS-CONTROL-REQUEST-HEADERS") Then
+      $sHTTPAccessControlRequestHeaders = cHTTPHeader["ACCESS-CONTROL-REQUEST-HEADERS"]
     Endif
   Endif
 
+  If cHTTPHeader.Exist("CONNECTION") Then
   iPos = InStr(UCase(sHTTPHeader), Chr(10) & "CONNECTION:")
-  If iPos > 0 Then
-    sHTTPHeaderTemp = Mid(sHTTPHeader, iPos + 13)
-    sHTTPHeaderTemp = Trim(Left(sHTTPHeaderTemp, InStr(sHTTPHeaderTemp, Chr(13))))
-    sHTTPHeaderTemp = UCase(Replace(sHTTPHeaderTemp, " ", ""))
-    $cHTTPConnection = Split(sHTTPHeaderTemp, ",")
+    $cHTTPConnection = Split(UCase(Replace(cHTTPHeader["CONNECTION"], " ", "")), ",")
 
     ' Don't accept upgrades on normal HTTP requests
     If $cHTTPConnection.Exist("UPGRADE") And If $iProtocol = PROTOCOL_HTTP Then
@@ -412,7 +413,7 @@ Private Sub Protocol_HTTP_Read() As Boolean
   Endif
 
   ' Any HTTP/1.1 request is required to have "Host: ..." field
-  If sHTTPProtocol = "HTTP/1.1" And If InStr(UCase(sHTTPHeader), Chr(10) & "HOST:") = 0 Then
+  If sHTTPProtocol = "HTTP/1.1" And If Not cHTTPHeader.Exist("HOST") Then
     $iHTTPCode = 400 'Bad Request
     Send()
     Close()
@@ -420,7 +421,7 @@ Private Sub Protocol_HTTP_Read() As Boolean
   Endif
 
   ' Check for "Expect: 100-continue" option & HTTP/1.1
-  If sHTTPProtocol = "HTTP/1.1" And If InStr(UCase(sHTTPHeader), Chr(10) & "EXPECT: 100-CONTINUE" & Chr(13)) > 0 Then
+  If sHTTPProtocol = "HTTP/1.1" And If cHTTPHeader.Exist("EXPECT") And If UCase(cHTTPHeader["EXPECT"]) = "100-CONTINUE" Then
 
     ' When it isn't chunked mode, reject the request if the body is too large
     If Not bHTTPChunked Then
@@ -452,6 +453,57 @@ Private Sub Protocol_HTTP_Read() As Boolean
     Endif
   Endif
 
+  ' Check if we have an upgrade request to websocket
+  If $iProtocol = PROTOCOL_HTTP_WEBSOCKET Or If $iProtocol = PROTOCOL_WEBSOCKET Then
+
+    If UCase(cHTTPHeader["UPGRADE"]) = "WEBSOCKET" And If $cHTTPConnection.Exist("UPGRADE") Then
+
+      ' WebSocket upgrade only can be done via a GET
+      If $sHTTPMethod <> "GET" Then
+        $iHTTPCode = 400 'Bad Request
+        Send()
+        Close()
+        Return False
+      Endif
+
+      ' We only support RFC6455 , version=13
+      If cHTTPHeader.Exist("SEC-WEBSOCKET-KEY") And If Len(UnBase64(cHTTPHeader["SEC-WEBSOCKET-KEY"])) = 16 And If cHTTPHeader.Exist("SEC-WEBSOCKET-VERSION") And If cHTTPHeader["SEC-WEBSOCKET-VERSION"] = 13 Then
+
+        If $sWebSocketProtocol And If cHTTPHeader.Exist("SEC-WEBSOCKET-PROTOCOL") Then
+        Endif
+
+        $sWebSocketHandShake = MakeWebSocketHandShake(cHTTPHeader["SEC-WEBSOCKET-KEY"])
+        $iHTTPCode = 101 'Switching Protocols
+        Send()
+        $bWebSocketEnabled = True
+        Return False
+      Else
+        $iHTTPCode = 400 'Bad Request
+        Send()
+        Close()
+        Return False
+      Endif
+
+      Return False
+    Else
+      ' WebSocket has to be upgraded
+      If $iProtocol = PROTOCOL_WEBSOCKET Then
+        $iHTTPCode = 400 'Bad Request
+        Send()
+        Close()
+        Return False
+      Endif
+    Endif
+  Else
+    ' A normal HTTP connection can't be upgraded
+    If cHTTPHeader.Exist("UPGRADE") Or If $cHTTPConnection.Exist("UPGRADE") Then
+      $iHTTPCode = 400 'Bad Request
+      Send()
+      Close()
+      Return False
+    Endif
+  Endif
+
   ' Check for possible URL requests
   If iHTTPContentLength = 0 And If $sHTTPRequestInUrl Then
     ' First get the first line, this is the URL and remove the HTTP/1.x
@@ -461,7 +513,7 @@ Private Sub Protocol_HTTP_Read() As Boolean
       sHTTPHeaderTemp = Mid(sHTTPHeaderTemp, iPos + Len($sHTTPRequestInUrl))
       Try $sDataIn = URL.Decode(sHTTPHeaderTemp)
       If Error Then
-        $iHTTPCode = 400
+        $iHTTPCode = 400 'Bad Request
         Send()
         Close()
         Return False
@@ -593,31 +645,28 @@ Private Sub Protocol_HTTP_Write()
     Case 100 ' Continue
     Case 101 ' Switching Protocols
     Case 200 ' OK
-    Case 400 ' Bad Request
+    Case 400
       sDataOut = "400 Bad Request"
-    Case 405 ' Not Allowed
+    Case 405
       sDataOut = "405 Not Allowed"
-    Case 408 ' Request Timeout
+    Case 408
       sDataOut = "408 Request Timeout"
-    Case 411 ' Length Required
+    Case 411
       sDataOut = "411 Length Required"
-    Case 413 ' Request Entity Too Large
+    Case 413
       sDataOut = "413 Request Entity Too Large"
-    Case 415 ' Unsupported Media Type
+    Case 415
       sDataOut = "415 Unsupported Media Type"
-    Case 417 'Exceptation Failed
+    Case 417
       sDataOut = "417 Expectation Failed"
-    Case 500 ' Internal Server Error
+    Case 500
       sDataOut = "500 Internal Server Error"
-    Case 505 ' HTTP Version Not Supported
+    Case 505
       sDataOut = "505 HTTP Version Not Supported"
   End Select
 
-  ' Reset code to zero, it needs to be set with every send call
-  $iHTTPCode = 0
-
   ' Something went wrong, construct output and quit
-  If sDataOut Then
+  If $iHTTPCode >= 400 Then
     sDataOut = "HTTP/1.1 " & sDataOut & gb.CrLf
     bServer = False
     For Each sStr In $cHTTPHeaders
@@ -637,6 +686,26 @@ Private Sub Protocol_HTTP_Write()
 
     sDataOut &= gb.CrLf
     $sDataOut = sDataOut
+
+    ' Reset code to zero, it needs to be set with every send call
+    $iHTTPCode = 0
+
+    Return
+  Endif
+
+  ' We are upgrading to WebSockets
+  If $iHTTPCode = 101 Then
+    sDataOut = "HTTP/1.1 101 Switching Protocols" & gb.CrLf
+    sDataOut &= "Upgrade: websocket" & gb.CrLf
+    sDataOut &= "Connection: Upgrade" & gb.CrLf
+    sDataOut &= "Sec-WebSocket-Accept: " & $sWebSocketHandShake & gb.CrLf
+    'If $sHTTPCrossOrigin Then sDataOut &= "Sec-WebSocket-Origin: " & $sHTTPCrossOrigin & gb.CrLf
+    sDataOut &= gb.CrLf
+    $sDataOut = sDataOut
+
+    ' Reset code to zero, it needs to be set with every send call
+    $iHTTPCode = 0
+
     Return
   Endif
 
@@ -656,6 +725,10 @@ Private Sub Protocol_HTTP_Write()
     sDataOut &= "Content-Length: 0" & gb.CrLf
     sDataOut &= gb.CrLf
     $sDataOut = sDataOut
+
+    ' Reset code to zero, it needs to be set with every send call
+    $iHTTPCode = 0
+
     Return
   Endif
 
@@ -710,6 +783,9 @@ Private Sub Protocol_HTTP_Write()
     $sDataOut = sDataOut & $sDataOut
   Endif
 
+  ' Reset code to zero, it needs to be set with every send call
+  $iHTTPCode = 0
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -732,6 +808,32 @@ Public Sub MySocket_Write()
   Else
     Raise Write
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generate the handshake key for WebSockets
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub MakeWebSocketHandShake(sKey As String) As String
+
+  Dim sSpecial As String = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+  Dim sSum As String
+  Dim iCount As Integer
+  Dim sResult As String
+
+  ' Append the uuid to the key
+  sKey &= sSpecial
+
+  ' Generate the SHA1 hash
+  Shell "echo -n \"" & sKey & "\" | sha1sum" To sSum
+  sSum = Left(sSum, -4)
+
+  For iCount = 1 To Len(sSum) Step 2
+   sResult &= Chr(Val("&H" & Mid(sSum, iCount, 2)))
+  Next
+
+  ' Now base64 our result
+  Return Base64(sResult)
 
 End
 
@@ -785,7 +887,7 @@ Public Sub Send(Optional bProtocol As Boolean = True)
   Dim sStream As Stream
 
   If bProtocol Then
-    If $iProtocol = PROTOCOL_HTTP Then
+    If $iProtocol = PROTOCOL_HTTP Or If ($iProtocol = PROTOCOL_HTTP_WEBSOCKET And Not $bWebSocketEnabled) Or If ($iProtocol = PROTOCOL_WEBSOCKET And Not $bWebSocketEnabled) Then
       Protocol_HTTP_Write()
     Else
     Endif
@@ -1025,7 +1127,6 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Properties
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 Function EndOfLine_Read() As Integer
 
   Return $iEndOfLine
