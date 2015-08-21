@@ -69,9 +69,9 @@ Property Read Status As Integer
 Property Timeout As Integer
 Property Tag As Variant
 Property Protocol As Integer
+Property ReadTimeOut As Integer
 
 Property HTTPCode As Integer
-Property HTTPTimeOut As Integer
 Property HTTPKeepAlive As Integer
 Property HTTPSize As Integer
 Property HTTPMethods As String[]
@@ -91,17 +91,19 @@ Private $pCTX As Pointer
 Private $pSSL As Pointer
 Private $bSSLAcceptHandshake As Boolean
 Private $sDataIn As String
+Private $sDataInExtra As String
 Private $sDataOut As String
 Public MySocket As New Socket
 
+Private $iReadTimeOut As Integer = 200 '*0.005
+
 Public $tHTTPTimer As Timer
 Private $iHTTPCode As Integer
-Private $iHTTPSize As Integer = 65535
+Private $iHTTPSize As Integer = 65535 ' 64kByte
 Private $cHTTPMethods As New String[]
 Private $cHTTPContentTypes As New String[]
 Private $cHTTPHeaders As New String[]
 Private $sHTTPRequestInUrl As String
-Private $iHTTPTimeOut As Integer = 200 '*0.005
 Private $iHTTPKeepAlive As Integer = 15000
 Private $sHTTPMethod As String
 Private $cHTTPConnection As New String[]
@@ -112,6 +114,8 @@ Private $sHTTPAccessControlRequestHeaders As String
 Private $sWebSocketProtocol As String
 Private $bWebSocketEnabled As Boolean
 Private $sWebSocketHandShake As String
+Private $lWebSocketSize As Long = 1048576 ' 1MByte
+Private $sWebSocketOpCode As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Called when Class is created
@@ -240,7 +244,27 @@ Public Sub MySocket_Read()
 
     Else
       If $bWebSocketEnabled Then
+
+        If $sDataIn Then
+          ' Don't continue, the other loop will pick of the changes
+          $sDataIn &= sData
+          Return
+        Else
+          $sWebSocketOpCode = ""
+
+          $sDataIn &= $sDataInExtra & sData
+          $sDataInExtra = ""
+
+          If Protocol_WebSocket_Read() Then
+            If $sWebSocketOpCode = "text" Or $sWebSocketOpCode = "binary" Then
+              Raise Read($sDataIn)
+            Endif
+          Endif
+
+          $sDataIn = ""
+        Endif
       Else
+        ' Just send the read data to the application to handle it
         $sDataIn = ""
         Raise Read(sData)
       Endif
@@ -269,17 +293,18 @@ Private Sub Protocol_HTTP_Read() As Boolean
   Try $tHTTPTimer.Stop
 
   ' At least wait until we retrieve the http headers
-  For iCount = iWait To ($iHTTPTimeOut + 1) Step 1
+  For iCount = 1 To $iReadTimeOut Step 1
     iPos = InStr($sDataIn, gb.CrLf & gb.CrLf)
     If iPos >= 1 Then Break
     Wait 0.005
   Next
 
   ' Problem with reading valid http data
-  If iWait > $iHTTPTimeOut Then
+  If iCount > $iReadTimeOut Then
     Close()
-    Raise Closed()
     Return False
+  Else
+    iWait = iCount
   Endif
 
   sHTTPHeader = Left($sDataIn, iPos)
@@ -526,7 +551,7 @@ Private Sub Protocol_HTTP_Read() As Boolean
   iPos = InStr($sDataIn, gb.CrLf & gb.CrLf) - 3
   sHTTPHeaderTemp = gb.CrLf & "0" & gb.CrLf & gb.CrLf
 
-  For iCount = iWait To ($iHTTPTimeOut + 2) Step 1
+  For iCount = iWait To ($iReadTimeOut + 1) Step 1
 
     If bHTTPChunked Then
       If Right($sDataIn, Len(sHTTPHeaderTemp)) = sHTTPHeaderTemp Then Break
@@ -539,7 +564,7 @@ Private Sub Protocol_HTTP_Read() As Boolean
   Next
 
   ' Check for possible timeout
-  If iCount > ($iHTTPTimeOut + 1) Then
+  If iCount > ($iReadTimeOut + 1) Then
     $iHTTPCode = 408 'Request Timeout
     Send()
     Close()
@@ -834,6 +859,143 @@ Private Sub MakeWebSocketHandShake(sKey As String) As String
 
   ' Now base64 our result
   Return Base64(sResult)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle HTTP data and only return the body of the request upstream
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Protocol_WebSocket_Read() As Boolean
+
+  Dim iWait As Integer = 1
+  Dim iCount As Integer
+
+  Dim lPayloadLength As Long
+  Dim iPayloadOffSet As Integer
+  Dim bByte1, bByte2 As Byte
+  Dim bFIN As Boolean
+  Dim iOpCode As Byte
+  Dim bMask As Boolean
+  Dim aMask As New Byte[]
+  Dim sUnmaskedPayload As String
+
+  ' Anything less of 2, can't be a valid websocket messages
+  If Len($sDataIn) < 2 Then Return False
+
+  bByte1 = Asc(Mid($sDataIn, 1, 1))
+  bByte2 = Asc(Mid($sDataIn, 2, 1))
+
+  ' Byte1: 76543210: 7=FIN, 654=000 3210=OPCODE
+  ' Byte2: 7=Mask 654321=Length if <126, 126=2 bytes length, 127=8 bytes lengh
+
+  ' Determine FIN, OpCode and Mask
+  bFIN = BTst(bByte1, 7)
+  iOpCode = bByte1 And &H0F
+  bMask = BTst(bByte2, 7)
+  lPayloadLength = bByte2 And &H7F
+
+  ' RSV1, 2 and 3 aren't supported, so abort according RFC 6455
+  If (bByte1 And &H70) <> 0 Then
+    Raise Error("WebSocket read packet has invalid RSV1/2/3 header. Received=" & (bByte1 And &H70) & ", Expected=0")
+    Close()
+    Return False
+  Endif
+
+  If bMask Then
+    iPayloadOffSet = 2 + 4
+  Else
+    iPayloadOffSet = 2
+  Endif
+
+  If lPayloadLength = 126 Then
+    ' length + 2 bytes
+    iPayloadOffSet += 2
+  Else If lPayloadLength = 127 Then
+    ' length + 8 bytes
+    iPayloadOffSet += 8
+  Endif
+
+  For iCount = iWait To $iReadTimeOut Step 1
+    If Len($sDataIn) >= iPayloadOffSet Then Break
+    Wait 0.005
+  Next
+
+  ' Problem with reading valid websocket data
+  If iCount > $iReadTimeOut Then
+    Raise Error("WebSocket read packet timeout. TimeOut=" & $iReadTimeOut * 5 & "msec")
+    Close()
+    Return False
+  Else
+    iWait = iCount
+  Endif
+
+  If lPayloadLength = 126 Then
+    lPayloadLength = Asc(Mid($sDataIn, 3, 1)) * 256 + Asc(Mid($sDataIn, 4, 1))
+  Else If lPayloadLength = 127 Then
+    lPayloadLength = 0
+    For iCount = 0 To 7
+      lPayloadLength += CLong(Asc(Mid($sDataIn, 10 - iCount, 1))) * (iCount * 256)
+    Next
+  Endif
+
+  ' Reject if the websocket packet is too big
+  If lPayloadLength > $lWebSocketSize Then
+    Raise Error("WebSocket read packet too big. Received=" & lPayloadLength & ", Allowed=" & $lWebSocketSize)
+    Close()
+    Return False
+  Endif
+
+  For iCount = iWait To ($iReadTimeOut + 1) Step 1
+    If Len($sDataIn) >= (lPayloadLength + iPayloadOffSet) Then Break
+    Wait 0.005
+  Next
+
+  ' Problem with reading valid websocket data
+  If iCount > ($iReadTimeOut + 1) Then
+    Raise Error("WebSocket read packet timeout. TimeOut=" & $iReadTimeOut * 5 & "msec")
+    Close()
+    Return False
+  Endif
+
+  Select iOpCode
+    Case &H00 'Continues the payload
+    Case &H01 'UTF-8 data
+      $sWebSocketOpCode = "text"
+    Case &H02 'Binary data
+      $sWebSocketOpCode = "binary"
+    Case &H08 'Terminate connection
+      $sWebSocketOpCode = "close"
+    Case &H09 'Ping
+      $sWebSocketOpCode = "ping"
+    Case &H0A 'Pong
+      $sWebSocketOpCode = "pong"
+    Default 'Unknown frame, reject
+      Raise Error("WebSocket Unknown OpCode=" & iOpCode)
+      Close()
+      Return False
+  End Select
+
+  ' According to the payload length, we have enough and check for possible extra data
+  If Len($sDataIn) > (lPayloadLength + iPayloadOffSet) Then
+    $sDataInExtra = Mid($sDataIn, lPayloadLength + iPayloadOffSet + 1)
+  Endif
+
+  If bMask Then
+    ' Build-up the mask array
+    For iCount = 0 To 3
+      aMask.Add(Asc(Mid($sDataIn, iPayloadOffSet - 3 + iCount, 1)))
+    Next
+
+    ' Now unmask the payload with the mask with XOR
+    For iCount = (iPayLoadOffset + 1) To (lPayloadLength + iPayLoadOffset)
+      sUnmaskedPayload &= Chr(Asc(Mid($sDataIn, iCount, 1)) Xor aMask[(iCount - (iPayloadOffset + 1)) % 4])
+    Next
+    $sDataIn = sUnmaskedPayload
+  Else
+    $sDataIn = Mid($sDataIn, iPayloadOffset + 1, lPayloadLength) 
+  Endif
+
+  Return True
 
 End
 
@@ -1329,15 +1491,15 @@ Function HTTPRequestInUrl_Write(sHTTPRequestInUrl As String)
 
 End
 
-Function HTTPTimeOut_Read() As Integer
+Function ReadTimeOut_Read() As Integer
 
-  Return $iHTTPTimeOut * 5
+  Return $iReadTimeOut * 5
 
 End
 
-Function HTTPTimeOut_Write(iHTTPTimeOut As Integer)
+Function ReadTimeOut_Write(iReadTimeOut As Integer)
 
-  $iHTTPTimeOut = iHTTPTimeOut / 5
+  $iReadTimeOut = iReadTimeOut / 5
 
 End
 
