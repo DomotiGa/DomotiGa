@@ -79,6 +79,10 @@ Property HTTPContentTypes As String[]
 Property HTTPHeaders As String[]
 Property HTTPRequestInUrl As String
 
+Property WebSocketOpcode As String
+Property WebSocketMask As Boolean
+Property WebSocketTextBinary As String
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -111,11 +115,18 @@ Private $bHTTPDeflate As Boolean = False
 Private $sHTTPCrossOrigin As String
 Private $sHTTPAccessControlRequestHeaders As String
 
+Private $sWebSocketOpCode As String
+Private $bWebSocketMask As Boolean
+Private $sWebSocketTextBinary As String = "text"
+Private $lWebSocketSize As Long = 1048576 ' 1MByte
 Private $sWebSocketProtocol As String
 Private $bWebSocketEnabled As Boolean
 Private $sWebSocketHandShake As String
-Private $lWebSocketSize As Long = 1048576 ' 1MByte
-Private $sWebSocketOpCode As String
+Private $bWebSocketFIN As Boolean
+Private $iWebSocketCloseCode As Integer
+Private $sWebSocketCloseText As String
+Private $sWebSocketMultiPacket As String
+Private $sWebSocketPrevOpCode As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Called when Class is created
@@ -164,10 +175,8 @@ Public Sub MySocket_Read()
       If iRet = 1 Then
         $bSSLAcceptHandshake = True
 
-        ' Raise Ready event if we are a client, SSL handshake is done
-        If MySocket.Server = Null Then
-          Raise Ready
-        Endif
+        ' Raise Ready event if the SSL handshake is done succesfully
+        Raise Ready
       Else
         If iRet = -1 Then
           Try iRet = SSL_get_error($pSSL, iRet)
@@ -188,7 +197,7 @@ Public Sub MySocket_Read()
       Endif
     Endif
 
-    ' Don't continue if the handshake didn succeed
+    ' Don't continue if the handshake didn't succeed
     If Not $bSSLAcceptHandshake Then Return
 
     ' Allocate a read buffer for the read routine
@@ -227,20 +236,24 @@ Public Sub MySocket_Read()
         $sDataIn &= sData
         Return
       Else
-        $sHTTPMethod = ""
-        $cHTTPConnection.Clear()
-        $bHTTPDeflate = False
-        $sHTTPCrossOrigin = ""
-        $sHTTPAccessControlRequestHeaders = ""
+        ' Do a repeat/until loop, for HTTP/1.1 requests
+        Repeat
+          $sHTTPMethod = ""
+          $cHTTPConnection.Clear()
+          $bHTTPDeflate = False
+          $sHTTPCrossOrigin = ""
+          $sHTTPAccessControlRequestHeaders = ""
 
-        $sDataIn &= sData
+          $sDataIn &= $sDataInExtra & sData
+          $sDataInExtra = ""
 
-        If Protocol_HTTP_Read() Then
-          Raise Read($sDataIn)
-        Endif
+          If Protocol_HTTP_Read() Then
+            Raise Read($sDataIn)
+          Endif
 
-        $sDataIn = ""
-      Endif
+          $sDataIn = ""
+        Until Not $sDataInExtra
+       Endif
 
     Else
       If $bWebSocketEnabled Then
@@ -250,18 +263,41 @@ Public Sub MySocket_Read()
           $sDataIn &= sData
           Return
         Else
-          $sWebSocketOpCode = ""
+          Repeat
+            $sWebSocketOpCode = ""
+            $bWebSocketMask = False
 
-          $sDataIn &= $sDataInExtra & sData
-          $sDataInExtra = ""
+            $sDataIn &= $sDataInExtra & sData
+            $sDataInExtra = ""
 
-          If Protocol_WebSocket_Read() Then
-            If $sWebSocketOpCode = "text" Or $sWebSocketOpCode = "binary" Then
-              Raise Read($sDataIn)
+            If Protocol_WebSocket_Read() Then
+
+              ' This isn't a single packet, but split across multiple websocket packets
+              If Not $bWebSocketFIN And ($sWebSocketOpCode = "text" Or $sWebSocketOpCode = "binary") Then
+                $sWebSocketMultiPacket &= $sDataIn
+                $sWebSocketPrevOpCode = $sWebSocketOpCode
+              Else
+                If $bWebSocketFIN And $sWebSocketOpCode = "continue" Then
+                  ' Only allow it, if we found previous data
+                  If $sWebSocketMultiPacket Then
+                    Raise Read($sWebSocketMultiPacket & $sDataIn)
+                  Else
+                    ' Discard this one, it looks to be invalid
+                  Endif
+                Else
+                  If $sWebSocketOpCode = "text" Or $sWebSocketOpCode = "binary" Then
+                    Raise Read($sDataIn)
+                  Else If $sWebSocketOpCode = "ping" Then
+                    ' We got a ping, lets return a pong :-)
+                  Endif
+                Endif
+
+                $sWebSocketMultiPacket = ""
+              Endif
             Endif
-          Endif
 
-          $sDataIn = ""
+            $sDataIn = ""
+          Until Not $sDataInExtra
         Endif
       Else
         ' Just send the read data to the application to handle it
@@ -462,8 +498,8 @@ Private Sub Protocol_HTTP_Read() As Boolean
     If (Len(sHTTPHeader) + 3) = Len($sDataIn) Then
       Begin()
       $iEndOfLine = gb.Windows
-      Print("HTTP/1.1 100 Continue")
-      Print("")
+      Print("HTTP/1.1 100 Continue", True)
+      Print("", True)
       Try Send(False)
     Endif
   Endif
@@ -501,6 +537,10 @@ Private Sub Protocol_HTTP_Read() As Boolean
         $iHTTPCode = 101 'Switching Protocols
         Send()
         $bWebSocketEnabled = True
+
+        ' Raise write event, the application can start sending bi-directional data to it
+        Raise Write
+
         Return False
       Else
         $iHTTPCode = 400 'Bad Request
@@ -628,11 +668,18 @@ Private Sub Protocol_HTTP_Read() As Boolean
       Return False
     Endif
 
+    $sDataIn = Mid($sDataIn, InStr($sDataIn, gb.CrLf & gb.CrLf) + 4)
+
+    ' We received more then expected with HTTP/1.1, can be a second request
+    If sHTTPProtocol = "HTTP/1.1" And If Len($sDataIn) > iHTTPContentLength Then
+      $sDataInExtra = Mid($sDataIn, iHTTPContentLength + 1)
+      $sDataIn = Left($sDataIn, iHTTPContentLength)
+    Endif
+
+    ' With an option we should just respond and don't send anything to the application
     If $sHTTPMethod = "OPTIONS" Then
       Send()
       Return False
-    Else
-      $sDataIn = Mid($sDataIn, InStr($sDataIn, gb.CrLf & gb.CrLf) + 4)
     Endif
   Endif
 
@@ -873,9 +920,7 @@ Private Sub Protocol_WebSocket_Read() As Boolean
   Dim lPayloadLength As Long
   Dim iPayloadOffSet As Integer
   Dim bByte1, bByte2 As Byte
-  Dim bFIN As Boolean
   Dim iOpCode As Byte
-  Dim bMask As Boolean
   Dim aMask As New Byte[]
   Dim sUnmaskedPayload As String
 
@@ -889,9 +934,9 @@ Private Sub Protocol_WebSocket_Read() As Boolean
   ' Byte2: 7=Mask 654321=Length if <126, 126=2 bytes length, 127=8 bytes lengh
 
   ' Determine FIN, OpCode and Mask
-  bFIN = BTst(bByte1, 7)
+  $bWebSocketFIN = BTst(bByte1, 7)
   iOpCode = bByte1 And &H0F
-  bMask = BTst(bByte2, 7)
+  $bWebSocketMask = BTst(bByte2, 7)
   lPayloadLength = bByte2 And &H7F
 
   ' RSV1, 2 and 3 aren't supported, so abort according RFC 6455
@@ -901,7 +946,7 @@ Private Sub Protocol_WebSocket_Read() As Boolean
     Return False
   Endif
 
-  If bMask Then
+  If $bWebSocketMask Then
     iPayloadOffSet = 2 + 4
   Else
     iPayloadOffSet = 2
@@ -941,6 +986,10 @@ Private Sub Protocol_WebSocket_Read() As Boolean
   ' Reject if the websocket packet is too big
   If lPayloadLength > $lWebSocketSize Then
     Raise Error("WebSocket read packet too big. Received=" & lPayloadLength & ", Allowed=" & $lWebSocketSize)
+    $sWebSocketOpCode = "close"
+    $iWebSocketCloseCode = 1004 'too large
+    Send()
+
     Close()
     Return False
   Endif
@@ -959,10 +1008,29 @@ Private Sub Protocol_WebSocket_Read() As Boolean
 
   Select iOpCode
     Case &H00 'Continues the payload
+      $sWebSocketOpCode = "continue"
     Case &H01 'UTF-8 data
       $sWebSocketOpCode = "text"
+      If $sWebSocketTextBinary = "binary" Then
+        $sWebSocketOpCode = "close"
+        $iWebSocketCloseCode = 1003 'unsupported
+        Send()
+
+        Raise Error("WebSocket received binary packet, only text is allowed")
+        Close()
+        Return False
+      Endif
     Case &H02 'Binary data
       $sWebSocketOpCode = "binary"
+      If $sWebSocketTextBinary = "text" Then
+        $sWebSocketOpCode = "close"
+        $iWebSocketCloseCode = 1003 'unsupported
+        Send()
+
+        Raise Error("WebSocket received text packet, only binary is allowed")
+        Close()
+        Return False
+      Endif
     Case &H08 'Terminate connection
       $sWebSocketOpCode = "close"
     Case &H09 'Ping
@@ -971,6 +1039,10 @@ Private Sub Protocol_WebSocket_Read() As Boolean
       $sWebSocketOpCode = "pong"
     Default 'Unknown frame, reject
       Raise Error("WebSocket Unknown OpCode=" & iOpCode)
+      $sWebSocketOpCode = "close"
+      $iWebSocketCloseCode = 1002 'protocol error
+      Send()
+
       Close()
       Return False
   End Select
@@ -980,7 +1052,7 @@ Private Sub Protocol_WebSocket_Read() As Boolean
     $sDataInExtra = Mid($sDataIn, lPayloadLength + iPayloadOffSet + 1)
   Endif
 
-  If bMask Then
+  If $bWebSocketMask Then
     ' Build-up the mask array
     For iCount = 0 To 3
       aMask.Add(Asc(Mid($sDataIn, iPayloadOffSet - 3 + iCount, 1)))
@@ -1000,6 +1072,114 @@ Private Sub Protocol_WebSocket_Read() As Boolean
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Create WebSocket data, upstream is unaware of WebSockets
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Protocol_WebSocket_Write()
+
+  Dim sDataOut As String
+  Dim iPayloadLength As Integer
+  Dim bByte1 As Byte
+  Dim bByte2 As Byte
+  Dim iCount As Integer
+  Dim aMask As New Byte[]
+  Dim iLength As Integer
+  Dim sVal As String
+
+' Close codes:
+' 2-bytes with code + text with a reason/description
+' 1000=No error
+' 1001=Go away
+' 1002=Protocol error
+' 1003=Unsupported, e.g. receive binary while only support text
+' 1004=Too large
+
+  ' Set the opcode, also the FIN bit with &H80 (we never segment packets)
+  Select $sWebSocketOpCode
+    Case "continue"
+      If $sWebSocketPrevOpCode = "text" Then
+        bByte1 += &H81
+      Else If $sWebSocketPrevOpCode = "binary" Then
+        bByte1 += &H82
+      Else
+        bByte1 += &H80
+        $sDataOut = ""
+        Return
+      Endif
+    Case "text"
+      bByte1 += &H81
+    Case "binary"
+      bByte1 += &H82
+    Case "close"
+      bByte1 += &H88
+      $sDataOut = ""
+
+      ' We got a close request, but it can be required to send a code back
+      If $iWebSocketCloseCode > 0 Then
+        sVal = Bin($iWebSocketCloseCode, iLength * 8)
+        For iCount = 0 To Len(sVal) - 1 Step 8
+          $sDataOut = Chr(Val("&X" & Mid(sVal, iCount + 1, 8)))
+        Next
+      Endif
+
+      $iWebSocketCloseCode = 0
+    Case "ping"
+      bByte1 += &H89
+    Case "pong" 'Discard a pong, we don't support it
+      bByte1 += &H8A
+      $sDataOut = ""
+      Return
+    Default 'Don't do anything if we don't have a proper opcode
+      $sDataOut = ""
+      Return
+  End Select
+
+  ' Set mask bit if applicable
+  If $bWebSocketMask Then BSet(bByte2, 7)
+
+  iPayloadLength = Len($sDataOut)
+  If iPayloadLength <= 125 Then
+    bByte2 += iPayloadLength
+    iLength = 0
+  Else If iPayloadLength <= 65535 Then
+    bByte2 += 126
+    iLength = 2
+  Else
+    bByte2 += 127
+    iLength = 8
+  Endif
+
+  ' Set the first 2 bytes of a websocket packet
+  sDataOut = CheckBox(bByte1)
+  sDataOut &= CheckBox(bByte2)
+
+  ' Add the possible length
+  If iLength > 0 Then
+    ' Add the possible length
+    sVal = Bin(iPayloadLength, iLength * 8)
+    For iCount = 0 To Len(sVal) - 1 Step 8
+      sDataOut &= Chr(Val("&X" & Mid(sVal, iCount + 1, 8)))
+    Next
+  Endif
+
+  ' Generate random mask and mask the datapacket
+  If $bWebSocketMask Then
+    For iCount = 0 To 3
+      aMask[iCount] = Rnd(0, 255)
+      SDataOut &= Chr(aMask[iCount])
+    Next
+
+    For iCount = 1 To iPayloadLength
+      sDataOut &= Chr(Asc(Mid($sDataOut, iCount, 1)) Xor aMask[iCount Mod 4])
+    Next
+
+    $sDataOut = sDataOut
+  Else
+    $sDataOut = sDataOut & $sDataOut
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Start a new line/print session
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Begin()
@@ -1011,7 +1191,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Add the line with a proper linefeed character(s)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Print(sData As String, Optional bEOL As Boolean = True)
+Public Sub Print(sData As String, Optional bEOL As Boolean = False)
 
   If bEOL Then
     Select $iEndOfLine
@@ -1052,6 +1232,7 @@ Public Sub Send(Optional bProtocol As Boolean = True)
     If $iProtocol = PROTOCOL_HTTP Or If ($iProtocol = PROTOCOL_HTTP_WEBSOCKET And Not $bWebSocketEnabled) Or If ($iProtocol = PROTOCOL_WEBSOCKET And Not $bWebSocketEnabled) Then
       Protocol_HTTP_Write()
     Else
+      Protocol_WebSocket_Write()
     Endif
   Endif
 
@@ -1153,6 +1334,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub MySocket_Ready()
 
+  ' Only raise it for none-encrypted connections
   If $iEncrypt <> Net.SSL Then
     Raise Ready
   Endif
@@ -1512,5 +1694,48 @@ End
 Function HTTPKeepAlive_Write(iHTTPKeepAlive As Integer)
 
   $iHTTPKeepAlive = iHTTPKeepAlive
+
+End
+
+Function WebSocketOpcode_Read() As String
+
+  Return $sWebSocketOpCode
+
+End
+
+Function WebSocketOpCode_Write(sWebSocketOpCode As String)
+
+  $sWebSocketOpCode = sWebSocketOpCode
+
+End
+
+Function WebSocketMask_Read() As Boolean
+
+  Return $bWebSocketMask
+
+End
+
+Function WebSocketMask_Write(bWebSocketMask As Boolean)
+
+  $bWebSocketMask = bWebSocketMask
+
+End
+
+Function WebSocketTextBinary_Read() As String
+
+  Return $sWebSocketTextBinary
+
+End
+
+Function WebSocketTextBinary_Write(sWebSocketTextBinary As String)
+
+  Select LCase(sWebSocketTextBinary)
+    Case "text"
+      $sWebSocketTextBinary = "text"
+    Case "binary"
+      $sWebSocketTextBinary = "binary"
+    Default ' support both text/binary
+      $sWebSocketTextBinary = ""
+  End Select
 
 End

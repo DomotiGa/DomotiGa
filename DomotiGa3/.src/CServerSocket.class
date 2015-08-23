@@ -30,19 +30,33 @@ Private Extern TLS_method() As Pointer ' new in OpenSSL 1.1.x
 Private Extern SSL_CTX_new(pCTX As Pointer) As Pointer
 Private Extern SSL_CTX_free(pCTX As Pointer)
 Private Extern SSL_CTX_ctrl(pCTX As Pointer, iCmd As Integer, lOptions As Long, pParm As Pointer) As Long
-Private Extern SSL_CTX_use_certificate_file(pCTX As Pointer, sFile As String, iType As Integer) As Integer
+'Private Extern SSL_CTX_use_certificate_file(pCTX As Pointer, sFile As String, iType As Integer) As Integer
+Private Extern SSL_CTX_use_certificate_chain_file(pCTX As Pointer, sFile As String) As Integer
 Private Extern SSL_CTX_use_PrivateKey_file(pCTX As Pointer, sFile As String, iType As Integer) As Integer
 Private Extern SSL_CTX_check_private_key(pCTX As Pointer) As Integer
 'Private Extern SSL_CTX_set_options(pCTX As Pointer, lOptions As Long) As Long
+Private Extern SSL_CTX_set_verify(pCTX As Pointer, iMode As Integer, pCallback As Pointer)
+Private Extern SSL_CTX_set_verify_depth(pCTX As Pointer, iDepth As Integer)
+'Private Extern SSL_CTX_set_client_CA_list(pCTX As Pointer, pX509 As Pointer) As Integer
+'Private Extern SSL_load_client_CA_file(sFile As String) As Pointer
+Private Extern SSL_CTX_load_verify_locations(PCTX As Pointer, sFile As String, sDir As String) As Integer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Constants
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+' Define not allowed SSL/TLS protocols
 Public Const SSL_OP_NO_SSLv2 As Long = &H01000000
 Public Const SSL_OP_NO_SSLv3 As Long = &H02000000
 Public Const SSL_OP_NO_TLSv1 As Long = &H04000000
 Public Const SSL_OP_NO_TLSv1_1 As Long = &H10000000
 Public Const SSL_OP_NO_TLSv1_2 As Long = &H08000000
+
+' Define server side verification for clients certificates
+Public Const SSL_VERIFY_NONE As Integer = &H00
+Public Const SSL_VERIFY_PEER As Integer = &H01
+Public Const SSL_VERIFY_FAIL_IF_NO_PEER_CERT As Integer = &H02
+Public Const SSL_VERIFY_CLIENT_ONCE As Integer = &H04
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Properties
@@ -51,6 +65,7 @@ Property Timeout As Integer
 Property Encrypt As Integer
 Property SSLCertificate As String
 Property SSLPrivateKey As String
+Property SSLClientKey As String
 Property Read SSLVersion As String
 Property SSLMethod As Long
 Property Read SSLCTX As Pointer
@@ -62,6 +77,7 @@ Private $iTimeout As Integer = 0
 Private $iEncrypt As Integer = Net.None ' 0=Net.None, 1=Net.SSL
 Private $sSSLCertificate As String
 Private $sSSLPrivateKey As String
+Private $sSSLClientKey As String
 Private $sSSLVersion As String
 Private $sSSLVersionId As String
 Private $lSSLMethod As Long
@@ -69,16 +85,17 @@ Private $pCTX As Pointer
 'Static Private MyServerSocket As ServerSocket
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Executed when object is created
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub _new()
 
-'  MyServerSocket = New ServerSocket
+  ' We disable SSLv2 and SSLv3 by default
+  $lSSLMethod = SSL_OP_NO_SSLv2 + SSL_OP_NO_SSLv3
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Executed when object is freed
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub _free()
 
@@ -105,9 +122,9 @@ Public Sub SSLStart()
     Return
   Endif
 
+  ' If no private key is supplied, try the Certificate file, it can hold both
   If Not $sSSLPrivateKey Then
-    Error.Raise("SSL PrivateKey filename is empty")
-    Return
+    $sSSLPrivateKey = $sSSLCertificate
   Endif
 
   If Not Exist($sSSLCertificate) Then
@@ -128,6 +145,18 @@ Public Sub SSLStart()
   If Not Access($sSSLPrivateKey, gb.Read) Then
     Error.Raise("SSL PrivateKey file '" & $sSSLPrivateKey & "' can't be read")
     Return
+  Endif
+
+  If $sSSLClientKey Then
+    If Not Exist($sSSLClientKey) Then
+      Error.Raise("SSL ClientKey file '" & $sSSLClientKey & "' doesn't exist")
+      Return
+    Endif
+
+    If Not Access($sSSLClientKey, gb.Read) Then
+      Error.Raise("SSL ClientKey file '" & $sSSLClientKey & "' can't be read")
+      Return
+    Endif
   Endif
 
   ' Check if the OpenSSL library is installed
@@ -217,10 +246,11 @@ Public Sub SSLStart()
     Return
   Endif
 
-  Try iVal = SSL_CTX_use_certificate_file($pCTX, $sSSLCertificate, 1)
+  'Try iVal = SSL_CTX_use_certificate_file($pCTX, $sSSLCertificate, 1)
+  Try iVal = SSL_CTX_use_certificate_chain_file($PCTX, $sSSLCertificate)
   If Error Then
     Try SSL_CTX_free($pCTX)
-    Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_CTX_use_certificate_file'")
+    Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_CTX_use_certificate_chain_file'")
     Return
   Endif
   If iVal <= 0 Then
@@ -251,6 +281,20 @@ Public Sub SSLStart()
     Try SSL_CTX_free($pCTX)
     Error.Raise("Unable to initialize SSL, the certificate '" & $sSSLCertificate & "' and PrivateKey '" & $sSSLPrivateKey & "' don't match. RC=" & iVal)
     Return
+  Endif
+
+  ' Request client certificate if required, OpenSSL will terminate automatically if no certificate is send
+  If $sSSLClientKey Then
+
+    'iVal = SSL_CTX_set_client_CA_list($pCTX, SSL_load_client_CA_file($sSSLClientKey))
+    ival = SSL_CTX_load_verify_locations($pCTX, $sSSLClientKey, Null) 
+    If iVal <= 0 Then
+      '...
+    Endif
+
+    SSL_CTX_set_verify($pCTX, SSL_VERIFY_PEER + SSL_VERIFY_FAIL_IF_NO_PEER_CERT, Null)
+    SSL_CTX_set_verify_depth($pCTX, 4)
+
   Endif
 
   ' All done, it should be able to setup SSL sessions now
@@ -341,5 +385,17 @@ End
 Function SSLCTX_Read() As Pointer
 
   Return $pCTX
+
+End
+
+Function SSLClientKey_Read() As String
+
+  Return $sSSLClientKey
+
+End
+
+Function SSLClientKey_Write(sSSLClientKey As String)
+
+ $sSSLClientKey = sSSLClientKey
 
 End
