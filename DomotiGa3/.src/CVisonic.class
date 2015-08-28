@@ -62,7 +62,7 @@ Private $bDebug As Boolean
 Private $iMasterCode As Integer = &H0000 ' Not Known
 Private $iDisarmArmCode As Integer = &H0000 ' Not Known
 Private $iDownloadCode As Integer = &H5650 ' VP
-Private $bSendInit As Boolean = False
+Private $bSendInit As Boolean = True
 Private $iTripReset As Integer = 30 ' Reset status after 30 seconds
 
 Private $tPowerLinkKeepAlive As New Timer As "tPowerLinkKeepAlive"
@@ -90,6 +90,7 @@ Private $iModelType As Byte
 Private $bPowerMaster As Boolean
 
 Private $tQueueDelay As New Timer As "tQueueDelay"
+Private $bQueueDelay As Boolean
 Private $tQueueTimeout As New Timer As "tQueueTimeout"
 Private $oTripTimers As New Object[]
 Public tTripTimer As CTimerGeneric
@@ -425,6 +426,7 @@ Private Sub StartTimer(iDelay As Integer)
 
   ' Only start timer if it isn't running yet
   'If Not $tQueueDelay.Enabled Then
+    $bQueueDelay = False
     $tQueueDelay.Stop
     $tQueueDelay = New Timer As "tQueueDelay"
     $tQueueDelay.Delay = iDelay
@@ -441,7 +443,7 @@ Public Sub tQueueDelay_Timer()
   $tQueueDelay.Stop
 
   ' Timer expired, kick off the processing of the queue
-  If $cSendLastCommand Then
+  If $cSendLastCommand And If $bQueueDelay Then
     ProcessQueue(True)
   Else
     ProcessQueue()
@@ -457,13 +459,25 @@ Private Sub ProcessQueue(Optional bResend As Boolean = False)
   Dim iMSec As Integer
   Dim aStr As New String[]
   Dim iCode As Integer
+  Dim bAddToQueue As Boolean
 
   ' Resend the request, but reset the receive counter to the original value
   If bResend Then
     If $cSendLastCommand Then
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Resending Request '" & $cSendLastCommand.Msg & "' " & ByteToHex($cSendLastCommand.Command.Copy()))
-      $cSendLastCommand.ReceiveCnt = $cSendLastCommand.ReceiveCntFixed
-      $cSendQueue.Add($cSendLastCommand, 0)
+
+      ' Compare if we already have the same command in the buffer, then pop it first 
+      bAddToQueue = True
+      If $cSendQueue.Count >= 1 Then 
+        If $cSendQueue[0].Msg = $cSendLastCommand.Msg And If $cSendQueue[0].Command.ToString() = $cSendLastCommand.Command.ToString() And If $cSendQueue[0].Receive = $cSendLastCommand.Receive Then
+          bAddToQueue = False
+        Endif
+      Endif
+
+      If bAddToQueue Then
+        $cSendLastCommand.ReceiveCnt = $cSendLastCommand.ReceiveCntFixed
+        $cSendQueue.Add($cSendLastCommand, 0)
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Resending Request '" & $cSendLastCommand.Msg & "' " & ByteToHex($cSendLastCommand.Command.Copy()) & ". Queue Count=" & $cSendQueue.Count)
+      Endif
     Else
       Main.WriteDebugLog(LogLabel & "ERROR: Resend is requested, but the last request is NULL?")
     Endif
@@ -579,6 +593,16 @@ Private Sub QueueCommand(sData As Byte[], sMsg As String, bResponse As Byte, Opt
   If $cSendQueue.Count >= 1 Then
     ProcessQueue()
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Clear the queue, preventing any retry causing issues
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ClearQueue()
+
+  $cSendQueue.Clear()
+  $cSendLastCommand = Null
 
 End
 
@@ -849,12 +873,13 @@ Private Function ProcessReceivedPacket(sData As Byte[])
           If $cSendLastCommand.ReceiveRetries = 0 Then
             $cSendLastCommand.ReceiveRetries += 1
           Else
-            ' Kick off the queue with resend of the last message
-            ProcessQueue(True)
+            ' Kick off the queue with resend of the last message, but only if timer didn't expire
+            If Not $tQueueDelay.Enabled Then ProcessQueue(True)
           Endif
         Endif
       Endif
     Else
+
       ' We don't expect anything, so kick off queue handling
       $cSendLastCommand = Null
       ProcessQueue()
@@ -1600,6 +1625,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub SendMsg_ENROLL()
 
+  ' Remove anything else from the queue, we need to restart
+  ClearQueue()
   ' Send the request, the pin will be added when the command is send
   QueueCommand(VMSG_ENROLL.Copy(), "Auto-Enroll of the PowerMax/Master", &H00, "PIN:DownloadCode:4")
 
@@ -1894,6 +1921,13 @@ Private Sub Handle_MsgType02()
       $tPowerLinkKeepAlive.Start
 
       ProcessSettings()
+    Else If $cSendLastCommand.Command.Count >= 3 And If $cSendLastCommand.Command[0] = &HAB And If $cSendLastCommand.Command[1] = &H0A And If $cSendLastCommand.Command[2] = &H00 Then
+      ' The queue timer
+      $bQueueDelay = False
+      Try $tQueueDelay.Stop
+      $tQueueDelay = New Timer As "tQueueDelay"
+      $tQueueDelay.Delay = $iSendDelay
+      $tQueueDelay.Start
     Endif
   Endif
 
@@ -1942,7 +1976,8 @@ Private Sub Handle_MsgType25()
 
   If $bDebug Then Main.WriteDebugLog(LogLabel & "Download Retry, have to wait " & iDelay & " seconds")
 
-  ' Restart the queue timer, but untested
+  ' Restart the queue timer
+  $bQueueDelay = True
   $tQueueDelay.Stop
   $tQueueDelay = New Timer As "tQueueDelay" 
   $tQueueDelay.Delay = iDelay * 1000
