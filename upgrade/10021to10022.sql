@@ -3,6 +3,9 @@
 --
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (671,'VMB4RYLD','Velbus - 4 Channel relay module','Velbus','13|2');
 
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (672,'Visonic PowerMax','PowerMax Panel','Visonic','Panel');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (673,'Visonic PowerMaster','PowerMaster Panel','Visonic','Panel');
+
 --
 -- Modify settings_jsonrpc
 --
