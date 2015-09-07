@@ -82,12 +82,15 @@ ln -s ../../DomotiGa3/.src/CRFXComRX.class
 ln -s ../../DomotiGa3/.src/CRFXComTX.class
 ln -s ../../DomotiGa3/.src/CRFXComTRX.class
 ln -s ../../DomotiGa3/.src/CRFXComxPL.class
+ln -s ../../DomotiGa3/.src/CSerialPort.class
+ln -s ../../DomotiGa3/.src/CServerSocket.class
 ln -s ../../DomotiGa3/.src/CSharpTV.class
 ln -s ../../DomotiGa3/.src/CShell.class
 ln -s ../../DomotiGa3/.src/CSMS.class
 ln -s ../../DomotiGa3/.src/CSmartMeter.class
 ln -s ../../DomotiGa3/.src/CSmartVISUServer.class
 ln -s ../../DomotiGa3/.src/CSqueezeServer.class
+ln -s ../../DomotiGa3/.src/CSocket.class
 ln -s ../../DomotiGa3/.src/CTelnetServer.class
 ln -s ../../DomotiGa3/.src/CTemp08.class
 ln -s ../../DomotiGa3/.src/CTemperaturNu.class

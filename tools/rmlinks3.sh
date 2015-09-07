@@ -90,6 +90,7 @@ cp ../../DomotiGa3/.src/CRFXComTX.class .
 cp ../../DomotiGa3/.src/CRFXComTRX.class .
 cp ../../DomotiGa3/.src/CRFXComxPL.class .
 cp ../../DomotiGa3/.src/CSharpTV.class .
+cp ../../DomotiGa3/.src/CSerialPort.class .
 cp ../../DomotiGa3/.src/CShell.class .
 cp ../../DomotiGa3/.src/CSMS.class .
 cp ../../DomotiGa3/.src/CSmartMeter.class .
