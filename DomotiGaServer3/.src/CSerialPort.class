@@ -41,6 +41,7 @@ Property FlowControl As Integer
 Property Read Handle As Integer
 Property Read InputBufferSize As Integer
 Property Read OutputBufferSize As Integer
+Property Read Lines As Object
 Property Parity As Integer
 Property PortName As String
 Property Read RNG As Boolean
@@ -60,9 +61,11 @@ Private $sDataOut As String
 Public MySerialPort As New SerialPort
 
 ' Reconnect - we raise an Event if it happened
-Public $tReConnect As Timer
+Public tReConnect As Timer
 Private $iReConnectRetry As Integer = 0 ' retries
-Private $aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000, 14400000, 14400000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours (4x)
+Private $aReConnectDelay As Integer[] = [5000, 10000, 20000, 30000, 60000, 120000, 300000, 900000, 1800000, 3600000, 7200000, 14400000, 14400000, 14400000, 14400000] ' 5sec, 5sec, 10sec, 20sec, 30sec, 1min, 2min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours (4x)
+Private $iRWErrorMinute As Integer = 1 ' Number of read/write errors in the last minute, before we reconnect
+Private $aRWErrorDate As New Date[]
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Called when Class is created
@@ -75,6 +78,8 @@ End
 ' Called when Class is destroyed, free/close used variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub _free()
+
+  Try tReConnect.Stop
 
   Try Object.Detach(MySerialPort)
 
@@ -95,8 +100,7 @@ Public Sub MySerialPort_Read()
       Try bData = Read #Last As Byte
 
       If Error Then
-        ' * How many error do we accept before disconnect/reconnect? *
-        ' * Prevent flooding of logfiles *
+        ReadWriteError()
         Return
       Endif
 
@@ -106,11 +110,10 @@ Public Sub MySerialPort_Read()
       iLen = Lof(Last)
       aData = New Byte[]
       aData.Resize(iLen)
-      aData.Read(Last, 0, iLen)
+      Try aData.Read(Last, 0, iLen)
 
       If Error Then
-        ' * How many error do we accept before disconnect/reconnect? *
-        ' * Prevent flooding of logfiles *
+        ReadWriteError()
         Return
       Endif
 
@@ -119,8 +122,7 @@ Public Sub MySerialPort_Read()
     Default ' Also String
       Try sData = Read #Last, Lof(Last)
       If Error Then
-        ' * How many error do we accept before disconnect/reconnect? *
-        ' * Prevent flooding of logfiles *
+        ReadWriteError()
         Return
       Endif
 
@@ -145,7 +147,7 @@ Public Sub MySerialPort_Error()
   Raise Error(sMsg)
 
   ' Try to reconnect
-  ReConnected()
+  ReConnect()
 
 End
 
@@ -215,8 +217,7 @@ Public Sub Write(vData As Variant, Optional iDataType As Integer = 0)
       Try Write #MySerialPort, vData As Byte
 
       If Error Then
-        ' * How many error do we accept before disconnect/reconnect? *
-        ' * Prevent flooding of logfiles *
+        ReadWriteError()
         Return
       Endif
 
@@ -224,8 +225,7 @@ Public Sub Write(vData As Variant, Optional iDataType As Integer = 0)
       Try vData.Write(MySerialPort, 0, vData.Length)
 
       If Error Then
-        ' * How many error do we accept before disconnect/reconnect? *
-        ' * Prevent flooding of logfiles *
+        ReadWriteError()
         Return
       Endif
 
@@ -233,8 +233,7 @@ Public Sub Write(vData As Variant, Optional iDataType As Integer = 0)
       Try Write #MySerialPort, vData, Len(vData)
 
       If Error Then
-        ' * How many error do we accept before disconnect/reconnect? *
-        ' * Prevent flooding of logfiles *
+        ReadWriteError()
         Return
       Endif
 
@@ -247,7 +246,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Begin()
 
-  '$sDataOut = ""
+  $sDataOut = ""
 
 End
 
@@ -285,7 +284,8 @@ Public Sub Send()
 
   Try Write #MySerialPort, $sDataOut, Len($sDataOut)
   If Error Then
-    ' todo
+    ReadWriteError()
+    Return
   Endif
 
 End
@@ -306,6 +306,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Open(Optional iPolling As Integer = 50)
 
+  Dim sMsg As String
+
   Object.Attach(MySerialPort, Me, "MySerialPort")
 
   If iPolling = 50 Then
@@ -314,29 +316,76 @@ Public Sub Open(Optional iPolling As Integer = 50)
     MySerialPort.Open(iPolling)
   Endif
 
+  ' Successfully connected, reset the reconnect counter
+  $iReConnectRetry = 0
+
+Catch
+  If $iReConnectRetry <= $aReConnectDelay.Max Then
+    sMsg = Error.Text & ". Retry in " & ($aReConnectDelay[$iReConnectRetry] / 1000) & " seconds."
+  Else
+    sMsg = Error.Text
+  Endif
+
+  ReConnect()
+  Error.Raise(sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle possible read/write errors, because we don't want to reconnect with every error
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ReadWriteError()
+
+  Dim iCount As Integer
+
+  ' First expire entries older then the last 60 seconds
+  For iCount = 0 To $aRWErrorDate.Max
+    If iCount > $aRWErrorDate.Max Then Break
+
+    If DateDiff($aRWErrorDate[iCount], Now(), gb.Second) > 60 Then
+
+      $aRWErrorDate.Remove(iCount)
+      Dec iCount
+    Endif
+  Next
+
+  ' Add our current time
+  $aRWErrorDate.Add(Now)
+
+  ' Check if we went over the maximum number of read/write errors - do reconnect
+  If $aRWErrorDate.Count > $iRWErrorMinute Then
+    $aRWErrorDate.Clear()
+    ReConnect()
+  Else
+    Raise Error("Error read/write from SerialPort -> " & Error.Text & " (Count=" & $aRWErrorDate.Count & ")")
+  Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' We try to reconnect
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ReConnected()
+Public Sub ReConnect()
 
   ' Maybe something is still open/active, so kill it first
   Close()
+
+  ' Don't overrule an already started timer
+  If tReconnect And If tReconnect.Enabled Then Return
 
   ' Only do it, when it is a valid variable and has 1 or more entries
   If $aReConnectDelay Then
     If $aReConnectDelay.Count Then
 
       If $iReConnectRetry <= $aReConnectDelay.Max Then
-        $tReconnect = New Timer As "tReConnect"
-        $tReConnect.Delay = $aReConnectDelay[$iReConnectRetry]
-        $tReConnect.Start
+        tReconnect = New Timer As "tReConnect"
+        tReConnect.Delay = $aReConnectDelay[$iReConnectRetry]
+        tReConnect.Start
       Else
-        Try $tReConnect.Stop
+        Try tReConnect.Stop
         Raise Error("Too many reconnect failures (" & $iReConnectRetry & "), stopped trying.")
       Endif
+
       Inc $iReConnectRetry
     Endif
   Endif
@@ -560,5 +609,11 @@ End
 Function DataType_Write(iDataType As Integer)
 
   $iDataType = iDataType
+
+End
+
+Function Lines_Read() As Object
+
+  Return MySerialPort.Lines
 
 End
