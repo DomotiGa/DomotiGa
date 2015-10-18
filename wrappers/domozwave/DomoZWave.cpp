@@ -1111,31 +1111,6 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 				}
 			}
 
-
-			break;
-		}
-		case COMMAND_CLASS_THERMOSTAT_MODE:
-		{
-			if ( type == ValueID::ValueType_Decimal )
-			{
-				if ( label == "Mode" )
-				{
-					dev_index = 146;
-				}
-				if ( dev_index > 0 )
-				{
-					dev_label = label;
-
-					if ( strcmp( dev_value, "2" ) == 2 )
-					{
-						strcpy( dev_result, "Cool" );
-					}
-					else
-					{
-						strcpy( dev_result, "Ukn" );
-					}
-				}
-			}
 			break;
 		}
 	}
@@ -1194,7 +1169,6 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		}
 		else
 		{
-			if %s = "Cool"
 			WriteLog( LogLevel_Debug, false, "Value=%s", dev_value );
 		}
 
