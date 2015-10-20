@@ -1,0 +1,300 @@
+' Gambas class file
+
+' Description:
+' CBuienradar.class
+' Provides various weather related functions.
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "Buienradar"
+Public PluginFriendlyName As String = "Buienradar"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Johan Van Dyck"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[buienradar] "
+Public InterfaceId As Integer
+Public Instance As Integer
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sCity As String
+Private $sLatitude As String
+Private $sLongitude As String
+Private $iRefresh As Integer
+Private $bDebug As Boolean
+Private $iOutputPrecision As Integer
+Private $sURLBuienradar As String
+Private $sOutput As String
+Private $iDevMaxValue As Integer
+Private $iDevTimeValue As Integer
+
+Public hBuienradar As New HttpClient
+Public tBuienradar As New Timer
+Public $sBuffer As String
+
+'Private $cWeatherData As New Collection
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = 1 ' Module can only have 1 instance
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sCity = cPl.Settings["city"]
+  $sLatitude = cPl.Settings["latitude"]
+  $sLongitude = cPl.Settings["longitude"]
+  $iRefresh = cPl.Settings["polltime"]
+  $bDebug = cPl.Settings["debug"]
+  $iOutputPrecision = cPl.Settings["outputprecision"]
+  $sURLBuienradar = cPl.Settings["urlbuienradar"]
+  $sOutput = cPl.Settings["output"]
+  $iDevMaxValue = cPl.Settings["devmaxvalue"]
+  $iDevTimeValue = cPl.Settings["devtimevalue"]
+
+  InterfaceId = Devices.FindInterface("Virtual Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId can't be retrieved from the database!"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Initialize
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try tBuienradar.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' start timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Run()
+
+  ' Fetch the initial data
+  GetWeather()
+  Try tBuienradar.Stop
+
+  ' create refresh timer
+  tBuienradar = New Timer As "tBuienradar"
+  tBuienradar.Delay = $iRefresh * 1000
+  tBuienradar.Start
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Started refresh timer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' gets called at each timer event
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tBuienradar_Timer()
+
+  GetWeather()
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Updating data.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generates a GET call to Buienradar and store the info
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub GetWeather()
+
+  Dim sURL As String
+  'Dim sUnits As String
+  'Dim sLanguage As String
+
+  ' Don't start a new session if one is already active
+  If hBuienradar.Status > 0 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Fetching data is already in progress!")
+    Return
+  Endif
+
+  $sBuffer = ""
+
+  ' Build up the GET Url, we retrieve current conditions only
+  ' e.g. http://gps.buienradar.nl/getrr.php?lat=52&lon=4
+  sURL = $sURLBuienradar & "?lat=" & $sLatitude & "&lon=" & $sLongitude
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching data for Country/City '" & $sCity & "' with request '" & sURL & "'")
+
+  hBuienradar = New HttpClient As "hBuienradar"
+  hBuienradar.URL = sURL
+  hBuienradar.Async = True
+  hBuienradar.TimeOut = 5
+  hBuienradar.Tag = $sCity
+  hBuienradar.Get
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle data reading
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hBuienradar_Read()
+
+  IsRunning = True
+  If Lof(Last) Then $sBuffer &= Read #Last, Lof(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle read errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hBuienradar_Error()
+
+  isRunning = False
+  ErrorText = "Error retrieving Buienradar URL. Code=" & hBuienradar.Status
+  Main.WriteLog(LogLabel & "ERROR: Retrieving Buienradar URL. Code=" & hBuienradar.Status)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle finish request and start parsing the data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hBuienradar_Finished()
+
+  Dim sMsg As String
+  Dim cData As Collection
+
+  Select Last.Code
+    Case 200
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received '" & $sBuffer & "'")
+      DecodeBuienradar($sBuffer)
+    Default
+      IsRunning = False
+      ErrorText = "Unknown HTTP Code=" & Last.Code
+      Try cData = JSON.Decode($sBuffer)
+      If Not Error And If cData.Exist("error") Then sMsg = cData["error"]
+      Main.WriteLog(LogLabel & "ERROR: Unknown HTTP Code=" & Last.Code & ", while fetching weather data!" & IIf(sMsg, " Msg=" & sMsg, ""))
+  End Select
+
+  Try Last.Close
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Progress WeatherUnderground data and store it in a virtualdevice and Collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DecodeBuienradar(sData As String)
+
+  Dim sLine, sFirstTime As String
+  Dim aLines, aValues As String[]
+  Dim iDeviceId As Integer
+  Dim iLine, iValue As Integer
+' example data:
+	  '"000|16:05\r\n000|16:10\r\n000|16:15\r\n000|16:20\r\n000|16:25\r\n000|16:30\r\n000|16:35\r\n000|16:40\r\n000|16:45\r\n000|16:50\r\n
+	  '000 |16:55\r\n000|17:00\r\n000|17:05\r\n000|17:10\r\n000|17:15\r\n000|17:20\r\n000|17:25\r\n000|17:30\r\n000|17:35\r\n000|17:40\r\n
+	  '000 |17:45\r\n000|17:50\r\n000|17:55\r\n000|18:00\r\n000|18:05\r\n"
+  '''sData = "001|16:05\r\n002|16:10\r\n003|16:15\r\n004|16:20\r\n005|16:25\r\n006|16:30\r\n007|16:35\r\n008|16:40\r\n009|16:45\r\n010|16:50\r\n011|16:55\r\n012|17:00\r\n013|17:05\r\n014|17:10\r\n015|17:15\r\n016|17:20\r\n017|17:25\r\n018|17:30\r\n019|17:35\r\n020|17:40\r\n021|17:45\r\n022|17:50\r\n023|17:55\r\n024|18:00\r\n025|18:05\r\n"
+  '' print data to decode to debuglog
+  ''If $bDebug Then Main.WriteDebugLog(LogLabel & "sData= " & sData & "")
+  ' Find virtual device
+  iDeviceId = Devices.Find(Instance, "Buienradar", InterfaceId, "Weather", "Buienradar")
+  ''If $bDebug Then Main.WriteDebugLog(LogLabel & "DeviceID Buienradar= " & iDeviceId)
+  ' init loop to store values
+  iLine = 1
+  iValue = 1
+   ' split per line
+  aLines = Split(sData, "\n")
+  ' split rainfall and ('time of rainfall' + \r)
+    For Each sLine In aLines
+      'If $bDebug Then Main.WriteDebugLog(LogLabel & "sLine aValues.Count= " & sLine & ", " & aValues)
+      aValues = Split(sLine, "|")
+      'aLines ends with empty sline; aValues splitting gives only 1 value back; to avoid out of bound error in next calc, the ctu statement is added.
+      If aValues.Count = 0 Then Continue
+      '''If $bDebug Then Main.WriteDebugLog(LogLabel & "check max (iValue iDevMaxValue)= " & iValue & ", " & $iDevMaxValue)  
+	    If (iValue == ($iDevMaxValue + 1)) Then Break 'max number of wanted device values reached.
+      'for debug only simulate rain with value 77 = 0,1 mm/h rain or 078 to have fractional with n decimals.
+      ''aValues[0] = "078"
+      'choose which type of output: integer or mm/h
+      If $sOutput = "mm/h" Then
+        'convert rainfall from integer to mm/h via "mm/pro hour = 10^((value -109)/32)" formula given by the API website.
+        'info: good practise is to round to -3 digits as rainfall is an exponential curve. "-3" digits gives a good result for medium rainfall values
+        aValues[0] = CStr(Round(10 ^ ((Val(aValues[0]) - 109) / 32), - $iOutputPrecision))
+      Else
+        ' output integer value between 0 and 255. No calculation needed.
+      Endif
+      ''If $bDebug Then Main.WriteDebugLog(LogLabel & "iLine= " & iLine)
+      ''If $bDebug Then Main.WriteDebugLog(LogLabel & "aValues[0] round= " & aValues[0]) 'rain
+      ''If $bDebug Then Main.WriteDebugLog(LogLabel & "aValues[1]= " & Left(aValues[1],5) 'time of rain
+	  ' temp store the first time of the data
+	    If iLine == 1 Then
+      'first time received
+      sFirstTime = Left(aValues[1], 5)
+      Endif
+      ' if device found then update it's values
+      If iDeviceId Then
+        If iValue == $iDevTimeValue Then
+          '''If $bDebug Then Main.WriteDebugLog(LogLabel & "iValue iDevtimeValue = " & iValue & ", " & $iDevTimeValue)
+          Devices.ValueUpdate(iDeviceId, iValue, sFirstTime)
+          iValue = iValue + 1
+          If iValue == ($iDevMaxValue + 1) Then Continue 'max number of value reached.
+          Devices.ValueUpdate(iDeviceId, iValue, aValues[0])
+          iValue = iValue + 1
+          '''If $bDebug Then Main.WriteDebugLog(LogLabel & "1_na_t dev= " & iValue & ", " & aValues[0])
+        Else
+          Devices.ValueUpdate(iDeviceId, iValue, aValues[0])
+   	      '''If $bDebug Then Main.WriteDebugLog(LogLabel & "devstd (devmax devtime iValue aValues)= " & $iDevMaxValue & ", " & $iDevTimeValue & ", " & iValue & ", " & aValues[0])
+    	    iValue = iValue + 1
+    	    If iValue == $iDevMaxValue Then Continue 'max number of value reached.
+        Endif 'devtimevalue
+	    Endif 'iDeviceID
+   iLine = iLine + 1
+   '''If $bDebug Then Main.WriteDebugLog(LogLabel & "=======================")
+  Next
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return full pathname to the icon of Buienradar
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub IconFullName(sIcon As String) As String
+
+  'Return "http://" & $aIPAddr & "img/w/buienradar.png"
+  Return "http://xxx.xxx/img/w/" & sIcon & ".png"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return the Buienradar data format (not yet implemented)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub JsonRpc_Buienradar_Get(cData As Collection) As Collection
+
+  If cData Then
+  Else
+    ' If nothing supplied, just return no data
+    Return "No data supplied"
+  Endif
+
+End

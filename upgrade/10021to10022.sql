@@ -24,6 +24,31 @@ ALTER TABLE settings_visonic ADD COLUMN `motiontimeout` INT(11) DEFAULT '30'  AF
 ALTER TABLE settings_visonic ADD COLUMN `sensorarmstatus` INT(11) DEFAULT '0'  AFTER `motiontimeout`;
 
 --
+-- Add settings_buienradar
+--
+CREATE TABLE `settings_buienradar` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `urlbuienradar` varchar(128) DEFAULT NULL,
+  `latitude` varchar(32) DEFAULT NULL,
+  `longitude` varchar(32) DEFAULT NULL,
+  `city` varchar(128) DEFAULT NULL,
+  `polltime` int(11) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  `outputprecision` int(11) DEFAULT NULL,
+  `output` varchar(32) DEFAULT NULL,
+  `devmaxvalue` int(11) DEFAULT NULL,
+  `devtimevalue` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+
+LOCK TABLES `settings_buienradar` WRITE;
+INSERT INTO `settings_buienradar` VALUES (0, 0, 'http://gps.buienradar.nl/getrr.php', '51.2194475', '4.4024643', 'Antwerpen', 300, 0, 3, 'integer 0-255', 4, 4),(1, 0, 'http://gps.buienradar.nl/getrr.php', '51.2194475', '4.4024643', 'Antwerpen', 300, 0, 3, 'integer 0-255', 4, 4);
+UNLOCK TABLES;
+
+INSERT INTO plugins (`id`, `interface`, `protocols`, `name`, `type`) values (94,'Buienradar','','Buienradar','class');
+
+--
 -- Finally update to 1.0.022
 --
 
