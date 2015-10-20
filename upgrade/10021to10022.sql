@@ -49,6 +49,19 @@ UNLOCK TABLES;
 INSERT INTO plugins (`id`, `interface`, `protocols`, `name`, `type`) values (94,'Buienradar','','Buienradar','class');
 
 --
+-- Table structure for table `sslcertificate`
+--
+CREATE TABLE `sslcertificate` (
+  `id` int(11) NOT NULL,
+  `name` varchar(64) NOT NULL DEFAULT '',
+  `certificate` varchar(128) NOT NULL DEFAULT '',
+  `private` varchar(128) NOT NULL DEFAULT '',
+  `client` varchar(128) NOT NULL DEFAULT '',
+  `description` text,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+
+--
 -- Finally update to 1.0.022
 --
 

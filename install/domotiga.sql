@@ -4491,6 +4491,24 @@ INSERT INTO `settings_youless` VALUES (0,0,300,0),(1,0,300,0);
 UNLOCK TABLES;
 
 --
+-- Table structure for table `sslcertificate`
+--
+
+DROP TABLE IF EXISTS `sslcertificate`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `sslcertificate` (
+  `id` int(11) NOT NULL,
+  `name` varchar(64) NOT NULL DEFAULT '',
+  `certificate` varchar(128) NOT NULL DEFAULT '',
+  `private` varchar(128) NOT NULL DEFAULT '',
+  `client` varchar(128) NOT NULL DEFAULT '',
+  `description` text,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `stock`
 --
 
