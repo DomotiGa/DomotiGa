@@ -4,131 +4,69 @@
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (671,'VMB4RYLD','Velbus - 4 Channel relay module','Velbus','13|2');
 
 --
--- Table structure for table `settings_modbus`
+-- Add Visonic PowerMax/Master Panel
 --
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (672,'Visonic PowerMax','PowerMax Panel','Visonic','Panel');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (673,'Visonic PowerMaster','PowerMaster Panel','Visonic','Panel');
 
-DROP TABLE IF EXISTS `settings_modbus`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `settings_modbus` (
+--
+-- Modify settings_jsonrpc
+--
+ALTER TABLE settings_jsonrpc DROP COLUMN `sslcertificate` , DROP COLUMN `httpsenabled` , DROP COLUMN `httpenabled` , DROP COLUMN `httpsport`;
+ALTER TABLE settings_jsonrpc ADD COLUMN `sslenabled` TINYINT(1) NOT NULL DEFAULT '0'  AFTER `debug` ;
+
+--
+-- Modify settings_visonic
+--
+ALTER TABLE settings_visonic ADD COLUMN `autosynctime` TINYINT(1) NOT NULL DEFAULT '1'  AFTER `mastercode`;
+ALTER TABLE settings_visonic ADD COLUMN `forcestandardmode` TINYINT(1) NOT NULL DEFAULT '0'  AFTER `autosynctime`;
+ALTER TABLE settings_visonic ADD COLUMN `motiontimeout` INT(11) DEFAULT '30'  AFTER `forcestandardmode`;
+ALTER TABLE settings_visonic ADD COLUMN `sensorarmstatus` INT(11) DEFAULT '0'  AFTER `motiontimeout`;
+
+--
+-- Add settings_buienradar
+--
+CREATE TABLE `settings_buienradar` (
   `id` int(11) NOT NULL,
-  `modbustype` varchar(32) DEFAULT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
-  `tcphost` varchar(32) DEFAULT NULL,
-  `tcpport` int(11) DEFAULT NULL,
-  `type` varchar(32) DEFAULT NULL,
-  `serialport` varchar(128) DEFAULT NULL,
-  `baudrate` varchar(32) DEFAULT NULL,
-  `stopbits` int(8) DEFAULT NULL,
-  `databits` int(8) DEFAULT NULL,
-  `parity` int(8) DEFAULT NULL,
-  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  `urlbuienradar` varchar(128) DEFAULT NULL,
+  `latitude` varchar(32) DEFAULT NULL,
+  `longitude` varchar(32) DEFAULT NULL,
+  `city` varchar(128) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  `outputprecision` int(11) DEFAULT NULL,
+  `output` varchar(32) DEFAULT NULL,
+  `devmaxvalue` int(11) DEFAULT NULL,
+  `devtimevalue` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Dumping data for table `settings_modbus`
---
-
-LOCK TABLES `settings_modbus` WRITE;
-/*!40000 ALTER TABLE `settings_modbus` DISABLE KEYS */;
-INSERT INTO `settings_modbus` VALUES (0,'rtu',0,'192.168.100.7',502,'serial','/dev/ttyUSB0','9600',1,8,0,-1,300),(1,'rtu',0,'192.168.100.7',502,'serial','/dev/ttyUSB0','9600',1,8,0,-1,300);
-/*!40000 ALTER TABLE `settings_modbus` ENABLE KEYS */;
+LOCK TABLES `settings_buienradar` WRITE;
+INSERT INTO `settings_buienradar` VALUES (0, 0, 'http://gps.buienradar.nl/getrr.php', '51.2194475', '4.4024643', 'Antwerpen', 300, 0, 3, 'integer 0-255', 4, 4),(1, 0, 'http://gps.buienradar.nl/getrr.php', '51.2194475', '4.4024643', 'Antwerpen', 300, 0, 3, 'integer 0-255', 4, 4);
 UNLOCK TABLES;
 
 --
--- Add Modbus to Table `plugin`
+-- Fix 10020 to 10021 upgrade problem
 --
+DELETE FROM plugins WHERE id=94;
 
-INSERT INTO plugins (`id`, `interface`, `name`, `protocols`, `type`) VALUES (94, 'Modbus Interface', 'Modbus', 'Modbus', 'class');
+INSERT INTO plugins (`id`, `interface`, `name`, `type`) VALUES (94, 'GPS', 'GPS', 'class');
+INSERT INTO plugins (`id`, `interface`, `protocols`, `name`, `type`) values (95,'Buienradar','','Buienradar','class');
 
---
--- Add Modbus devicetypes
---
-
-INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (672, 'Read Holding Register 16-bit Unsigned', '03 16-bit Unsigned', 'Modbus', '2:10'),(673,'Read Holding Register 16-bit Signed','03 16-bit Signed','Modbus','1:0'),(674, 'Read Holding Register 16-bit ASCII', '03 16-bit ASCII', 'Modbus', '2:10'),(675,'Read Holding Register 16-bit On/Off','03 16-bit On/Off','Modbus','1:0');
-
-INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (676, 'Read Holding Register 32-bit Unsigned', '03 32-bit Unsigned', 'Modbus', '2:10'),(677,'Read Holding Register 32-bit Signed','03 32-bit Signed','Modbus','1:0'),(678, 'Read Holding Register 32-bit ASCII', '03 32-bit ASCII', 'Modbus', '2:10'),(679,'Read Holding Register 32-bit IEEE','03 32-bit IEEE','Modbus','1:0');
 
 --
--- Table structure for table `settings_enocean`
+-- Table structure for table `sslcertificate`
 --
-
-DROP TABLE IF EXISTS `settings_enocean`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `settings_enocean` (
+CREATE TABLE `sslcertificate` (
   `id` int(11) NOT NULL,
-  `enabled` tinyint(1) NOT NULL DEFAULT '0',
-  `type` varchar(32) DEFAULT NULL,
-  `tcphost` varchar(32) DEFAULT NULL,
-  `tcpport` int(11) DEFAULT NULL,
-  `serialport` varchar(128) DEFAULT NULL,
-  `baudrate` varchar(32) DEFAULT NULL,
-  `relayenabled` tinyint(1) DEFAULT NULL,
-  `relayport` int(11) DEFAULT NULL,
-  `debug` tinyint(1) NOT NULL DEFAULT '0',
-  PRIMARY KEY (`id`)
-) ENGINE=MyISAM DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `settings_enocean`
---
-
-LOCK TABLES `settings_enocean` WRITE;
-/*!40000 ALTER TABLE `settings_enocean` DISABLE KEYS */;
-INSERT INTO `settings_enocean` VALUES (0,0,'serial','192.168.100.7',5003,'/dev/serial/by-id/usb-EnOcean_GmbH_EnOcean_USB_300_DB_FTWYONRS-if00-port0','57600',0,10004,-1),(1,0,'serial','192.168.100.7',5003,'/dev/serial/by-id/usb-EnOcean_GmbH_EnOcean_USB_300_DB_FTWYONRS-if00-port0','57600',0,10004,-1);
-/*!40000 ALTER TABLE `settings_enocean` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Add EnOcean to Table `plugins`
---
-
-INSERT INTO plugins (`id`, `interface`, `name`, `protocols`, `type`) VALUE (95,'EnOcean Interface','EnOcean','EnOcean','class');
-
---
--- Add EnOcean devicetypes
---
--- Not defined yet 
-
---
--- Table structure for table `settings_caddx`
---
-
-DROP TABLE IF EXISTS `settings_caddx`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `settings_caddx` (
-  `id` int(11) NOT NULL,
-  `enabled` tinyint(1) NOT NULL DEFAULT '0',
-  `serialport` varchar(128) DEFAULT NULL,
-  `baudrate` int(11) DEFAULT NULL,
-  `type` int(11) NOT NULL DEFAULT '0',
-  `mastercode` varchar(16) DEFAULT '1234',
-  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  `name` varchar(64) NOT NULL DEFAULT '',
+  `certificate` varchar(128) NOT NULL DEFAULT '',
+  `private` varchar(128) NOT NULL DEFAULT '',
+  `client` varchar(128) NOT NULL DEFAULT '',
+  `description` text,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table `settings_caddx`
---
-
-LOCK TABLES `settings_caddx` WRITE;
-/*!40000 ALTER TABLE `settings_dsc` DISABLE KEYS */;
-INSERT INTO `settings_caddx` VALUES (0,0,'/dev/ttyS0',9600,0,'1234',0),(1,0,'/dev/ttyS0',9600,0,'1234',0);
-/*!40000 ALTER TABLE `settings_dsc` ENABLE KEYS */;
-UNLOCK TABLES;
-
---
--- Add Caddx to Table `plugins`
---
-
-INSERT INTO plugins (`id`, `interface`, `name`, `protocols`, `type`) VALUE (96,'Caddx Interface','Caddx','Caddx','class');
 
 --
 -- Finally update to 1.0.022
