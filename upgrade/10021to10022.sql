@@ -46,7 +46,14 @@ LOCK TABLES `settings_buienradar` WRITE;
 INSERT INTO `settings_buienradar` VALUES (0, 0, 'http://gps.buienradar.nl/getrr.php', '51.2194475', '4.4024643', 'Antwerpen', 300, 0, 3, 'integer 0-255', 4, 4),(1, 0, 'http://gps.buienradar.nl/getrr.php', '51.2194475', '4.4024643', 'Antwerpen', 300, 0, 3, 'integer 0-255', 4, 4);
 UNLOCK TABLES;
 
-INSERT INTO plugins (`id`, `interface`, `protocols`, `name`, `type`) values (94,'Buienradar','','Buienradar','class');
+--
+-- Fix 10020 to 10021 upgrade problem
+--
+DELETE FROM plugins WHERE id=94;
+
+INSERT INTO plugins (`id`, `interface`, `name`, `type`) VALUES (94, 'GPS', 'GPS', 'class');
+INSERT INTO plugins (`id`, `interface`, `protocols`, `name`, `type`) values (95,'Buienradar','','Buienradar','class');
+
 
 --
 -- Table structure for table `sslcertificate`
