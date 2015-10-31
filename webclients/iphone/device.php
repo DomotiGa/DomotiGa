@@ -65,8 +65,17 @@ if (is_array($data)) {
 
 // Get list of switchable devices
 $datas=get_device_listtype("switch");
+if (!is_array($datas))
+{
+   $datas=array();
+}
+
 // Get list of dimmable devices
 $datad=get_device_listtype("dim");
+if (!is_array($datad))
+{
+   $datad=array();
+}
 
 echo "<style type=\"text/css\">\n";
 foreach ($data AS $item) {

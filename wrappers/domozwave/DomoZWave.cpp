@@ -2297,7 +2297,7 @@ void OnControllerUpdate( Driver::ControllerState cs, Driver::ControllerError err
 				{
 					ctrl->m_controllerBusy = true;
 					WriteLog( LogLevel_Debug, true, "DomoZWave_HasNodeFailed: HomeId=0x%x Node=%d (Queued)", ctrl->m_homeId, cmd.m_nodeId );
-					response = Manager::Get()->BeginControllerCommand( ctrl->m_homeId, Driver::ControllerCommand_HasNodeFailed, OnControllerUpdate, ctrl, true, cmd.m_nodeId );
+					response = Manager::Get()->HasNodeFailed( ctrl->m_homeId, cmd.m_nodeId );
 		                        WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
 					break;
 				}
@@ -2305,7 +2305,7 @@ void OnControllerUpdate( Driver::ControllerState cs, Driver::ControllerError err
 				{
 					ctrl->m_controllerBusy = true;
 					WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNodeNeighborUpdate: HomeId=0x%x Node=%d (Queued)", ctrl->m_homeId, cmd.m_nodeId );
-					response = Manager::Get()->BeginControllerCommand( ctrl->m_homeId, Driver::ControllerCommand_RequestNodeNeighborUpdate, OnControllerUpdate, ctrl, false, cmd.m_nodeId );
+					response = Manager::Get()->RequestNodeNeighborUpdate( ctrl->m_homeId, cmd.m_nodeId );
 		                        WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
 					break;
 				}
@@ -3427,7 +3427,7 @@ bool DomoZWave_RequestNodeNeighborUpdate( uint32 home, int32 node, bool addqueue
 			ctrl->m_nodeId = node;
 			ctrl->m_controllerBusy = true;
 
-			try { response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNodeNeighborUpdate, OnControllerUpdate, ctrl, false, node ); } catch(...) {}
+			try { response = Manager::Get()->RequestNodeNeighborUpdate( home, node ); } catch(...) {}
 			WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
 		}
 		else
@@ -3475,7 +3475,7 @@ bool DomoZWave_RequestNodeNeighborUpdate( uint32 home, int32 node, bool addqueue
 			ctrl->m_nodeId = node;
 			ctrl->m_controllerBusy = true;
 
-			response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNodeNeighborUpdate, OnControllerUpdate, ctrl, false, node );
+			response = Manager::Get()->RequestNodeNeighborUpdate( home, node );
 		}
 		else
 		{
@@ -4820,7 +4820,7 @@ bool DomoZWave_AddDevice( uint32 home )
 		ctrl->m_nodeId = 0;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_AddDevice, OnControllerUpdate, ctrl, true, 0xff );
+		response = Manager::Get()->AddNode( home );
 	}
 	else
 	{
@@ -4850,7 +4850,7 @@ bool DomoZWave_RemoveDevice( uint32 home )
 		ctrl->m_nodeId = 0;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RemoveDevice, OnControllerUpdate, ctrl, true );
+		response = Manager::Get()->RemoveNode( home );
 	}
 	else
 	{
@@ -4880,7 +4880,7 @@ bool DomoZWave_AssignReturnRoute( uint32 home, int32 node, int32 destnode )
 		ctrl->m_nodeId = node;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_AssignReturnRoute, OnControllerUpdate, ctrl, true, node, destnode );
+		response = Manager::Get()->AssignReturnRoute( home, destnode );
 	}
 	else
 	{
@@ -4910,7 +4910,7 @@ bool DomoZWave_DeleteAllReturnRoutes( uint32 home, int32 node )
 		ctrl->m_nodeId = node;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_DeleteAllReturnRoutes, OnControllerUpdate, ctrl, true, node );
+		response = Manager::Get()->DeleteAllReturnRoutes( home, node );
 	}
 	else
 	{
@@ -4940,7 +4940,7 @@ bool DomoZWave_RequestNetworkUpdate( uint32 home, int32 node )
 		ctrl->m_nodeId = node;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RequestNetworkUpdate, OnControllerUpdate, ctrl, false, node );
+		response = Manager::Get()->RequestNetworkUpdate( home, node );
 	}
 	else
 	{
@@ -4971,7 +4971,7 @@ bool DomoZWave_CreateNewPrimary( uint32 home )
 		ctrl->m_nodeId = 0;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_CreateNewPrimary, OnControllerUpdate, ctrl, true );
+		response = Manager::Get()->CreateNewPrimary( home );
 	}
 	else
 	{
@@ -5001,7 +5001,7 @@ bool DomoZWave_TransferPrimaryRole( uint32 home )
 		ctrl->m_nodeId = 0;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_TransferPrimaryRole, OnControllerUpdate, ctrl, true );
+		response = Manager::Get()->TransferPrimaryRole( home );
 	}
 	else
 	{
@@ -5031,7 +5031,7 @@ bool DomoZWave_ReceiveConfiguration( uint32 home )
 		ctrl->m_nodeId = 0;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_ReceiveConfiguration, OnControllerUpdate, ctrl, true );
+		response = Manager::Get()->ReceiveConfiguration( home );
 	}
 	else
 	{
@@ -5064,7 +5064,7 @@ bool DomoZWave_HasNodeFailed( uint32 home, int32 node, bool addqueue = false )
 			ctrl->m_nodeId = node;
 			ctrl->m_controllerBusy = true;
 
-			response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_HasNodeFailed, OnControllerUpdate, ctrl, true, node );
+			response = Manager::Get()->HasNodeFailed( home, node );
 			WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
 		}
 		else
@@ -5110,7 +5110,7 @@ bool DomoZWave_HasNodeFailed( uint32 home, int32 node, bool addqueue = false )
 			ctrl->m_nodeId = node;
 			ctrl->m_controllerBusy = true;
 
-			response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_HasNodeFailed, OnControllerUpdate, ctrl, true, node );
+			response = Manager::Get()->HasNodeFailed( home, node );
 		}
 		else
 		{
@@ -5144,7 +5144,7 @@ bool DomoZWave_RemoveFailedNode( uint32 home, int32 node )
 		ctrl->m_nodeId = node;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_RemoveFailedNode, OnControllerUpdate, ctrl, true, node );
+		response = Manager::Get()->RemoveFailedNode( home, node );
 	}
 	else
 	{
@@ -5175,7 +5175,7 @@ bool DomoZWave_ReplaceFailedNode( uint32 home, int32 node )
 		ctrl->m_nodeId = node;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_ReplaceFailedNode, OnControllerUpdate, ctrl, true, node );
+		response = Manager::Get()->ReplaceFailedNode( home, node );
 	}
 	else
 	{
@@ -5205,7 +5205,7 @@ bool DomoZWave_SendNodeInformation( uint32 home, int32 node )
 		ctrl->m_nodeId = node;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_SendNodeInformation, OnControllerUpdate, ctrl, true, node );
+		response = Manager::Get()->SendNodeInformation( home, node );
 	}
 	else
 	{
@@ -5235,7 +5235,7 @@ bool DomoZWave_ReplicationSend( uint32 home, int32 node )
 		ctrl->m_nodeId = node;
 		ctrl->m_controllerBusy = true;
 
-		response = Manager::Get()->BeginControllerCommand( home, Driver::ControllerCommand_ReplicationSend, OnControllerUpdate, ctrl, true, node );
+		response = Manager::Get()->ReplicationSend( home, node );
 	}
 	else
 	{

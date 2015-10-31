@@ -48,6 +48,7 @@ Public ErrorWhere As String
 Private $bEnabled As Boolean
 Private $sSerPort As String
 Private $bDebug As Boolean
+Private $bLibDebug As Boolean
 Private $iPollTime As Integer
 Private $sPollTimeListening As String
 Private $bEnablePollListening As Boolean
@@ -63,9 +64,7 @@ Public bAllQueried As Boolean
 Public sAPIVersion As String
 Public sSDKVersion As String
 
-Public hJSONRPC As JsonRpcServer
 Private ZWaveNetwork As New Collection
-Private $sCurrentMethod As String
 
 ' Timer variables to cancel certain commands/states in open-zwave
 Public tSerialConnected As Timer
@@ -74,6 +73,26 @@ Public tControllerCommand As Timer
 Public tUserCodeEnroll As Timer
 Public tZWaveLED As New Timer
 Public tOZWKeepAlive As New Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Other Variable definitions like sockets, timers, etc
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public hServerSocket As CServerSocket
+Private $cClients As New Object[]
+Private $sCurrentMethod As String
+Private $cMethods As New String[]
+Private $cIPWhiteList As New String[]
+Private $iReply As Integer
+Private $vReply As Variant
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Constants
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Const JSONRPC_PARSEERROR As Integer = -32700
+Private Const JSONRPC_INVALIDREQUEST As Integer = -32600
+Private Const JSONRPC_METHODNOTFOUND As Integer = -32601
+Private Const JSONRPC_INVALIDPARAMS As Integer = -32602
+Private Const JSONRPC_INTERNALERROR As Integer = -32603
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Internal structures
@@ -235,10 +254,6 @@ Private Extern DomoZWave_SpecificTypeName(generictype As Integer, specifictype A
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
 
-  Dim bLibDebug As Boolean
-  Dim iJsonRpcPort As Integer
-  Dim sVersion As String
-
   KeyName = cPl.KeyName
   Instance = cPl.Instance
   If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
@@ -255,6 +270,13 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sUpdateNeighbor = cPl.Settings["updateneighbor"]
   $bEnableUpdateNeighbor = cPl.Settings["enableupdateneighbor"]
 
+    ' Check if we a "libdebug" settings, that is used during StartAll
+  If cPl.Settings.Exist("libdebug") Then
+    $bLibDebug = cPl.Settings["libdebug"]
+  Else
+    $bLibDebug = $bDebug
+  Endif
+
   ' Retrieve our Interface Id, we don't have to retrieve it more then once
   InterfaceId = Devices.FindInterface("Z-Wave Controller")
   If InterfaceId = 0 Then
@@ -264,6 +286,39 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     ErrorText = "Required InterfaceId for 'Z-Wave Controller' can't be retrieved from the database"
     Return
   Endif
+
+  Connect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add a new JSON-RPC method
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub RegisterMethod(sMethod As String)
+
+  If Not $cMethods.Exist(sMethod, gb.IgnoreCase) Then
+    $cMethods.Add(sMethod)
+  Endif 
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Connect/Setup OpenZWave
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Connect()
+
+  Dim sVersion As String
+  Dim iCnt As Integer
+  Dim iJsonRpcPort As Integer
 
   ' Re-Initialize information
   iHomeId = 0
@@ -276,8 +331,28 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] = 0
   Endif
 
+  $cMethods.Clear()
+
+  RegisterMethod("openzwave.homeid")
+  RegisterMethod("openzwave.allqueried")
+  RegisterMethod("openzwave.addnode")
+  RegisterMethod("openzwave.removenode")
+  RegisterMethod("openzwave.setvalue")
+
+  ' Only allow local connections
+  $cIPWhiteList.Add("127.0.0.1")
+
+  hServerSocket = New CServerSocket As "hServerSocket"
+
   ' Find available JSON-RPC port - every instance uses their own port. It is unlikely anybody has more than 1 controller
-  iJsonRpcPort = StartJSONRPC()
+  For iCnt = (16000 + Instance) To 65535
+    hServerSocket.Port = iCnt
+    Try hServerSocket.Listen()
+    If Not Error Then
+      iJsonRpcPort = iCnt
+      Break
+    Endif
+  Next
 
   If iJsonRpcPort = 0 Then
     Main.WriteLog(LogLabel & "ERROR: Required OpenZWave JSON-RPC Server can not be started, no ports available above 16000")
@@ -288,13 +363,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   Endif
 
   If Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] = 0 Then
-
-    ' Check if we a "libdebug" settings, that is used during StartAll
-    If cPl.Settings.Exist("libdebug") Then
-      bLibDebug = cPl.Settings["libdebug"]
-    Else
-      bLibDebug = $bDebug
-    Endif
 
     ' Check if the library matches the required version
     sVersion = Version()
@@ -324,7 +392,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Endif
 
     ' We need to call OpenZWave_Init
-    DomoZWave_Init(Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ "wrappers/domozwave/", Main.sBaseDir &/ "logs" &/ Main.sDomoZWaveFile, bLibDebug)
+    DomoZWave_Init(Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ "wrappers/domozwave/", Main.sBaseDir &/ "logs" &/ Main.sDomoZWaveFile, $bLibDebug)
   Endif
 
   ' Add +1 to ZWaveControllers count
@@ -345,18 +413,25 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Mandatory sub for each Module/Class to stop
+' Shutdown our OpenZWave JSON-RPC server
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub StopPlugin()
+Private Sub Disconnect()
 
-  ' Try to stop timer first
+  Dim oObj As Object
+
+  For Each oObj In $cClients
+    Try oObj.Close()
+  Next
+
+  $cClients.Clear()
+
+  Try hServerSocket.Close()
+
+ ' Try to stop timer first
   Try tSerialConnected.Stop
 
   ' Try to remove the SerialPort from the openzwave library
   Try DomoZWave_RemoveSerialPort($sSerPort)
-
-  ' Stop the OpenZWave JSON-RPC server instance
-  StopJSONRPC()
 
   ' Substract the instance from the current list. It can become negative
   Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] = Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] - 1
@@ -370,6 +445,243 @@ Public Sub StopPlugin()
   If Plugin.GetPluginObject("OpenZWave", 0).Settings["ZWaveControllers"] <= 0 Then
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Destroyed open-zwave wrapper.")
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Register an incoming connection. We support JSON-RPC over 
+' HTTP (including URL) and WebSockets
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hServerSocket_Connection(RemoteHost As String)
+
+  Dim hS As CSocket
+
+  hS = New CSocket As "hSocket"
+
+  ' If a whitelist exist, reject all other IP address
+  If $cIPWhiteList.Count >= 1 Then
+    If Not $cIPWhiteList.Exist(RemoteHost) Then
+      Try hS.AcceptSocket(hServerSocket)
+      hS.Close()
+      Return
+    Endif
+  Endif
+
+  ' Do an assignment, if SSL fails, we can get an error
+  Try hS.AssignSocket()
+  If Error Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Cannot assign ServerSocket. Msg=" & Error.Text)
+    Return
+  Endif
+
+  ' We support HTTP only
+  hS.Protocol = hS.PROTOCOL_HTTP
+
+  $cClients.Add(hS)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Close and remove Socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub RemoveSocket(hS As CSocket)
+
+  Try $cClients.Remove(hS)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read data from the Socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hSocket_Read(sJsonData As Variant)
+
+  Dim vTestData As Variant
+  Dim vJsonData As New Variant[]
+  Dim Entry As Variant
+  Dim vOutput As New Variant[]
+  Dim sJSONVersion As String
+  Dim sMethod As String
+  Dim JsonBatch As Boolean
+  Dim vId As Variant
+  Dim jCol As JSONCollection
+
+  ' Remove all NewLine and Carriage Return
+  sJsonData = Replace(sJsonData, Chr(13), "")
+  sJsonData = Replace(sJsonData, Chr(10), "")
+
+  ' Try to decode the string
+  Try vTestData = JSON.Decode(sJsonData, True)
+  If Error Then
+    Last.Begin()
+    Last.Print(JsonError(JSONRPC_PARSEERROR))
+    Last.Send()
+
+    Return
+  Endif
+
+  Try Entry = vTestData[0]
+  If Error Then
+    Last.Begin()
+    Last.Print(JsonError(JSONRPC_PARSEERROR))
+    Last.Send()
+
+    Return
+  Endif
+
+  ' No array, just 1 call
+  If Entry = Null Then
+    JsonBatch = False
+    vJsonData.Add(vTestData)
+  Else
+    JsonBatch = True
+    vJsonData = vTestData
+  Endif
+
+  For Each Entry In vJsonData
+
+    Try sJSONVersion = Entry["jsonrpc"]
+    ' Check if we got a method name
+
+    If sJSONVersion = "2.0" Then
+      ' Check if we got a method name
+      Try sMethod = Entry["method"]
+      If Error Then
+        vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST))
+      Else
+        If TypeOf(Entry["method"]) = gb.String Then
+          Try vId = Entry["id"]
+
+          sMethod = LCase(sMethod)
+
+          If Not $cMethods.Exist(sMethod) Then
+            vOutput.Add(JsonError(JSONRPC_METHODNOTFOUND, vId))
+          Else
+            $iReply = 0 
+            $vReply = Null
+
+            ' Convert the 'Null' to ""
+            If Entry["params"] Then
+              For Each Entry["params"]
+                If Entry["params"][Entry["params"].Key] = Null Then
+                  Entry["params"].Add("", Entry["params"].Key)
+                Else If TypeOf(Entry["params"][Entry["params"].Key]) = gb.Object And If Object.Type(Entry["params"][Entry["params"].Key]) = "JSONCollection" Then
+                  jCol = Entry[Entry["params"].Key]
+                  For Each jCol
+                    If jCol[jCol.Key] = Null Then
+                      jCol.Add("", jCol.Key)
+                    Endif
+                  Next
+                Endif
+              Next
+            Endif
+            ' Just pass all the data for testing
+            RemoteCall(sMethod, Entry["params"])
+
+            ' If id=Null then it is most likely a Json-Rpc notification, we shouldn't respond to it
+            If vId <> Null Then
+
+              ' The response from JSON-RPC handle can't be empty!
+              If $vReply = Null Then
+                If $iReply <> 0 Then
+                  vOutput.Add(JsonError($iReply, vId))
+                Else
+                  vOutput.Add(JsonError(JSONRPC_INTERNALERROR, vId))
+                Endif
+              Else
+                vOutput.Add(JsonToRpc($vReply, vId))
+              Endif
+            Endif
+          Endif
+        Else
+          vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST))
+        Endif
+      Endif
+    Else
+      vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST))
+    Endif
+
+  Next
+
+  If vOutput.Count >= 1 Then
+    If JsonBatch Then
+      Try sJsonData = JSON.Encode(vOutput)
+    Else
+      Try sJsonData = JSON.Encode(vOutput[0])
+    Endif
+
+    If Error Then
+      ' JSON data is invalid, thrown an internal error
+      sJsonData = JSON.Encode(JsonError(JSONRPC_INTERNALERROR))
+    Endif
+
+    Last.Begin()
+    Last.Print(sJsonData)
+    Last.Send()
+  Endif
+
+Catch
+  Last.Begin()
+  Last.Print(JsonError(JSONRPC_INTERNALERROR))
+  Last.Send()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Remove a suddenly socket from the list
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hSocket_Closed()
+
+  RemoveSocket(Last)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Create a Json Collection with a specific error message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub JsonError(iError As Integer, Optional vId As Variant = Null) As String
+
+  Dim cJsonData As New JSONCollection
+  Dim cError As New JSONCollection
+
+  ' Fill the error fields first
+  cError.Add(iError, "code")
+  Select Case iError
+    Case JSONRPC_PARSEERROR
+      cError.Add("Parse error", "message")
+    Case JSONRPC_INVALIDREQUEST
+      cError.Add("Invalid request", "message")
+    Case JSONRPC_METHODNOTFOUND
+      cError.Add("Method not found", "message")
+    Case JSONRPC_INVALIDPARAMS
+      cError.Add("Invalid params", "message")
+    Case JSONRPC_INTERNALERROR
+      cError.Add("Internal error", "message")
+    Default
+      cError.Add("Unknown error", "message")
+  End Select
+
+  ' Build up the collection
+  cJsonData.Add("2.0", "jsonrpc")
+  cJsonData.Add(cError, "error")
+  cJsonData.Add(vId, "id")
+
+  Return JSON.Encode(cJsonData)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Convert a JsonCollection to a valid JSON-RPC 2.0 Collection
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub JsonToRpc(cJsonResponse As Variant, vId As Variant) As JSONCollection
+
+  Dim cJsonData As New JSONCollection
+
+  ' Build up the collection
+  cJsonData.Add("2.0", "jsonrpc")
+  cJsonData.Add(cJsonResponse, "result")
+  cJsonData.Add(vId, "id")
+
+  Return cJsonData
 
 End
 
@@ -1262,61 +1574,9 @@ Public Sub SDKVersion(sVersion As String) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Start a JSON-RPC server only to be used by OpenZWave
-' We try to listen on a port-range, if that fails, we return zero
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub StartJSONRPC() As Integer
-
-  Dim hRpcFunc As JsonRpcFunction
-  Dim iCnt As Integer
-
-  ' Create a new instance of the JSON-RPC Server
-  hJSONRPC = New JsonRpcServer As "hJSONRPC"
-
-  ' ### OpenZWave only methods ###
-  hRpcFunc = New JsonRpcFunction("openzwave.homeid")
-  hJSONRPC.Register(hRpcFunc)
-  hRpcFunc = New JsonRpcFunction("openzwave.allqueried")
-  hJSONRPC.Register(hRpcFunc)
-  hRpcFunc = New JsonRpcFunction("openzwave.addnode")
-  hJSONRPC.Register(hRpcFunc)
-  hRpcFunc = New JsonRpcFunction("openzwave.removenode")
-  hJSONRPC.Register(hRpcFunc)
-  hRpcFunc = New JsonRpcFunction("openzwave.setvalue")
-  hJSONRPC.Register(hRpcFunc)
-
-  ' ---------------------------------------------------------
-  ' All have been setup, now try to start the JSOC-RPC server
-  ' ---------------------------------------------------------
-  For iCnt = 16000 To 65535
-    Try hJSONRPC.Listen(iCnt, 10, $bDebug, "127.0.0.1")
-    If hJSONRPC.Listening Then
-      Return iCnt
-    Endif
-  Next
-
-  ' Destroy create hJSONRPC
-  hJSONRPC = Null
-  Return 0
-
-Catch
-  Return 0
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Stop the OpenZWave JSON-RPC server
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub StopJSONRPC()
-
-  Try hJSONRPC.Stop()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle the JSON-RPC Remote Calls
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub hJSONRPC_RemoteCall(sName As String, cData As JSONCollection)
+Private Sub RemoteCall(sName As String, cData As JSONCollection)
 
   Dim sParam As String
 
@@ -1346,12 +1606,36 @@ Public Sub hJSONRPC_RemoteCall(sName As String, cData As JSONCollection)
 
       ' ## Default - return an error ###
     Default
-      hJSONRPC.SetReply(-32601, Null)
+      SetReply(JSONRPC_METHODNOTFOUND, Null)
       Return
   End Select
 
   Main.ControlLed("ZWave", "Off")
   Wait 0.001
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle SetReply and return it to the hJSONRPC procedure
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub SetReply(iReply As Integer, vReply As Variant, Optional sError As String = "")
+
+  $iReply = iReply
+  $vReply = vReply 
+
+  If $bDebug Then
+
+    If iReply = 0 Then
+      Main.WriteDebugLog(LogLabel & "Response for Method '" & $sCurrentMethod & "' Data '" & JSON.Encode(vReply) & "'")
+    Else
+      Main.WriteDebugLog(LogLabel & "Response for Method '" & $sCurrentMethod & "' ErrorCode=" & iReply)
+    Endif
+
+    ' Write error to a the logfile, if it contains a value
+    If sError Then
+      Main.WriteDebugLog(LogLabel & "ERROR: Method '" & $sCurrentMethod & "' - " & sError)
+    Endif
+  Endif
 
 End
 
@@ -1399,27 +1683,27 @@ Private Sub JSONCheckHomeId(vVar As Variant, Optional bNotNull As Boolean = True
 
   If vVar = Null Then
     WriteDebugLogError("params 'homeid' is missing")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
   If Not JSONCheckNumber(vVar) Then
     WriteDebugLogError("params 'homeid' is missing or is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
   Try iTemp = CInt(vVar)
   If Error Then
     WriteDebugLogError("params 'homeid' is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
   If bNotNull Then
     If iHomeId <> iTemp Then
       WriteDebugLogError("params 'homeid' is '" & iTemp & "', it is NOT our homeid '" & iHomeId & "'")
-      hJSONRPC.SetReply(-32602, Null)
+      SetReply(JSONRPC_INVALIDPARAMS, Null)
       Return False
     Endif
   Endif
@@ -1437,20 +1721,20 @@ Private Sub JSONCheckNodeId(vVar As Variant) As Boolean
 
   If vVar = Null Then
     WriteDebugLogError("params 'nodeid' is missing")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
   If Not JSONCheckNumber(vVar) Then
     WriteDebugLogError("params 'nodeid' is missing or is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
   Try iTemp = CInt(vVar)
   If Error Then
     WriteDebugLogError("params 'nodeid' is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return False
   Endif
 
@@ -1473,32 +1757,32 @@ Private Sub Call_OpenZWave_HomeId(cData As JSONCollection)
 
   If Not JSONCheckNumber(cData["controllerid"]) Then
     WriteDebugLogError("params 'controllerid' is missing or is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return
   Endif
 
   Try iTemp2 = CInt(cData["controllerid"])
   If Error Then
     WriteDebugLogError("params 'controllerid' is not numeric")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return
   Endif
 
   If TypeOf(cData["serialport"]) <> gb.String Then
     WriteDebugLogError("params 'serialport' is missing or isn't a string")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return
   Endif
 
   If Not cData["serialport"] Then
     WriteDebugLogError("params 'serialport' is empty string")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return
   Endif
 
   If cData["serialport"] <> $sSerPort Then
     WriteDebugLogError("params 'serialport' is NOT our serialport variable. Ours: '" & $sSerPort & "', Received: '" & cData["serialport"] & "'")
-    hJSONRPC.SetReply(-32602, Null)
+    SetReply(JSONRPC_INVALIDPARAMS, Null)
     Return
   Endif
 
@@ -1525,7 +1809,7 @@ Private Sub Call_OpenZWave_HomeId(cData As JSONCollection)
     Main.WriteDebugLog(LogLabel & "Z-Wave SDK version: " & sSDKVersion & ".")
   Endif
 
-  hJSONRPC.SetReply(0, True)
+  SetReply(0, True)
 
 End
 
@@ -1540,7 +1824,7 @@ Private Sub Call_OpenZWave_AllQueried(cData As Collection)
 
   bAllQueried = True
 
-  hJSONRPC.SetReply(0, True)
+  SetReply(0, True)
 
   ' All nodes are queried, now enable polling if > 0
   If $iPollTime > 0 Then
@@ -1633,7 +1917,7 @@ Private Sub Call_OpenZWave_AddNode(cData As Collection)
 
   ZWaveNetwork[iNodeId] = cZWaveNode
 
-  hJSONRPC.SetReply(0, True)
+  SetReply(0, True)
 
 End
 
@@ -1655,7 +1939,7 @@ Private Sub Call_OpenZWave_RemoveNode(cData As Collection)
       ZWaveNetwork.Remove(iNodeId)
   Endif
 
-  hJSONRPC.SetReply(0, True)
+  SetReply(0, True)
 
 End
 
@@ -1715,7 +1999,7 @@ Private Sub Call_OpenZWave_SetValue(cData As Collection)
     If iDeviceId Then Devices.ValueUpdate(iDeviceId, iValueId, cData["value"])
   Endif
 
-  hJSONRPC.SetReply(0, True)
+  SetReply(0, True)
 
 End
 

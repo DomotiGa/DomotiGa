@@ -1,0 +1,636 @@
+' Gambas class file
+
+' Description:
+' CSerialPort.class
+' Support for reconnect and not flooding the logfiles
+
+' Development Status:
+' Just started.
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' My events
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Event {Error}(sError As String)
+Event {Read}(vData As Variant)
+Event {ReConnect}
+Event {CTSChange}(CurrentValue As Boolean)
+Event {DCDChange}(CurrentValue As Boolean)
+Event {DSDChange}(CurrentValue As Boolean)
+Event {DTRChange}(CurrentValue As Boolean)
+Event {RNGChange}(CurrentValue As Boolean)
+Event {RTSChange}(CurrentValue As Boolean)
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Property Blocking As Boolean
+Property ByteOrder As Integer
+Property Read CTS As Boolean
+Property Read DCD As Boolean
+Property Read DSR As Boolean
+Property Read DTR As Boolean
+Property DataBits As Integer
+Property Read EndOfFile As Boolean
+Property EndOfLine As Integer
+Property FlowControl As Integer
+Property Read Handle As Integer
+Property Read InputBufferSize As Integer
+Property Read OutputBufferSize As Integer
+Property Read Lines As Object
+Property Parity As Integer
+Property PortName As String
+Property Read RNG As Boolean
+Property RTS As Boolean
+Property Speed As Integer
+Property Read Status As Integer
+Property StopBits As Integer
+Property Tag As Variant
+Property DataType As Integer
+Property ReConnectRetry As Integer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Generic SerialPort
+Private $iDataType As Integer = gb.String
+Private $sDataOut As String
+Public MySerialPort As New SerialPort
+
+' Reconnect - we raise an Event if it happened
+Public tReConnect As Timer
+Private $iReConnectRetry As Integer = 0 ' retries
+Private $aReConnectDelay As Integer[] = [5000, 10000, 20000, 30000, 60000, 120000, 300000, 900000, 1800000, 3600000, 7200000, 14400000, 14400000, 14400000, 14400000] ' 5sec, 5sec, 10sec, 20sec, 30sec, 1min, 2min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours (4x)
+Private $iRWErrorMinute As Integer = 1 ' Number of read/write errors in the last minute, before we reconnect
+Private $aRWErrorDate As New Date[]
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when Class is created
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub _new()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when Class is destroyed, free/close used variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub _free()
+
+  Try tReConnect.Stop
+
+  Try Close #MySerialPort
+
+  Try Object.Detach(MySerialPort)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Read data from SerialPort
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerialPort_Read()
+
+  Dim iLen As Integer
+  Dim sData As String
+  Dim bData As Byte
+  Dim aData As Byte[]
+
+  Select $iDataType
+    Case gb.Byte ' Byte
+      Try bData = Read #Last As Byte
+
+      If Error Then
+        ReadWriteError()
+        Return
+      Endif
+
+      Raise Read(bData)
+
+    Case &HFF + gb.Byte 'Byte[]
+      iLen = Lof(Last)
+      aData = New Byte[]
+      aData.Resize(iLen)
+      Try aData.Read(Last, 0, iLen)
+
+      If Error Then
+        ReadWriteError()
+        Return
+      Endif
+
+      Raise Read(aData)
+
+    Default ' Also String
+      Try sData = Read #Last, Lof(Last)
+      If Error Then
+        ReadWriteError()
+        Return
+      Endif
+
+      Raise Read(sData)
+
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' MySerialPort error
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerialPort_Error()
+
+  Dim sMsg As String
+
+  Select MySerialPort.Status
+    Default
+      sMsg = "Unknown Status=" & MySerialPort.Status
+  End Select
+
+  Raise Error(sMsg)
+
+  ' Try to reconnect
+  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Raise CTS Change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerialPort_CTSChange(CurrentValue As Boolean)
+
+  Raise CTSChange(CurrentValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Raise DCD Change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerialPort_DCDChange(CurrentValue As Boolean)
+
+  Raise DCDChange(CurrentValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Raise DSR Change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerialPort_DSRChange(CurrentValue As Boolean)
+
+  Raise DSRChange(CurrentValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Raise DTR Change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerialPort_DTRChange(CurrentValue As Boolean)
+
+  Raise DTRChange(CurrentValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Raise RNG Change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerialPort_RNGChange(CurrentValue As Boolean)
+
+  Raise RNGChange(CurrentValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Raise RTS Change
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerialPort_RTSChange(CurrentValue As Boolean)
+
+  Raise RTSChange(CurrentValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Write data to SerialPort
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Write(vData As Variant, Optional iDataType As Integer = 0)
+
+  If iDataType Then $iDataType = iDataType
+
+  Select $iDataType
+    Case gb.Byte ' Byte
+      Try Write #MySerialPort, vData As Byte
+
+      If Error Then
+        ReadWriteError()
+        Return
+      Endif
+
+    Case &HFF + gb.Byte ' Byte[]
+      Try vData.Write(MySerialPort, 0, vData.Length)
+
+      If Error Then
+        ReadWriteError()
+        Return
+      Endif
+
+    Default ' Also String
+      Try Write #MySerialPort, vData, Len(vData)
+
+      If Error Then
+        ReadWriteError()
+        Return
+      Endif
+
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Start a new line/print session
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Begin()
+
+  $sDataOut = ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add the line with a proper linefeed character(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Print(vData As Variant, Optional iDataType As Integer = 0)
+
+  If iDataType Then $iDataType = iDataType
+
+  Select $iDataType
+    Case gb.Byte
+      $sDataOut &= Chr(vData)
+    Case &HFF + gb.Byte
+      $sDataOut &= vData.ToString
+    Default
+      $sDataOut &= vData
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Drop the data stored in the internal buffer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Drop()
+
+  $sDataOut = ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Send the data in the internal buffer, as line/print
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Send()
+
+  Try Write #MySerialPort, $sDataOut, Len($sDataOut)
+  If Error Then
+    ReadWriteError()
+    Return
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' SerialPort will be closed
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Close()
+
+  Try tReConnect.Stop
+
+  Try Close #MySerialPort
+
+  Try Object.Detach(MySerialPort)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Open SerialPort
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Open(Optional iPolling As Integer = 50)
+
+  Dim sMsg As String
+
+  Object.Attach(MySerialPort, Me, "MySerialPort")
+
+  If iPolling = 50 Then
+    MySerialPort.Open()
+  Else
+    MySerialPort.Open(iPolling)
+  Endif
+
+  ' Successfully connected, reset the reconnect counter
+  $iReConnectRetry = 0
+
+Catch
+  If $iReConnectRetry <= $aReConnectDelay.Max Then
+    sMsg = Error.Text & ". Retry in " & ($aReConnectDelay[$iReConnectRetry] / 1000) & " seconds."
+  Else
+    sMsg = Error.Text
+  Endif
+
+  ReConnect()
+  Error.Raise(sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle possible read/write errors, because we don't want to reconnect with every error
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ReadWriteError()
+
+  Dim iCount As Integer
+
+  ' First expire entries older then the last 60 seconds
+  For iCount = 0 To $aRWErrorDate.Max
+    If iCount > $aRWErrorDate.Max Then Break
+
+    If DateDiff($aRWErrorDate[iCount], Now(), gb.Second) > 60 Then
+
+      $aRWErrorDate.Remove(iCount)
+      Dec iCount
+    Endif
+  Next
+
+  ' Add our current time
+  $aRWErrorDate.Add(Now)
+
+  ' Check if we went over the maximum number of read/write errors - do reconnect
+  If $aRWErrorDate.Count > $iRWErrorMinute Then
+    $aRWErrorDate.Clear()
+    ReConnect()
+  Else
+    Raise Error("Error read/write from SerialPort -> " & Error.Text & " (Count=" & $aRWErrorDate.Count & ")")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' We try to reconnect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub ReConnect()
+
+  ' Maybe something is still open/active, so kill it first
+  Close()
+
+  ' Don't overrule an already started timer
+  If tReconnect And If tReconnect.Enabled Then Return
+
+  ' Only do it, when it is a valid variable and has 1 or more entries
+  If $aReConnectDelay Then
+    If $aReConnectDelay.Count Then
+
+      If $iReConnectRetry <= $aReConnectDelay.Max Then
+        tReconnect = New Timer As "tReConnect"
+        tReConnect.Delay = $aReConnectDelay[$iReConnectRetry]
+        tReConnect.Start
+      Else
+        Try tReConnect.Stop
+        Raise Error("Too many reconnect failures (" & $iReConnectRetry & "), stopped trying.")
+      Endif
+
+      Inc $iReConnectRetry
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' ReConnect Timer expired
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReConnect_Timer()
+
+  ' Stop timer
+  Last.Stop()
+
+  ' Raise a reconnect event, Plugin is responsible for it
+  Raise ReConnect
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Properties
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Function Blocking_Read() As Boolean
+
+  Return MySerialPort.Blocking
+
+End
+
+Function Blocking_Write(bBlocking As Boolean)
+
+  MySerialPort.Blocking = bBlocking
+
+End
+
+Function ByteOrder_Read() As Integer
+
+  Return MySerialPort.ByteOrder
+
+End
+
+Function ByteOrder_Write(iByteOrder As Integer)
+
+  MySerialPort.ByteOrder = iByteOrder
+
+End
+
+Function CTS_Read() As Boolean
+
+  Return MySerialPort.CTS
+
+End
+
+Function DCD_Read() As Boolean
+
+  Return MySerialPort.DCD
+
+End
+
+Function DSR_Read() As Boolean
+
+  Return MySerialPort.DSR
+
+End
+
+Function DTR_Read() As Boolean
+
+  Return MySerialPort.DTR
+
+End
+
+Function DataBits_Read() As Integer
+
+  Return MySerialPort.DataBits
+
+End
+
+Function DataBits_Write(iDataBits As Integer)
+
+  MySerialPort.DataBits = iDataBits
+
+End
+
+Function EndOfFile_Read() As Boolean
+
+  Return MySerialPort.EndOfFile
+
+End
+
+Function EndOfLine_Read() As Integer
+
+  Return MySerialPort.EndOfLine
+
+End
+
+Function EndOfLine_Write(iEndOfLine As Integer)
+
+  MySerialPort.EndOfLine = iEndOfLine
+
+End
+
+Function FlowControl_Read() As Integer
+
+  Return MySerialPort.FlowControl
+
+End
+
+Function FlowControl_Write(iFlowControl As Integer)
+
+  MySerialPort.FlowControl = iFlowControl
+
+End
+
+Function Handle_Read() As Integer
+
+  Return MySerialPort.Handle
+
+End
+
+Function InputBufferSize_Read() As Integer
+
+  Return MySerialPort.InputBufferSize
+
+End
+
+Function OutputBufferSize_Read() As Integer
+
+  Return MySerialPort.OutputBufferSize
+
+End
+
+Function Parity_Read() As Integer
+
+  Return MySerialPort.Parity
+
+End
+
+Function Parity_Write(iParity As Integer)
+
+  MySerialPort.Parity = iParity
+
+End
+
+Function PortName_Read() As String
+
+  Return MySerialPort.PortName
+
+End
+
+Function PortName_Write(sPortName As String)
+
+  MySerialPort.PortName = sPortName
+
+End
+
+Function RNG_Read() As Boolean
+
+  Return MySerialPort.RNG
+
+End
+
+Function RTS_Read() As Boolean
+
+  Return MySerialPort.RTS
+
+End
+
+Function RTS_Write(bRTS As Boolean)
+
+  MySerialPort.RTS = bRTS
+
+End
+
+Function Speed_Read() As Integer
+
+  Return MySerialPort.Speed
+
+End
+
+Function Speed_Write(iSpeed As Integer)
+
+  MySerialPort.Speed = iSpeed
+
+End
+
+Function Status_Read() As Integer
+
+  Return MySerialPort.Status
+
+End
+
+Function StopBits_Read() As Integer
+
+  Return MySerialPort.StopBits
+
+End
+
+Function StopBits_Write(iStopBits As Integer)
+
+  MySerialPort.StopBits = iStopBits
+
+End
+
+Function Tag_Read() As Variant
+
+  Return MySerialPort.Tag
+
+End
+
+Function Tag_Write(vTag As Variant)
+
+  MySerialPort.Tag = vTag
+
+End
+
+Function DataType_Read() As Integer
+
+  Return $iDataType
+
+End
+
+Function DataType_Write(iDataType As Integer)
+
+  $iDataType = iDataType
+
+End
+
+Function Lines_Read() As Object
+
+  Return MySerialPort.Lines
+
+End
+
+Function ReConnectRetry_Read() As Integer
+
+  Return $iReConnectRetry
+
+End
+
+Function ReConnectRetry_Write(iReConnectRetry As Integer)
+
+  $iReConnectRetry = iReConnectRetry
+
+End

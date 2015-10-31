@@ -18,6 +18,7 @@ ln -s ../../DomotiGa3/.src/CallerID.module
 ln -s ../../DomotiGa3/.src/CAsterisk.class
 ln -s ../../DomotiGa3/.src/CBluetooth.class
 ln -s ../../DomotiGa3/.src/CBroadcastUDP.class
+ln -s ../../DomotiGa3/.src/CBuienradar.class
 ln -s ../../DomotiGa3/.src/CCUL.class
 ln -s ../../DomotiGa3/.src/CBwiredMap.class
 ln -s ../../DomotiGa3/.src/CCTX35.class
@@ -82,12 +83,15 @@ ln -s ../../DomotiGa3/.src/CRFXComRX.class
 ln -s ../../DomotiGa3/.src/CRFXComTX.class
 ln -s ../../DomotiGa3/.src/CRFXComTRX.class
 ln -s ../../DomotiGa3/.src/CRFXComxPL.class
+ln -s ../../DomotiGa3/.src/CSerialPort.class
+ln -s ../../DomotiGa3/.src/CServerSocket.class
 ln -s ../../DomotiGa3/.src/CSharpTV.class
 ln -s ../../DomotiGa3/.src/CShell.class
 ln -s ../../DomotiGa3/.src/CSMS.class
 ln -s ../../DomotiGa3/.src/CSmartMeter.class
 ln -s ../../DomotiGa3/.src/CSmartVISUServer.class
 ln -s ../../DomotiGa3/.src/CSqueezeServer.class
+ln -s ../../DomotiGa3/.src/CSocket.class
 ln -s ../../DomotiGa3/.src/CTelnetServer.class
 ln -s ../../DomotiGa3/.src/CTemp08.class
 ln -s ../../DomotiGa3/.src/CTemperaturNu.class
@@ -132,4 +136,3 @@ ln -s ../../DomotiGa3/.src/JsonRpc/JsonRpcServer.class
 ln -s ../../DomotiGa3/.src/Timers/CTimerDelay.class
 ln -s ../../DomotiGa3/.src/Timers/CTimerOnOff.class
 ln -s ../../DomotiGa3/.src/Timers/CTimerGeneric.class
-
