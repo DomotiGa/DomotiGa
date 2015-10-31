@@ -54,7 +54,6 @@ DELETE FROM plugins WHERE id=94;
 INSERT INTO plugins (`id`, `interface`, `name`, `type`) VALUES (94, 'GPS', 'GPS', 'class');
 INSERT INTO plugins (`id`, `interface`, `protocols`, `name`, `type`) values (95,'Buienradar','','Buienradar','class');
 
-
 --
 -- Table structure for table `sslcertificate`
 --

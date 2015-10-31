@@ -135,13 +135,6 @@ UNLOCK TABLES;
 INSERT INTO plugins (`id`, `interface`, `name`, `protocols`, `type`) VALUE (98,'Caddx Interface','Caddx','Caddx','class');
 
 --
--- Finally update to 1.0.022
---
-
-LOCK TABLES version WRITE;
-INSERT INTO version VALUES (67,'1.0.022');
-UNLOCK TABLES;
---
 -- Finally update to 1.0.023
 --
 
