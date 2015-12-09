@@ -61,6 +61,7 @@ char domozwave_vers[] = "DomoZWave version 2.10";
 #include "ValueList.h"
 #include "ValueShort.h"
 #include "ValueString.h"
+#include "ThermostatMode.h"
 
 // wrapper
 #include "DomoZWave.h"
@@ -978,24 +979,6 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 			break;
 		}
-		case COMMAND_CLASS_ALARM:
-		{
-			if ( label == "Alarm Level" )
-			{
-				dev_index = 91;
-
-				if ( strcmp( dev_value, "0" ) == 0 )
-				{
-					strcpy( dev_result, "Secure" );
-				}
-				else
-				{
-					strcpy( dev_result, "Tamper" );
-				}
-			}
-
-			break;
-		}
 		case COMMAND_CLASS_SENSOR_ALARM:
 		{
 			if ( type == ValueID::ValueType_Byte )
@@ -1113,21 +1096,138 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 			break;
 		}
-        case COMMAND_CLASS_THERMOSTAT_MODE:
+        
+        case COMMAND_CLASS_ALARM:
 		{
-			if ( type == ValueID::ValueType_Decimal )
+			if ( label == "Alarm Level" )
 			{
-				if ( label == "Mode" )
+				dev_index = 91;
+
+				if ( strcmp( dev_value, "0" ) == 0 )
 				{
-					dev_index = 146;
+					strcpy( dev_result, "Secure" );
 				}
-				if ( dev_index > 0 )
+				else if ( strcmp( dev_value, "255" ) == 0 )
 				{
-					dev_label = label;
+					strcpy( dev_result, "Heartbeat" );
+				}
+				else
+				{
+					strcpy( dev_result, dev_value );
+				}
+			}
+
+			if ( label == "Alarm Type")
+			{
+				dev_index = 151;
+				if ( strcmp( dev_value, "1" ) == 0 )
+				{
+					strcpy( dev_result, "Smoke" );
+				}
+				else if ( strcmp( dev_value, "2" ) == 0 )
+				{
+					strcpy( dev_result, "CO" );
+				}
+				else if ( strcmp( dev_value, "9" ) == 0 )
+				{
+					strcpy( dev_result, "Malfunction" );
+				}
+				else if ( strcmp( dev_value, "12" ) == 0 )
+				{
+					strcpy( dev_result, "Test" );
+				}
+				else if ( strcmp( dev_value, "13" ) == 0 )
+				{
+					strcpy( dev_result, "Heartbeat" );
+				}
+				else if ( strcmp( dev_value, "14" ) == 0 )
+				{
+					strcpy( dev_result, "EOL" );
+				}
+				else
+				{
+					strcpy( dev_result, dev_value );
 				}
 			}
 			break;
 		}
+
+		case COMMAND_CLASS_THERMOSTAT_FAN_MODE:
+		{
+			if ( label == "Fan Mode" )
+			{
+				dev_index = 150;
+
+				if ( strcmp( dev_value, "0" ) == 0 )
+				{
+					strcpy( dev_result, "Auto Low" );
+				}
+				else if ( strcmp( dev_value, "1" ) == 0 )
+				{
+					strcpy( dev_result, "On Low" );
+				}
+				else
+				{
+					strcpy( dev_result, dev_value );
+				}
+			}
+
+			break;
+		}
+
+		case COMMAND_CLASS_THERMOSTAT_OPERATING_STATE:
+		{
+			if ( label == "Operating State" )
+			{
+				dev_index = 149;
+				strcpy( dev_result, dev_value );
+			}
+
+			break;
+		}
+
+		case COMMAND_CLASS_THERMOSTAT_FAN_STATE:
+		{
+			if ( label == "Fan State" )
+			{
+				dev_index = 148;
+				strcpy( dev_result, dev_value );
+			}
+
+			break;
+		}
+
+		case COMMAND_CLASS_THERMOSTAT_MODE:
+		{
+			if ( label == "Mode" )
+			{
+				dev_index = 147;
+
+				if ( strcmp( dev_value, "0" ) == 0 )
+				{
+					strcpy( dev_result, "Off" );
+				}
+				else if ( strcmp( dev_value, "1" ) == 0 )
+				{
+					strcpy( dev_result, "Heat" );
+				}
+				else if ( strcmp( dev_value, "2" ) == 0 )
+				{
+					strcpy( dev_result, "Cool" );
+				}
+				else if ( strcmp( dev_value, "3" ) == 0 )
+				{
+					strcpy( dev_result, "Auto" );
+				}
+				else
+				{
+					strcpy( dev_result, dev_value );
+				}
+			}
+
+			break;
+		}
+
 	}
 
 	//////////////////////////////////////////////////////////////////////////////////////////
@@ -3628,6 +3728,10 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 			{
 				usecc = COMMAND_CLASS_DOOR_LOCK;
 			}
+			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_MODE") != string::npos )
+			{
+				usecc = COMMAND_CLASS_THERMOSTAT_MODE;
+			}
 			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_SETPOINT") != string::npos )
 			{
 				usecc = COMMAND_CLASS_THERMOSTAT_SETPOINT;
@@ -3707,6 +3811,18 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 
 						break;
 					}
+
+                    case COMMAND_CLASS_THERMOSTAT_MODE:
+					{
+						// Currently we only support Heating 1
+						if ( label != "Mode" )
+						{
+							continue;
+						}
+
+						break;
+					}
+
 					default:
 					{
 						continue;
