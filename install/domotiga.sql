@@ -1453,7 +1453,7 @@ DROP TABLE IF EXISTS `settings_arduino`;
 CREATE TABLE `settings_arduino` (
   `id` int(11) NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
-  `serialport` varchar(32) DEFAULT NULL,
+  `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `polltime` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
@@ -4044,7 +4044,7 @@ DROP TABLE IF EXISTS `settings_velbus`;
 CREATE TABLE `settings_velbus` (
   `id` int(11) NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
-  `serialport` varchar(32) DEFAULT NULL,
+  `serialport` varchar(128) DEFAULT NULL,
   `tcphost` varchar(32) DEFAULT NULL,
   `tcpport` int(11) NOT NULL DEFAULT '0',
   `type` varchar(32) DEFAULT NULL,
