@@ -15,7 +15,18 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Define external OpenSSL library calls. We support 0.9.8/1.0.x/1.1.x
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Library "libcrypto"
+Private Extern SSLeay_version(iInt As Integer) As String
+
 Library "libssl"
+Private Extern SSL_library_init()
+Private Extern SSL_load_error_strings()
+Private Extern SSLv23_method() As Pointer ' deprecated in OpenSSL 1.1.x
+Private Extern TLS_method() As Pointer ' new in OpenSSL 1.1.x
+Private Extern SSL_CTX_new(pCTX As Pointer) As Pointer
+Private Extern SSL_CTX_free(pCTX As Pointer)
+Private Extern SSL_CTX_ctrl(pCTX As Pointer, iCmd As Integer, lOptions As Long, pParm As Pointer) As Long
 Private Extern SSL_new(pCTX As Pointer) As Pointer
 Private Extern SSL_free(pSSL As Pointer)
 Private Extern SSL_shutdown(pSSL As Pointer) As Integer
@@ -23,16 +34,18 @@ Private Extern SSL_set_fd(pSSL As Pointer, iFd As Integer) As Integer
 Private Extern SSL_read(pSSL As Pointer, pData As Pointer, iLen As Integer) As Integer
 Private Extern SSL_write(pSSL As Pointer, pData As Pointer, iLen As Integer) As Integer
 Private Extern SSL_accept(pSSL As Pointer) As Integer
+Private Extern SSL_connect(pSSL As Pointer) As Integer
 Private Extern SSL_get_error(pSSL As Pointer, iRC As Integer) As Integer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' My events
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Event {Closed}
-Event {Found}
 Event {Error}(sError As String)
-Event {Read}(sData As String)
+Event {Found}
+Event {Read}(vData As Variant)
 Event {Ready}
+Event {WebSocketReady}
 Event {Write}
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -70,6 +83,8 @@ Property Timeout As Integer
 Property Tag As Variant
 Property Protocol As Integer
 Property ReadTimeOut As Integer
+Property Server As Object
+Property DataType As Integer
 
 Property HTTPCode As Integer
 Property HTTPKeepAlive As Integer
@@ -90,13 +105,18 @@ Private $iEndOfLine As Integer = gb.Unix
 Private $iTimeout As Integer = 0
 Private $iEncrypt As Integer = Net.None ' 0=Net.None, 1=Net.SSL
 Private $iProtocol As Integer = PROTOCOL_NONE
-Private $iSSLBufferSize As Integer = 1024 ' The SSL buffer size for reading the socket
+Private $iSSLBufferSize As Integer = 2048 ' The SSL buffer size for reading the socket
 Private $pCTX As Pointer
 Private $pSSL As Pointer
 Private $bSSLAcceptHandshake As Boolean
 Private $sDataIn As String
 Private $sDataInExtra As String
 Private $sDataOut As String
+Private $cServer As Object
+Private $sSSLVersion As String
+Private $sSSLVersionId As String
+Private $lSSLMethod As Long
+Private $iDataType As Integer
 Public MySocket As New Socket
 
 Private $iReadTimeOut As Integer = 200 '*0.005
@@ -124,7 +144,7 @@ Private $bWebSocketEnabled As Boolean
 Private $sWebSocketHandShake As String
 Private $bWebSocketFIN As Boolean
 Private $iWebSocketCloseCode As Integer
-Private $sWebSocketCloseText As String
+'Private $sWebSocketCloseText As String
 Private $sWebSocketMultiPacket As String
 Private $sWebSocketPrevOpCode As String
 
@@ -142,6 +162,10 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub _free()
 
+  If $pCTX <> Null Then
+    Try SSL_CTX_free($pCTX)
+  Endif
+
   If $pSSL <> Null Then
     Try SSL_shutdown($pSSL)
     Try SSL_free($pSSL)
@@ -151,12 +175,14 @@ Public Sub _free()
   Try $tHTTPTimer.Stop
   Try Close #MySocket
 
+  Try Object.Detach(MySocket)
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Read None-SSL and SSL data from socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySocket_Read()
+Public Sub Socket_Read()
 
   Dim sData As String
   Dim pData As Pointer
@@ -177,6 +203,9 @@ Public Sub MySocket_Read()
 
         ' Raise Ready event if the SSL handshake is done succesfully
         Raise Ready
+
+        ' Now we can also raise Write event
+        Raise Write
       Else
         If iRet = -1 Then
           Try iRet = SSL_get_error($pSSL, iRet)
@@ -217,7 +246,8 @@ Public Sub MySocket_Read()
         sData &= String@(pData, iLen)
       Endif
 
-    Until iLen <= 0
+      ' Run until SSL_read returns zero, or our buffer is empty
+    Until iLen <= 0 Or Lof(Last) = 0
 
     Free(pData)
 
@@ -236,23 +266,30 @@ Public Sub MySocket_Read()
         $sDataIn &= sData
         Return
       Else
-        ' Do a repeat/until loop, for HTTP/1.1 requests
-        Repeat
-          $sHTTPMethod = ""
-          $cHTTPConnection.Clear()
-          $bHTTPDeflate = False
-          $sHTTPCrossOrigin = ""
-          $sHTTPAccessControlRequestHeaders = ""
+        If $cServer Then
+          ' Server mode
 
-          $sDataIn &= $sDataInExtra & sData
-          $sDataInExtra = ""
+          ' Do a repeat/until loop, for HTTP/1.1 requests
+          Repeat
+            $sHTTPMethod = ""
+            $cHTTPConnection.Clear()
+            $bHTTPDeflate = False
+            $sHTTPCrossOrigin = ""
+            $sHTTPAccessControlRequestHeaders = ""
 
-          If Protocol_HTTP_Read() Then
-            Raise Read($sDataIn)
-          Endif
+            $sDataIn &= $sDataInExtra & sData
+            $sDataInExtra = ""
 
-          $sDataIn = ""
-        Until Not $sDataInExtra
+            If Protocol_HTTPServer_Read() Then
+              Raise Read($sDataIn)
+            Endif
+
+            $sDataIn = ""
+          Until Not $sDataInExtra
+        Else
+          ' Client mode
+          ' TODO
+        Endif
        Endif
 
     Else
@@ -312,7 +349,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle HTTP data and only return the body of the request upstream
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Protocol_HTTP_Read() As Boolean
+Private Sub Protocol_HTTPServer_Read() As Boolean
 
   Dim iWait As Integer = 1
   Dim iCount As Integer
@@ -538,9 +575,8 @@ Private Sub Protocol_HTTP_Read() As Boolean
         Send()
         $bWebSocketEnabled = True
 
-        ' Raise write event, the application can start sending bi-directional data to it
-        Raise Write
-
+        ' Raise WebSocketReady event, the application can start sending bi-directional data to it
+        Raise WebSocketReady
         Return False
       Else
         $iHTTPCode = 400 'Bad Request
@@ -703,7 +739,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Create HTTP data, upstream is unaware of HTTP
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Protocol_HTTP_Write()
+Private Sub Protocol_HTTPServer_Write()
 
   Dim sDataOut As String
   Dim cCz As New Compress
@@ -777,7 +813,6 @@ Private Sub Protocol_HTTP_Write()
 
     ' Reset code to zero, it needs to be set with every send call
     $iHTTPCode = 0
-
     Return
   Endif
 
@@ -820,7 +855,7 @@ Private Sub Protocol_HTTP_Write()
   Endif
 
   sDataOut = "HTTP/1.1 200 OK" & gb.CrLf
-  'Print "Date: " & Format$(DateAdd(Now, gb.Minute, CInt(Main.fAstroAutoTimezone * -60)), "ddd dd mmm yyyy hh:nn:ss") & " GMT"
+  sDataOut &= "Date: " & Util.FormatHTTPDate() & gb.CrLf
 
   If $cHTTPConnection.Exist("CLOSE") Then
     sDataOut &= "Connection: close" & gb.CrLf
@@ -872,12 +907,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Raise a Write event if the socket is ready for writing
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySocket_Write()
+Public Sub Socket_Write()
 
-  If $iEncrypt = Net.SSL Then
-    ' Not sure this works?
-    Raise Write
-  Else
+  If $iEncrypt <> Net.SSL Then
     Raise Write
   Endif
 
@@ -1231,7 +1263,7 @@ Public Sub Send(Optional bProtocol As Boolean = True)
 
   If bProtocol Then
     If $iProtocol = PROTOCOL_HTTP Or If ($iProtocol = PROTOCOL_HTTP_WEBSOCKET And Not $bWebSocketEnabled) Or If ($iProtocol = PROTOCOL_WEBSOCKET And Not $bWebSocketEnabled) Then
-      Protocol_HTTP_Write()
+      Protocol_HTTPServer_Write()
     Else
       Protocol_WebSocket_Write()
     Endif
@@ -1250,6 +1282,11 @@ Public Sub Send(Optional bProtocol As Boolean = True)
       iRet = SSL_accept($pSSL)
       If iRet = 1 Then
         $bSSLAcceptHandshake = True
+
+        ' Raise Ready Event anyway - shouldn't be needed really
+        Raise Ready
+        ' Now we can also raise Write event
+        Raise Write
       Else
         If iRet = -1 Then
           Try iRet = SSL_get_error($pSSL, iRet)
@@ -1285,16 +1322,16 @@ Public Sub Send(Optional bProtocol As Boolean = True)
     Endif
 
   Else
-    MySocket.Blocking = True
+    Try MySocket.Blocking = True
     Try Write #MySocket, $sDataOut, Len($sDataOut)
-    MySocket.Blocking = False
+    Try MySocket.Blocking = False
   Endif
 
   $sDataOut = ""
 
   ' If HTTP Protocol, please run a Close() here
   If bProtocol Then
-    If $iProtocol = PROTOCOL_HTTP Then
+    If $iProtocol = PROTOCOL_HTTP Or If $iProtocol = PROTOCOL_HTTP_WEBSOCKET Then
 
       ' Close the connection if the client requested it
       If $cHTTPConnection.Exist("CLOSE") Then
@@ -1303,6 +1340,24 @@ Public Sub Send(Optional bProtocol As Boolean = True)
     Else
     Endif
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Write data directly to socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Write(vData As Variant)
+
+  Select $iDataType
+    Case gb.Byte ' Byte
+      $sDataOut = Chr(vData)
+    Case &HFF + gb.Byte ' Byte[]
+      $sDataOut = vData.ToString()
+    Default ' Also string
+      $sDataOut = CStr(vData)
+  End Select
+
+  Send()
 
 End
 
@@ -1324,19 +1379,98 @@ Public Sub Close()
     Try Close #MySocket
   Endif
 
-  Object.Detach(MySocket)
+  Try Object.Detach(MySocket)
 
-  Raise Closed()
+  ' Not sure if we should raise a Closed event
+  'Raise Closed()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Socket is closed by client
+' Socket raises found, Hostname -> IP resolved
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySocket_Ready()
+Public Sub Socket_Found()
+
+  Raise Found
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Socket is ready
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Socket_Ready()
+
+  Dim iRet As Integer
 
   ' Only raise it for none-encrypted connections
-  If $iEncrypt <> Net.SSL Then
+  If $iEncrypt = Net.SSL Then
+
+    ' If we are a client, try to start the SSL negotiation. In serversocket it already happened
+    If $cServer = Null Then
+
+      ' try to do the SSL setup/negotiation
+      If $pCTX = Null Then
+        Try Close #MySocket
+        Raise Error("SSL CTX is NULL value")
+        Return
+      Endif
+
+      $pSSL = SSL_new($pCTX)
+
+      If $pSSL = Null Then
+        Try Close #MySocket
+        Raise Error("SSL is NULL value")
+        Return
+      Endif
+
+      iRet = SSL_set_fd($pSSL, MySocket.Handle)
+
+      ' When <> 1, then something went wrong during set fd
+      If iRet = 0 Then
+        Try Close #MySocket
+        Raise Error("SSL set_fd failed")
+        Return
+      Endif
+
+      ' File-Handle assigned, now try to accept the connection
+      iRet = SSL_connect($pSSL)
+
+      ' Check return value of SSL_accept
+      Select iRet
+        Case 0 ' Handshake failed, stop the SSL session
+          Try SSL_shutdown($pSSL)
+          Try SSL_free($pSSL)
+          $pSSL = Null
+          Try Close #MySocket
+
+          Try iRet = SSL_get_error($pSSL, iRet)
+          Raise Error("SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
+          Return
+        Case 1 ' Succesfull
+          $bSSLAcceptHandshake = True
+
+          ' Raise Ready Event
+          Raise Ready
+          ' Now we can also raise Write event
+          Raise Write
+
+        Default ' Error happened, maybe we should retry
+          $bSSLAcceptHandshake = False
+          Try iRet = SSL_get_error($pSSL, iRet)
+          If iRet <> SSL_ERROR_WANT_READ Then 
+            ' Something went wrong, just stop the SSL session
+            Try SSL_shutdown($pSSL)
+            Try SSL_free($pSSL)
+            $pSSL = Null
+            Try Close #MySocket
+
+            Try iRet = SSL_get_error($pSSL, iRet)
+            Raise Error("SSL handshake failed RC=" & iRet & " (" & Display_SSL_ERROR(iRet) & ")")
+            Return
+          Endif
+      End Select
+    Endif
+  Else
     Raise Ready
   Endif
 
@@ -1345,7 +1479,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Socket is closed by client
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySocket_Closed()
+Public Sub Socket_Closed()
 
   Try $tHTTPTimer.Stop
 
@@ -1356,15 +1490,16 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Assigns the just created socket to our SSLSocket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub AssignSocket(sServerSocket As CServerSocket)
+Public Sub AssignSocket()
 
   Dim iRet As Integer
 
-  MySocket = sServerSocket.Accept()
-  $iTimeout = sServerSocket.Timeout
-  $iEncrypt = sServerSocket.Encrypt
-  $pCTX = sServerSocket.SSLCTX
-  Object.Attach(MySocket, Me, "MySocket")
+  $cServer = Last
+  MySocket = Last.Accept()
+  $iTimeout = Last.Timeout
+  $iEncrypt = Last.Encrypt
+  $iDataType = Last.DataType
+  $pCTX = Last.SSLCTX
 
   If $iEncrypt = Net.SSL Then
 
@@ -1406,6 +1541,12 @@ Public Sub AssignSocket(sServerSocket As CServerSocket)
         Return
       Case 1 ' Succesfull
         $bSSLAcceptHandshake = True
+
+        ' Raise Ready Event
+        Raise Ready
+        ' Now we can also raise Write event
+        Raise Write
+
       Default ' Error happened, maybe we should retry
         $bSSLAcceptHandshake = False
         Try iRet = SSL_get_error($pSSL, iRet)
@@ -1428,14 +1569,109 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Connect as a client to a server
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Connection(Optional sHostOrPath As String, Optional iPort As Integer = 0)
+Public Sub Connect(Optional sHostOrPath As String, Optional iPort As Integer = 0)
 
+  Dim pMethod As Pointer
+ 
   If sHostOrPath And iPort Then
     MySocket.Connect(sHostOrPath, iPort)
   Else If sHostOrPath Then
     MySocket.Connect(sHostOrPath)
   Else
-    MySocket.Connect()
+    Raise Error("No path or host supplied for connect")
+  Endif
+
+  Object.Attach(MySocket, Me, "Socket")
+
+  If $iEncrypt = Net.SSL Then
+    ' Initialize the SSL connection and check certificate
+
+    ' Check if the OpenSSL library is installed
+    Try $sSSLVersion = SSLeay_version(0)
+    If Error Then
+      Error.Raise("Unable to initialize the OpenSSL library, 'libcrypto.so' is missing or incorrect call to 'SSLeay_version'")
+      Return
+    Endif
+
+    If $sSSLVersion Then
+      If InStr($sSSLVersion, "OpenSSL 0.9") Then
+        $sSSLVersionId = "0.9"
+      Else If InStr($sSSLVersion, "OpenSSL 1.0") Then
+        $sSSLVersionId = "1.0"
+      Else If InStr($sSSLVersion, "OpenSSL 1.1") Then
+        $sSSLVersionId = "1.1"
+      Else
+        $sSSLVersionId = "NA"
+      Endif
+    Else
+      $sSSLVersionId = "NA"
+    Endif
+
+    ' Initialize the library
+    Try SSL_library_init()
+    If Error Then
+      Error.Raise(Error.Text)
+      Return
+    Endif
+
+    ' Initialize the error strings
+    Try SSL_load_error_strings()
+    If Error Then
+      Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_load_error_strings'")
+      Return
+    Endif
+
+    ' Here we initiaze the CTX, but it is different depending on the OpenSSL version.
+    ' 0.9.8/1.0.x call SSLv23_method, but 1.1.x call TLS_method
+    Select $sSSLVersionId
+      Case "0.9", "1.0"
+        Try pMethod = SSLv23_method()
+        If Error Then
+          Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSLv23_method'")
+          Return
+        Endif
+      Case "1.1"
+        Try pMethod = TLS_method()
+        If Error Then
+          Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'TLS_method'")
+          Return
+        Endif
+      Default
+        ' We first try the SSLv23, if that fails, try the TLS
+        Try pMethod = SSLv23_method()
+        If Error Then
+          Try pMethod = TLS_method()
+          If Error Then
+            Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSLv23_method' or 'TLS_method'")
+            Return
+          Endif
+        Endif
+    End Select
+
+    If pMethod = Null Then
+      Error.Raise("Unable to initialize the OpenSSL library, call to 'SSLv23_method' or 'TLS_method' returned NULL")
+      Return
+    Endif
+
+    Try $pCTX = SSL_CTX_new(pMethod)
+    If Error Then
+      Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_CTX_new'")
+      Return
+    Endif
+
+    If $pCTX = Null Then
+      Error.Raise("Unable to initialize the OpenSSL library, call to 'SSL_CTX_new' returned NULL")
+      Return
+    Endif
+
+    'Try lVal = SSL_CTX_set_options($pCTX, lVal)
+    Try SSL_CTX_ctrl($pCTX, 32, $lSSLMethod, Null)
+    If Error Then
+      Error.Raise("Unable to initialize the OpenSSL library, 'libssl.so' is missing or incorrect call to 'SSL_CTX_set_options'")
+      Try SSL_CTX_free($pCTX)
+      Return
+    Endif
+
   Endif
 
 End
@@ -1664,7 +1900,7 @@ End
 
 Function HTTPRequestInUrl_Read() As String
 
-  Return $cHTTPHeaders
+  Return $sHTTPRequestInUrl
 
 End
 
@@ -1740,3 +1976,28 @@ Function WebSocketTextBinary_Write(sWebSocketTextBinary As String)
   End Select
 
 End
+
+Function Server_Read() As Object
+
+  Return $cServer
+
+End
+
+Function Server_Write(cServSock As Object)
+
+  $cServer = cServSock
+
+End
+
+Function DataType_Read() As Integer
+
+  Return $iDataType
+
+End
+
+Function DataType_Write(iDataType As Integer)
+
+  $iDataType = iDataType
+
+End
+

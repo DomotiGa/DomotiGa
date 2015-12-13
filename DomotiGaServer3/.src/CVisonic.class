@@ -27,7 +27,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Visonic"
 Public PluginFriendlyName As String = "Visonic Security"
-Public PluginVersion As String = "0.91"
+Public PluginVersion As String = "0.95"
 Public PluginAuthor As String = "Wouter Wolkers, Alexander Kuiper"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -62,11 +62,14 @@ Private $bDebug As Boolean
 Private $iMasterCode As Integer = &H0000 ' Not Known
 Private $iDisarmArmCode As Integer = &H0000 ' Not Known
 Private $iDownloadCode As Integer = &H5650 ' VP
-Private $bSendInit As Boolean = False
-Private $iTripReset As Integer = 30 ' Reset status after 30 seconds
+Private $bSendInit As Boolean = True
+Private $bAutoSyncTime As Boolean
+Private $bForceStandardMode As Boolean
+Private $iMotionTimeout As Integer
+Private $iSensorArmStatus As Integer
 
 Private $tPowerLinkKeepAlive As New Timer As "tPowerLinkKeepAlive"
-Public hVisonic As New SerialPort
+Public hVisonic As New CSerialPort
 
 ' Receive command buffer
 Private $bReceiveHeaderFound As Boolean = False ' When 0D char is detected
@@ -90,6 +93,7 @@ Private $iModelType As Byte
 Private $bPowerMaster As Boolean
 
 Private $tQueueDelay As New Timer As "tQueueDelay"
+Private $bQueueDelay As Boolean
 Private $tQueueTimeout As New Timer As "tQueueTimeout"
 Private $oTripTimers As New Object[]
 Public tTripTimer As CTimerGeneric
@@ -206,6 +210,10 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
   $sSerPort = cPl.Settings["serialport"]
+  $bAutoSyncTime = cPl.Settings["autosynctime"]
+  $bForceStandardMode = cPl.Settings["forcestandardmode"]
+  $iMotionTimeout = cPl.Settings["motiontimeout"]
+  $iSensorArmStatus = cPl.Settings["sensorarmstatus"]
   $bDebug = cPl.Settings["debug"]
 
   ' Retrieve our Interface Id, we don't have to retrieve it more then once
@@ -246,12 +254,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Connect() As Boolean
 
+  Dim iReconnectRetry As Integer = 0
+
   ' try to close the port
   Try hVisonic.Close
 
-  ' get a new one
-  hVisonic = New Serialport As "Visonic"
+  ' get a new one - but store the retry counter between new instances
+  Try iReconnectRetry = hVisonic.ReconnectRetry
+  hVisonic = New CSerialPort As "Visonic"
+  hVisonic.ReConnectRetry = iReconnectRetry
+
   With hVisonic
+    .DataType = &HFF + gb.Byte ' Byte[]
     .PortName = $sSerPort
     .Speed = 9600
     .Parity = 0
@@ -425,6 +439,7 @@ Private Sub StartTimer(iDelay As Integer)
 
   ' Only start timer if it isn't running yet
   'If Not $tQueueDelay.Enabled Then
+    $bQueueDelay = False
     $tQueueDelay.Stop
     $tQueueDelay = New Timer As "tQueueDelay"
     $tQueueDelay.Delay = iDelay
@@ -441,7 +456,7 @@ Public Sub tQueueDelay_Timer()
   $tQueueDelay.Stop
 
   ' Timer expired, kick off the processing of the queue
-  If $cSendLastCommand Then
+  If $cSendLastCommand And If $bQueueDelay Then
     ProcessQueue(True)
   Else
     ProcessQueue()
@@ -457,13 +472,25 @@ Private Sub ProcessQueue(Optional bResend As Boolean = False)
   Dim iMSec As Integer
   Dim aStr As New String[]
   Dim iCode As Integer
+  Dim bAddToQueue As Boolean
 
   ' Resend the request, but reset the receive counter to the original value
   If bResend Then
     If $cSendLastCommand Then
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Resending Request '" & $cSendLastCommand.Msg & "' " & ByteToHex($cSendLastCommand.Command.Copy()))
-      $cSendLastCommand.ReceiveCnt = $cSendLastCommand.ReceiveCntFixed
-      $cSendQueue.Add($cSendLastCommand, 0)
+
+      ' Compare if we already have the same command in the buffer, then pop it first 
+      bAddToQueue = True
+      If $cSendQueue.Count >= 1 Then 
+        If $cSendQueue[0].Msg = $cSendLastCommand.Msg And If $cSendQueue[0].Command.ToString() = $cSendLastCommand.Command.ToString() And If $cSendQueue[0].Receive = $cSendLastCommand.Receive Then
+          bAddToQueue = False
+        Endif
+      Endif
+
+      If bAddToQueue Then
+        $cSendLastCommand.ReceiveCnt = $cSendLastCommand.ReceiveCntFixed
+        $cSendQueue.Add($cSendLastCommand, 0)
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Resending Request '" & $cSendLastCommand.Msg & "' " & ByteToHex($cSendLastCommand.Command.Copy()) & ". Queue Count=" & $cSendQueue.Count)
+      Endif
     Else
       Main.WriteDebugLog(LogLabel & "ERROR: Resend is requested, but the last request is NULL?")
     Endif
@@ -583,6 +610,16 @@ Private Sub QueueCommand(sData As Byte[], sMsg As String, bResponse As Byte, Opt
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Clear the queue, preventing any retry causing issues
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ClearQueue()
+
+  $cSendQueue.Clear()
+  $cSendLastCommand = Null
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send a command to the alarm panel
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub SendCommand(sData As Byte[])
@@ -611,7 +648,7 @@ Private Sub SendCommand(sData As Byte[])
     Endif
 
     ' Write the complete string - not byte-for-byte
-    Try sData.Write(hVisonic, 0, sData.Length)
+    hVisonic.Write(sData)
   Else
     Main.WriteDebugLog(LogLabel & "ERROR: Not connected anymore")
   Endif
@@ -624,22 +661,45 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' got data back from Alarm panel and parse it when it's complete
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Visonic_Read()
+Public Sub Visonic_Read(vVar As Variant)
 
   Dim bData As Byte
   Dim sData As New Byte[]
   Dim iSize As Integer
 
-  iSize = Lof(hVisonic)
-  sData.Resize(iSize)
-  Try sData.Read(hVisonic, 0, iSize)
-  If Error Then
-    Main.WriteDebugLog(LogLabel & "ERROR: Problem reading data from the serial port! (ReadSize=" & iSize & ") ->" & ERROR.Text)
-  Else
-    For Each bData In sData
+  If vVar Then
+    For Each bData In vVar
       'If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & Hex$(sData, 2) & " Length: " & aData.Length)
       ProcessReceivedChar(bData)
     Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Visonic_Error(sMsg As String)
+
+  Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Visonic_ReConnect()
+
+  $bDownloadMode = False
+  $bInitialized = False
+  $iPanelType = -1
+  $iModelType = 0
+  $bPowerMaster = False
+  $cSendLastCommand = Null
+
+  ' ReConnect/Initialize connection
+  If Connect() Then
+    Run()
   Endif
 
 End
@@ -849,12 +909,13 @@ Private Function ProcessReceivedPacket(sData As Byte[])
           If $cSendLastCommand.ReceiveRetries = 0 Then
             $cSendLastCommand.ReceiveRetries += 1
           Else
-            ' Kick off the queue with resend of the last message
-            ProcessQueue(True)
+            ' Kick off the queue with resend of the last message, but only if timer didn't expire
+            If Not $tQueueDelay.Enabled Then ProcessQueue(True)
           Endif
         Endif
       Endif
     Else
+
       ' We don't expect anything, so kick off queue handling
       $cSendLastCommand = Null
       ProcessQueue()
@@ -980,6 +1041,9 @@ Private Sub ProcessSettings()
     Main.WriteDebugLog(LogLabel & "ERROR: Can't process settings, the PanelType= " & $iPanelType & " is a too new type")
     Return
   Endif
+
+  ' Try to create the PowerMax/Master panel device, to show the Arm/Disarm of the panel
+  Devices.Find(Instance, "Panel", InterfaceId, IIf($bPowerMaster, "Visonic PowerMaster", "Visonic PowerMax"))
 
   ' ------------------------------------
   ' Read serialnumber and paneltype info
@@ -1600,6 +1664,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub SendMsg_ENROLL()
 
+  ' Remove anything else from the queue, we need to restart
+  ClearQueue()
   ' Send the request, the pin will be added when the command is send
   QueueCommand(VMSG_ENROLL.Copy(), "Auto-Enroll of the PowerMax/Master", &H00, "PIN:DownloadCode:4")
 
@@ -1640,9 +1706,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Stop download mode
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub SendMsg_DL_EXIT()
+Private Sub SendMsg_DL_EXIT(Optional bSend As Boolean = False)
 
-  If $bDownloadMode Then
+  If $bDownloadMode Or If bSend Then
     QueueCommand(VMSG_DL_EXIT.Copy(), "Exit Download Mode", &H00)
   Else
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Not in Download Mode?")
@@ -1894,6 +1960,13 @@ Private Sub Handle_MsgType02()
       $tPowerLinkKeepAlive.Start
 
       ProcessSettings()
+    Else If $cSendLastCommand.Command.Count >= 3 And If $cSendLastCommand.Command[0] = &HAB And If $cSendLastCommand.Command[1] = &H0A And If $cSendLastCommand.Command[2] = &H00 Then
+      ' The queue timer
+      $bQueueDelay = False
+      Try $tQueueDelay.Stop
+      $tQueueDelay = New Timer As "tQueueDelay"
+      $tQueueDelay.Delay = $iSendDelay
+      $tQueueDelay.Start
     Endif
   Endif
 
@@ -1906,7 +1979,7 @@ End
 Private Sub Handle_MsgType06()
 
   If $bDebug Then Main.WriteDebugLog(LogLabel & "Timeout Received")
-  SendMsg_DL_EXIT()
+  SendMsg_DL_EXIT(True)
 
 End
 
@@ -1942,7 +2015,8 @@ Private Sub Handle_MsgType25()
 
   If $bDebug Then Main.WriteDebugLog(LogLabel & "Download Retry, have to wait " & iDelay & " seconds")
 
-  ' Restart the queue timer, but untested
+  ' Restart the queue timer
+  $bQueueDelay = True
   $tQueueDelay.Stop
   $tQueueDelay = New Timer As "tQueueDelay" 
   $tQueueDelay.Delay = iDelay * 1000
@@ -2093,6 +2167,7 @@ End
 Private Sub Handle_MsgTypeA5()
 
   Dim sLog As String
+  Dim sArm As String
   Dim iDeviceId As Integer
   Dim iCnt As Integer
   Dim bByte As Byte
@@ -2141,7 +2216,6 @@ Private Sub Handle_MsgTypeA5()
             Else
               If iDeviceId Then
                 Devices.ValueUpdate(iDeviceId, 1, "On")
-                EnableTripTimer("Z" & Format$(iCnt, "00"))
               Endif
             Endif
 
@@ -2175,38 +2249,77 @@ Private Sub Handle_MsgTypeA5()
     Case &H04 ' Zone event
       Select Case $sReceiveData[3] ' System Status
         Case &H00
-          sLog = "Disarm"
+          sLog = "Disarmed"
+          sArm = "Disarmed"
         Case &H01
           sLog = "Exit Delay, Arming Home"
+          sArm = "Disarmed"
         Case &H02
           sLog = "Exit Delay, Arming Away"
+          sArm = "Disarmed"
         Case &H03
           sLog = "Entry Delay"
+          sArm = "Armed"
         Case &H04
           sLog = "Armed Home"
+          sArm = "Armed"
         Case &H05
           sLog = "Armed Away"
+          sArm = "Armed"
         Case &H06
           sLog = "User Test"
-        Case &H07
+         sArm = "Disarmed"
+         Case &H07
           sLog = "Downloading"
+          sArm = "Disarmed"
         Case &H08
           sLog = "Programming"
+          sArm = "Disarmed"
         Case &H09
           sLog = "Installer"
+          sArm = "Disarmed"
         Case &H0A
           sLog = "Home Bypass"
+          sArm = "Armed"
         Case &H0B
           sLog = "Away Bypass"
+          sArm = "Armed"
         Case &H0C
           sLog = "Ready"
+          sArm = "Disarmed"
         Case &H0D
           sLog = "Not Ready"
+          sArm = "Disarmed"
+        Case &H10
+          sLog = "Disarm"
+          sArm = "Disarmed"
+        Case &H11
+          sLog = "Exit Delay"
+          sArm = "Disarmed"
+        Case &H12
+          sLog = "Exit Delay"
+          sArm = "Disarmed"
+        Case &H13
+          sLog = "Entry Delay"
+          sArm = "Armed"
+        Case &H14
+          sLog = "Armed Home Instant"
+          sArm = "Armed"
+        Case &H15
+          sLog = "Armed Away Instant"
+          sArm = "Armed"
         Default
           sLog = "Unknown (" & Hex$($sReceiveData[3], 2) & ")"
+          sArm = "Disarmed"
       End Select
 
       If $bDebug Then Main.WriteDebugLog(LogLabel & "Zone Event " & sLog)
+
+      iDeviceId = Devices.Find(Instance, "Panel", InterfaceId, IIf($bPowerMaster, "Visonic PowerMaster", "Visonic PowerMax"))
+      If iDeviceId Then
+         Devices.ValueUpdate(iDeviceId, 1, sArm)
+         Devices.ValueUpdate(iDeviceId, 2, sLog)
+      Endif
 
       If ($sReceiveData[4] And 1) Then
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Bit 0 set, Ready")
@@ -2279,10 +2392,10 @@ Private Sub Handle_MsgTypeA5()
       Endif
 
       If ($sReceiveData[4] And 64) Then 
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Bit 6 set, Arm")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Bit 6 set, Status Changed")
       Endif
       If ($sReceiveData[4] And 128) Then 
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Bit 7 set, Alarm!")
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Bit 7 set, Alarm Event")
       Endif
 
       ' Trigger a zone event will only work for PowerMax and not for PowerMaster
@@ -2294,7 +2407,10 @@ Private Sub Handle_MsgTypeA5()
             ' Try to find it, it will autocreate the device if needed
             iDeviceId = Devices.Find(Instance, "Z" & Format$(iCnt, "00"), InterfaceId, $cConfig["zoneinfo"][$sReceiveData[5]]["autocreate"])
             If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "On")
-            EnableTripTimer("Z" & Format$(iCnt, "00"))
+
+            If $cConfig["zoneinfo"][$sReceiveData[5]]["sensortype"] = "Motion" Then 
+              EnableTripTimer("Z" & Format$(iCnt, "00"))
+            Endif
           Else
             Main.WriteLog(LogLabel & "ERROR: Zone information for zone '" & $sReceiveData[5] & "' is unknown, possible the Plugin couldn't retrieve the information from the panel?")
           Endif
@@ -2475,7 +2591,7 @@ Private Sub EnableTripTimer(sZone As String)
   tTripTimer = New CTimerGeneric As "tTripTimer"
   $oTripTimers.Add(tTripTimer)
 
-  tTripTimer.Delay = $iTripReset * 1000
+  tTripTimer.Delay = $iMotionTimeout * 1000
   tTripTimer.Start
   tTripTimer.Tag = sZone 
 
@@ -2942,6 +3058,8 @@ Private Sub DisplayPanelModel() As String
       Return "PowerMaster10 7_18"
     Case &H0713
       Return "PowerMaster10 7_19"
+    Case &H0735
+      Return "PowerMaster10 7_53"
     Case &H0802
       Return "PowerMax Complete PowerCode-G 8_2"
     Case &H0803

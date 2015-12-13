@@ -25,6 +25,7 @@ cp ../../DomotiGa3/.src/CallerID.module .
 cp ../../DomotiGa3/.src/CAsterisk.class .
 cp ../../DomotiGa3/.src/CBluetooth.class .
 cp ../../DomotiGa3/.src/CBroadcastUDP.class .
+cp ../../DomotiGa3/.src/CBuienradar.class .
 cp ../../DomotiGa3/.src/CCUL.class .
 cp ../../DomotiGa3/.src/CBwiredMap.class .
 cp ../../DomotiGa3/.src/CCTX35.class .
@@ -90,6 +91,7 @@ cp ../../DomotiGa3/.src/CRFXComTX.class .
 cp ../../DomotiGa3/.src/CRFXComTRX.class .
 cp ../../DomotiGa3/.src/CRFXComxPL.class .
 cp ../../DomotiGa3/.src/CSharpTV.class .
+cp ../../DomotiGa3/.src/CSerialPort.class .
 cp ../../DomotiGa3/.src/CShell.class .
 cp ../../DomotiGa3/.src/CSMS.class .
 cp ../../DomotiGa3/.src/CSmartMeter.class .
