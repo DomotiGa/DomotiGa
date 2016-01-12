@@ -77,6 +77,7 @@ Private $tReceiveLast0DChar As Date ' When last 0D char is received
 Private $sReceiveBuffer As New Byte[] ' Complete buffer of received data, including pre, crc and postamble
 Private $sReceiveData As New Byte[] ' buffer without pre, crc and postamble (complete command, with valid crc)
 Private $dReceiveLastPacket As Date ' When last 'ReceiveData' packet is received
+Private $bReceiveLength As Byte = 0 ' Expected data length, 0=unknown length
 
 Private $cSendLastCommand As VisonicQueueEntry
 Private $cSendQueue As New Object[]
@@ -179,6 +180,8 @@ Private VMSG_SET_DATETIME As Byte[] = [&H46, &HF8, &H00, &H00, &H00, &H00, &H00,
 '########################################################
 ' PowerMax/Master definitions for partitions, events, keyfobs, etc
 '########################################################
+' 0=PowerMax, 1=PowerMax+, 2=PowerMax Pro, 3=PowerMax Complete, 4=PowerMax Pro Part
+' 5=PowerMax Complete Part, 6=PowerMax Express, 7=PowerMaster10, 8=PowerMaster30
 
 Private VCFG_PARTITIONS As Byte[] = [1, 1, 1, 1, 3, 3, 1, 3, 3]
 'Private VCFG_EVENTS As Integer[] = [250, 250, 250, 250, 250, 250, 250, 250, 1000]
@@ -384,6 +387,9 @@ Private Sub CheckCRC(bData As Byte[]) As Boolean
 
   ' Re-copy data, remove pre, checksum and postamble
   bData = bData.Copy(1, bData.Count - 3)
+
+  ' Ignore the CRC of a MsgType=&HF1
+  If bData.Length >= 1 And If bData[0] = &HF1 Then Return True
 
   ' Check if calculation and checksum match
   If CalculateCRC(bData) = bChecksum Then
@@ -709,12 +715,12 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessReceivedChar(bTemp As Byte)
 
-  Dim iLength As Integer = 0
   Dim sStr As String
   Dim bData As Byte
 
   ' Check if the prevous character isn't long ago
   If $bReceiveHeaderFound Then
+
     If DateDiff($tReceiveLast0DChar, Now, gb.Millisecond) >= $iReceiveCompletePacketTimeout Then
 
       If $bDebug Then
@@ -723,52 +729,127 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
           sStr &= IIf(sStr, " ", "") & Hex$(bData, 2)
         Next
 
-        Main.WriteDebugLog(LogLabel & "< " & sStr & " (TIMEOUT ERROR, " & DateDiff($tReceiveLast0DChar, Now, gb.Millisecond) & " milliseconds)")
-
-        ' reset for next data
-        $sReceiveBuffer.Clear()
-        $bReceiveHeaderFound = False
+        Main.WriteDebugLog(LogLabel & "< " & sStr & " (TIMEOUT ERROR: " & DateDiff($tReceiveLast0DChar, Now, gb.Millisecond) & " milliseconds)")
       Endif
+
+      ' reset for next data
+      $sReceiveBuffer.Clear()
+      $bReceiveHeaderFound = False
+    Endif
+
+    ' If we only have 1 byte (preamble), check if next byte is a valid type
+    If $sReceiveBuffer.Length = 1 Then
+
+      ' Depending on the msgtype, we assign a length or reject the current data
+      Select bTemp
+        Case &H02, &H06, &H08, &H0B ' dynamic length, between 4-5 normally
+          $bReceiveLength = 0
+        Case &H25, &H33, &H3C
+          $bReceiveLength = 14
+        Case &H3F
+          $bReceiveLength = 0
+        Case &HA0, &HA3, &HA5, &HA6, &HA7, &HAB
+          $bReceiveLength = 15
+        Case &HB0 ' dynamic length
+          $bReceiveLength = 0
+        Case &F1
+          $bReceiveLength = 9
+        Default ' invalid msgtype received
+          If $bDebug Then
+            sStr = ""
+            For Each bData In $sReceiveBuffer
+              sStr &= IIf(sStr, " ", "") & Hex$(bData, 2)
+            Next
+
+            Main.WriteDebugLog(LogLabel & "< " & sStr & " (ERROR: Invalid MsgType=" & Hex$(bTemp, 2) & ")")
+          Endif
+
+          ' reset for next data
+          $sReceiveBuffer.Clear()
+          $bReceiveHeaderFound = False
+          $bReceiveLength = 0
+          Return
+
+      End Select
+    Endif
+
+    ' A packet can never be longer &HC0/192 bytes
+    If $sReceiveBuffer.Length >= &HC0 Then
+
+      If $bDebug Then
+        sStr = ""
+        For Each bData In $sReceiveBuffer
+          sStr &= IIf(sStr, " ", "") & Hex$(bData, 2)
+        Next
+
+        Main.WriteDebugLog(LogLabel & "< " & sStr & " (ERROR: Message too long (>192 bytes)")
+      Endif
+
+      ' reset for next data
+      $sReceiveBuffer.Clear()
+      $bReceiveHeaderFound = False
+      $bReceiveLength = 0
+      Return
     Endif
   Else
     $tReceiveLast0DChar = Now()
   Endif
 
-  ' We detected a preamble, set the HeaderFound to True. It doesn't matter if we find more 0x0D in the data, because it is already set to True anyway
+  ' We detected a preamble, set the HeaderFound to True. It doesn't matter if 
+  ' we find more 0x0D in the data, because it Is already set To True anyway
   If bTemp = &H0D Then $bReceiveHeaderFound = True
 
   ' Add the received Byte to the Array
   If $bReceiveHeaderFound Then $sReceiveBuffer.Add(bTemp)
 
   ' We detected a postamble and a preamble has been found
-  If (bTemp = &H0A) And $bReceiveHeaderFound Then
+  If $bReceiveHeaderFound Then
 
-    If $sReceiveBuffer.Length >= 4 Then
-      Select $sReceiveBuffer[1]
-        ' 25, 33 and 3C have a fixed length of 14 bytes (including pre and postamble)
-        Case &H25, &H33, &H3C
-          iLength = 14
-        ' All A0-AF have a fixed length of 15 bytes (including pre and postamble)
-        Case &HA0, &HA1, &HA2, &HA3, &HA4, &HA5, &HA6, &HA7, &HA8, &HA9, &HAA, &HAB, &HAC, &HAD, &HAE, &HAF
-          iLength = 15
-        ' B0 has a dynamic length, the length is on position 4, also add 8 for the full length
-        Case &HB0
-          If $sReceiveBuffer.Length >= 7 Then
-            iLength = $sReceiveBuffer[4] + 8
-          Endif
-      End Select
+    If $bReceiveLength = 0 Then
+      ' &HB0 and &H3F have a dynamic length, if the buffer contains the length, determine it
+      If $sReceiveBuffer.Length >= 5 Then
+        If $sReceiveBuffer[1] = &H3F Then $bReceiveLength = $sReceiveBuffer[4] + 7
+        If $sReceiveBuffer[1] = &HB0 Then $bReceiveLength = $sReceiveBuffer[4] + 8
+      Endif
     Endif
 
-    ' Check the Crc, if it doesn't match - the 0x0A isn't the postamble!
-    If CheckCRC($sReceiveBuffer.Copy()) Then
-      ProcessReceivedPacket($sReceiveBuffer.Copy())
-      ' reset for next data
-      $sReceiveBuffer.Clear()
-      $bReceiveHeaderFound = False
+    If bTemp = &H0A Then
+      ' Check the Crc, if it doesn't match - the 0x0A isn't the postamble!
+      If CheckCRC($sReceiveBuffer.Copy()) Then
+        ProcessReceivedPacket($sReceiveBuffer.Copy())
+        ' reset for next data
+        $sReceiveBuffer.Clear()
+        $bReceiveHeaderFound = False
+        $bReceiveLength = 0
+      Else
+        If $bReceiveLength > 0 Then
+          ' If length match, we got a CRC error
+          If $sReceiveBuffer.Length >= $bReceiveLength Then
+
+            If $bDebug Then
+              sStr = ""
+              For Each bData In $sReceiveBuffer
+                sStr &= IIf(sStr, " ", "") & Hex$(bData, 2)
+              Next
+
+              Main.WriteDebugLog(LogLabel & "< " & sStr & " (CRC ERROR)" & IIf($sReceiveBuffer.Length > $bReceiveLength, " (INVALID LENGTH)", ""))
+
+              ' reset for next data
+              $sReceiveBuffer.Clear()
+              $bReceiveHeaderFound = False
+              $bReceiveLength = 0
+
+              ' Just send an ACK anyway
+              SendMsg_ACK(False)
+            Endif
+          Endif
+        Endif
+      Endif
     Else
-      If iLength > 0 Then
+      ' Check if we don't go over the expected length
+      If $bReceiveLength > 0 Then
         ' If length match, we got a CRC error
-        If $sReceiveBuffer.Length >= iLength Then
+        If $sReceiveBuffer.Length >= $bReceiveLength Then
 
           If $bDebug Then
             sStr = ""
@@ -776,15 +857,12 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
               sStr &= IIf(sStr, " ", "") & Hex$(bData, 2)
             Next
 
-            Main.WriteDebugLog(LogLabel & "< " & sStr & " (CRC ERROR)" & IIf($sReceiveBuffer.Length > iLength, " (INVALID LENGTH)", ""))
+            Main.WriteDebugLog(LogLabel & "< " & sStr & " (CRC ERROR)" & IIf($sReceiveBuffer.Length > $bReceiveLength, " (INVALID LENGTH)", ""))
 
             ' reset for next data
             $sReceiveBuffer.Clear()
             $bReceiveHeaderFound = False
-
-            ' Just send an ACK anyway
-            SendMsg_ACK(False)
-
+            $bReceiveLength = 0
           Endif
         Endif
       Endif
@@ -2412,14 +2490,14 @@ Private Sub Handle_MsgTypeA5()
         'If $sReceiveData[6] = 3 Or If $sReceiveData[6] = 4 Or If $sReceiveData[6] = 5 Then
         If $sReceiveData[6] = 5 Then
 
-          If $cConfig And If $cConfig["zoneinfo"][$sReceiveData[5]]["sensortype"] Then
+          If $cConfig And If $cConfig.Exist("zoneinfo") And If $cConfig["zoneinfo"].Exist($sReceiveData[5]) And If $cConfig["zoneinfo"][$sReceiveData[5]]["sensortype"] Then
 
             ' Try to find it, it will autocreate the device if needed
-            iDeviceId = Devices.Find(Instance, "Z" & Format$(iCnt, "00"), InterfaceId, $cConfig["zoneinfo"][$sReceiveData[5]]["autocreate"])
+            iDeviceId = Devices.Find(Instance, "Z" & Format$($sReceiveData[5], "00"), InterfaceId, $cConfig["zoneinfo"][$sReceiveData[5]]["autocreate"])
             If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, "On")
 
             If $cConfig["zoneinfo"][$sReceiveData[5]]["sensortype"] = "Motion" Then 
-              EnableTripTimer("Z" & Format$(iCnt, "00"))
+              EnableTripTimer("Z" & Format$($sReceiveData[5], "00"))
             Endif
           Else
             Main.WriteLog(LogLabel & "ERROR: Zone information for zone '" & $sReceiveData[5] & "' is unknown, possible the Plugin couldn't retrieve the information from the panel?")
