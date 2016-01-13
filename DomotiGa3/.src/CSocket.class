@@ -47,6 +47,7 @@ Event {Read}(vData As Variant)
 Event {Ready}
 Event {WebSocketReady}
 Event {Write}
+Event {Reconnect} ' Only applicable in client mode
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Constants
@@ -61,10 +62,10 @@ Public Const SSL_ERROR_ZERO_RETURN As Integer = 6
 Public Const SSL_ERROR_WANT_CONNECT As Integer = 7
 Public Const SSL_ERROR_WANT_ACCEPT As Integer = 8
 
-Public Const PROTOCOL_NONE As Integer = 0
+Public Const PROTOCOL_NONE As Integer = 0 ' RAW
 Public Const PROTOCOL_HTTP As Integer = 1
-Public Const PROTOCOL_HTTP_WEBSOCKET As Integer = 2
-Public Const PROTOCOL_WEBSOCKET As Integer = 3
+Public Const PROTOCOL_HTTP_WEBSOCKET As Integer = 2 ' Only allowed in server mode
+Public Const PROTOCOL_WEBSOCKET As Integer = 3 ' WebSockets RFC6455
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Properties
@@ -86,6 +87,7 @@ Property Protocol As Integer
 Property ReadTimeOut As Integer
 Property Server As Object
 Property DataType As Integer
+Property ReconnectRetry As Integer
 
 ' HTTP Server
 Property HTTPCode As Integer
@@ -156,6 +158,11 @@ Private $iWebSocketCloseCode As Integer
 'Private $sWebSocketCloseText As String
 Private $sWebSocketMultiPacket As String
 Private $sWebSocketPrevOpCode As String
+
+' Reconnect - we raise an Event if it happened
+Public tReconnect As Timer
+Private $iReconnectRetry As Integer = 0 ' retries
+Private $aReconnectDelay As Integer[] = [5000, 10000, 20000, 30000, 60000, 120000, 300000, 900000, 1800000, 3600000, 7200000, 14400000, 14400000, 14400000, 14400000] ' 5sec, 5sec, 10sec, 20sec, 30sec, 1min, 2min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours (4x)
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Called when Class is created
@@ -1549,7 +1556,7 @@ End
 Public Sub Socket_Found()
 
   If $bDebug Then Main.WriteDebugLog(Loglabel & "Event=Found")
-  
+
   Raise Found
 
 End
@@ -1562,6 +1569,12 @@ Public Sub Socket_Ready()
   Dim iRet As Integer
 
   If $bDebug Then Main.WriteDebugLog(Loglabel & "Event=Ready")
+
+  ' In client mode, stop and reset retry counter
+  If $cServer = Null Then
+    Try tReconnect.Stop
+    $iReconnectRetry = 0
+  Endif
 
   ' Only raise it for none-encrypted connections
   If $iEncrypt = Net.SSL Then
@@ -1639,15 +1652,37 @@ Public Sub Socket_Ready()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Socket has an error - try to reconnect in client mode
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Socket_Error()
+
+  If $bDebug Then Main.WriteDebugLog(Loglabel & "Event=Error, Msg=" & Log.Text_TCP_Error(MySocket.Status, MySocket.Host))
+
+  Raise Error(Log.Text_TCP_Error(MySocket.Status, MySocket.Host))
+
+  If $cServer = Null Then
+    Reconnect()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Socket is closed by client
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Socket_Closed()
 
   If $bDebug Then Main.WriteDebugLog(Loglabel & "Event=Closed")
-  
+
   Try $tHTTPTimer.Stop
 
   Raise Closed
+
+  ' In client mode we should try to reconnect for RAW and WebSocket
+  If $cServer = Null Then
+    If $iProtocol = PROTOCOL_NONE Or If $iProtocol = PROTOCOL_WEBSOCKET Then
+      Reconnect()
+    Endif
+  Endif
 
 End
 
@@ -1736,7 +1771,12 @@ End
 Public Sub Connect(Optional sHostOrPath As String, Optional iPort As Integer = 0)
 
   Dim pMethod As Pointer
- 
+
+  If $iProtocol = PROTOCOL_HTTP_WEBSOCKET Then
+    Raise Error("Protocol HTTP & WebSockets only allowed in Server mode")
+    Return
+  Endif
+
   If sHostOrPath And iPort Then
     MySocket.Connect(sHostOrPath, iPort)
   Else If sHostOrPath Then
@@ -1837,6 +1877,48 @@ Public Sub Connect(Optional sHostOrPath As String, Optional iPort As Integer = 0
     Endif
 
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' We try to reconnect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Reconnect()
+
+  ' Don't overrule an already started timer
+  If tReconnect And If tReconnect.Enabled Then Return
+
+  If $bDebug Then Main.WriteDebugLog(Loglabel & "Reconnect routine")
+
+  ' Only do it, when it is a valid variable and has 1 or more entries
+  If $aReconnectDelay And If $aReconnectDelay.Count Then
+
+    If $iReconnectRetry <= $aReconnectDelay.Max Then
+      tReconnect = New Timer As "tReconnect"
+      tReconnect.Delay = $aReconnectDelay[$iReconnectRetry]
+      tReconnect.Start
+ 
+      If $bDebug Then Main.WriteDebugLog(Loglabel & "Reconnect started, timer=" & $aReconnectDelay[$iReConnectRetry])
+    Else
+      Try tReconnect.Stop
+      Raise Error("Too many reconnect failures (" & $iReconnectRetry & "), stopped trying.")
+    Endif
+
+    Inc $iReconnectRetry
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' ReConnect Timer expired
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReconnect_Timer()
+
+  ' Stop timer
+  Last.Stop()
+
+  ' Raise a reconnect event, Plugin is responsible for it
+  Raise Reconnect
 
 End
 
@@ -2189,3 +2271,14 @@ Function DataType_Write(iDataType As Integer)
 
 End
 
+Function ReconnectRetry_Read() As Integer
+
+  Return $iReconnectRetry
+
+End
+
+Function ReconnectRetry_Write(iReconnectRetry As Integer)
+
+  $iReConnectRetry = iReconnectRetry
+
+End
