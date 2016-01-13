@@ -1,0 +1,701 @@
+' Gambas class file
+
+' Description:
+' CRFLink.class
+' Connects to a RFLink interface via TCP socket or serial port
+' RFLink is a cheap RF transceiver for 433MHz and supports devices like:
+' Oregon, LaCrosse, X-10, KlikAanKlikUit, etc
+
+
+' Development Status:
+' Unstable
+
+' Links:
+' http://www.nemcon.nl/blog2/
+' http://sourceforge.net/projects/rflink/
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "RFLink"
+Public PluginFriendlyName As String = "RFLink"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Alexander Kuiper"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[RFLink] "
+Public Instance As Integer
+Public InterfaceId As Integer = 0
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
+Private $sSerPort As String
+Private $sBaud As String
+Private $bDebug As Boolean
+
+Public hMySocket As New CSocket
+Public hMySerial As New CSerialPort
+Private $sBuffer As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' cmd queue stuff, only needed if you need to send data back to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private cQueue As New Collection    ' command buffer
+Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
+Public tPluginFooBusy As Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sInterface = cPl.Settings["type"]
+  $sSerPort = cPl.Settings["serialport"]
+  $sBaud = cPl.Settings["baudrate"]
+  $bDebug = cPl.Settings["debug"]
+
+  ' Retrieve our Interface Id, we don't have to retrieve it more then once
+  InterfaceId = Devices.FindInterface("RFLink Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId for 'RFLink Interface' can't be retrieved from the database"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Connect/Initialize connection
+  If InStr($sInterface, "tcp") Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer
+
+  ' try to close the connection
+  Try hMySocket.Close
+
+  ' get a new one - but save the reconnect count
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+  hMySocket = New CSocket As "MySocket"
+  hMySocket.ReconnectRetry = iReconnectRetry
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectSerial() As Boolean
+
+  Dim iReconnectRetry As Integer
+
+  ' try to close the connection
+  Try hMySerial.Close
+
+  ' get a new one
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+  hMySerial = New CSerialPort As "MySerial"
+  hMySerial.ReconnectRetry = iReconnectRetry
+
+  With hMySerial
+    .DataType = gb.String
+    .PortName = $sSerPort
+    .Speed = 57600
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' Write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to port " & $sSerPort)
+  IsRunning = True
+
+  ' define timer for interface busy
+  tPluginFooBusy = New Timer As "tPluginFooBusy"
+  tPluginFooBusy.Stop
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  ' define timer for interface busy
+  tPluginFooBusy = New Timer As "tPluginFooBusy"
+  tPluginFooBusy.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host/close serial port, close plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function Disconnect() As Boolean
+
+  ' try to close the connection
+  Try tPluginFooBusy.Stop
+  Try hMySocket.Close
+  Try hMySocket.Close
+
+  If InStr($sInterface, "tcp") Then
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
+  Else
+    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  Endif
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the serialport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(sVar As Variant)
+
+  Dim iPos As Integer
+
+  $sBuffer &= sVar
+
+  ' Check if we received complete packet, end-of-record is "\r\n"
+  Repeat
+    iPos = InStr($sBuffer, gb.CrLf)
+    If iPos >= 1 Then
+      ProcessData(Left($sBuffer, iPos - 1))
+      $sBuffer = Mid($sBuffer, iPos + 2)
+      iPos = InStr($sBuffer, gb.CrLf)
+    Endif
+  Until iPos = 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(sVar As Variant)
+
+  Dim iPos As Integer
+
+  $sBuffer &= sVar
+
+  ' Check if we received complete packet, end-of-record is "\r\n"
+  Repeat
+    iPos = InStr($sBuffer, gb.CrLf)
+    If iPos >= 1 Then
+      ProcessData(Left($sBuffer, iPos - 1))
+      $sBuffer = Mid($sBuffer, iPos + 2)
+      iPos = InStr($sBuffer, gb.CrLf)
+    Endif
+  Until iPos = 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessData(sData As String)
+
+  Dim aData As String[]
+  Dim sAddress As String
+  Dim sName As String
+  Dim sType As String
+  Dim sVar As String
+  Dim sPair As String[]
+  Dim iCount As Integer = 0
+  Dim iDeviceId As Integer
+  Dim iValueType As Integer
+  Dim sValue As String
+
+  '0 = 20 fixed. 20=RFLink->Serial, 10=Serial->RFLink
+  '1 = Id - we ignore it
+  '2 = Description, e.g. Oregon TempHygro
+  '3 = Device Id
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sData)
+
+  ' Process pong request, but don't give an error on it
+  If sData = "20;99;PONG;" Then
+    If $bDebug Then Main.WriteDebugLog("Pong Received")
+    Return
+  Endif
+
+  ' Split data into string array
+  aData = Split(sData, ";")
+
+  ' A minimum of 5 fields is required, to be a valid packet
+  If aData.Count < 5 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Invalid packet received, 5 or more fields required")
+    Return
+  Endif
+
+  ' First field has to be 20
+  If aData[0] <> "20" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Invalid packet received, field 1 must be '20'")
+    Return
+  Endif
+
+  If InStr(aData[3], "ID=") = 0 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Invalid packet received, field 4 must has the format ID=<hex>")
+    Return
+  Endif
+
+  ' Store device id, in hex format
+  sAddress = Mid(aData[3], InStr(aData[3], "ID=") + 3)
+
+  ' Go through the description field and map the devices
+  Select aData[2]
+    Case "Oregon BTHR" ' Temp, Hygro, Baro, Battery. BTHR918N, BTHR968, BTHG968
+      sName = "Oregon"
+      sType = "THR1"
+    Case "Oregon Rain" ' RGR126, RGR682, RGR918, RGR928, PCR122
+      sName = "Oregon"
+      sType = "RAIN1"
+    Case "Oregon Rain2" ' PCR800
+      sName = "Oregon"
+      sType = "RAIN2"
+    Case "Oregon Temp" ' THC238, THC268, THN132N, THWR288A, THRN122N, THN122N, AW129, AW131, THWR800, THR128, THR138, THC138
+      sName = "Oregon"
+      sType = "TEMP1"
+    Case "Oregon TempHygro" ' THGN122N, THGN123N, THGR122NX, THGR228N, THGR238, THGR268, THGR122X, THGR918, THGRN228NX, THGN500, THGR810, RTGR328N, THGR328N, WTGR800
+      sName = "Oregon"
+      sType = "TH1"
+    Case "Oregon UVN128/138" ' UVN128, UV138
+      sName = "Oregon"
+      sType = "UV1"
+    Case "Oregon UVN800" 'UVN800
+      sName = "Oregon"
+      sType = "UV2"
+    Case "OregonV1"
+      sName = "Oregon"
+      sType = "V1"
+    Case "Oregon Wind" ' WGR800
+      sName = "Oregon"
+      sType = "WIND1"
+    Case "Oregon Wind2" ' STR918, WGR918
+      sName = "Oregon"
+      sType = "WIND2"
+    Default
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Unknown description '" & aData[2] & "'")
+      Return
+  End Select
+
+  sAddress = sType & "[" & sAddress & "]"
+
+  ' Find device or auto-create it if enabled
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
+
+  ' Don't continieu if not found and no auto-create
+  If Not iDeviceId Then Return
+
+  ' Now we got the sType and possible sSubType defined, we can remove the first 4 fields
+  aData = aData.Extract(4)
+
+  For Each sVar In aData
+
+    ' Ignore empty fields, normally the last entry
+    If Not sPair Then Continue
+
+    sPair = Split(sVar, "=")
+    If sPair.Count <> 2 Then
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Invalid data field '" & sVar & "'")
+      Continue
+    Endif
+
+    iValueType = 0
+    sValue = ""
+
+    Select sPair[0]
+      Case "SWITCH"
+      Case "CMD"
+      Case "SET_LEVEL"
+      Case "TEMP"
+        iValueType = Devices.ValueType_Temperature
+        sValue = (Val("&H" & sPair[1]) / 10)
+
+        If Main.sTemperature = "°C" Then
+          sValue = Format(CStr(sValue), "0.#")
+        Else
+          sValue = Format(CStr(sValue * 1.8 + 32), "0.#")
+        Endif
+      Case "HUM"
+        iValueType = Devices.ValueType_Humidity
+        sValue = Val("&H" & sPair[1])
+      Case "BARO"
+        iValueType = Devices.ValueType_Barometric
+        sValue = Val("&H" & sPair[1])
+      Case "HSTATUS"
+        Select sPair[1]
+          Case "0"
+            sValue = "Normal"
+          Case "1"
+            sValue = "Comfort"
+          Case "2"
+            sValue = "Dry"
+          Case "3"
+            sValue = "Wet"
+        End Select
+      Case "BFORECAST"
+        Select sPair[1]
+          Case "0"
+            sValue = "Unknown"
+          Case "1"
+            sValue = "Sunny"
+          Case "2"
+            sValue = "Partly Cloudy"
+          Case "3"
+            sValue = "Cloudy"
+          Case "4"
+            sValue = "Rain"
+        End Select
+      Case "UV"
+        iValueType = Devices.ValueType_UV
+        sValue = Val("&H" & sPair[1])
+      Case "LUX"
+        iValueType = Devices.ValueType_Luminance
+        sValue = Val("&H" & sPair[1])
+      Case "RAIN"
+        iValueType = Devices.ValueType_RainRate
+        sValue = Val("&H" & sPair[1])
+      Case "RAINTOT"
+        iValueType = Devices.ValueType_RainTotal
+        sValue = Val("&H" & sPair[1])
+      Case "WINSP"
+        iValueType = Devices.ValueType_WindSpeed
+        sValue = (Val("&H" & sPair[1]) / 10)
+        sValue = Format(CStr(sValue), "0.#")
+      Case "AWINSP"
+        iValueType = Devices.ValueType_WindAvgSpeed
+        sValue = (Val("&H" & sPair[1]) / 10)
+        sValue = Format(CStr(sValue), "0.#")
+      Case "WINGS"
+        iValueType = Devices.ValueType_WindSpeed
+        sValue = Val("&H" & sPair[1])
+        sValue = Format(CStr(sValue), "0.#")
+      Case "WINDIR"
+        iValueType = Devices.ValueType_WindDirection
+        sValue = Floor(Val("&H" & sPair[1]) * 22.5)
+      Case "WINCHL"
+        iValueType = Devices.ValueType_Temperature
+        sValue = (Val("&H" & sPair[1]) / 10)
+
+        If Main.sTemperature = "°C" Then
+          sValue = Format(CStr(sValue), "0.#")
+        Else
+          sValue = Format(CStr(sValue * 1.8 + 32), "0.#")
+        Endif
+      Case "WINTMP"
+        iValueType = Devices.ValueType_Temperature
+        sValue = (Val("&H" & sPair[1]) / 10)
+
+        If Main.sTemperature = "°C" Then
+          sValue = Format(CStr(sValue), "0.#")
+        Else
+          sValue = Format(CStr(sValue * 1.8 + 32), "0.#")
+        Endif
+      Case "CHIME"
+        iValueType = Devices.ValueType_Chime
+        sValue = Val("&H" & sPair[1])
+      Case "SMOKEALERT"
+        sValue = sPair[1]
+      Case "PIR"
+        sValue = sPair[1]
+      Case "CO2"
+        sValue = Val("&H" & sPair[1])
+      Case "SOUND"
+        sValue = Val("&H" & sPair[1])
+      Case "KWATT"
+        iValueType = Devices.ValueType_Energy_kWh
+        sValue = Val("&H" & sPair[1])
+      Case "WATT"
+        iValueType = Devices.ValueType_Energy_Watt
+        sValue = Val("&H" & sPair[1])
+      Case "DIST"
+        sValue = Val("&H" & sPair[1])
+      Case "METER"
+        iValueType = Devices.ValueType_Water
+        sValue = Val("&H" & sPair[1])
+      Case "VOLT"
+        iValueType = Devices.ValueType_Voltage
+        sValue = Val("&H" & sPair[1])
+      Case "CURRENT"
+        iValueType = Devices.ValueType_Current
+        sValue = Val("&H" & sPair[1])
+      Case "BAT"
+        Devices.Battery(iDeviceId, sPair[1])
+        Continue
+      Default
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Unknown data field '" & sVar & "', '" & sPair[0] & "'")
+      Continue
+    End Select
+
+    ' Increment counter, for the device values
+    iCount += 1
+    Devices.ValueUpdate(iDeviceId, iCount, sValue, iValueType)
+  Next
+
+' TODO
+' ----
+'AB400D
+'Alecto V1
+'Alecto V3
+'Alecto V4
+'Auriol
+'Auriol V2
+'Auriol V3
+'Avidsen
+'Blyss
+'Byron MP
+'Byron SX
+'Chuango
+'Conrad
+'Cresta
+'Deltronic
+'Eurodomest
+'FA20RF
+'FA500
+'HomeConfort
+'HomeEasy
+'Ikea Koppla
+'Imagintronix
+'Impuls
+'Kaku
+'Kambrook
+'LaCrosse
+'LaCrosseV2
+'LaCrosseV3
+'Mebus
+'Mertik
+'NewKaku
+'Plieger
+'Powerfix
+'PT2262
+'SelectPlus
+'SilverCrest
+'Slave
+'TRC02RGB
+'TriState
+'UPM/Esic
+'UPM/Esic F2
+'X10
+'Xiron
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' domotiga want to control a device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim bBuf As New Byte[8]
+
+  ' create data packet to send, use supplied address and cmd
+
+  ' and send it to cmdbuffer
+  QueueCommand(bBuf)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(aPacket As Byte[])
+
+  ' add command to queue
+  cQueue.Add(aPacket, Rnd)
+
+  ' if controller is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub DoQueue()
+
+  Dim aPacket As Byte[] = Null
+
+  For Each aPacket In cQueue
+    WriteCommand(aPacket, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tPluginFooBusy_Timer()
+
+  bInterfaceBusy = False
+  tPluginFooBusy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    DoQueue()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send commands to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function WriteCommand(bBuffer As Byte[], sKey As String)
+
+  Dim iCnt As Integer
+  Dim sMessage As String
+
+  For iCnt = 0 To bBuffer[0]
+    sMessage &= Hex(bBuffer[iCnt], 2)
+  Next
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
+
+  If $sInterface = "tcp" Then
+    ' send the message to the tcp stream
+    'Try bBuffer.Write(hMySocket, 0, bBuffer.Length)
+    If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to tcp port! -> " & Error.Text)
+  Else
+    ' send the message to the serial port
+    'Try bBuffer.Write(hMySerial, 0, bBuffer.Length)
+    If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to serial port! -> " & Error.Text)
+  Endif
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  tPluginFooBusy.Delay = 50 ' 50mS (initial test value)
+  tPluginFooBusy.Start
+  bInterfaceBusy = True
+
+End

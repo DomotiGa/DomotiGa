@@ -79,6 +79,7 @@ ln -s ../../DomotiGa3/.src/CProwl.class
 ln -s ../../DomotiGa3/.src/CPVoutput.class
 ln -s ../../DomotiGa3/.src/CPwrCtrl.class
 ln -s ../../DomotiGa3/.src/CRaZberry.class
+ln -s ../../DomotiGa3/.src/CRFLink.class
 ln -s ../../DomotiGa3/.src/CRFXComRX.class
 ln -s ../../DomotiGa3/.src/CRFXComTX.class
 ln -s ../../DomotiGa3/.src/CRFXComTRX.class

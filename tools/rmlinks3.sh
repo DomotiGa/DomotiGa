@@ -86,6 +86,7 @@ cp ../../DomotiGa3/.src/CProwl.class .
 cp ../../DomotiGa3/.src/CPVoutput.class .
 cp ../../DomotiGa3/.src/CPwrCtrl.class .
 cp ../../DomotiGa3/.src/CRaZberry.class .
+cp ../../DomotiGa3/.src/CRFLink.class .
 cp ../../DomotiGa3/.src/CRFXComRX.class .
 cp ../../DomotiGa3/.src/CRFXComTX.class .
 cp ../../DomotiGa3/.src/CRFXComTRX.class .
