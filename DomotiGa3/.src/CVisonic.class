@@ -58,6 +58,9 @@ End Struct
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private $bEnabled As Boolean
 Private $sSerPort As String
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
 Private $bDebug As Boolean
 Private $iMasterCode As Integer = &H0000 ' Not Known
 Private $iDisarmArmCode As Integer = &H0000 ' Not Known
@@ -69,7 +72,8 @@ Private $iMotionTimeout As Integer
 Private $iSensorArmStatus As Integer
 
 Private $tPowerLinkKeepAlive As New Timer As "tPowerLinkKeepAlive"
-Public hVisonic As New CSerialPort
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 
 ' Receive command buffer
 Private $bReceiveHeaderFound As Boolean = False ' When 0D char is detected
@@ -236,8 +240,10 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $cSendLastCommand = Null
 
   ' Connect/Initialize connection
-  If Connect() Then
-    Run()
+  If $sInterface = "tcp" Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
   Endif
 
 End
@@ -252,21 +258,56 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+  
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Open serial port and start keepalive timer
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Private Sub ConnectSerial() As Boolean
 
   Dim iReconnectRetry As Integer = 0
 
   ' try to close the port
-  Try hVisonic.Close
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
   ' get a new one - but store the retry counter between new instances
-  Try iReconnectRetry = hVisonic.ReconnectRetry
-  hVisonic = New CSerialPort As "Visonic"
-  hVisonic.ReConnectRetry = iReconnectRetry
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
 
-  With hVisonic
+  With hMySerial
     .DataType = &HFF + gb.Byte ' Byte[]
     .PortName = $sSerPort
     .Speed = 9600
@@ -276,16 +317,12 @@ Public Function Connect() As Boolean
     .FlowControl = 0
     .Open()
   End With
-  
-  ' Define 60 seconds timer and start it for PowerLink communication
-  $tPowerLinkKeepAlive.Stop
-  $tPowerLinkKeepAlive = New Timer As "tPowerLinkKeepAlive"
-  $tPowerLinkKeepAlive.Delay = $iPowerLinkTimeOut
-  $tPowerLinkKeepAlive.Start
 
   ' Write to main logfile we connected successfully
   Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
+
+  Run()
 
   ' All went ok
   Return True
@@ -304,7 +341,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Close port and stop timers
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect() As Boolean
 
   ' Stop timers
   $tPowerLinkKeepAlive.Stop
@@ -312,8 +349,10 @@ Public Function Disconnect() As Boolean
   $tQueueTimeout.Stop
 
   ' Try to close the connection
-  Try hVisonic.Close
-  Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  Try hMySocket.Close
+  Try hMySerial.Close
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
 
   ' all ok
   Return True
@@ -329,10 +368,124 @@ Catch ' some errors
 
 End
 
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data back from Alarm panel and parse it when it's complete
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' When SerialPort is connected, start the initialization
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Run()
+Private Sub Run()
+
+  $bDownloadMode = False
+  $bInitialized = False
+  $iPanelType = -1
+  $iModelType = 0
+  $bPowerMaster = False
+  $cSendLastCommand = Null
+
+  ' Define 60 seconds timer and start it for PowerLink communication
+  $tPowerLinkKeepAlive.Stop
+  $tPowerLinkKeepAlive = New Timer As "tPowerLinkKeepAlive"
+  $tPowerLinkKeepAlive.Delay = $iPowerLinkTimeOut
+  $tPowerLinkKeepAlive.Start
 
   ' Initialize last timestamp, also add delay to trigger it directly
   $dReceiveLastPacket = DateAdd(Now(), gb.Millisecond, $iSendDelay)
@@ -635,77 +788,42 @@ Private Sub SendCommand(sData As Byte[])
   ' Lets update the timestamp
   $dReceiveLastPacket = Now()
 
-  If hVisonic.Status = Net.Active Then
-
-    ' First add preamble, crc and postamble
-    bData = CalculateCRC(sData)
-    sData.Add(&H0D, 0)
-    sData.Add(bData)
-    sData.Add(&H0A)
-
-    If $bDebug Then 
-      sStr = ""
-      For Each bData In sData
-        sStr &= IIf(sStr, " ", "") & Hex$(bData, 2)
-      Next
-
-      Main.WriteDebugLog(LogLabel & "> " & sStr)
+  If InStr($sInterface, "tcp") Then
+    If hMySocket.Status <> Net.Active Then
+      Main.WriteDebugLog(LogLabel & "ERROR: Not connected anymore")
+      Return
     Endif
-
-    ' Write the complete string - not byte-for-byte
-    hVisonic.Write(sData)
   Else
-    Main.WriteDebugLog(LogLabel & "ERROR: Not connected anymore")
+    If hMySerial.Status <> Net.Active Then
+      Main.WriteDebugLog(LogLabel & "ERROR: Not connected anymore")
+      Return
+    Endif
+  Endif
+
+  ' First add preamble, crc and postamble
+  bData = CalculateCRC(sData)
+  sData.Add(&H0D, 0)
+  sData.Add(bData)
+  sData.Add(&H0A)
+
+  If $bDebug Then 
+    sStr = ""
+    For Each bData In sData
+      sStr &= IIf(sStr, " ", "") & Hex$(bData, 2)
+    Next
+
+    Main.WriteDebugLog(LogLabel & "> " & sStr)
+  Endif
+
+  ' Write the complete string - not byte-for-byte
+  If InStr($sInterface, "tcp") Then
+    hMySocket.Write(sData)
+  Else
+    hMySerial.Write(sData)
   Endif
 
 Catch
   Main.WriteDebugLog(LogLabel & "ERROR: while trying to send: '" & ERROR.Text & "' at " & ERROR.Where)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' got data back from Alarm panel and parse it when it's complete
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Visonic_Read(vVar As Variant)
-
-  Dim bData As Byte
-  Dim sData As New Byte[]
-  Dim iSize As Integer
-
-  If vVar Then
-    For Each bData In vVar
-      'If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & Hex$(sData, 2) & " Length: " & aData.Length)
-      ProcessReceivedChar(bData)
-    Next
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Handle errors
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Visonic_Error(sMsg As String)
-
-  Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Handle reconnect(s)
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Visonic_ReConnect()
-
-  $bDownloadMode = False
-  $bInitialized = False
-  $iPanelType = -1
-  $iModelType = 0
-  $bPowerMaster = False
-  $cSendLastCommand = Null
-
-  ' ReConnect/Initialize connection
-  If Connect() Then
-    Run()
-  Endif
 
 End
 
