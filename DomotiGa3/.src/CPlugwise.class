@@ -41,12 +41,16 @@ Public ErrorWhere As String
 Private $bEnabled As Boolean
 Private $sSerPort As String
 Private $bDebug As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
 Private $iPollTime As Integer
 Private $iBusyTime As Integer
 
-Public hPlugwise As New SerialPort
-Public tPlugwisePoll As Timer
-Public tPlugwiseBusy As Timer
+Public hMySocket As New CSocket
+Public hMySerial As New CSerialPort
+Public tPlugwisePoll As New Timer
+Public tPlugwiseBusy As New Timer
 
 ' calibration data
 Private cGainA As New Collection
@@ -57,11 +61,11 @@ Private cLogAddress As New Collection
 
 ' queue and command buffer stuff
 Private cQueue As New Collection    ' command buffer
-Private bStickBusy As Boolean       ' waiting for delay timer to finish
-Private bHeaderFound As Boolean = False
-Private bFooterFound As Boolean = False
-Private sRecBuf As String
-Private bTimeOut As Boolean
+Private $bStickBusy As Boolean       ' waiting for delay timer to finish
+Private $bHeaderFound As Boolean = False
+Private $bFooterFound As Boolean = False
+Private $sRecBuf As String
+Private $bTimeOut As Boolean
 
 ' CRC-16(CCITT) table with Poly = 0x10210
 Private aCRCTable As New Integer[256]
@@ -129,8 +133,10 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   Endif
 
   ' Connect/Initialize connection
-  If Connect() Then
-    Run()
+  If $sInterface = "tcp" Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
   Endif
 
 End
@@ -145,17 +151,51 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectTCP() As Boolean
+
+  ' try to close the connection
+  Try hMySocket.Close
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(hMySocket.ReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Private Sub ConnectSerial() As Boolean
 
   ' try to close the port
-  Try hPlugwise.Close
+  Try hMySerial.Close
 
   ' get a new one
-  hPlugwise = New Serialport As "Plugwise"
+  hMySerial = New CSerialPort(hMySerial.ReconnectRetry) As "MySerial"
 
-  With hPlugwise
+  With hMySerial
+    .DataType = &HFF + gb.Byte
     .PortName = $sSerPort
     .Speed = 115200
     .Parity = 0
@@ -168,6 +208,8 @@ Public Function Connect() As Boolean
   ' Write to main logfile we connected successfully
   Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
+
+  Run()
 
   ' All went ok
   Return True
@@ -193,7 +235,8 @@ Public Function Disconnect() As Boolean
   Try tPlugwiseBusy.Stop
 
   ' try to close the connection
-  hPlugwise.Close
+  Try hMySocket.Close
+  Try hMySerial.Close
 
   Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
 
@@ -211,16 +254,121 @@ Catch
 
 End
 
-Public Sub Run()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read data char for char
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run/Init
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
 
   ' start poll timer for power usage check
+  tPlugwisePoll.Stop
   tPlugwisePoll = New Timer As "tPlugwisePoll"
   tPlugwisePoll.Delay = $iPollTime * 1000 ' multiply for seconds
   tPlugwisePoll.Start
 
   ' define timer for Plugwise stick busy
+  tPlugwiseBusy.Stop
   tPlugwiseBusy = New Timer As "tPlugwiseBusy"
-  tPlugwiseBusy.Delay = IIf(bTimeOut, $iBusyTime, $iBusyTime * 2) ' if a TimedOut device is present double time between packets
+  tPlugwiseBusy.Delay = IIf($bTimeOut, $iBusyTime, $iBusyTime * 2) ' if a TimedOut device is present double time between packets
   tPlugwiseBusy.Stop
 
   InitStick()
@@ -266,9 +414,9 @@ Private Function ProcessReceivedPacket(sInput As String)
   Dim iBegin As Integer
 
   ' reset for next data
-  sRecBuf = ""
-  bHeaderFound = False
-  bFooterFound = False
+  $sRecBuf = ""
+  $bHeaderFound = False
+  $bFooterFound = False
 
   For Each sPacket In GetPackets(sInput)
 
@@ -325,12 +473,12 @@ Catch ' some errors
 
 End
 
-Private Sub ProcessReceivedChar(sTemp As String)
+Private Sub ProcessReceivedChar(bTemp As Byte)
 
-  If sTemp = Chr(5) Then bHeaderFound = True
-  If sTemp = Chr(10) Then bFooterFound = True
-  sRecBuf &= sTemp
-  If bFooterFound = True And If bHeaderFound = True Then ProcessReceivedPacket(sRecbuf)
+  If bTemp = &H05 Then $bHeaderFound = True
+  If bTemp = &H0A Then $bFooterFound = True
+  $sRecBuf &= Chr(bTemp)
+  If $bFooterFound = True And If $bHeaderFound = True Then ProcessReceivedPacket($sRecbuf)
 
 End
 
@@ -516,7 +664,7 @@ Private Sub ProcessAckResponse(sResult As String)
       sMsg = "Error, Re-Init"
     Case "00E1"
       sMsg = "NAK/Timeout"
-      bTimeOut = True
+      $bTimeOut = True
     Case Else
       sMsg = "Unknown"
   End Select
@@ -625,7 +773,7 @@ Private Sub InitStick()
   Dim sHeader As String = Chr(5) & Chr(5) & Chr(3) & Chr(3)
   Dim sFooter As String = Chr(13) & Chr(10)
 
-  If hPlugwise.Status <> Net.Active Then Return
+  If hMySerial.Status <> Net.Active Then Return
 
   ' <ENQ><ENQ><ETX><ETX>000AB43C<CR><LF>
   sCmd = STICKINITCODE
@@ -651,7 +799,7 @@ Private Sub QueueCommand(sPacket As String)
   cQueue.Add(sPacket, Rnd)
 
   ' if stick is not busy process it
-  If bStickBusy = False Then DoQueue()
+  If $bStickBusy = False Then DoQueue()
 
 End
 
@@ -676,16 +824,20 @@ Private Sub WriteCommand(sBuffer As String, sKey As String)
 
   If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & Mid(sBuffer, 5, Len(sBuffer) - 6))
 
-  Try Print #hPlugwise, sBuffer
-  If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! ->" & Error.Text)
+  ' Write to serial, but we read as byte[] and write as string
+  If $sInterface = "tcp" Then
+    hMySocket.Write(sBuffer, gb.String)
+  Else
+    hMySerial.Write(sBuffer, gb.String)
+  Endif
 
   ' remove sent command from queue
   cQueue.Remove(sKey)
 
   ' start timer to wait before sending next command
-  tPlugwiseBusy.Delay = IIf(bTimeOut, $iBusyTime, $iBusyTime * 2) ' if a TimedOut device is present double time between packets
+  tPlugwiseBusy.Delay = IIf($bTimeOut, $iBusyTime, $iBusyTime * 2) ' if a TimedOut device is present double time between packets
   tPlugwiseBusy.Start
-  bStickBusy = True
+  $bStickBusy = True
 
 End
 
@@ -694,28 +846,12 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tPlugwiseBusy_Timer()
 
-  bStickBusy = False
+  $bStickBusy = False
   tPlugwiseBusy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' read data char for char
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Plugwise_Read()
-
-  Dim sPacket As String
-
-  Try Read #hPlugwise, sPacket, 1
-  If Not Error Then
-    ProcessReceivedChar(sPacket)
-  Else
-    Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! ->" & Error.Text)
   Endif
 
 End
