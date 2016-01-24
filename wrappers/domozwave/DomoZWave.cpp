@@ -5729,6 +5729,22 @@ const char* DomoZWave_SpecificTypeName( int32 generictype, int32 specifictype )
 				case 0x01: return "Simple Display";
 			} 
 			return "Display";
+		case GENERIC_TYPE_NETWORK_EXTENDER:
+			switch ( specifictype )
+			{
+				case 0x01: return "Secure Extender";
+			}
+			return "Network Extender";
+		case GENERIC_TYPE_APPLIANCE:
+			switch ( specifictype )
+			{
+				case 0x01: return "General Appliance";
+				case 0x02: return "Kitchen Appliance";
+				case 0x03: return "Laundry Appliance";
+			}
+			return "Appliance";
+		case GENERIC_TYPE_NOTIFICATION_SENSOR:
+			return "Notification Sensor";
 		case GENERIC_TYPE_THERMOSTAT:
 			switch ( specifictype )
 			{
@@ -5806,6 +5822,18 @@ const char* DomoZWave_SpecificTypeName( int32 generictype, int32 specifictype )
 				case 0x01: return "Residential Heat Recovery Ventilation";
 			}
 			return "Ventilation";
+		case GENERIC_TYPE_SECURITY_PANEL:
+			switch ( specifictype )
+			{
+				case 0x01: return "Zoned Security Panel";
+			}
+			return "Security Panel";
+		case GENERIC_TYPE_WALL_CONTROLLER:
+			switch ( specifictype )
+			{
+				case 0x01: return "Basic Wall Controller";
+			}
+			return "Wall Controller";
 		case GENERIC_TYPE_SENSOR_BINARY:
 			switch ( specifictype )
 			{
