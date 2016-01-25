@@ -1,11 +1,7 @@
 --
--- Fix 10020 to 10021 upgrade problem
+-- Delete duplicate Wirelesstags Plugin
 --
-DELETE FROM plugins WHERE id=94;
-DELETE FROM plugins WHERE id=95;
-
-INSERT INTO plugins (`id`, `interface`, `name`, `type`) VALUES (94, 'GPS', 'GPS', 'class');
-INSERT INTO plugins (`id`, `interface`, `protocols`, `name`, `type`) values (95,'Buienradar','','Buienradar','class');
+DELETE FROM plugins WHERE id=93;
 
 --
 -- extend serialport field length
