@@ -64,7 +64,7 @@ Private $sInterface As String
 Private $bDebug As Boolean
 Private $iMasterCode As Integer = &H0000 ' Not Known
 Private $iDisarmArmCode As Integer = &H0000 ' Not Known
-Private $iDownloadCode As Integer = &H5650 ' VP
+Private $iDownloadCode As Integer
 Private $bSendInit As Boolean = True
 Private $bAutoSyncTime As Boolean
 Private $bForceStandardMode As Boolean
@@ -161,7 +161,7 @@ Private VMSG_DL_PHONENRS As Byte[] = [&H3E, &H36, &H01, &H20, &H00, &HB0, &H00, 
 Private VMSG_DL_PGMX10 As Byte[] = [&H3E, &H14, &H02, &HD5, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
 Private VMSG_DL_PARTITIONS As Byte[] = [&H3E, &H00, &H03, &HF0, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
 Private VMSG_DL_ZONES As Byte[] = [&H3E, &H00, &H09, &H78, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
-'Private VMSG_DL_KEYFOBS As Byte[] = [&H3E, &H78, &H09, &H40, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
+Private VMSG_DL_KEYFOBS As Byte[] = [&H3E, &H78, &H09, &H40, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
 Private VMSG_DL_2WKEYPADS As Byte[] = [&H3E, &H00, &H0A, &H08, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
 Private VMSG_DL_1WKEYPADS As Byte[] = [&H3E, &H20, &H0A, &H40, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
 Private VMSG_DL_SIRENS As Byte[] = [&H3E, &H60, &H0A, &H08, &H00, &HB0, &H00, &H00, &H00, &H00, &H00] '&H3F
@@ -189,7 +189,7 @@ Private VMSG_SET_DATETIME As Byte[] = [&H46, &HF8, &H00, &H00, &H00, &H00, &H00,
 
 Private VCFG_PARTITIONS As Byte[] = [1, 1, 1, 1, 3, 3, 1, 3, 3]
 'Private VCFG_EVENTS As Integer[] = [250, 250, 250, 250, 250, 250, 250, 250, 1000]
-'Private VCFG_KEYFOBS As Byte[] = [8, 8, 8, 8, 8, 8, 8, 8, 32]
+Private VCFG_KEYFOBS As Byte[] = [8, 8, 8, 8, 8, 8, 8, 8, 32]
 Private VCFG_1WKEYPADS As Byte[] = [8, 8, 8, 8, 8, 8, 8, 0, 0]
 Private VCFG_2WKEYPADS As Byte[] = [2, 2, 2, 2, 2, 2, 2, 8, 32]
 Private VCFG_SIRENS As Byte[] = [2, 2, 2, 2, 2, 2, 2, 4, 8]
@@ -210,18 +210,38 @@ Private VINFO_CHIME As String[] = ["Chime Off", "Melody Chime", "Zone Name Chime
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
 
+  Dim rResult As Result
+  Dim sZone As String
+  Dim iZone As Integer
+  Dim sName As String
+
   KeyName = cPl.KeyName
   Instance = cPl.Instance
   If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
 
   ' Copy configuration items locally
   $bEnabled = cPl.Settings["enabled"]
+  '$sInterface = cPl.Settings["type"]
+  '$sTCPHost = cPl.Settings["tcphost"]
+  '$iTCPPort = cPl.Settings["tcpport"]
   $sSerPort = cPl.Settings["serialport"]
   $bAutoSyncTime = cPl.Settings["autosynctime"]
   $bForceStandardMode = cPl.Settings["forcestandardmode"]
   $iMotionTimeout = cPl.Settings["motiontimeout"]
   $iSensorArmStatus = cPl.Settings["sensorarmstatus"]
+  '$iMasterCode = cPl.Settings["mastercode"]
+  Try $iDownloadCode = cPl.Settings["downloadcode"]
+  If Error Then $iDownloadCode = 5650
   $bDebug = cPl.Settings["debug"]
+
+  ' First test if it is in an allowed range
+  If $iDownloadCode >= 1000 Or $iDownloadCode <= 9999 Then
+    ' Convert the value to hex, because it is stored in that way in Visonic
+    $iDownloadCode = Val("&H" & $iDownloadCode)
+  Else
+    ' Assume the download code as '5650'
+    $iDownloadCode = &H5650 ' VP
+  Endif
 
   ' Retrieve our Interface Id, we don't have to retrieve it more then once
   InterfaceId = Devices.FindInterface("Visonic Interface")
@@ -238,6 +258,63 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iModelType = 0
   $bPowerMaster = False
   $cSendLastCommand = Null
+
+  ' When we force standard mode, we will retrieve the zones from the devices
+  ' and we don't try to download the configuration from the panel
+  If $bForceStandardMode Then
+
+    ' Set our panel to PowerMax
+    $iPanelType = 0
+
+    rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
+    If rResult And If rResult.Available Then
+      For Each rResult
+        sZone = rResult!address
+
+        If Len(sZone) = 3 And If InStr(sZone, "Z") = 1 Then
+          Try iZone = Val(Mid(sZone, 2, 2))
+          If Error Then
+            If $bDebug Then Main.WriteDebugLog("ERROR: Device id '" & rResult!id & "' has an invalid Visonic address")
+            Continue
+          Endif
+
+          If iZone < 1 Or If iZone > 30 Then
+            If $bDebug Then Main.WriteDebugLog("ERROR: Device id '" & rResult!id & "' has an invalid Visonic address")
+            Continue
+          Endif
+
+          If Not $cConfig.Exist("zoneinfo") Then
+             $cConfig["zoneinfo"] = New Collection
+          Endif
+
+          If Not $cConfig["zoneinfo"].Exist(iZone) Then
+
+            sName = Devices.FindNameForDeviceType(rResult!devicetype_id)
+
+            Select sName
+              Case "Visonic PIR"
+                $cConfig["zoneinfo"][iZone] = New Collection
+                $cConfig["zoneinfo"][iZone]["sensortype"] = "Motion"
+              Case "Visonic Door/Window Contact"
+                $cConfig["zoneinfo"][iZone] = New Collection
+                $cConfig["zoneinfo"][iZone]["sensortype"] = "Magnet"
+              Case "Visonic Wired"
+                $cConfig["zoneinfo"][iZone] = New Collection
+                $cConfig["zoneinfo"][iZone]["sensortype"] = "Wired"
+            End Select
+
+          Else
+            If $bDebug Then Main.WriteDebugLog("ERROR: Device id '" & rResult!id & "' has a duplicate Visonic address")
+            Continue
+          Endif
+
+        Else
+          If $bDebug Then Main.WriteDebugLog("ERROR: Device id '" & rResult!id & "' has an invalid Visonic address")
+        Endif
+
+      Next
+    Endif
+  Endif
 
   ' Connect/Initialize connection
   If $sInterface = "tcp" Then
@@ -500,7 +577,10 @@ Private Sub Run()
   Endif
 
   ' Send the download command, this should initiate the communication
-  SendMsg_DL_START()
+  ' Only skip it, if we force standard mode
+  If Not $bForceStandardMode Then
+    SendMsg_DL_START()
+  Endif
 
 End
 
@@ -1197,6 +1277,7 @@ Private Sub ProcessSettings()
   Dim iSirenCnt As Integer
   Dim iKeypad1Cnt As Integer
   Dim iKeypad2Cnt As Integer
+  Dim iKeyfobCnt As Integer
   Dim bEnrolled As Boolean
   Dim bEnabled As Boolean
   Dim bLog As Boolean
@@ -1271,6 +1352,7 @@ Private Sub ProcessSettings()
   iSirenCnt = VCFG_SIRENS[$iPanelType]
   iKeypad1Cnt = VCFG_1WKEYPADS[$iPanelType]
   iKeypad2Cnt = VCFG_2WKEYPADS[$iPanelType]
+  iKeyfobCnt = VCFG_KEYFOBS[$iPanelType]
 
   ' ---------------------------------- 
   ' Read panel eprom and software info
@@ -1679,8 +1761,18 @@ Private Sub ProcessSettings()
 
   Else
 
+    $cConfig["keyfob"] = New Collection
     $cConfig["keypad1"] = New Collection
     $cConfig["keypad2"] = New Collection
+
+    sData = ReadMemoryMap(VMSG_DL_KEYFOBS)
+    For iCnt = 1 To iKeyfobCnt
+      bEnrolled = (ByteToHex(sData.Copy(iCnt * 4 - 4, 2)) <> String$(2, "00"))
+      If bEnrolled Then
+        $cConfig["keyfob"][iCnt] = New Collection
+        $cConfig["keyfob"][iCnt]["enrolled"] = True
+      Endif
+    Next
 
     sData = ReadMemoryMap(VMSG_DL_1WKEYPADS)
     For iCnt = 1 To iKeypad1Cnt
@@ -1713,6 +1805,22 @@ Private Sub ProcessSettings()
   ' All information gathered, now print it in debug
   If $bDebug Then
 
+    bLog = False
+    If $cConfig.Exist("keyfob") Then
+      bLog = False
+      Main.WriteDebugLog(LogLabel & "Keyfob:")
+
+      For iCnt = 1 To iKeyfobCnt
+        If $cConfig["keyfob"].Exist(iCnt) Then
+          bLog = True
+          Main.WriteDebugLog(LogLabel & "  " & Format$(iCnt, "00") & ": Enrolled")
+        Endif
+      Next
+
+      If Not bLog Then Main.WriteDebugLog(LogLabel & "  None")
+    Endif
+
+    bLog = False
     If $cConfig.Exist("keypad1") Then
       bLog = False
       Main.WriteDebugLog(LogLabel & "1-Way Keypad:")
@@ -2712,6 +2820,12 @@ Private Sub Handle_MsgTypeB0()
   Dim iDeviceId As Integer
 
   If $bDebug Then Main.WriteDebugLog(LogLabel & "PowerMaster Message")
+
+  ' Set our panel to PowerMaster10 if we run in forced mode
+  If $bForceStandardMode Then
+    $iPanelType = 7
+    $bPowerMaster = True
+  Endif
 
   ' Format: <Type> <SubType> <Length> <Data>
 

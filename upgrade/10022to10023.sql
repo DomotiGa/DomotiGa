@@ -30,6 +30,19 @@ INSERT INTO `devicetypes` VALUES (674,'VMB8PB','Velbus - 8 channel pushbutton mo
 /*!40000 ALTER TABLE `devicetypes` ENABLE KEYS */;
 UNLOCK TABLES;
 
+-- Update Visonic settings
+--
+
+ALTER TABLE settings_visonic ADD COLUMN `downloadcode` VARCHAR(16) NULL DEFAULT '5650'  AFTER `mastercode`;
+
+--
+-- Update Visonic device addresses
+--
+
+UPDATE devicetypes SET `addressformat`='Z01' WHERE `id`='289';
+UPDATE devicetypes SET `addressformat`='Z01' WHERE `id`='291';
+UPDATE devicetypes SET `addressformat`='Z01' WHERE `id`='293';
+
 --
 -- Finally update to 1.0.023
 --
