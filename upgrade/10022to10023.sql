@@ -22,6 +22,15 @@ ALTER TABLE settings_arduino CHANGE COLUMN `serialport` `serialport` VARCHAR(128
 ALTER TABLE settings_velbus CHANGE COLUMN `serialport` `serialport` VARCHAR(128) CHARACTER SET 'utf8' NULL DEFAULT NULL;
 
 --
+-- Add Velbus VMB8PB module
+--
+LOCK TABLES `devicetypes` WRITE;
+/*!40000 ALTER TABLE `devicetypes` DISABLE KEYS */;
+INSERT INTO `devicetypes` VALUES (674,'VMB8PB','Velbus - 8 channel pushbutton module','Velbus','13|1');
+/*!40000 ALTER TABLE `devicetypes` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Finally update to 1.0.023
 --
 
