@@ -59,13 +59,17 @@ Private cOffNoise As New Collection
 Private cOffTot As New Collection
 Private cLogAddress As New Collection
 
+' store outstanding communication
+Private cCommQueue As New Collection
+Private iCommRetry As Integer
+Const iMaxCommRetry As Integer = 8
+
 ' queue and command buffer stuff
 Private cQueue As New Collection    ' command buffer
 Private $bStickBusy As Boolean       ' waiting for delay timer to finish
 Private $bHeaderFound As Boolean = False
 Private $bFooterFound As Boolean = False
 Private $sRecBuf As String
-Private $bTimeOut As Boolean
 
 ' CRC-16(CCITT) table with Poly = 0x10210
 Private aCRCTable As New Integer[256]
@@ -374,7 +378,7 @@ Private Sub Run()
   ' define timer for Plugwise stick busy
   tPlugwiseBusy.Stop
   tPlugwiseBusy = New Timer As "tPlugwiseBusy"
-  tPlugwiseBusy.Delay = IIf($bTimeOut, $iBusyTime, $iBusyTime * 2) ' if a TimedOut device is present double time between packets
+  tPlugwiseBusy.Delay = $iBusyTime
   tPlugwiseBusy.Stop
 
   InitStick()
@@ -574,6 +578,9 @@ Private Sub ProcessDeviceInfoResponse(sResult As String)
   iLogAddress = (Val("&H" & sLogAddress & "&") - LOGADDRESSOFFSET) / 32
   sType = Mid(sResult, 61, 2)
 
+  ' remove entry from commqueue
+  Try cCommQueue.Remove(sMAC)
+
   ' store logaddress
   cLogAddress.Add(iLogAddress, sMAC)
 
@@ -602,9 +609,9 @@ Private Sub ProcessDeviceInfoResponse(sResult As String)
   iDeviceId = Devices.Find(Instance, sMAC, InterfaceId, "Plugwise Circle")
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sState, Devices.ValueType_Switch)
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking power logs of device with address '" & sMAC & "'")
+  'If $bDebug Then Main.WriteDebugLog(LogLabel & "Checking power logs of device with address '" & sMAC & "'")
   ' now that the logaddress is known get the power logs too
-  GetPowerLogs(sMAC)
+  'GetPowerLogs(sMAC)
 
 Catch ' some errors
   Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
@@ -670,7 +677,6 @@ Private Sub ProcessAckResponse(sResult As String)
       sMsg = "Error, Re-Init"
     Case "00E1"
       sMsg = "NAK/Timeout"
-      $bTimeOut = True
     Case Else
       sMsg = "Unknown"
   End Select
@@ -696,6 +702,9 @@ Private Sub ProcessCalibrationResponse(sResult As String)
   fGainB = HexToFloat(Mid(sResult, 29, 8))
   fOffTot = HexToFloat(Mid(sResult, 37, 8))
   fOffNoise = HexToFloat(Mid(sResult, 45, 8))
+
+  ' remove entry from commqueue
+  Try cCommQueue.Remove(sMAC)
 
   ' store calibration data
   StoreCircle(sMAC, fGainA, fGainB, fOffTot, fOffNoise)
@@ -731,6 +740,9 @@ Private Sub ProcessPowerInfoResponse(sResult As String)
   If Not cOffNoise.Exist(sMac) Then
     Main.WriteLog(LogLabel & "ERROR: MAC Address: " & sMAC & " is not registered with the call 'ProcessCalibrationResponse'")
   Endif
+
+  ' remove entry from commqueue
+  Try cCommQueue.Remove(sMAC)
 
   ' calculate actual usage in Watt
   iPulses = Val("&H" & sPulses) / 1.0
@@ -821,6 +833,29 @@ Private Sub DoQueue()
     Break ' only do first one
   Next
 
+  If cQueue.Count = 1 Then
+    ' clear queue at max retries
+    If iCommRetry > iMaxCommRetry Then
+      cCommQueue.Clear
+      iCommRetry = 0
+      Return
+    Endif
+
+    ' empty queue, return
+    If Not cCommQueue.Count Then Return
+
+    For Each cCommQueue
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "CommQueue Retry #" & iCommRetry & ": " & cCommQueue.Key & "-" & cCommQueue[cCommQueue.Key])
+      Select Case cCommQueue[cCommQueue.Key]
+        Case "P", "C"
+          GetPowerInfo(cCommQueue.Key)
+        Case "L"
+          GetPowerLogs(cCommQueue.Key)
+      End Select
+    Next
+    Inc iCommRetry
+  Endif
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -841,7 +876,7 @@ Private Sub WriteCommand(sBuffer As String, sKey As String)
   cQueue.Remove(sKey)
 
   ' start timer to wait before sending next command
-  tPlugwiseBusy.Delay = IIf($bTimeOut, $iBusyTime, $iBusyTime * 2) ' if a TimedOut device is present double time between packets
+  tPlugwiseBusy.Delay = $iBusyTime
   tPlugwiseBusy.Start
   $bStickBusy = True
 
@@ -875,6 +910,9 @@ Private Sub CheckPlugs()
       If CheckAddress(rResult!address) Then
         If $bDebug Then Main.WriteDebugLog(LogLabel & "Getting power info for device '" & rResult!name & "' with address '" & rResult!address & "'")
         GetPowerInfo(UCase(rResult!address))
+      Else
+        Main.WriteDebugLog(LogLabel & "Address for device called '" & rResult!name & "' with address '" & rResult!address & "' has wrong length!")
+        Main.WriteDebugLog(LogLabel & "It must be 16 chars long for a Circle, or 19 for a Switch.")
       Endif
     Next
   Else
@@ -889,7 +927,6 @@ End
 Private Sub CheckAddress(sAddress As String) As Boolean
 
   If Len(sAddress) <> 16 And If Len(sAddress) <> 19 Then
-    Main.WriteDebugLog(LogLabel & "Lenght of address '" & sAddress & "' is invalid, must be 16 chars long for a Circle, or 19 for a Switch.")
     Return False
   Endif
   Return True
@@ -946,6 +983,10 @@ Private Sub GetPowerLogs(sAddress As String)
     sPacket = sHeader & sCmd & sCRC & sFooter
 
     QueueCommand(sPacket)
+
+    ' add entry to commqueue
+    cCommQueue.Add("L", sMAC)
+
     If Not $bDebug Then Return
     Main.WriteDebugLog(LogLabel & "Queue Power Logs:")
     Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
@@ -975,6 +1016,9 @@ Private Sub GetDeviceInfo(sAddress As String)
   sPacket = sHeader & sCmd & sCRC & sFooter
   QueueCommand(sPacket)
 
+  ' add entry to commqueue
+  cCommQueue.Add("D", sMAC)
+
   If Not $bDebug Then Return
   Main.WriteDebugLog(LogLabel & "Queue Device Info:")
   Main.WriteDebugLog(LogLabel & "MAC Address: " & sMAC)
@@ -995,10 +1039,16 @@ Private Sub GetPowerInfo(sAddress As String)
     ' <ENQ><ENQ><ETX><ETX>0026000D6F00002366BB7071<CR><LF>
     sCmd = CALIBRATIONCODE & sMAC
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Queue Calibration Request:")
+
+    ' add entry to commqueue
+    cCommQueue.Add("C", sMAC)
   Else
     ' <ENQ><ENQ><ETX><ETX>0012000D6F00002366BB338B<CR><LF>
     sCmd = POWERINFOCODE & sMAC
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Queue Power Info Request:")
+
+  ' add entry to commqueue
+    cCommQueue.Add("P", sMAC)
   Endif
 
   sCRC = CalculateCRC(sCmd)
