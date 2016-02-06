@@ -4151,6 +4151,7 @@ CREATE TABLE `settings_visonic` (
   `serialport` varchar(128) DEFAULT NULL,
   `type` int(11) DEFAULT '0',
   `mastercode` varchar(16) DEFAULT '1234',
+  `downloadcode` varchar(16) DEFAULT '5650',
   `autosynctime` tinyint(1) NOT NULL DEFAULT '1',
   `forcestandardmode` tinyint(1) NOT NULL DEFAULT '0',
   `motiontimeout` int(11) DEFAULT '30',
@@ -4166,7 +4167,7 @@ CREATE TABLE `settings_visonic` (
 
 LOCK TABLES `settings_visonic` WRITE;
 /*!40000 ALTER TABLE `settings_visonic` DISABLE KEYS */;
-INSERT INTO `settings_visonic` VALUES (0,0,'/dev/ttyUSB0',0,'1234',1,0,30,0,0),(1,0,'/dev/ttyUSB6',0,'1234',1,0,30,0,0);
+INSERT INTO `settings_visonic` VALUES (0,0,'/dev/ttyUSB0',0,'1234','5650',1,0,30,0,0),(1,0,'/dev/ttyUSB0',0,'1234','5650',1,0,30,0,0);
 /*!40000 ALTER TABLE `settings_visonic` ENABLE KEYS */;
 UNLOCK TABLES;
 
