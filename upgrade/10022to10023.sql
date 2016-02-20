@@ -79,6 +79,36 @@ INSERT INTO devicetypes (id, name, description, protocol, addressformat) values 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (699,'Topstar Motor','Blinds Motor','BlindsT10','0x00a1b2');
 
 --
+-- Table structure for table `settings_rflink`
+--
+
+DROP TABLE IF EXISTS `settings_rflink`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_rflink` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `type` varchar(32) DEFAULT NULL,
+  `serialport` varchar(128) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_rflink`
+--
+
+LOCK TABLES `settings_rflink` WRITE;
+/*!40000 ALTER TABLE `settings_rflink` DISABLE KEYS */;
+INSERT INTO `settings_rflink` VALUES (0,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0','9600',0),(1,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0','9600',0);
+/*!40000 ALTER TABLE `settings_rflink` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Finally update to 1.0.023
 --
 
