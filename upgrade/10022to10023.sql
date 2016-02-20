@@ -92,7 +92,6 @@ CREATE TABLE `settings_rflink` (
   `tcpport` int(11) DEFAULT NULL,
   `type` varchar(32) DEFAULT NULL,
   `serialport` varchar(128) DEFAULT NULL,
-  `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
@@ -104,9 +103,14 @@ CREATE TABLE `settings_rflink` (
 
 LOCK TABLES `settings_rflink` WRITE;
 /*!40000 ALTER TABLE `settings_rflink` DISABLE KEYS */;
-INSERT INTO `settings_rflink` VALUES (0,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0','9600',0),(1,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0','9600',0);
+INSERT INTO `settings_rflink` VALUES (0,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0',0),(1,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0',0);
 /*!40000 ALTER TABLE `settings_rflink` ENABLE KEYS */;
 UNLOCK TABLES;
+
+--
+-- Add the new RFLink plugin to the database
+--
+INSERT INTO plugins (id, interface, protocols, name, type) VALUES (96,'RFLink Interface','AB400 Alectro Auriol Blyss Cresta HEEU Imagintrx Implus KAKU Koppla LaCrosse Mertik NewKAKU Oregon X10','RFLink','class');
 
 --
 -- Finally update to 1.0.023
