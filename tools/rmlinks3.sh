@@ -106,6 +106,7 @@ cp ../../DomotiGa3/.src/CTemperaturNu.class .
 cp ../../DomotiGa3/.src/CToon.class .
 cp ../../DomotiGa3/.src/CTVGuide.class .
 cp ../../DomotiGa3/.src/CTwitter.class .
+cp ../../DomotiGa3/.src/CUniPi.class .
 cp ../../DomotiGa3/.src/CUPS.class .
 cp ../../DomotiGa3/.src/CVISCA.class .
 cp ../../DomotiGa3/.src/CWeeder.class .

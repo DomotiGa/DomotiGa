@@ -99,6 +99,7 @@ ln -s ../../DomotiGa3/.src/CTemperaturNu.class
 ln -s ../../DomotiGa3/.src/CToon.class
 ln -s ../../DomotiGa3/.src/CTVGuide.class
 ln -s ../../DomotiGa3/.src/CTwitter.class
+ln -s ../../DomotiGa3/.src/CUniPi.class
 ln -s ../../DomotiGa3/.src/CUPS.class
 ln -s ../../DomotiGa3/.src/CVideoServer.class
 ln -s ../../DomotiGa3/.src/CVISCA.class

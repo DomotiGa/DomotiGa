@@ -24,11 +24,10 @@ ALTER TABLE settings_velbus CHANGE COLUMN `serialport` `serialport` VARCHAR(128)
 --
 -- Add Velbus VMB8PB module
 --
-LOCK TABLES `devicetypes` WRITE;
-/*!40000 ALTER TABLE `devicetypes` DISABLE KEYS */;
-INSERT INTO `devicetypes` VALUES (674,'VMB8PB','Velbus - 8 channel pushbutton module','Velbus','13|1');
-/*!40000 ALTER TABLE `devicetypes` ENABLE KEYS */;
-UNLOCK TABLES;
+
+DELETE FROM devicetypes WHERE id=674;
+
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (674,'VMB8PB','Velbus - 8 channel pushbutton module','Velbus','13|1');
 
 --
 -- Update Visonic settings
@@ -52,11 +51,34 @@ ALTER TABLE plugins CHANGE COLUMN `protocols` `protocols` VARCHAR(1024) CHARACTE
 --
 -- Add Blinds1 support to rfxcom tranceiver plugin
 --
+
 UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss BlindsT0 BlindsT1 BlindsT2 BlindsT3 BlindsT4 BlindsT5 BlindsT6 BlindsT7 BlindsT8 BlindsT9 BlindsT10 BlindsT11 Meiantech ByronSX ByronMP SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagintrx WT TRC022 AOKE EuroDomest Smartwares SelectPlus' WHERE id = 35;
 
 --
 -- Add Blinds1 devicetypes
 --
+
+DELETE FROM devicetypes WHERE id=680;
+DELETE FROM devicetypes WHERE id=681;
+DELETE FROM devicetypes WHERE id=682;
+DELETE FROM devicetypes WHERE id=683;
+DELETE FROM devicetypes WHERE id=684;
+DELETE FROM devicetypes WHERE id=685;
+DELETE FROM devicetypes WHERE id=686;
+DELETE FROM devicetypes WHERE id=687;
+DELETE FROM devicetypes WHERE id=688;
+DELETE FROM devicetypes WHERE id=689;
+DELETE FROM devicetypes WHERE id=690;
+DELETE FROM devicetypes WHERE id=691;
+DELETE FROM devicetypes WHERE id=692;
+DELETE FROM devicetypes WHERE id=693;
+DELETE FROM devicetypes WHERE id=694;
+DELETE FROM devicetypes WHERE id=695;
+DELETE FROM devicetypes WHERE id=696;
+DELETE FROM devicetypes WHERE id=697;
+DELETE FROM devicetypes WHERE id=698;
+DELETE FROM devicetypes WHERE id=699;
+
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (680,'Bofu Blinds','Blinds Motor','BlindsT0','0x00a1b2 1');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (681,'RollerTrol Blinds','Blinds Motor','BlindsT0','0x00a1b2 1');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (682,'Hasta New Blinds','Blinds Motor','BlindsT0','0x00a1b2 1');
@@ -110,11 +132,70 @@ UNLOCK TABLES;
 --
 -- Add the new RFLink plugin to the database
 --
+
+DELETE FROM plugins WHERE id=96;
+
 INSERT INTO plugins (id, interface, protocols, name, type) VALUES (96,'RFLink Interface','AB400 Alectro Auriol Blyss Cresta HEEU Imagintrx Implus KAKU Koppla LaCrosse Mertik NewKAKU Oregon X10','RFLink','class');
+
+--
+-- Add RFLink devices
+--
+
+DELETE FROM devicetypes WHERE id=700;
+DELETE FROM devicetypes WHERE id=701;
+DELETE FROM devicetypes WHERE id=702;
+DELETE FROM devicetypes WHERE id=703;
+DELETE FROM devicetypes WHERE id=704;
+DELETE FROM devicetypes WHERE id=705;
+
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (700,'Alectro Device','Alectro RFLink Device','Alectro','alectro 0xa1b2');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (701,'Auriol Device','Auriol RFLink Device','Auriol','auriol 0xa1b2');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (702,'Cresta Device','Cresta RFLink Device','Cresta','auriol 0xa1b2');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (703,'LaCrosse Device','LaCrosse RFLink Device','LaCrosse','lacrosse 0xa1b2');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (704,'NewKAKU Device','NewKAKU RFLink Device','NewKAKU','00cac142 03');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (705,'UPM Device','UPM RFLink Device','UPM','c142');
+
+--
+-- Table structure for table `settings_unipi`
+--
+
+DROP TABLE IF EXISTS `settings_unipi`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_unipi` (
+  `id` int(11) NOT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `sslenabled` tinyint(1) NOT NULL DEFAULT '0',
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_unipi`
+--
+
+LOCK TABLES `settings_unipi` WRITE;
+/*!40000 ALTER TABLE `settings_unipi` DISABLE KEYS */;
+INSERT INTO `settings_unipi` VALUES (0,0,'192.168.1.68',80,0,0),(1,0,'192.168.1.68',80,0,0);
+/*!40000 ALTER TABLE `settings_unipi` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Add UniPi default device
+--
+
+DELETE FROM devicetypes WHERE id=706;
+
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (706,'UniPi','UniPi Device','UniPi','relay 1 or ao 1');
 
 --
 -- Finally update to 1.0.023
 --
+
+DELETE FROM version WHERE db='1.0.023';
 
 LOCK TABLES version WRITE;
 INSERT INTO version VALUES (68,'1.0.023');
