@@ -45,13 +45,9 @@ Private $sSerPort As String
 Private $sBaud As String
 Private $bDebug As Boolean
 
-Public hPluginFoo As New Socket
-Public hPluginFooSer As New SerialPort
-Private sBuffer As String
-
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [0, 1000, 5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000] ' 1sec, 5sec, 20sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hour
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
+Private $sBuffer As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' cmd queue stuff, only needed if you need to send data back to the interface
@@ -81,13 +77,8 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sBaud = cPl.Settings["baudrate"]
   $bDebug = cPl.Settings["debug"]
 
-  ' Define timer for TCP reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
-
   ' Connect/Initialize connection
-  If InStr($sInterface, "tcp") Then
+  If $sInterface = "tcp" Then
     ConnectTCP()
   Else
     ConnectSerial()
@@ -109,12 +100,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function ConnectTCP() As Boolean
 
+  Dim iReconnectRetry As Integer = 0
+
   ' try to close the connection
-  Try hPluginFoo.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
   ' get a new one
-  hPluginFoo = New Socket As "PluginFoo"
-  hPluginFoo.Connect($sTCPHost, $iTCPPort)
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  'hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
   Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
@@ -140,15 +136,24 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function ConnectSerial() As Boolean
 
+  Dim iReconnectRetry As Integer = 0
+
   ' try to close the connection
-  Try hPluginFooSer.Close
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
   ' get a new one
-  hPluginFooSer = New Serialport As "PluginFooSer"
-  With hPluginFooSer
+  hMySerial = New CSerialPort(iReconnectRetry) As "PluginFooSer"
+  With hMySerial
+    '.DataType = gb.Strin - Default
+    '.DataType = gb.Byte
+    '.DataType = &HFF + gb.Byte 'Byte[]
     .PortName = $sSerPort
     .Speed = $sBaud
-    .FlowControl = 0
+    '.Parity = 0
+    '.DataBits = 8
+    '.StopBits = 1
+    '.FlowControl = 0
     .Open()
   End With
 
@@ -174,100 +179,17 @@ Catch ' some errors
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' host ip address found
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PluginFoo_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to tcp host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PluginFoo_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' tcp socket is connected
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PluginFoo_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' define timer for interface busy
-  tPluginFooBusy = New Timer As "tPluginFooBusy"
-  tPluginFooBusy.Stop
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' peer closed tcp socket
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PluginFoo_Closed()
-
-  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  ConnectTCP()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ReConnect()
-
-  Inc iReConnectRetry
-  If iReConnectRetry < aReConnectDelay.Max Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-  Endif
-
-End
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host/close serial port, close plugin
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Public Sub Disconnect() As Boolean
 
   ' try to close the connection
-  Try tReConnect.Stop
   Try tPluginFooBusy.Stop
-  Try hPluginFoo.Close
-  Try hPluginFooSer.Close
+  Try hMySocket.Close
+  Try hMySerial.Close
 
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
+  Main.WriteLog(LogLabel & PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
 
   ' all ok
   Return True
@@ -284,40 +206,112 @@ Catch
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' received data from the serialport
+' peer closed tcp socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PluginFooSer_Read()
+Public Sub MySocket_Closed()
 
-  Dim sData As String
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
 
-  Try sData = Read #hPluginFooSer, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from serial port! -> " & Error.Text)
-  If sData = "!" Then ' buffer until end of record
-    sBuffer &= sData
-    ProcessData(sBuffer)
-    sBuffer = Null
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  'Run() - execute commands when tcp connection is established
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the TCP socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(sVar As Variant)
+
+  Dim EOR As String = "!" ' Character/string which marks end-of-record
+
+  If InStr(sVar, EOR) >= 1 Then
+    ' Append the data found until EOR
+    $sBuffer &= Left(sVar, InStr(sVar, EOR) - 1)
+    ' Process the data
+    ProcessData($sBuffer)
+    ' Copy the leftover data to the $sBuffer var
+    $sBuffer = Mid(sVar, InStr(sVar, EOR) + 1)
   Else
-    sBuffer &= sData
+    $sBuffer &= sVar
   Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' received data from the tcp port
+' Handle errors
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub PluginFoo_Read()
+Public Sub MySerial_Error(sMsg As String)
 
-  Dim sData As String
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
 
-  Try sData = Read #hPluginFoo, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from tcp port! -> " & Error.Text)
-  If sData = "!" Then ' buffer until end of record
-    sBuffer &= sData
-    ProcessData(sBuffer)
-    sBuffer = Null
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the serialport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(sVar As Variant)
+
+  Dim EOR As String = "!" ' Character/string which marks end-of-record
+
+  If InStr(sVar, EOR) >= 1 Then
+    ' Append the data found until EOR
+    $sBuffer &= Left(sVar, InStr(sVar, EOR) - 1)
+    ' Process the data
+    ProcessData($sBuffer)
+    ' Copy the leftover data to the $sBuffer var
+    $sBuffer = Mid(sVar, InStr(sVar, EOR) + 1)
   Else
-    sBuffer &= sData
+    $sBuffer &= sVar
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
 
 End
 
@@ -425,12 +419,10 @@ Public Function WriteCommand(bBuffer As Byte[], sKey As String)
 
   If $sInterface = "tcp" Then
     ' send the message to the tcp stream
-    Try bBuffer.Write(hPluginFoo, 0, bBuffer.Length)
-    If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to tcp port! -> " & Error.Text)
+    hMySocket.Write(bBuffer, &HFF + gb.Byte)
   Else
     ' send the message to the serial port
-    Try bBuffer.Write(hPluginFooSer, 0, bBuffer.Length)
-    If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to serial port! -> " & Error.Text)
+    hMySerial.Write(bBuffer, &HFF + gb.Byte)
   Endif
 
   ' remove sent command from queue

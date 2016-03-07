@@ -1,0 +1,292 @@
+' Gambas class file
+
+' Description:
+' CUniPi.class
+
+' Development Status:
+' Unstable
+
+' Links:
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "UniPi"
+Public PluginFriendlyName As String = "UniPi"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Alexander Kuiper"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[UniPi] "
+Public Instance As Integer
+Public InterfaceId As Integer = 0
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $bSSL As Boolean
+Private $bDebug As Boolean
+
+Public hMySocket As CSocket
+
+Private $bReady As Boolean
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $bSSL = cPl.Settings["sslenabled"]
+  $bDebug = cPl.Settings["debug"]
+
+  ' Retrieve our Interface Id, we don't have to retrieve it more then once
+  InterfaceId = Devices.FindInterface("UniPi Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId for 'UniPi Interface' can't be retrieved from the database"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  $bReady = False
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Encrypt = $bSSL
+  hMySocket.Protocol = hMySocket.PROTOCOL_WEBSOCKET
+  hMySocket.HTTPUrl = "/ws"
+  hMySocket.WebSocketOpCode = "text"
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " WebSocket interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " WebSocket interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  Main.WriteLog(LogLabel & "WebSocket connected.")
+  IsRunning = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  Main.WriteDebugLog(LogLabel & "ERROR: WebSocket closed by peer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host/close serial port, close plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Disconnect() As Boolean
+
+  ' try to close the connection
+  Try hMySocket.Close
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " WebSocket connection closed.")
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(sVar As Variant)
+
+  Dim cJsonData As JSONCollection
+  Dim iDeviceId As Integer
+  Dim sAddress As String
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sVar)
+
+  Try cJsonData = JSON.Decode(sVar)
+
+  If Error Then
+    Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+    Return
+  Endif
+
+  If Not cJsonData Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: No JSON Data return")
+    Return
+  Endif
+
+  If Not cJsonData.Exist("dev") Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Data is missing required 'dev' field")
+    Return
+  Endif
+
+  If Not cJsonData.Exist("circuit") Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Data is missing required 'circuit' field")
+    Return
+  Endif
+
+  If Not cJsonData.Exist("value") Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Data is missing required 'value' field")
+    Return
+  Endif
+
+  sAddress = cJsonData["dev"] & " " & cJsonData["circuit"]
+
+  ' We got all fields, now find or create UniPi device
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, "UniPi")
+
+  ' Don't continue if not found and no auto-create
+  If Not iDeviceId Then Return
+
+  ' Update device value 1
+  Devices.ValueUpdate(iDeviceId, 1, cJsonData["value"])
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' WebSocket is ready for write
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_WebSocketReady()
+
+  $bReady = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' domotiga want to control a device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim aData As String[]
+  Dim cJsonData As New JSONCollection
+
+  If Not $bReady Then
+    Main.WriteLog(LogLabel & "ERROR: Can not send command, the WebSocket connection is not established")
+    Return
+  Endif
+
+  aData = Split(sAddress, " ")
+
+  If aData.Count <> 2 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Wrong address format")
+    Return
+  Endif
+
+  cJsonData["cmd"] = "set"
+  cJsonData["dev"] = aData[0]
+  cJsonData["circuit"] = aData[1]
+  cJsonData["value"] = sCmd
+
+  '{"cmd":"set","dev":"relay","circuit":"3","value":"1"}
+  hMySocket.Write(JSON.Encode(cJsonData))
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & JSON.Encode(cJsonData))
+
+End

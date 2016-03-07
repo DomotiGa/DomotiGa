@@ -5,7 +5,7 @@
 ' Support none-SSL and SSL TCP sockets
 
 ' Development Status:
-' Just started.
+' Finished
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -47,6 +47,7 @@ Event {Read}(vData As Variant)
 Event {Ready}
 Event {WebSocketReady}
 Event {Write}
+Event {Reconnect} ' Only applicable in client mode
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Constants
@@ -61,14 +62,15 @@ Public Const SSL_ERROR_ZERO_RETURN As Integer = 6
 Public Const SSL_ERROR_WANT_CONNECT As Integer = 7
 Public Const SSL_ERROR_WANT_ACCEPT As Integer = 8
 
-Public Const PROTOCOL_NONE As Integer = 0
+Public Const PROTOCOL_NONE As Integer = 0 ' RAW
 Public Const PROTOCOL_HTTP As Integer = 1
-Public Const PROTOCOL_HTTP_WEBSOCKET As Integer = 2
-Public Const PROTOCOL_WEBSOCKET As Integer = 3
+Public Const PROTOCOL_HTTP_WEBSOCKET As Integer = 2 ' Only allowed in server mode
+Public Const PROTOCOL_WEBSOCKET As Integer = 3 ' WebSocket RFC6455
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Properties
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Property Debug As Boolean
 Property EndOfLine As Integer
 Property Read Handle As Integer
 Property Host As String
@@ -85,7 +87,10 @@ Property Protocol As Integer
 Property ReadTimeOut As Integer
 Property Server As Object
 Property DataType As Integer
+Property ReconnectRetry As Integer
+Property Encrypt As Integer
 
+' HTTP Server
 Property HTTPCode As Integer
 Property HTTPKeepAlive As Integer
 Property HTTPSize As Integer
@@ -94,13 +99,18 @@ Property HTTPContentTypes As String[]
 Property HTTPHeaders As String[]
 Property HTTPRequestInUrl As String
 
+' HTTP Client
+Property HTTPMethod As String ' GET or POST
+Property HTTPUrl As String ' / or something else
+
 Property WebSocketOpcode As String
-Property WebSocketMask As Boolean
 Property WebSocketTextBinary As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private LogLabel As String = "[Socket]"
+Private $bDebug As Boolean = False
 Private $iEndOfLine As Integer = gb.Unix
 Private $iTimeout As Integer = 0
 Private $iEncrypt As Integer = Net.None ' 0=Net.None, 1=Net.SSL
@@ -117,7 +127,7 @@ Private $sSSLVersion As String
 Private $sSSLVersionId As String
 Private $lSSLMethod As Long
 Private $iDataType As Integer
-Public MySocket As New Socket
+Public MySocket As Socket
 
 Private $iReadTimeOut As Integer = 200 '*0.005
 
@@ -126,14 +136,16 @@ Private $iHTTPCode As Integer
 Private $iHTTPSize As Integer = 65535 ' 64kByte
 Private $cHTTPMethods As New String[]
 Private $cHTTPContentTypes As New String[]
+Private $sHTTPMethodIn As String = ""
 Private $cHTTPHeaders As New String[]
 Private $sHTTPRequestInUrl As String
 Private $iHTTPKeepAlive As Integer = 15000
-Private $sHTTPMethod As String
 Private $cHTTPConnection As New String[]
 Private $bHTTPDeflate As Boolean = False
 Private $sHTTPCrossOrigin As String
 Private $sHTTPAccessControlRequestHeaders As String
+Private $sHTTPMethod As String = "GET"
+Private $sHTTPUrl As String = "/"
 
 Private $sWebSocketOpCode As String
 Private $bWebSocketMask As Boolean
@@ -141,6 +153,7 @@ Private $sWebSocketTextBinary As String = "text"
 Private $lWebSocketSize As Long = 1048576 ' 1MByte
 Private $sWebSocketProtocol As String
 Private $bWebSocketEnabled As Boolean
+Private $bWebSocketInit As Boolean
 Private $sWebSocketHandShake As String
 Private $bWebSocketFIN As Boolean
 Private $iWebSocketCloseCode As Integer
@@ -148,12 +161,24 @@ Private $iWebSocketCloseCode As Integer
 Private $sWebSocketMultiPacket As String
 Private $sWebSocketPrevOpCode As String
 
+' Reconnect - we raise an Event if it happened
+Public tReconnect As Timer
+Private $iReconnectRetry As Integer = 0 ' retries
+Private $aReconnectDelay As Integer[] = [5000, 10000, 20000, 30000, 60000, 120000, 300000, 900000, 1800000, 3600000, 7200000, 14400000, 14400000, 14400000, 14400000] ' 5sec, 5sec, 10sec, 20sec, 30sec, 1min, 2min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours (4x)
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Called when Class is created
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub _new()
+Public Sub _new(Optional iReconnectRetry As Integer = -1)
+
+  MySocket = New Socket As "Socket"
 
   $cHTTPMethods.Insert(["POST", "GET", "OPTIONS", "HEAD", "PUT", "DELETE", "TRACE", "CONNECT"])
+
+  ' Use the reconnectretry if a valid value is supplied
+  If iReconnectRetry >= 0 Then
+    $iReconnectRetry = iReconnectRetry
+  Endif
 
 End
 
@@ -175,8 +200,6 @@ Public Sub _free()
   Try $tHTTPTimer.Stop
   Try Close #MySocket
 
-  Try Object.Detach(MySocket)
-
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -190,6 +213,8 @@ Public Sub Socket_Read()
   Dim iRet As Integer
 
   If $iEncrypt = Net.SSL Then
+
+    If $bDebug Then Main.WriteDebugLog(Loglabel & "Event=Read")
 
     If $pSSL = Null Then
       Raise Error("SSL Object has Null value (SSL_read)")
@@ -252,6 +277,9 @@ Public Sub Socket_Read()
     Free(pData)
 
   Else
+    iLen = Lof(Last)
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Event=Read, Length=" & iLen & ", Status=" & Last.Status)
+
     ' No SSL, just read the socket
     Read #Last, sData, Lof(Last)
   Endif
@@ -271,7 +299,7 @@ Public Sub Socket_Read()
 
           ' Do a repeat/until loop, for HTTP/1.1 requests
           Repeat
-            $sHTTPMethod = ""
+            $sHTTPMethodIn = ""
             $cHTTPConnection.Clear()
             $bHTTPDeflate = False
             $sHTTPCrossOrigin = ""
@@ -289,6 +317,23 @@ Public Sub Socket_Read()
         Else
           ' Client mode
           ' TODO
+          ' Do a repeat/until loop, for HTTP/1.1 requests
+          Repeat
+            $sHTTPMethodIn = ""
+            $cHTTPConnection.Clear()
+            $bHTTPDeflate = False
+            $sHTTPCrossOrigin = ""
+            $sHTTPAccessControlRequestHeaders = ""
+
+            $sDataIn &= $sDataInExtra & sData
+            $sDataInExtra = ""
+
+            If Protocol_HTTPClient_Read() Then
+              Raise Read($sDataIn)
+            Endif
+
+            $sDataIn = ""
+          Until Not $sDataInExtra
         Endif
        Endif
 
@@ -364,6 +409,7 @@ Private Sub Protocol_HTTPServer_Read() As Boolean
   Dim bHTTPChunked As Boolean = False
 
   Try $tHTTPTimer.Stop
+  $tHTTPTimer = Null
 
   ' At least wait until we retrieve the http headers
   For iCount = 1 To $iReadTimeOut Step 1
@@ -386,17 +432,15 @@ Private Sub Protocol_HTTPServer_Read() As Boolean
     sHTTPHeaderTemp = Left(sHTTPHeader, iPos - 1)
   Else
     Close()
-    Raise Closed()
     Return False
   Endif
 
   ' Look for the http method
   iPos = InStr(sHTTPHeaderTemp, " ") - 1
   If iPos >= 1 Then
-    $sHTTPMethod = Left(sHTTPHeaderTemp, iPos)
+    $sHTTPMethodIn = Left(sHTTPHeaderTemp, iPos)
   Else
     Close()
-    Raise Closed()
     Return False
   Endif
 
@@ -416,7 +460,7 @@ Private Sub Protocol_HTTPServer_Read() As Boolean
   Endif
 
   ' Only allow certain methods
-  If Not $cHTTPMethods.Exist($sHTTPMethod) Then
+  If Not $cHTTPMethods.Exist($sHTTPMethodIn) Then
     $iHTTPCode = 405 'Not Allowed
     Send()
     Close()
@@ -557,7 +601,7 @@ Private Sub Protocol_HTTPServer_Read() As Boolean
     If UCase(cHTTPHeader["UPGRADE"]) = "WEBSOCKET" And If $cHTTPConnection.Exist("UPGRADE") Then
 
       ' WebSocket upgrade only can be done via a GET
-      If $sHTTPMethod <> "GET" Then
+      If $sHTTPMethodIn <> "GET" Then
         $iHTTPCode = 400 'Bad Request
         Send()
         Close()
@@ -691,7 +735,7 @@ Private Sub Protocol_HTTPServer_Read() As Boolean
       Endif
     Wend
 
-    If $sHTTPMethod = "OPTIONS" Then
+    If $sHTTPMethodIn = "OPTIONS" Then
       Send()
       Return False
     Endif
@@ -713,7 +757,7 @@ Private Sub Protocol_HTTPServer_Read() As Boolean
     Endif
 
     ' With an option we should just respond and don't send anything to the application
-    If $sHTTPMethod = "OPTIONS" Then
+    If $sHTTPMethodIn = "OPTIONS" Then
       Send()
       Return False
     Endif
@@ -801,7 +845,7 @@ Private Sub Protocol_HTTPServer_Write()
     Return
   Endif
 
-  ' We are upgrading to WebSockets
+  ' We are upgrading to WebSocket
   If $iHTTPCode = 101 Then
     sDataOut = "HTTP/1.1 101 Switching Protocols" & gb.CrLf
     sDataOut &= "Upgrade: websocket" & gb.CrLf
@@ -817,7 +861,7 @@ Private Sub Protocol_HTTPServer_Write()
   Endif
 
   ' With an Options request, just respond and don't process further
-  If $sHTTPMethod = "OPTIONS" Then
+  If $sHTTPMethodIn = "OPTIONS" Then
     sDataOut = "HTTP/1.1 200 OK" & gb.CrLf
     If $sHTTPCrossOrigin Then
       sDataOut &= "Access-Control-Allow-Origin: " & $sHTTPCrossOrigin & gb.CrLf
@@ -896,6 +940,96 @@ Private Sub Protocol_HTTPServer_Write()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle HTTP data in client mode and only return the body of the request upstream
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Protocol_HTTPClient_Read() As Boolean
+
+  Dim iWait As Integer = 1
+  Dim iCount As Integer
+  Dim iPos As Integer
+  'Dim iLen As Integer
+  Dim sHTTPHeader As String
+  'Dim cHTTPHeader As New Collection
+  Dim sHTTPHeaderTemp As String
+  'Dim sHTTPProtocol As String
+  'Dim iHTTPContentLength As Integer
+  'Dim sHTTPContentType As String
+  'Dim bHTTPChunked As Boolean = False
+  Dim sMsg As String
+
+  Try $tHTTPTimer.Stop
+  $tHTTPTimer = Null
+
+  ' At least wait until we retrieve the http headers
+  For iCount = 1 To $iReadTimeOut Step 1
+    iPos = InStr($sDataIn, gb.CrLf & gb.CrLf)
+    If iPos >= 1 Then Break
+    Wait 0.005
+  Next
+
+  ' Problem with reading valid http data
+  If iCount > $iReadTimeOut Then
+    Close()
+    Return False
+  Else
+    iWait = iCount
+  Endif
+
+  sHTTPHeader = Left($sDataIn, iPos)
+  iPos = InStr(sHTTPHeader, Chr(13))
+  If iPos >= 1 Then
+    sHTTPHeaderTemp = Left(sHTTPHeader, iPos - 1)
+  Else
+    Close()
+    Return False
+  Endif
+
+  ' We are a WebSocket client, lets check if we got valid data
+  If $iProtocol = PROTOCOL_WEBSOCKET Then
+    If InStr(sHTTPHeaderTemp, "HTTP/1.1 101 ") <> 1 Then
+
+      sMsg = "WebSocket handshake failed." 
+      If $iReconnectRetry <= $aReconnectDelay.Max Then
+        sMsg &= " Retry in " & IIf($aReConnectDelay[$iReConnectRetry] > 60000, CStr($aReConnectDelay[$iReConnectRetry] / 60000) & " minutes.", CStr($aReConnectDelay[$iReConnectRetry] / 1000) & " seconds.")
+      Endif
+      sMsg &= " Msg=" & sHTTPHeaderTemp
+
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & $sDataIn)
+
+      Raise Error(sMsg)
+      Reconnect()
+      Return False
+    Endif
+
+    ' Stop timer and reset retry
+    Try tReconnect.Stop
+    $iReconnectRetry = 0
+
+    ' TODO handle headers
+
+    $bWebSocketEnabled = True
+
+    ' Raise Event
+    Raise WebSocketReady
+
+    ' Don't return true, because then we http headers are send upstream
+    Return False
+  Endif
+
+  Return True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Create HTTP data, upstream is unaware of HTTP headers
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Protocol_HTTPClient_Write()
+
+  ' TODO
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' HTTP Timer to terminate inactive persistent connections
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub HTTPTimer_Timer()
@@ -909,14 +1043,31 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Socket_Write()
 
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Event=Write (Encrypt=" & $iEncrypt & ")")
+
   If $iEncrypt <> Net.SSL Then
     Raise Write
+
+    ' If we are in client mode and no SSL check if we use websockets
+    If $cServer = Null Then
+
+      ' Ok lets try to upgrade our socket to websockets and send it
+      If ($iProtocol = PROTOCOL_WEBSOCKET And Not $bWebSocketEnabled) Then
+
+        ' Only try to do the upgrade once
+        If Not $bWebSocketInit Then
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Upgrade to WebSocket")
+          Protocol_WebSocket_Upgrade()
+          Send()
+        Endif
+      Endif
+    Endif
   Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Generate the handshake key for WebSockets
+' Generate the handshake key for WebSocket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub MakeWebSocketHandShake(sKey As String) As String
 
@@ -1104,7 +1255,7 @@ Private Sub Protocol_WebSocket_Read() As Boolean
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Create WebSocket data, upstream is unaware of WebSockets
+' Create WebSocket data, upstream is unaware of WebSocket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Protocol_WebSocket_Write()
 
@@ -1161,12 +1312,16 @@ Private Sub Protocol_WebSocket_Write()
       $sDataOut = ""
       Return
     Default 'Don't do anything if we don't have a proper opcode
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "WebSocket Write Requires a 'WebSocketOpCode'")
       $sDataOut = ""
       Return
   End Select
 
-  ' Set mask bit if applicable
-  If $bWebSocketMask Then BSet(bByte2, 7)
+  ' Check if we are in server or client mode. According to RFC6455 
+  ' we should never set mask as server, and always as client.
+  If Not $cServer Then
+    bByte2 = BSet(bByte2, 7)
+  Endif
 
   iPayloadLength = Len($sDataOut)
   If iPayloadLength <= 125 Then
@@ -1193,22 +1348,54 @@ Private Sub Protocol_WebSocket_Write()
     Next
   Endif
 
-  ' Generate random mask and mask the datapacket
-  If $bWebSocketMask Then
+  ' Generate random mask and mask the datapacket only if we are in client mode
+  If $cServer Then
+    $sDataOut = sDataOut & $sDataOut
+  Else
     aMask.Resize(4)
     For iCount = 0 To 3
       aMask[iCount] = Rnd(0, 255)
-      SDataOut &= Chr(aMask[iCount])
+      sDataOut &= Chr(aMask[iCount])
     Next
 
     For iCount = 1 To iPayloadLength
-      sDataOut &= Chr(Asc(Mid($sDataOut, iCount, 1)) Xor aMask[iCount Mod 4])
+      sDataOut &= Chr(Asc(Mid($sDataOut, iCount, 1)) Xor aMask[(iCount - 1) Mod 4])
     Next
 
     $sDataOut = sDataOut
-  Else
-    $sDataOut = sDataOut & $sDataOut
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' In client mode, try to upgrade to WebSocket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Protocol_WebSocket_Upgrade()
+
+  Dim sDataOut As String
+  Dim iCount As Integer
+  Dim sKey As String
+
+  ' Generate 16 random bytes for the key
+  For iCount = 0 To 15
+    sKey &= Chr(Rnd(0, 255))
+  Next
+
+  ' Key has to be Base64 encoded
+  sKey = Base64(sKey)
+
+  sDataOut = "GET " & $sHTTPUrl & " HTTP/1.1" & gb.CrLf
+  sDataOut &= "Host: " & MySocket.Host & IIf(MySocket.Port <> 80, ":" & MySocket.Port, "") & gb.CrLf 
+  sDataOut &= "Upgrade: websocket" & gb.CrLf
+  sDataOut &= "Connection: Upgrade" & gb.CrLf
+  sDataOut &= "Sec-WebSocket-Key: " & sKey & gb.CrLf
+  sDataOut &= "Sec-WebSocket-Version: 13" & gb.CrLf
+  sDataOut &= "Origin: http://localhost" & gb.CrLf
+
+  sDataOut &= gb.CrLf
+  $sDataOut = sDataOut
+
+  $bWebSocketInit = True
 
 End
 
@@ -1263,7 +1450,20 @@ Public Sub Send(Optional bProtocol As Boolean = True)
 
   If bProtocol Then
     If $iProtocol = PROTOCOL_HTTP Or If ($iProtocol = PROTOCOL_HTTP_WEBSOCKET And Not $bWebSocketEnabled) Or If ($iProtocol = PROTOCOL_WEBSOCKET And Not $bWebSocketEnabled) Then
-      Protocol_HTTPServer_Write()
+
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & $sDataOut)
+
+      If $cServer Then
+        Protocol_HTTPServer_Write()
+      Else
+        If $iProtocol = PROTOCOL_HTTP Or $iProtocol = PROTOCOL_HTTP_WEBSOCKET Then
+          Protocol_HTTPClient_Write()
+        Else
+          ' Do nothing for WebSocket, we got an upgrade request with all the headers ;-)
+          ' bWebSocketEnabled  will be set in the Protocol_HTTPClient_Read
+        Endif
+      Endif
+
     Else
       Protocol_WebSocket_Write()
     Endif
@@ -1367,6 +1567,7 @@ End
 Public Sub Close()
 
   Try $tHTTPTimer.Stop
+  $tHTTPTimer = Null
 
   If $iEncrypt = Net.SSL Then
     If $pSSL <> Null Then
@@ -1379,10 +1580,8 @@ Public Sub Close()
     Try Close #MySocket
   Endif
 
-  Try Object.Detach(MySocket)
-
-  ' Not sure if we should raise a Closed event
-  'Raise Closed()
+  ' Set MySocket to null, otherwise it isn't freed by Gambas
+  MySocket = Null
 
 End
 
@@ -1390,6 +1589,8 @@ End
 ' Socket raises found, Hostname -> IP resolved
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Socket_Found()
+
+  If $bDebug Then Main.WriteDebugLog(Loglabel & "Event=Found")
 
   Raise Found
 
@@ -1401,6 +1602,15 @@ End
 Public Sub Socket_Ready()
 
   Dim iRet As Integer
+
+  If $bDebug Then Main.WriteDebugLog(Loglabel & "Event=Ready")
+
+  ' In client mode, stop and reset retry counter
+  ' Only do it for NONE websockets, because that's handled during the upgrade response
+  If $cServer = Null And If $iProtocol <> PROTOCOL_WEBSOCKET Then
+    Try tReconnect.Stop
+    $iReconnectRetry = 0
+  Endif
 
   ' Only raise it for none-encrypted connections
   If $iEncrypt = Net.SSL Then
@@ -1451,6 +1661,7 @@ Public Sub Socket_Ready()
 
           ' Raise Ready Event
           Raise Ready
+
           ' Now we can also raise Write event
           Raise Write
 
@@ -1474,6 +1685,46 @@ Public Sub Socket_Ready()
     Raise Ready
   Endif
 
+  ' If we are in client mode check if we use websockets
+  If $cServer = Null Then
+
+    ' Ok lets try to upgrade our socket to websockets and send it
+    If ($iProtocol = PROTOCOL_WEBSOCKET And Not $bWebSocketEnabled) Then
+
+      ' Only try to do the upgrade once
+      If Not $bWebSocketInit Then
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Upgrade to WebSocket")
+        Protocol_WebSocket_Upgrade()
+        Send()
+      Endif
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Socket has an error - try to reconnect in client mode
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub Socket_Error()
+
+  Dim iReconnectTime As Integer
+  Dim iStatus As Integer
+  Dim sHost As String
+
+  iStatus = MySocket.Status
+  sHost = MySocket.Host
+
+  If $bDebug Then Main.WriteDebugLog(Loglabel & "Event=Error, Msg=" & Log.Text_TCP_Error(iStatus, sHost))
+
+  If $cServer = Null Then
+    ' Get the possible time for reconnecting
+    iReconnectTime = Reconnect()
+    ' Raise the error event
+    Raise Error(Log.Text_TCP_Error(iStatus, sHost) & IIf(iReconnectTime > 0, " Retry in " & (iReconnectTime / 1000) & " seconds.", ""))
+  Else
+    Raise Error(Log.Text_TCP_Error(iStatus, sHost))
+  Endif
+
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1481,9 +1732,22 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Socket_Closed()
 
-  Try $tHTTPTimer.Stop
+  If $bDebug Then Main.WriteDebugLog(Loglabel & "Event=Closed")
 
+  Try $tHTTPTimer.Stop
+  $tHTTPTimer = Null
+
+  Close()
+
+  ' Raise Closed event
   Raise Closed
+
+  ' In client mode we should try to reconnect for RAW and WebSocket
+  If $cServer = Null Then
+    If $iProtocol = PROTOCOL_NONE Or If $iProtocol = PROTOCOL_WEBSOCKET Then
+      Reconnect()
+    Endif
+  Endif
 
 End
 
@@ -1492,10 +1756,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub AssignSocket()
 
+  Dim sPluginName As String
   Dim iRet As Integer
 
   $cServer = Last
   MySocket = Last.Accept()
+
+  Try sPluginName = Object.Parent(Me).PluginName
+  If Error Then sPluginName = "Unknown"
+  LogLabel = "[Socket:" & sPluginName & ":" & MySocket.RemoteHost & ":" & MySocket.RemotePort & "] "
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Socket Accepted")
+
   $iTimeout = Last.Timeout
   $iEncrypt = Last.Encrypt
   $iDataType = Last.DataType
@@ -1571,8 +1843,20 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Connect(Optional sHostOrPath As String, Optional iPort As Integer = 0)
 
+  Dim sPluginName As String
   Dim pMethod As Pointer
- 
+
+  Try sPluginName = Object.Parent(Me).PluginName
+  If Error Then sPluginName = "Unknown"
+  LogLabel = "[Socket:" & sPluginName & ":" & sHostOrPath & IIf(iPort, ":" & iPort, "") & "] "
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Opening Socket")
+
+  If $iProtocol = PROTOCOL_HTTP_WEBSOCKET Then
+    Raise Error("Protocol HTTP & WebSocket only allowed in Server mode")
+    Return
+  Endif
+
   If sHostOrPath And iPort Then
     MySocket.Connect(sHostOrPath, iPort)
   Else If sHostOrPath Then
@@ -1580,8 +1864,6 @@ Public Sub Connect(Optional sHostOrPath As String, Optional iPort As Integer = 0
   Else
     Raise Error("No path or host supplied for connect")
   Endif
-
-  Object.Attach(MySocket, Me, "Socket")
 
   If $iEncrypt = Net.SSL Then
     ' Initialize the SSL connection and check certificate
@@ -1677,6 +1959,57 @@ Public Sub Connect(Optional sHostOrPath As String, Optional iPort As Integer = 0
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' We try to reconnect, we return the started timer in msec
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Reconnect() As Integer
+
+  Dim iReconnectTime As Integer = 0
+
+  ' Maybe something is still open/active, so kill it first
+  Close()
+
+  ' Don't overrule an already started timer
+  If tReconnect And If tReconnect.Enabled Then Return
+
+  If $bDebug Then Main.WriteDebugLog(Loglabel & "Reconnect routine")
+
+  ' Only do it, when it is a valid variable and has 1 or more entries
+  If $aReconnectDelay And If $aReconnectDelay.Count Then
+
+    If $iReconnectRetry <= $aReconnectDelay.Max Then
+      tReconnect = New Timer As "tReconnect"
+      tReconnect.Delay = $aReconnectDelay[$iReconnectRetry]
+      tReconnect.Start
+ 
+      iReconnectTime = $aReconnectDelay[$iReconnectRetry]
+ 
+      If $bDebug Then Main.WriteDebugLog(Loglabel & "Reconnect started, timer=" & $aReconnectDelay[$iReConnectRetry] & " milliseconds")
+    Else
+      Try tReconnect.Stop
+      Raise Error("Too many reconnect failures (" & $iReconnectRetry & "), stopped trying.")
+    Endif
+
+    Inc $iReconnectRetry
+  Endif
+
+  Return iReconnectTime
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' ReConnect Timer expired
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tReconnect_Timer()
+
+  ' Stop timer
+  Last.Stop()
+
+  ' Raise a reconnect event, Plugin is responsible for it
+  Raise Reconnect
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Display a readable SSL_ERROR
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Display_SSL_ERROR(iRet As Integer) As String
@@ -1708,6 +2041,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Properties
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Function Debug_Read() As Boolean
+
+  Return $bDebug
+
+End
+
+Function Debug_Write(bDebug As Boolean)
+
+  $bDebug = bDebug
+
+End
+
 Function EndOfLine_Read() As Integer
 
   Return $iEndOfLine
@@ -1934,6 +2279,30 @@ Function HTTPKeepAlive_Write(iHTTPKeepAlive As Integer)
 
 End
 
+Function HTTPMethod_Read() As String
+
+  Return $sHTTPMethod
+
+End
+
+Function HTTPMethod_Write(sHTTPMethod As String)
+
+  $sHTTPMethod = sHTTPMethod
+
+End
+
+Function HTTPUrl_Read() As String
+
+  Return $sHTTPUrl
+
+End
+
+Function HTTPUrl_Write(sHTTPUrl As String)
+
+  $sHTTPUrl = sHTTPUrl
+
+End
+
 Function WebSocketOpcode_Read() As String
 
   Return $sWebSocketOpCode
@@ -1943,18 +2312,6 @@ End
 Function WebSocketOpCode_Write(sWebSocketOpCode As String)
 
   $sWebSocketOpCode = sWebSocketOpCode
-
-End
-
-Function WebSocketMask_Read() As Boolean
-
-  Return $bWebSocketMask
-
-End
-
-Function WebSocketMask_Write(bWebSocketMask As Boolean)
-
-  $bWebSocketMask = bWebSocketMask
 
 End
 
@@ -1998,6 +2355,30 @@ End
 Function DataType_Write(iDataType As Integer)
 
   $iDataType = iDataType
+
+End
+
+Function ReconnectRetry_Read() As Integer
+
+  Return $iReconnectRetry
+
+End
+
+Function ReconnectRetry_Write(iReconnectRetry As Integer)
+
+  $iReConnectRetry = iReconnectRetry
+
+End
+
+Function Encrypt_Read() As Integer
+
+  Return $iEncrypt
+
+End
+
+Function Encrypt_Write(iEncrypt As Integer)
+
+  $iEncrypt = iEncrypt
 
 End
 

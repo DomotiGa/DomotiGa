@@ -992,6 +992,70 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 				{
 					strcpy( dev_result, "Tamper" );
 				}
+			} else if ( label == "Alarm Type" )
+			{
+				dev_index = 92;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "SourceNodeId" )
+			{
+				dev_index = 93;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "General" )
+			{
+				dev_index = 94;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Smoke" )
+			{
+				dev_index = 95;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Carbon Monoxide" )
+			{
+				dev_index = 96;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Carbon Dioxide" )
+			{
+				dev_index = 97;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Heat" )
+			{
+				dev_index = 98;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Flood" )
+			{
+				dev_index = 99;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Access Control" )
+			{
+				dev_index = 100;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Burglar" )
+			{
+				dev_index = 101;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Power Management" )
+			{
+				dev_index = 102;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "System" )
+			{
+				dev_index = 103;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Emergency" )
+			{
+				dev_index = 104;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Clock" )
+			{
+				dev_index = 105;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "Appliance" )
+			{
+				dev_index = 106;
+				strcpy( dev_result, dev_value );
+			} else if ( label == "HomeHealth" )
+			{
+				dev_index = 107;
+				strcpy( dev_result, dev_value );
 			}
 
 			break;
@@ -5665,6 +5729,22 @@ const char* DomoZWave_SpecificTypeName( int32 generictype, int32 specifictype )
 				case 0x01: return "Simple Display";
 			} 
 			return "Display";
+		case GENERIC_TYPE_NETWORK_EXTENDER:
+			switch ( specifictype )
+			{
+				case 0x01: return "Secure Extender";
+			}
+			return "Network Extender";
+		case GENERIC_TYPE_APPLIANCE:
+			switch ( specifictype )
+			{
+				case 0x01: return "General Appliance";
+				case 0x02: return "Kitchen Appliance";
+				case 0x03: return "Laundry Appliance";
+			}
+			return "Appliance";
+		case GENERIC_TYPE_NOTIFICATION_SENSOR:
+			return "Notification Sensor";
 		case GENERIC_TYPE_THERMOSTAT:
 			switch ( specifictype )
 			{
@@ -5742,6 +5822,18 @@ const char* DomoZWave_SpecificTypeName( int32 generictype, int32 specifictype )
 				case 0x01: return "Residential Heat Recovery Ventilation";
 			}
 			return "Ventilation";
+		case GENERIC_TYPE_SECURITY_PANEL:
+			switch ( specifictype )
+			{
+				case 0x01: return "Zoned Security Panel";
+			}
+			return "Security Panel";
+		case GENERIC_TYPE_WALL_CONTROLLER:
+			switch ( specifictype )
+			{
+				case 0x01: return "Basic Wall Controller";
+			}
+			return "Wall Controller";
 		case GENERIC_TYPE_SENSOR_BINARY:
 			switch ( specifictype )
 			{

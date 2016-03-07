@@ -86,6 +86,7 @@ cp ../../DomotiGa3/.src/CProwl.class .
 cp ../../DomotiGa3/.src/CPVoutput.class .
 cp ../../DomotiGa3/.src/CPwrCtrl.class .
 cp ../../DomotiGa3/.src/CRaZberry.class .
+cp ../../DomotiGa3/.src/CRFLink.class .
 cp ../../DomotiGa3/.src/CRFXComRX.class .
 cp ../../DomotiGa3/.src/CRFXComTX.class .
 cp ../../DomotiGa3/.src/CRFXComTRX.class .
@@ -105,6 +106,7 @@ cp ../../DomotiGa3/.src/CTemperaturNu.class .
 cp ../../DomotiGa3/.src/CToon.class .
 cp ../../DomotiGa3/.src/CTVGuide.class .
 cp ../../DomotiGa3/.src/CTwitter.class .
+cp ../../DomotiGa3/.src/CUniPi.class .
 cp ../../DomotiGa3/.src/CUPS.class .
 cp ../../DomotiGa3/.src/CVISCA.class .
 cp ../../DomotiGa3/.src/CWeeder.class .

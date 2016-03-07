@@ -1,0 +1,937 @@
+' Gambas class file
+
+' Description:
+' CRFLink.class
+' Connects to a RFLink interface via TCP socket or serial port
+' RFLink is a cheap RF transceiver for 433MHz and supports devices like:
+' Oregon, LaCrosse, X-10, KlikAanKlikUit, etc
+
+
+' Development Status:
+' Unstable
+
+' Links:
+' http://www.nemcon.nl/blog2/
+' http://sourceforge.net/projects/rflink/
+
+' DomotiGa - an open source home automation program.
+' Copyright (C) Ron Klinkien, The Netherlands.
+
+' Read file called COPYING for license details.
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Module/Class specific variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public PluginName As String = "RFLink"
+Public PluginFriendlyName As String = "RFLink"
+Public PluginVersion As String = "1.00"
+Public PluginAuthor As String = "Alexander Kuiper"
+Public PluginProtocols As String[]
+Public PluginMaxInstances As Integer = 1
+
+Public KeyName As String
+Public LogLabel As String = "[RFLink] "
+Public Instance As Integer
+Public InterfaceId As Integer = 0
+Public IsRunning As Boolean
+Public ErrorText As String
+Public ErrorWhere As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private $bEnabled As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
+Private $sSerPort As String
+Private $bDebug As Boolean
+
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
+Private $sBuffer As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' cmd queue stuff, only needed if you need to send data back to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private cQueue As New Collection    ' command buffer
+Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
+Public tPluginBusy As Timer
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory subroutine for each Module/Class to initialize:
+' - The cPlugin[x].Settings are copied into local variables
+' - Port/Connection will be started (any errors caught)
+' - Any other code per Class
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StartPlugin(cPl As CPluginEntry)
+
+  KeyName = cPl.KeyName
+  Instance = cPl.Instance
+  If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
+
+  ' Copy configuration items locally
+  $bEnabled = cPl.Settings["enabled"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sInterface = cPl.Settings["type"]
+  $sSerPort = cPl.Settings["serialport"]
+  $bDebug = cPl.Settings["debug"]
+
+  ' Retrieve our Interface Id, we don't have to retrieve it more then once
+  InterfaceId = Devices.FindInterface("RFLink Interface")
+  If InterfaceId = 0 Then
+    ErrorText = "Required InterfaceId for 'RFLink Interface' can't be retrieved from the database"
+    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    IsRunning = False
+    Return
+  Endif
+
+  ' Connect/Initialize connection
+  If $sInterface = "tcp" Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Mandatory sub for each Module/Class to stop
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub StopPlugin()
+
+  Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectSerial() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+
+  ' get a new one
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = gb.String
+    .PortName = $sSerPort
+    .Speed = 57600
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' Write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " interface connected to port " & $sSerPort)
+  IsRunning = True
+
+  ' define timer for interface busy
+  tPluginBusy = New Timer As "tPluginFooBusy"
+  tPluginBusy.Stop
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " interface FAILED to connect to port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  ' define timer for interface busy
+  tPluginBusy = New Timer As "tPluginBusy"
+  tPluginBusy.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host/close serial port, close plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Disconnect() As Boolean
+
+  ' try to close the connection
+  Try tPluginBusy.Stop
+  Try hMySocket.Close
+  Try hMySerial.Close
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the serialport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(sVar As Variant)
+
+  Dim iPos As Integer
+
+  $sBuffer &= sVar
+
+  ' Check if we received complete packet, end-of-record is "\r\n"
+  Repeat
+    iPos = InStr($sBuffer, gb.CrLf)
+    If iPos >= 1 Then
+      ProcessData(Left($sBuffer, iPos - 1))
+      $sBuffer = Mid($sBuffer, iPos + 2)
+      iPos = InStr($sBuffer, gb.CrLf)
+    Endif
+  Until iPos = 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(sVar As Variant)
+
+  Dim iPos As Integer
+
+  $sBuffer &= sVar
+
+  ' Check if we received complete packet, end-of-record is "\r\n"
+  Repeat
+    iPos = InStr($sBuffer, gb.CrLf)
+    If iPos >= 1 Then
+      ProcessData(Left($sBuffer, iPos - 1))
+      $sBuffer = Mid($sBuffer, iPos + 2)
+      iPos = InStr($sBuffer, gb.CrLf)
+    Endif
+  Until iPos = 0
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse received data
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessData(sData As String)
+
+  Dim aData As String[]
+  Dim sLabel As String
+  Dim sAddress As String
+  Dim sSwitch As String
+  Dim sType As String
+  Dim sVar As String
+  Dim sPair As String[]
+  Dim iCount As Integer = 0
+  Dim iDeviceId As Integer
+  Dim iValueType As Integer
+  Dim sValue As String
+  Dim iTemp As Integer
+
+  ' Input fields, the following columns are mandatory:
+  ' --------------------------------------------------
+  ' 0 = 20 fixed. 20=RFLink->Serial, 10=Serial->RFLink
+  ' 1 = Id - we ignore it, it is a sequencenumber only
+  ' 2 = Description, e.g. Oregon TempHygro
+  ' 3 = Device Id. Sometimes we require SWITCH= to have the complete address
+
+  ' Description        | RFLink | Protocol     | SR | Receive ID/SWITCH       | Send ID/SWITCH | DomotiGa Address
+  ' -------------------------------------------------------------------------------------------------------------
+  ' AB400D             | 003    | AB400        | SR | ID=41;SWITCH=3          | 000041;3       | A03 (SWITCH is Dec)
+  ' Alecto V1          | 030    | Alecto       | R  | ID=0000                 |                | alecto 0x0000
+  ' Alecto V2          | 100    | Alecto       | R  | ID=000c                 |                | alecto 0x000c
+  ' Alecto V3          | 031    | Alecto       | R  | ID=0000                 |                | alecto 0x0000
+  ' Alecto V4          | 032    | Alecto       | R  | ID=0000                 |                | alecto 0x0000
+  ' Auriol             | 045    | Auriol       | R  | ID=0000                 |                | auriol 0x0000
+  ' Auriol V2          | 046    | Auriol       | R  | ID=0000                 |                | auriol 0x0000
+  ' Auriol V3          | 044    | Auriol       | R  | ID=0000                 |                | auriol 0x0000
+  ' Avidsen            | 006    |              | SR | ID=0000;SWITCH=A1       |*000000;A1      | 0000 A1 (SWITCH is channel+subchannel)
+  ' Blyss              | 006    | Blyss        | SR | ID=0000;SWITCH=A1       |*000000;A1      | 0000 A1 (SWITCH is channel+subchannel)
+  ' Byron MP           | 074    |              | SR | ID=1234;SWITCH=1        |*001234;1       |
+  ' Byron SX           | 072    |              | SR | ID=1234;SWITCH=1        |*001234;01      | (SWITCH is fixed). R=Byron SX, S=Byron?!
+  ' Chuango            | 062    |              | R  | ID=12356;SWITCH=02      |                | (SWITCH is fixed)
+  ' Conrad             | 007    |              | SR | ID=010002;SWITCH=03     | 010002;3       | ? 010002 03 (SWITCH is Hex). NOTE: Can only send 1 char in hex for SWITCH value
+  ' Conrad             | 033    |              | R  | ID=0002                 |                |
+  ' Cresta             | 034    | Cresta       | R  | ID=0000                 |                | Cresta 0x0000
+  ' Deltronic          | 073    |              | SR | ID=1234;SWITCH=1        |*001234;1       |
+  ' DKW2012            | 100    |              | R  | ID=0012                 |                |
+  ' Eurodomest         | 005    |              | SR | ID=03696b;SWITCH=03     | 03696b;3       | ? (SWITCH is Hex)   
+  ' FA20RF             | 080    |              | S  | ID=123456               | 123456;1       | 123456 (SWITCH isn't send, but required for sending)
+  ' FA500              | 012    |              | SR | ID=12345678;SWITCH=D3   |*2345678;D3     | 12345678 D3 (SWITCH is channel+subchannel)
+  ' FA500              | 012    |              | SR | ID=1234;SWITCH=0000     | ?              | 1234 00000(SWITCH is Hex)
+  ' HomeConfort        | 011    |              | SR | ID=000000;SWITCH=A1     | 000000;A1      | 0000000 A1 (SWITCH is channel+subchannel)
+  ' HomeEasy           | 015    | HEEU         | SR | ID=7900b200;SWITCH=0b   | 7900b200;0b    | 7900B200 0B (SWITCH is Hex) 
+  ' Ikea Koppla        | 014    | Koppla       | R  | ID=0000;SWITCH=00       |                | 0000 00 (SWITCH is Hex)
+  ' Imagintronix       | 035    | Imagintrx    | R  | ID=0000                 |                | 0000
+  ' Impuls             | 003    | Impuls       | SR | ID=41;SWITCH=3          | 000041;3       | A03 (SWITCH is Dec)
+  ' Kaku               | 003    | KAKU         | SR | ID=41;SWITCH=1          | 000041;1       | A01 (SWITCH is Dec)
+  ' Kambrook           | 008    |              | SR | ID=000000;SWITCH=A1     | 000000;A1      | (SWITCH is channel+subchannel)
+  ' LaCrosse           | 043    | LaCrosse     | R  | ID=0000                 |                | lacrosse 0x0000
+  ' LaCrosseV2         | 002    | LaCrosse     | R  | ID=0000                 |                | lacrosse 0x0000
+  ' LaCrosseV3         | 041    | LaCrosse     | R  | ID=0000                 |                | lacrosse 0x0000 (PrintHex8 used, ID output can be 0x00 0x00?)
+  ' Mebus              | 040    |              | R  | ID=0000                 |                | 
+  ' Mertik             | 082    | Mertik       | SR | ID=12;SWITCH=01         | 12             | 0x12 (SWITCH seems to be invalid, because it contains also the CMD)
+  ' NewKaku            | 004    | NewKAKU      | SR | ID=00cac142;SWITCH=3    |*0cac142;3      | 00CAC142 03 (SWITCH is Hex)
+  ' Oregon BTHR        | 048    | Oregon       | R  | ID=0000                 |                | thb1 0x0000
+  ' Oregon Rain        | 048    | Oregon       | R  | ID=0000                 |                | rain1 0x0000
+  ' Oregon Rain2       | 048    | Oregon       | R  | ID=0000                 |                | rain2 0x0000
+  ' Oregon Temp        | 048    | Oregon       | R  | ID=0000                 |                | temp1 0x0000
+  ' Oregon TempHygro   | 048    | Oregon       | R  | ID=0000                 |                | th1 0x0000
+  ' Oregon UVN128/138  | 048    | Oregon       | R  | ID=0000                 |                | uv1 0x0000
+  ' Oregon UVN800      | 048    | Oregon       | R  | ID=0000                 |                | uv2 0x0000
+  ' OregonV1           | 048    | Oregon       | R  | ID=0000                 |                | temp1 0x0000
+  ' Oregon Wind        | 048    | Oregon       | R  | ID=0000                 |                | wind1 0x0000
+  ' Oregon Wind2       | 048    | Oregon       | R  | ID=0000                 |                | wind2 0x0000
+  ' Plieger            | 071    |              | R  | ID=1234;SWITCH=1        |                | (SWITCH is fixed)
+  ' Powerfix           | 013    |              | SR | ID=0000;SWITCH=00       |*000000;0       | (SWITCH is Hex)
+  ' PT2262             | 003    |              | SR | ID=41;SWITCH=3          |*000041;3       | A03 (SWITCH is Dec)
+  ' Sartano            | 003    |              | SR | ID=41;SWITCH=3          |*000041;3       | A03 (SWITCH is Dec)
+  ' SelectPlus         | 070    | SelectPlus   | SR | ID=1234;SWITCH=1        |*001234         | 0000 (SWITCH is fixed)
+  ' SilverCrest        | 075    |              | R  | ID=12345678;SWITCH=1    |                | (SWITCH is fixed)
+  ' Slave              | 090    |              | R  | ID=1234                 |                | Drop packet if contains "Debug="
+  ' Slave              | 090    |              | R  | ID=123456               |                | Drop packet if contains "Debug="
+  ' TRC02RGB           | 010    | TRC02        | SR | ID=03023c;SWITCH=00     | 03023c         | 03023C (NOTE: SWITCH seems to be invalid, because it contains also the CMD)
+  ' TriState           | 003    |              | SR | ID=000041;SWITCH=3      | 000041;3       | ? (SWITCH is Dec)
+  ' UPM/Esic           | 042    | UPM          | R  | ID=0000                 |                | 0000 
+  ' UPM/Esic F2        | 042    | UPM          | R  | ID=0000                 |                | 0000
+  ' X10                | 009    | X10          | SR | ID=41;SWITCH=3          |*0041;3         | A03 (SWITCH is Dec)
+  ' X10                | 060    | X10SecMotion | R  | ID=1234;SWITCH=01       |                | 123456 (SWITCH is fixed)
+  ' X10                | 061    | X10SecMotion | R  | ID=123456;SWITCH=01     |                | 123456 (SWITCH is fixed)
+  ' X10                | 063    | X10SecMotion | R  | ID=123456;SWITCH=01     |                | 123456 01 (SWITCH is hex)
+  ' Xiron              | 046    |              | R  | ID=0000                 |                |
+
+  ' DEBUG              | 254    |              | R  |                         |                | Ignore data
+  ' RFDEBUG            | 254    |              | R  |                         |                | Ignore data
+  ' RFUDEBUG           | 254    |              | R  |                         |                | Ignore data
+  ' QRFDEBUG           | 254    |              | R  |                         |                | Ignore data
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sData)
+
+  ' Ignore the RTS data, it isn't properly formatted
+  If InStr(sData, "RTS Record") = 1 Then Return
+
+  ' Split data into string array
+  aData = Split(sData, ";")
+
+  ' Check for special packets - we need to have at least 3 fields
+  If aData.Count < 4 Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Invalid packet received")
+    Return
+  Endif
+
+  If InStr(sData, "Nodo RadioFrequencyLink") Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Nodo RadioFrequencyLink Init Received")
+    Return
+  Endif
+
+  ' First field has to be 20
+  If aData[0] <> "20" Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Invalid packet received, field 1 must be '20'")
+    Return
+  Endif
+
+  ' Version of RFLink, expected format: VER=1.1;REV=37;BUILD=05;
+  If InStr(aData[2], "VER=") = 1 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "RFLink Version Received")
+    Return
+  Endif
+
+  ' Process pong request, but don't give an error on it
+  If aData[2] = "PONG" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Pong Message Received")
+    Return
+  Endif
+
+  ' Process pong request, but don't give an error on it
+  If aData[2] = "DEBUG" Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Debug Message Received")
+    Return
+  Endif
+
+  If InStr(aData[2], "RFDEBUG=") = 1 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "RF Debug State Changed")
+    Return
+  Endif
+
+  If InStr(aData[2], "RFUDEBUG=") = 1 Then
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "RFU Debug State Changed")
+    Return
+  Endif
+
+  If InStr(aData[2], "QRFDEBUG=") = 1 Then
+    If $bDebug Then Main.WriteDebugLog("QRF Debug State Changed")
+    Return
+  Endif
+
+  ' A minimum of 5 fields is required, to be a valid packet
+  If aData.Count < 6 Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Invalid packet received, 5 or more fields required")
+    Return
+  Endif
+
+  If InStr(aData[3], "ID=") = 0 Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Invalid packet received, field 4 must has the format ID=<hex>")
+    Return
+  Endif
+
+  ' Store label for later usage
+  sLabel = aData[2]
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Sequence no.  = " & aData[1])
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Label         = " & sLabel)
+
+  ' Validate ID= value
+  If InStr(aData[3], "ID=") <> 1 Then
+    Main.WriteDebugLog(LogLabel & "ERROR: Invalid packet received, field=4 doesn't contain 'ID=', but '" & aData[3] & "'")
+    Return
+  Endif
+
+  ' Store device id, in hex format
+  sAddress = Mid(aData[3], Len("ID=") + 1)
+
+  ' Now we got the ID, we can remove the first 4 fields
+  aData = aData.Extract(4, -1)
+
+  ' We assume the SWITCH= is always the first field
+  If InStr(aData[0], "SWITCH=") = 1 Then
+    sSwitch = Mid(sVar, Len("SWITCH=") + 1)
+  Endif
+
+  ' Go through the description field and map the devices
+  Select sLabel
+    Case "Alectro"
+      sType = "Alectro"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "Auriol"
+      sType = "Auriol"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "Cresta"
+      sType = "Cresta"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "HomeEasy"
+      sType = "HEEU"
+      sAddress = UCase(sAddress & " " & sSwitch)
+    Case "Kaku", "X10"
+      sType = "KAKU"
+      Try sAddress = Chr(Val("&H" & sAddress))
+      If Error Then
+        Main.WriteDebugLog("ERROR: KAKU/X10 device has an invalid address '" & sAddress & "'")
+        Return
+      Endif
+
+      sSwitch = IIf(Len(sSwitch) = 1, "0" & sSwitch, sSwitch)
+      sAddress &= sSwitch
+    Case "LaCrosse"
+      sType = "LaCrosse"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "NewKaku"
+      sType = "NewKAKU"
+      sSwitch = IIf(Len(sSwitch) = 1, "0" & sSwitch, sSwitch)
+      sAddress = UCase(sAddress & " " & sSwitch)
+    Case "Oregon BTHR" ' Temp, Hygro, Baro, Battery. BTHR918N, BTHR968, BTHG968
+      sType = "thb1"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "Oregon Rain" ' RGR126, RGR682, RGR918, RGR928, PCR122
+      sType = "rain1"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "Oregon Rain2" ' PCR800
+      sType = "rain2"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "Oregon Temp" ' THC238, THC268, THN132N, THWR288A, THRN122N, THN122N, AW129, AW131, THWR800, THR128, THR138, THC138
+      sType = "temp1"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "Oregon TempHygro" ' THGN122N, THGN123N, THGR122NX, THGR228N, THGR238, THGR268, THGR122X, THGR918, THGRN228NX, THGN500, THGR810, RTGR328N, THGR328N, WTGR800
+      sType = "th1"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "Oregon UVN128/138" ' UVN128, UV138
+      sType = "uv1"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "Oregon UVN800" 'UVN800
+      sType = "uv2"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "OregonV1" ' SL-109H, AcuRite 09955 - It is same as 'temp1', but no battery report
+      sType = "temp1"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "Oregon Wind" ' WGR800
+      sType = "wind1"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Case "Oregon Wind2" ' STR918, WGR918
+      sType = "wind2"
+      sAddress = sType & " 0x" & LCase(sAddress)
+    Default
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Unknown/Unsupported description '" & sLabel & "'")
+      Return
+  End Select
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "ID            = " & sAddress)
+
+  ' Find device or auto-create it if enabled
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
+
+  ' Don't continue if not found and no auto-create
+  If Not iDeviceId Then Return
+
+  For Each sVar In aData
+
+    ' Ignore empty fields, normally the last entry
+    If Not sVar Then Continue
+
+    sPair = Split(sVar, "=")
+    If sPair.Count < 2 Then
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Invalid data field '" & sVar & "'")
+      Continue
+    Else
+      ' Only CMD has a SET_LEVEL= the output
+      If sPair[0] = "CMD" Then
+        If sPair.Count <> 2 And If sPair.Count <> 3 Then
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Invalid data field '" & sVar & "'")
+          Continue
+        Endif
+      Else
+        If sPair.Count <> 2 Then
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Invalid data field '" & sVar & "'")
+          Continue
+        Endif
+      Endif
+    Endif
+
+    iValueType = 0
+    sValue = ""
+
+    Select sPair[0]
+      Case "SWITCH" ' We silently ignore this field
+        Continue
+      Case "CMD" ' SET_LEVEL is inside the CMD
+        If InStr(sPair[1], "SET_LEVEL=") Then
+          sValue = "Dim " & Mid(sPair[1], "SET_LEVEL=" + 1)
+        Else
+          sValue = sPair[1]
+        Endif
+      Case "TEMP"
+        iValueType = Devices.ValueType_Temperature
+        iTemp = Val("&H0" & sPair[1])
+
+        ' Check if high bit is set, then the value is negative
+        If BTst(iTemp, 15) Then
+          iTemp = BClr(iTemp, 15)
+          iTemp = iTemp * -1
+        Endif
+
+        ' Divide it with 10, to get the right value
+        sValue = iTemp / 10
+
+        If Main.sTemperature = "°C" Then
+          sValue = Format(CStr(sValue), "0.#")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Temperature   = " & sValue & " °C")
+        Else
+          sValue = Format(CStr(sValue * 1.8 + 32), "0.#")
+          If $bDebug Then Main.WriteDebugLog(LogLabel & "Temperature   = " & sValue & " °F")
+        Endif
+      Case "HUM"
+        iValueType = Devices.ValueType_Humidity
+        sValue = Val(sPair[1])
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Humidity      = " & sValue & " %")
+      Case "BARO"
+        iValueType = Devices.ValueType_Barometric
+        sValue = Val("&H" & sPair[1])
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Barometer     = " & sValue)
+      Case "HSTATUS"
+        Select sPair[1]
+          Case "0"
+            sValue = "Normal"
+          Case "1"
+            sValue = "Comfort"
+          Case "2"
+            sValue = "Dry"
+          Case "3"
+            sValue = "Wet"
+        End Select
+      Case "BFORECAST"
+        Select sPair[1]
+          Case "0"
+            sValue = "Unknown"
+          Case "1"
+            sValue = "Sunny"
+          Case "2"
+            sValue = "Partly Cloudy"
+          Case "3"
+            sValue = "Cloudy"
+          Case "4"
+            sValue = "Rain"
+        End Select
+      Case "UV"
+        iValueType = Devices.ValueType_UV
+        sValue = Val("&H0" & sPair[1])
+      Case "LUX"
+        iValueType = Devices.ValueType_Luminance
+        sValue = Val("&H0" & sPair[1])
+      Case "RAIN"
+        iValueType = Devices.ValueType_RainRate
+        sValue = Val("&H0" & sPair[1])
+      Case "RAINTOT"
+        iValueType = Devices.ValueType_RainTotal
+        sValue = Val("&H0" & sPair[1])
+      Case "WINSP"
+        iValueType = Devices.ValueType_WindSpeed
+        sValue = (Val("&H0" & sPair[1]) / 10)
+        sValue = Format(CStr(sValue), "0.#")
+      Case "AWINSP"
+        iValueType = Devices.ValueType_WindAvgSpeed
+        sValue = (Val("&H0" & sPair[1]) / 10)
+        sValue = Format(CStr(sValue), "0.#")
+      Case "WINGS"
+        iValueType = Devices.ValueType_WindSpeed
+        sValue = Val("&H0" & sPair[1])
+        sValue = Format(CStr(sValue), "0.#")
+      Case "WINDIR"
+        iValueType = Devices.ValueType_WindDirection
+        sValue = Floor(Val(sPair[1]) * 22.5)
+      Case "WINCHL"
+        iValueType = Devices.ValueType_Temperature
+        iTemp = Val("&H0" & sPair[1])
+
+        ' Check if high bit is set, then the value is negative
+        If BTst(iTemp, 15) Then
+          iTemp = BClr(iTemp, 15)
+          iTemp = iTemp * -1
+        Endif
+
+        ' Divide it with 10, to get the right value
+        sValue = iTemp / 10
+
+        If Main.sTemperature = "°C" Then
+          sValue = Format(CStr(sValue), "0.#")
+        Else
+          sValue = Format(CStr(sValue * 1.8 + 32), "0.#")
+        Endif
+      Case "WINTMP"
+        iValueType = Devices.ValueType_Temperature
+        iTemp = Val("&H0" & sPair[1])
+
+        ' Check if high bit is set, then the value is negative
+        If BTst(iTemp, 15) Then
+          iTemp = BClr(iTemp, 15)
+          iTemp = iTemp * -1
+        Endif
+
+        ' Divide it with 10, to get the right value
+        sValue = iTemp / 10
+
+        If Main.sTemperature = "°C" Then
+          sValue = Format(CStr(sValue), "0.#")
+        Else
+          sValue = Format(CStr(sValue * 1.8 + 32), "0.#")
+        Endif
+      Case "CHIME"
+        iValueType = Devices.ValueType_Chime
+        sValue = Val("&H0" & sPair[1])
+      Case "SMOKEALERT"
+        sValue = sPair[1]
+      Case "PIR"
+        sValue = sPair[1]
+      Case "CO2"
+        sValue = Val("&H0" & sPair[1])
+      Case "SOUND"
+        sValue = Val("&H0" & sPair[1])
+      Case "KWATT"
+        iValueType = Devices.ValueType_Energy_kWh
+        sValue = Val("&H0" & sPair[1])
+      Case "WATT"
+        iValueType = Devices.ValueType_Energy_Watt
+        sValue = Val("&H0" & sPair[1])
+      Case "DIST"
+        sValue = Val("&H0" & sPair[1])
+      Case "METER"
+        iValueType = Devices.ValueType_Water
+        sValue = Val("&H0" & sPair[1])
+      Case "VOLT"
+        iValueType = Devices.ValueType_Voltage
+        sValue = Val("&H0" & sPair[1])
+      Case "CURRENT"
+        iValueType = Devices.ValueType_Current
+        sValue = Val("&H0" & sPair[1])
+      Case "BAT"
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "Battery       = " & sPair[1])
+        Devices.Battery(iDeviceId, sPair[1])
+        Continue
+      Case "DEBUG" ' Ignore this one, it is a bug in RFLink?
+        Continue
+      Default
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Unknown data field '" & sVar & "', '" & sPair[0] & "'")
+      Continue
+    End Select
+
+    ' Increment counter, for the device values
+    iCount += 1
+    Devices.ValueUpdate(iDeviceId, iCount, sValue, iValueType)
+  Next
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' domotiga want to control a device
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SendCommand(sAddress As String, sCmd As String)
+
+  Dim iDeviceId As Integer
+  Dim sType As String
+  Dim sOut As String
+  Dim aData As String[]
+
+  ' 10;HomeEasy;7900b100;3;ON;
+  ' 10;Kaku;00004d;1;OFF;
+  ' 10;NewKaku;00c142;1;ON;
+  ' 10;X10;000041;1;OFF;
+
+  sCmd = UCase(sCmd)
+
+  ' Find the Protocol type, because we most likely change a RFLink address
+  iDeviceId = Devices.Find(Instance, sAddress, InterfaceId)
+  If iDeviceId Then
+    sType = Devices.FindTypeForDevice(iDeviceId)
+  Else
+    Return
+  Endif
+
+  sOut = "10;"
+
+  Select sType
+    Case "HEEU"
+      sOut &= "HomeEasy;"
+      aData = Split(sAddress, " ")
+      If aData.Count < 2 Then
+        Main.WriteDebugLog(LogLabel & "ERROR: Invalid address '" & sAddress & "' specified for protocol '" & sType & "'")
+        Return
+      Endif
+      sOut &= LCase(aData[0]) & ";"
+      sOut &= LCase(StripLeadingZeros(aData[1])) & ";"
+    Case "KAKU"
+      sOut &= "Kaku;0000" & LCase(Hex(Asc(sAddress), 2)) & ";"
+      sOut &= StripLeadingZeros(Mid(sAddress, 2)) & ";"
+    Case "NewKAKU"
+      sOut &= "NewKaku;"
+      aData = Split(sAddress, " ")
+      If aData.Count < 2 Then
+        Main.WriteDebugLog(LogLabel & "ERROR: Invalid address '" & sAddress & "' specified for protocol '" & sType & "'")
+        Return
+      Endif
+      sOut &= LCase(aData[0]) & ";"
+      sOut &= LCase(StripLeadingZeros(aData[1])) & ";"
+    Case "X10"
+      sOut &= "X10;0000" & LCase(Hex(Asc(sAddress), 2)) & ";"
+      sOut &= StripLeadingZeros(Mid(sAddress, 2)) & ";"
+    Default
+      Main.WriteDebugLog(LogLabel & "ERROR: Not supported protocol '" & sType & "' (yet)")
+      Return
+  End Select
+
+  ' Append the command and linefeed and queue
+  sOut &= sCmd & ";" & gb.CrLf
+
+  ' and send it to cmdbuffer
+  QueueCommand(sOut)
+
+Catch ' some errors
+  Main.WriteDebugLog(LogLabel & "ERROR: while sending command '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueCommand(sCmd As String)
+
+  ' add command to queue
+  cQueue.Add(sCmd, Rnd)
+
+  ' if controller is not busy process it
+  If bInterfaceBusy = False Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' process items in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DoQueue()
+
+  Dim sStr As String
+
+  For Each sStr In cQueue
+    WriteCommand(sStr, cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' interface busy reset
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tPluginBusy_Timer()
+
+  bInterfaceBusy = False
+  tPluginBusy.Stop
+
+  If cQueue.Count Then ' if there are more commands left in queue, send next one
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    DoQueue()
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' send commands to the interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteCommand(sCmd As String, sKey As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
+
+  If $sInterface = "tcp" Then
+    ' send the message to the tcp stream
+    hMySocket.Write(sCmd)
+  Else
+    ' send the message to the serial port
+    hMySerial.Write(sCmd)
+  Endif
+
+  ' remove sent command from queue
+  cQueue.Remove(sKey)
+
+  tPluginBusy.Delay = 50 ' 50mS (initial test value)
+  tPluginBusy.Start
+  bInterfaceBusy = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Strip zeros from address
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StripLeadingZeros(sAddress As String) As String
+
+  While Len(sAddress) > 1 And Left(sAddress) = "0"
+    sAddress = Mid(sAddress, 2)
+  Wend
+
+  Return sAddress
+
+End
