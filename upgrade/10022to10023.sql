@@ -192,6 +192,16 @@ DELETE FROM devicetypes WHERE id=706;
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (706,'UniPi','UniPi Device','UniPi','relay 1 or ao 1');
 
 --
+-- Update sslcertificate
+--
+
+ALTER TABLE sslcertificate CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
+ALTER TABLE sslcertificate CHANGE COLUMN `name` `name` VARCHAR(64) NOT NULL;
+ALTER TABLE sslcertificate CHANGE COLUMN `certificate` `certificate` VARCHAR(128) NULL DEFAULT NULL;
+ALTER TABLE sslcertificate CHANGE COLUMN `private` `private` VARCHAR(128) NULL DEFAULT NULL;
+ALTER TABLE sslcertificate CHANGE COLUMN `client` `client` VARCHAR(128) NULL DEFAULT NULL;
+
+--
 -- Finally update to 1.0.023
 --
 

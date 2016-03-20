@@ -4538,11 +4538,11 @@ DROP TABLE IF EXISTS `sslcertificate`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `sslcertificate` (
-  `id` int(11) NOT NULL,
-  `name` varchar(64) NOT NULL DEFAULT '',
-  `certificate` varchar(128) NOT NULL DEFAULT '',
-  `private` varchar(128) NOT NULL DEFAULT '',
-  `client` varchar(128) NOT NULL DEFAULT '',
+  `id` int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `name` varchar(64) NOT NULL,
+  `certificate` varchar(128) DEFAULT NULL,
+  `private` varchar(128) DEFAULT NULL,
+  `client` varchar(128) DEFAULT NULL,
   `description` text,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
