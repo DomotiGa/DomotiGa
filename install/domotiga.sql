@@ -2451,6 +2451,7 @@ CREATE TABLE `settings_jsonrpc` (
   `auth` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   `sslenabled` tinyint(1) NOT NULL DEFAULT '0',
+  `sslcertificate` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2461,7 +2462,7 @@ CREATE TABLE `settings_jsonrpc` (
 
 LOCK TABLES `settings_jsonrpc` WRITE;
 /*!40000 ALTER TABLE `settings_jsonrpc` DISABLE KEYS */;
-INSERT INTO `settings_jsonrpc` VALUES (0,-1,9090,10,0,0,0,0),(1,-1,9090,10,0,0,0,0);
+INSERT INTO `settings_jsonrpc` VALUES (0,-1,9090,10,0,0,0,0,0),(1,-1,9090,10,0,0,0,0,0);
 /*!40000 ALTER TABLE `settings_jsonrpc` ENABLE KEYS */;
 UNLOCK TABLES;
 

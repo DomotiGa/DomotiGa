@@ -202,6 +202,12 @@ ALTER TABLE sslcertificate CHANGE COLUMN `private` `private` VARCHAR(128) NULL D
 ALTER TABLE sslcertificate CHANGE COLUMN `client` `client` VARCHAR(128) NULL DEFAULT NULL;
 
 --
+-- Update settings_jsonrpc
+--
+
+ALTER TABLE settings_jsonrpc ADD COLUMN `sslcertificate` INT(11) NOT NULL DEFAULT '0' AFTER `sslenabled`;
+
+--
 -- Finally update to 1.0.023
 --
 
