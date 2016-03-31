@@ -53,8 +53,8 @@ Private $bRFXmitter As Boolean
 Private $sInterfaceType As String
 Private $bRelayEnabled As Boolean
 
-Public hRFXComTX As New Socket
-Public hRFXComTXSer As New SerialPort
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 Public hRFXComTXRelay As New ServerSocket
 Public hRelayTXClient As Object[]
 Public hRelayTXSocket As New Socket
@@ -71,10 +71,6 @@ Const MODERFXCOM As Byte = &H33
 Const MODERFXCOMNOREC As Byte = &H37
 
 Private bProtocol As Byte = MODERFXCOM
-
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -113,11 +109,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Return
   Endif
 
-  ' Define timer for TCP reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
-
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
@@ -139,29 +130,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  ConnectTCP()
-
-End
-
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory sub for each Module/Class to stop
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
@@ -171,15 +139,33 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Return "transmitter" or "xmitter"
+' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub DisplayTransmitterType() As String
+Public Function Disconnect() As Boolean
 
-  If $bRFXmitter Then
-    Return "xmitter"
+  ' try to close the connection
+  Try hMySocket.Close
+  Try hMySerial.Close
+  Try tRFXComTXBusy.Stop
+  Try hRFXComTXRelay.Close
+
+  If InStr($sInterface, "tcp") Then
+    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
   Else
-    Return "transmitter"
+    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
   Endif
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
 
 End
 
@@ -188,12 +174,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
 
-  ' try to close the connection
-  Try hRFXComTX.Close
+  Dim iReconnectRetry As Integer = 0
 
-  ' get a new one
-  hRFXComTX = New Socket As "RFXComTX"
-  hRFXComTX.Connect($sTCPHost, $iTCPPort)
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
   If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " (" & DisplayTransmitterType() & ") TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
@@ -219,12 +210,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function ConnectSerial() As Boolean
 
-  ' try to close the connection
-  Try hRFXComTXSer.Close
+  Dim iReconnectRetry As Integer = 0
 
-  ' get a new one
-  hRFXComTXSer = New Serialport As "RFXComTXSer"
-  With hRFXComTXSer
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+
+  ' get a new one - but store the retry counter between new instances
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = &HFF + gb.Byte ' Byte[]
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = 0
@@ -258,13 +254,120 @@ Catch ' some errors
 
 End
 
-Public Sub RFXComTX_Read()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Socket closed by remote
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
 
-  Dim sData As Byte
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
 
-  Try sData = Read #hRFXComTX As Byte
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
-  ProcessReceivedChar(sData)
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  ' define timer for Interface busy
+  tRFXComTXBusy = New Timer As "tRFXComTXBusy"
+  tRFXComTXBusy.Stop
+
+  DoInit()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data from serialport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return "transmitter" or "xmitter"
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayTransmitterType() As String
+
+  If $bRFXmitter Then
+    Return "xmitter"
+  Else
+    Return "transmitter"
+  Endif
 
 End
 
@@ -293,84 +396,6 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   Endif
 
   Main.ControlLed("RFXCom", "Off")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' disconnect from the host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
-
-  ' try to close the connection
-  Try tReConnect.Stop
-  Try tRFXComTXBusy.Stop
-  Try hRFXComTX.Close
-  Try hRFXComTXSer.Close
-  Try hRFXComTXRelay.Close
-
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
-
-  ' all ok
-  Return True
-
-Finally
-  IsRunning = False
-  ErrorText = ""
-  ErrorWhere = ""
-
-Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
-
-End
-
-Public Sub RFXComTX_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' host ip address found
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub RFXComTX_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
-
-End
-
-Public Sub RFXComTX_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
-
-End
-
-Public Sub RFXComTX_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
-
-  ' define timer for Interface busy
-  tRFXComTXBusy = New Timer As "tRFXComTXBusy"
-  tRFXComTXBusy.Stop
-
-  DoInit()
 
 End
 
@@ -462,7 +487,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   Dim iDeviceId As Integer
   Dim sType As String
 
-  If $sInterface = "serial" And If hRFXComTXSer.Status <> Net.Active Then
+  If $sInterface = "serial" And If hMySerial.Status <> Net.Active Then
     Main.WriteDebugLog(LogLabel & "Serial port not opened, unable to control device!")
     Return
   Endif
@@ -583,24 +608,11 @@ Private Sub WriteCommand(bBuffer As Byte[], sKey As String)
   Next
   If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
 
+  ' Write the complete string - not byte-for-byte
   If $sInterface = "tcp" Then
-    ' send the message to the tcp stream
-    Try bBuffer.Write(hRFXComTX, 0, bBuffer.Length)
-    If Error Then
-      Main.WriteDebugLogChars(LogLabel & "Unable to write to TCP port!")
-      If bFailedWriteRetry Then
-        bFailedWriteRetry = False
-        Main.WriteDebugLog(LogLabel & "Trying to reconnect once.")
-        If ConnectTCP(False) Then
-          Try bBuffer.Write(hRFXComTX, 0, bBuffer.Length)
-          If Error Then Main.WriteDebugLogChars(LogLabel & "Unable to write to TCP port again!")
-        Endif
-      Endif
-    Endif
+    hMySocket.Write(bBuffer)
   Else
-    ' send the message to the serial port
-    Try bBuffer.Write(hRFXComTXSer, 0, bBuffer.Length)
-    If Error Then Main.WriteDebugLogChars(LogLabel & "Unable to write to serial port!")
+    hMySerial.Write(bBuffer)
   Endif
 
   ' remove sent command from queue
