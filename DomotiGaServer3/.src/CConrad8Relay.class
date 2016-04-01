@@ -43,14 +43,10 @@ Private $sInterface As String
 Private $sSerPort As String
 Private $sBaud As String
 
-Public hConrad As New Socket
-Public hConradSer As New SerialPort
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 
-Public sBuffer As String
-
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+Private $sBuffer As String
 
 Private sSeparator As String = "-"
 Private iCardCount As Integer
@@ -86,11 +82,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
-    ' Define timer for TCP reconnect
-    tReConnect = New Timer As "tReConnect"
-    tReConnect.Delay = iReConnectRetry
-    tReConnect.Stop
-
     ConnectTCP()
   Else
     ConnectSerial()
@@ -112,12 +103,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function ConnectTCP() As Boolean
 
-  ' try to close the connection
-  Try hConrad.Close
+  Dim iReconnectRetry As Integer = 0
 
-  ' get a new one
-  hConrad = New Socket As "Conrad"
-  hConrad.Connect($sTCPHost, $iTCPPort)
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
   Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
@@ -144,12 +140,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function ConnectSerial() As Boolean
 
-  ' try to close the connection
-  Try hConradSer.Close
+  Dim iReconnectRetry As Integer = 0
 
-  ' get a new one
-  hConradSer = New Serialport As "ConradSer"
-  With hConradSer
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+
+  ' get a new one - but store the retry counter between new instances
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = gb.String
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = 0
@@ -182,66 +183,13 @@ Catch ' some errors
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is connected
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Conrad_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
-
-  ' Send init
-  SendCmd("\x01\x01\x01\x01")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is closed
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Conrad_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  ConnectTCP()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the tcp host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Disconnect() As Boolean
 
   ' try to close the connection
-  Try hConrad.Close
-  Try hConradSer.Close
+  Try hMySocket.Close
+  Try hMySerial.Close
 
   If InStr($sInterface, "tcp") Then
     Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
@@ -264,18 +212,109 @@ Catch
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to host
+' Socket closed by remote
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Conrad_Error()
+Public Sub MySocket_Closed()
 
-  Dim sMsg As String
+  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
 
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
   Main.WriteLog(LogLabel & "ERROR: " & sMsg)
 
   IsRunning = False
   ErrorText = sMsg
-  ReConnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim iLen As Integer
+
+  For iLen = 1 To Len(vVar)
+    $sBuffer &= Mid(vVar, iLen, 1)
+
+    If Len($sBuffer) = 4 Then
+      ParseLine($sBuffer)
+      $sBuffer = ""
+    Endif
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  ' Send init
+  SendCmd("\x01\x01\x01\x01")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data from serialport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim iLen As Integer
+
+  For iLen = 1 To Len(vVar)
+    $sBuffer &= Mid(vVar, iLen, 1)
+
+    If Len($sBuffer) = 4 Then
+      ParseLine($sBuffer)
+      $sBuffer = ""
+    Endif
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
 
 End
 
@@ -295,11 +334,9 @@ Public Sub SendCmd(sCmd As String)
   Endif
 
   If $sInterface = "tcp" Then
-    Try Write #hConrad, sCmd, Len(sCmd)
-    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & Error.Text)
+    hMySocket.Write(sCmd)
   Else
-    Try Write #hConradSer, sCmd, Len(sCmd)
-    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! -> " & Error.Text)
+    hMySerial.Write(sCmd)
   Endif
 
 End
@@ -337,44 +374,6 @@ Public Sub SendCommand(sAddress As String, sValue As String)
     SendCmd(sCmd)
   Else
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown address: " & sAddress)
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' data received on tcp socket
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Conrad_Read()
-
-  Dim sData As String
-
-  Try sData = Read #hConrad, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
-
-  sBuffer &= sData
-
-  If Len(sBuffer) = 4 Then
-    ParseLine(sBuffer)
-    sBuffer = Null
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' data received on serial port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ConradSer_Read()
-
-  Dim sData As String
-
-  Try sData = Read #hConradSer, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! -> " & Error.Text)
-
-  sBuffer &= sData
-
-  If Len(sBuffer) = 4 Then
-    ParseLine(sBuffer)
-    sBuffer = Null
   Endif
 
 End
