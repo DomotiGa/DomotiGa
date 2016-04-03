@@ -208,6 +208,23 @@ ALTER TABLE sslcertificate CHANGE COLUMN `client` `client` VARCHAR(128) NULL DEF
 ALTER TABLE settings_jsonrpc ADD COLUMN `sslcertificate` INT(11) NOT NULL DEFAULT '0' AFTER `sslenabled`;
 
 --
+-- Delete possible duplicate usernames and add unique index on username
+--
+
+DELETE n1 FROM users n1, users n2 WHERE n1.id > n2.id AND n1.username = n2.username;
+ALTER TABLE users ADD UNIQUE INDEX `username` (`username` ASC);
+
+--
+-- Extended password field for SHA512 support
+--
+ALTER TABLE users CHANGE COLUMN `password` `password` VARCHAR(128) NULL DEFAULT NULL;
+
+--
+-- Remove existing cookies, they are incompatible with SHA256/SHA512
+--
+UPDATE users SET `cookie`='';
+
+--
 -- Finally update to 1.0.023
 --
 
