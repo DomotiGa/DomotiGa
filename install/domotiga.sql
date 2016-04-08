@@ -2451,7 +2451,7 @@ CREATE TABLE `settings_jsonrpc` (
   `auth` int(11) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   `sslenabled` tinyint(1) NOT NULL DEFAULT '0',
-  `sslcertificate` int(11) NOT NULL DEFAULT '0',
+  `sslcertificate_id` int(11) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;

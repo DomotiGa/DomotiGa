@@ -205,7 +205,7 @@ ALTER TABLE sslcertificate CHANGE COLUMN `client` `client` VARCHAR(128) NULL DEF
 -- Update settings_jsonrpc
 --
 
-ALTER TABLE settings_jsonrpc ADD COLUMN `sslcertificate` INT(11) NOT NULL DEFAULT '0' AFTER `sslenabled`;
+ALTER TABLE settings_jsonrpc ADD COLUMN `sslcertificate_id` INT(11) NOT NULL DEFAULT '0' AFTER `sslenabled`;
 
 --
 -- Delete possible duplicate usernames and add unique index on username
