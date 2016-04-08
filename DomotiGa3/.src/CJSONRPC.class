@@ -12,12 +12,15 @@
 
 ' Read file called COPYING for license details.
 
+Public $sStr As String
+Public $sStream As Stream
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "JSONRPC"
 Public PluginFriendlyName As String = "JSON-RPC"
-Public PluginVersion As String = "1.30"
+Public PluginVersion As String = "1.40"
 Public PluginAuthor As String = "Alexander Kuiper"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -32,7 +35,7 @@ Public ErrorWhere As String
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' JSON-RPC API Version
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private APIVersion As String = "1.00"
+Private APIVersion As String = "1.01"
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Private Variables
@@ -143,7 +146,7 @@ Private Sub Connect() As Boolean
   ' ------------------------
 
   ' ### System methods ###
-  RegisterMethod("system.listMethods")
+  RegisterMethod("system.listmethods")
   RegisterMethod("system.hostname")
   RegisterMethod("system.get")
 
@@ -184,6 +187,7 @@ Private Sub Connect() As Boolean
   RegisterMethod("device.set")
 
   ' ### Value methods ###
+  RegisterMethod("value.get")
   RegisterMethod("value.set")
 
   ' ### Location methods ###
@@ -421,7 +425,7 @@ Public Sub hSocket_Read(sJsonData As Variant)
   Try vTestData = JSON.Decode(sJsonData, True)
   If Error Then
     Last.Begin()
-    Last.Print(JSON.Encode(JsonError(JSONRPC_PARSEERROR)))
+    Last.Print(Util.JSONEncode(JsonError(JSONRPC_PARSEERROR)))
     Last.Send()
 
     Return
@@ -430,7 +434,7 @@ Public Sub hSocket_Read(sJsonData As Variant)
   Try Entry = vTestData[0]
   If Error Then
     Last.Begin()
-    Last.Print(JSON.Encode(JsonError(JSONRPC_PARSEERROR)))
+    Last.Print(Util.JSONEncode(JsonError(JSONRPC_PARSEERROR)))
     Last.Send() 
     Return
   Endif
@@ -511,14 +515,15 @@ Public Sub hSocket_Read(sJsonData As Variant)
 
   If vOutput.Count >= 1 Then
     If JsonBatch Then
-      Try sJsonData = JSON.Encode(vOutput)
+      Try sJsonData = Util.JSONEncode(vOutput)
     Else
-      Try sJsonData = JSON.Encode(vOutput[0])
+      'Try sJsonData = Util.JSONEncode(vOutput[0])
+      Try sJsonData = Util.JSONEncode(vOutput[0])
     Endif
 
     If Error Then
       ' JSON data is invalid, thrown an internal error
-      sJsonData = JSON.Encode(JsonError(JSONRPC_INTERNALERROR))
+      sJsonData = Util.JSONEncode(JsonError(JSONRPC_INTERNALERROR))
     Endif
 
     Last.Begin()
@@ -528,7 +533,7 @@ Public Sub hSocket_Read(sJsonData As Variant)
 
 Catch
   Last.Begin()
-  Last.Print(JSON.Encode(JsonError(JSONRPC_INTERNALERROR)))
+  Last.Print(Util.JSONEncode(JsonError(JSONRPC_INTERNALERROR)))
   Last.Send()
 
 End
@@ -603,7 +608,7 @@ Public Sub RemoteCall(sName As String, cData As JSONCollection)
   $sCurrentMethod = sName
 
   If $bDebug Then
-    Try sParam = JSON.Encode(cData)
+    Try sParam = Util.JSONEncode(cData)
 
     Main.WriteDebugLog(LogLabel & "Got a RemoteCall for Method '" & sName & "'" & IIf(sParam, ", Params '" & sParam & "'", ""))
   Endif
@@ -613,7 +618,7 @@ Public Sub RemoteCall(sName As String, cData As JSONCollection)
     cData = New JSONCollection
   Endif
 
-  Select sName
+  Select LCase(sName)
       ' ### System methods ###
     Case "system.listmethods"
       Call_System_ListMethods()
@@ -683,6 +688,8 @@ Public Sub RemoteCall(sName As String, cData As JSONCollection)
       Call_Device_Set(cData)
 
       ' ### Value methods ###
+    Case "value.get"
+      Call_Value_Get(cData)
     Case "value.set"
       Call_Value_Set(cData)
 
@@ -842,7 +849,7 @@ Private Sub SetReply(iReply As Integer, vReply As Variant, Optional sError As St
   If $bDebug Then
 
     If iReply = 0 Then
-      Main.WriteDebugLog(LogLabel & "Response for Method '" & $sCurrentMethod & "' Data '" & JSON.Encode(vReply) & "'")
+      Main.WriteDebugLog(LogLabel & "Response for Method '" & $sCurrentMethod & "' Data '" & Util.JSONEncode(vReply) & "'")
     Else
       Main.WriteDebugLog(LogLabel & "Response for Method '" & $sCurrentMethod & "' ErrorCode=" & iReply)
     Endif
@@ -919,11 +926,18 @@ Private Sub CheckParam(cData As JSONCollection, cParam As Collection) As Boolean
             SetReply(JSONRPC_INVALIDPARAMS, Null, "params '" & cParam.Key & "' is not an array")
             Return False 
           Endif
+        Case "any"
+          ' Anything allows
       End Select
 
     Else
       ' Default params are not optional
-      If cCol.Exist("optional") And If Not cCol["optional"] Then
+      If cCol.Exist("optional") Then
+        If Not cCol["optional"] Then
+          SetReply(JSONRPC_INVALIDPARAMS, Null, "Param '" & cParam.Key & "' not supplied")
+          Return False
+        Endif
+      Else
         SetReply(JSONRPC_INVALIDPARAMS, Null, "Param '" & cParam.Key & "' not supplied")
         Return False
       Endif
@@ -1567,7 +1581,7 @@ End
 Private Sub Call_Device_Set(cData As JSONCollection)
 
   ' Check the device_id and valuenum fields
-  If Not CheckParam(cData, ["device_id": ["datatype": "integer"], "valuenum": ["datatype": "integer", "minvalue": 1, "optional": True], "value": ["all": True]]) Then Return
+  If Not CheckParam(cData, ["device_id": ["datatype": "integer"], "valuenum": ["datatype": "integer", "minvalue": 1, "optional": True], "value": ["datatype": "any"]]) Then Return
 
   If Devices.SetDevice(cData["device_id"], cData["value"], IIf(cData.Exist("valuenum"), cData["valuenum"], 1)) Then
     SetReply(0, True)
@@ -1787,22 +1801,94 @@ Private Sub Call_Device_Get(cData As JSONCollection)
   ' Add device values
   aValueValue = New Collection[]
   rResultValues = Devices.GetValues(["device_id": cData["device_id"], "sortOrder": "valuenum"])
-  For Each rResultValues
-    cValueValue = New JSONCollection
 
-    FilterFields(Type_Data_DeviceValue, GetFieldValues, rResultValues, MapFieldValues, cValueValue) 
+  If rResultValues And If rResultValues.Available Then
+    For Each rResultValues
+      cValueValue = New JSONCollection
 
-    ' Overrule the icon value if we have valuenum 1
-    If rResultValues!valuenum = 1 Then
-      cValue.Add(Devices.GetStatusIcon(rResultValues!value, rResult!onicon, rResult!officon, rResult!dimicon), "icon")
-    Endif
+      FilterFields(Type_Data_DeviceValue, GetFieldValues, rResultValues, MapFieldValues, cValueValue) 
 
-    aValueValue.Add(cValueValue)
-  Next
+      ' Overrule the icon value if we have valuenum 1
+      If rResultValues!valuenum = 1 Then
+        cValue.Add(Devices.GetStatusIcon(rResultValues!value, rResult!onicon, rResult!officon, rResult!dimicon), "icon")
+      Endif
+
+      aValueValue.Add(cValueValue)
+    Next
+  Endif
 
   cValue.Add(aValueValue, "values")
 
   SetReply(0, cValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Method=value.get
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Call_Value_Get(cData As JSONCollection)
+
+  Dim rResult As Result
+  Dim MapField As New Collection
+  Dim aValue As New Collection[]
+  Dim cValue As JSONCollection
+
+  ' Mapping of attribute names from SQL to JSON. Hopefully to be removed in the future
+  MapField.Add("value", "rawvalue")
+  MapField.Add("NA", "value")
+
+  If Not CheckParam(cData, ["device_id": ["datatype": "integer"], "valuenum": ["datatype": "integer", "minvalue": 1], "command": ["datatype": "string", "valuelist": ["value", "log"], "optional": True], "timestamp": ["datatype": "string", "optional": True], "count": ["datatype": "integer", "optional": True]]) Then Return
+
+  ' Check for "fields"
+  If Not GetParamFields(cData) Then Return
+
+  ' Set the command=value as default, if no parameter is supplied
+  If Not cData.Exist("command") Then cData["command"] = "value"
+
+  ' Determine if we got a timestamp or count
+  If Not cData.Exist("timestamp") And If Not cData.Exist("count") Then cData["count"] = 100
+
+  ' Remove the count if -1 is specified, then we just give all the entries
+  If cData.Exist("count") And If cData["count"] = -1 Then cData.Remove("count")
+
+  ' Do right command, only value and log are supported
+  Select cData["command"]
+    Case "value"
+      rResult = Devices.GetValues(["device_id": cData["device_id"], "sortOrder": "valuenum"])
+
+      cValue = New JSONCollection
+
+      If rResult And If rResult.Available Then
+        For Each rResult
+
+          If cData["valuenum"] = rResult!valuenum Then
+            FilterFields(Type_Data_DeviceValue, cData["fields"], rResult, MapField, cValue)
+            Break
+          Endif
+
+        Next
+      Endif
+
+      SetReply(0, cValue)
+
+    Case "log"
+      If cData["fields"].Count = 0 Then
+        cData["fields"] = ["log_id", "value", "rawvalue", "lastchanged"]
+      Endif
+
+      rResult = Devices.Get_Device_Values_Log(cData)
+
+      If rResult And If rResult.Available Then
+        For Each rResult
+          cValue = New JSONCollection
+          FilterFields(Type_Data_DeviceValue, cData["fields"], rResult, MapField, cValue) 
+          aValue.Add(cValue)
+        Next
+      Endif
+
+      SetReply(0, aValue)
+
+  End Select
 
 End
 
@@ -1976,7 +2062,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Call_Email_Send(cData As JSONCollection)
 
-  If Not CheckParam(cData, ["subject": ["datatype": "string"], "subject": ["datatype": "string"], "to": ["datatype": "string", "optional": True]]) Then Return
+  If Not CheckParam(cData, ["subject": ["datatype": "string"], "msg": ["datatype": "string"], "to": ["datatype": "string", "optional": True]]) Then Return
 
   If Mail.SendMail(cData["subject"], cData["msg"], cData["to"]) Then
     SetReply(0, True)
@@ -3473,3 +3559,4 @@ Private Sub Call_Scene_Delete(cData As Collection)
   Endif
 
 End
+
