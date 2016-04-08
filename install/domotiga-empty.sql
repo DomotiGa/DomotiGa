@@ -4555,6 +4555,7 @@ CREATE TABLE `sslcertificate` (
 
 LOCK TABLES `sslcertificate` WRITE;
 /*!40000 ALTER TABLE `sslcertificate` DISABLE KEYS */;
+INSERT INTO `sslcertificate` VALUES (1,"Default","domotiga-default.pem","","","DomotiGa default certificate");
 /*!40000 ALTER TABLE `sslcertificate` ENABLE KEYS */;
 UNLOCK TABLES;
 

@@ -202,6 +202,12 @@ ALTER TABLE sslcertificate CHANGE COLUMN `private` `private` VARCHAR(128) NULL D
 ALTER TABLE sslcertificate CHANGE COLUMN `client` `client` VARCHAR(128) NULL DEFAULT NULL;
 
 --
+-- Add DomotiGa default certificate
+--
+
+INSERT INTO sslcertificate (id, name, certificate, private, client, description) VALUES (1,"Default","domotiga-default.pem","","","DomotiGa default certificate");
+
+--
 -- Update settings_jsonrpc
 --
 
