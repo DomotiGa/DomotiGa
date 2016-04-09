@@ -4532,13 +4532,13 @@ INSERT INTO `settings_youless` VALUES (0,0,300,0),(1,0,300,0);
 UNLOCK TABLES;
 
 --
--- Table structure for table `sslcertificate`
+-- Table structure for table `sslcertificates`
 --
 
-DROP TABLE IF EXISTS `sslcertificate`;
+DROP TABLE IF EXISTS `sslcertificates`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
-CREATE TABLE `sslcertificate` (
+CREATE TABLE `sslcertificates` (
   `id` int(11) UNSIGNED NOT NULL AUTO_INCREMENT,
   `name` varchar(64) NOT NULL,
   `certificate` varchar(128) DEFAULT NULL,
@@ -4550,13 +4550,13 @@ CREATE TABLE `sslcertificate` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Dumping data for table `sslcertificate`
+-- Dumping data for table `sslcertificates`
 --
 
-LOCK TABLES `sslcertificate` WRITE;
-/*!40000 ALTER TABLE `sslcertificate` DISABLE KEYS */;
-INSERT INTO `sslcertificate` VALUES (1,"Default","domotiga-default.pem","","","DomotiGa default certificate");
-/*!40000 ALTER TABLE `sslcertificate` ENABLE KEYS */;
+LOCK TABLES `sslcertificates` WRITE;
+/*!40000 ALTER TABLE `sslcertificates` DISABLE KEYS */;
+INSERT INTO `sslcertificates` VALUES (1,"Default","domotiga-default.pem","","","DomotiGa default certificate");
+/*!40000 ALTER TABLE `sslcertificates` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --

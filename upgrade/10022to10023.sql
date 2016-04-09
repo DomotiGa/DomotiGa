@@ -198,20 +198,26 @@ INSERT INTO devicetypes (id, name, description, protocol, addressformat) values 
 INSERT INTO plugins (id, interface, protocols, name, type) VALUES (97,'UniPi Interface','UniPi','UniPi','class');
 
 --
--- Update sslcertificate
+-- Rename sslcertificate to sslcertificates
 --
 
-ALTER TABLE sslcertificate CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
-ALTER TABLE sslcertificate CHANGE COLUMN `name` `name` VARCHAR(64) NOT NULL;
-ALTER TABLE sslcertificate CHANGE COLUMN `certificate` `certificate` VARCHAR(128) NULL DEFAULT NULL;
-ALTER TABLE sslcertificate CHANGE COLUMN `private` `private` VARCHAR(128) NULL DEFAULT NULL;
-ALTER TABLE sslcertificate CHANGE COLUMN `client` `client` VARCHAR(128) NULL DEFAULT NULL;
+RENAME TABLE  `sslcertificate` TO  `sslcertificates`;
+
+--
+-- Update sslcertificates
+--
+
+ALTER TABLE sslcertificates CHANGE COLUMN `id` `id` INT(11) UNSIGNED NOT NULL AUTO_INCREMENT;
+ALTER TABLE sslcertificates CHANGE COLUMN `name` `name` VARCHAR(64) NOT NULL;
+ALTER TABLE sslcertificates CHANGE COLUMN `certificate` `certificate` VARCHAR(128) NULL DEFAULT NULL;
+ALTER TABLE sslcertificates CHANGE COLUMN `private` `private` VARCHAR(128) NULL DEFAULT NULL;
+ALTER TABLE sslcertificates CHANGE COLUMN `client` `client` VARCHAR(128) NULL DEFAULT NULL;
 
 --
 -- Add DomotiGa default certificate
 --
 
-INSERT INTO sslcertificate (id, name, certificate, private, client, description) VALUES (1,"Default","domotiga-default.pem","","","DomotiGa default certificate");
+INSERT INTO sslcertificates (id, name, certificate, private, client, description) VALUES (1,"Default","domotiga-default.pem","","","DomotiGa default certificate");
 
 --
 -- Update settings_jsonrpc
