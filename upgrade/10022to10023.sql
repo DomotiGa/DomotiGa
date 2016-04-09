@@ -44,8 +44,9 @@ UPDATE devicetypes SET `addressformat`='Z01' WHERE `id`='291';
 UPDATE devicetypes SET `addressformat`='Z01' WHERE `id`='293';
 
 --
--- Extend plugin protocol field lenght
+-- Extend plugin protocol field length
 --
+
 ALTER TABLE plugins CHANGE COLUMN `protocols` `protocols` VARCHAR(1024) CHARACTER SET 'utf8' NOT NULL;
 
 --
@@ -122,7 +123,6 @@ CREATE TABLE `settings_rflink` (
 --
 -- Dumping data for table `settings_rflink`
 --
-
 LOCK TABLES `settings_rflink` WRITE;
 /*!40000 ALTER TABLE `settings_rflink` DISABLE KEYS */;
 INSERT INTO `settings_rflink` VALUES (0,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0',0),(1,0,'192.168.1.68',500,'serial','/dev/ttyUSBD0',0);
@@ -135,7 +135,7 @@ UNLOCK TABLES;
 
 DELETE FROM plugins WHERE id=96;
 
-INSERT INTO plugins (id, interface, protocols, name, type) VALUES (96,'RFLink Interface','AB400 Alectro Auriol Blyss Cresta HEEU Imagintrx Implus KAKU Koppla LaCrosse Mertik NewKAKU Oregon X10','RFLink','class');
+INSERT INTO plugins (id, interface, protocols, name, type) VALUES (96,'RFLink Interface','AB400 Alectro Auriol Blyss Cresta HEEU Imagintrx Implus KAKU Koppla LaCrosse Mertik NewKAKU Oregon RFLink X10','RFLink','class');
 
 --
 -- Add RFLink devices
@@ -192,6 +192,12 @@ DELETE FROM devicetypes WHERE id=706;
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (706,'UniPi','UniPi Device','UniPi','relay 1 or ao 1');
 
 --
+-- Add UniPi plugin
+--
+
+INSERT INTO plugins (id, interface, protocols, name, type) VALUES (97,'UniPi Interface','UniPi','UniPi','class');
+
+--
 -- Update sslcertificate
 --
 
@@ -231,6 +237,20 @@ ALTER TABLE users CHANGE COLUMN `password` `password` VARCHAR(128) NULL DEFAULT 
 UPDATE users SET `cookie`='';
 
 --
+-- Add options1 column for special features
+--
+ALTER TABLE users ADD COLUMN `options1` INT(11) NULL DEFAULT '0' AFTER `cookie`;
+UPDATE users SET `options1`=1 WHERE `username` = 'admin';
+
+--
+-- Insert Generic RFLink device, then we don't have to add every device (it is unlikely all of them are used)
+--
+
+DELETE FROM devicetypes WHERE id=707;
+
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (707,'RFLink Generic Device','RFLink Device','RFLink','\'FA500 001b523 D3\' or \'Conrad 123456 1\'');
+
+--
 -- Finally update to 1.0.023
 --
 
@@ -239,3 +259,4 @@ DELETE FROM version WHERE db='1.0.023';
 LOCK TABLES version WRITE;
 INSERT INTO version VALUES (68,'1.0.023');
 UNLOCK TABLES;
+
