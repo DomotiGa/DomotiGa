@@ -5,7 +5,7 @@
 ' Connect to MySensors gateway via a serial port or Ethernet gateway.
 
 ' Development Status:
-' Alpha
+' Beta
 
 ' Credits:
 ' Thanks to MySensors for the great project.
@@ -24,7 +24,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "MySensors"
 Public PluginFriendlyName As String = "MySensors"
-Public PluginVersion As String = "0.1"
+Public PluginVersion As String = "0.2"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -50,32 +50,28 @@ Private $bDebug As Boolean
 Private $iRelayPort As Integer
 Private $bRelayEnabled As Boolean
 Private $bUseAck As Boolean
+Private $iHeartbeat As Integer
 
-Public hMySensorsTCP As New Socket
-Public hMySensorsSer As New SerialPort
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
+
 Public hMySensorsRelayServer As New ServerSocket
 Public hMySensorsRelayClient As Object[]
 Public hMySensorsRelaySocket As New Socket
 Public tMySensorsBusy As Timer
 
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+Public tHeartbeat As Timer ' heartbeat timer for TCP/IP gateways. Gateway stop working after they are poweroff/on, because they never notify us on TCP/IP
 
-Private RecBuf As String
+Private $sRecBuf As String
+
 Public bSimulate As Boolean
 Private sTxMsgQueue As New String[]     ' Outgoing message queue
 Private bInterfaceBusy As Boolean       ' waiting for delay timer to finish
-Private bGatewayReady As Boolean        ' Flag to indicate we received the Gateway ready message
-Private sGatewayVersion As String       ' Version of the gateway retrieved using I_VERSION, for example 1.4.1
-
-' counters to prevent logfile to fill up the disk
-Private iReadErrorCount As Integer
-Private dReadErrorSDate As Date
-Private dReadErrorLDate As Date
+Private $bGatewayReady As Boolean        ' Flag to indicate we received the Gateway ready message
+Private $sGatewayVersion As String       ' Version of the gateway retrieved using I_VERSION, for example 1.4.1
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Definitions from http://www.mysensors.org/build/serial_api / MyMessage.h
+' Definitions from http://www.mysensors.org/build/serial_api/MyMessage.h
 ' ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Public Struct MySensorMessage
@@ -144,6 +140,13 @@ Const V_UNIT_PREFIX As Byte = 43         ' Allows sensors to send in a string re
 Const V_HVAC_SETPOINT_COOL As Byte = 44  ' HVAC cold setpoint (Integer between 0-100)
 Const V_HVAC_SETPOINT_HEAT As Byte = 45  ' HVAC/Heater setpoint (Integer between 0-100)
 Const V_HVAC_FLOW_MODE As Byte = 46      ' Flow mode for HVAC ("Auto", "ContinuousOn", "PeriodicOn")
+Const V_TEXT As Byte = 47                ' Text/Info message S_INFO
+Const V_CUSTOM As Byte = 48              ' Custom messages used for controller/inter node specific commands, preferably using S_CUSTOM device type
+Const V_POSITION As Byte = 49            ' GPS position and altitude. Payload: latitude;longitude;altitude(m). E.g. "55.722526;13.017972;18"
+Const V_IR_RECORD As Byte = 50           ' Record IR codes S_IR for playback
+Const V_PH As Byte = 51                  ' S_WATER_QUALITY, water PH
+Const V_ORP As Byte = 52                 ' S_WATER_QUALITY, water ORP : redox potential in mV
+Const V_EC As Byte = 53                  ' S_WATER_QUALITY, water electric conductivity μS/cm (microSiemens/cm)
 
 ' Type of internal messages (for internal messages)
 Const I_BATTERY_LEVEL As Byte = 0        ' Use this To report the battery level( In percent 0 - 100).
@@ -164,8 +167,14 @@ Const I_GATEWAY_READY As Byte = 14       ' Send by gateway To controller when st
 Const I_REQUEST_SIGNING As Byte = 15     ' Used between sensors when initialting signing
 Const I_GET_NONCE As Byte = 16           ' Used between sensors when requesting nonce
 Const I_GET_NONE_RESPONSE As Byte = 17   ' Used between sensors for nonce response
+Const I_HEARTBEAT As Byte = 18           ' Heartbeat
+Const I_PRESENTATION As Byte = 19        '
+Const I_DISCOVER As Byte = 20            '
+Const I_DISCOVER_RESPONSE As Byte = 21   '
+Const I_HEARTBEAT_RESPONSE As Byte = 22  '
+Const I_LOCKED As Byte = 23              ' Node is locked, reason in payload string
 
-' Type of sensor  (for presentation message)
+' Type of sensor (for presentation message)
 Const S_DOOR As Byte = 0                 ' Door And window sensors
 Const S_MOTION As Byte = 1               ' Motion sensors
 Const S_SMOKE As Byte = 2                ' Smoke sensor
@@ -202,6 +211,10 @@ Const S_WATER_LEAK As Byte = 32          ' Water leak sensor
 Const S_SOUND As Byte = 33               ' Sound sensor
 Const S_VIBRATION As Byte = 34           ' Vibration sensor
 Const S_MOISTURE As Byte = 35            ' Moisture sensor
+Const S_INFO As Byte = 36                ' Info message
+Const S_GAS As Byte = 37                 ' Gas sensor
+Const S_GPS As Byte = 38                 ' GPS sensor
+Const S_WATER_QUALITY As Byte = 39       ' Water quality sensor
 
 Private sTypes As String[] = [
   "Door/window sensor",
@@ -238,7 +251,11 @@ Private sTypes As String[] = [
   "Water leak sensor",
   "Sound sensor",
   "Vibration sensor",
-  "Moisture sensor"]
+  "Moisture sensor",
+  "Info",
+  "Gas sensor",
+  "GPS sensor",
+  "Water quality sensor"]
 
 ' Type of data stream  (for streamed message)
 Const ST_FIRMWARE_CONFIG_REQUEST As Byte = 0
@@ -281,6 +298,11 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iRelayPort = cPl.Settings["relayport"]
   $bDebug = cPl.Settings["debug"]
   $bUseAck = cPl.Settings["useack"]
+  If cPl.Settings.Exist("heartbeat") Then
+    $iHeartbeat = cPl.Settings["heartbeat"]
+  Else
+    $iHeartbeat = 5
+  Endif
 
   InterfaceId = Devices.FindInterface("MySensors Interface")
   If InterfaceId = 0 Then
@@ -290,13 +312,12 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Return
   Endif
 
-  ' Define timer for TCP reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
+  ' define timer for Interface busy
+  tMySensorsBusy = New Timer As "tMySensorsBusy"
+  tMySensorsBusy.Stop
 
   ' Connect/Initialize connection
-  bGatewayReady = False
+  $bGatewayReady = False
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
   Else
@@ -327,6 +348,234 @@ Public Sub StopPlugin()
   Try Disconnect()
 
 End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+  
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Open serial port and start keepalive timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectSerial() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+
+  ' get a new one - but store the retry counter between new instances
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = &HFF + gb.Byte ' Byte[]
+    .PortName = $sSerPort
+    .Speed = $sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' Write to main logfile we connected successfully
+  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+  IsRunning = True
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Close port and stop timers
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Disconnect() As Boolean
+
+  $bGatewayReady = False
+
+  ' Stop timers
+  Try tMySensorsBusy.Stop
+  Try tHeartbeat.Stop
+
+  ' Try to close the connection
+  Try hMySocket.Close
+  Try hMySerial.Close
+
+  ' Close to relay
+  Try hMySensorsRelayServer.Close
+  Try hMySensorsRelayClient.Remove
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch ' some errors
+  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  Return False
+
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+  Try tHeartbeat.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      If bSimulate = False Then ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  Main.WriteLog(LogLabel & "TCP interface connected.")
+  IsRunning = True
+
+  If $iHeartbeat Then
+    tHeartbeat = New Timer As "tHeartbeat"
+    tHeartbeat.Delay = $iHeartbeat * 1000
+    tHeartbeat.Start
+  Endif
+
+  ' ethernet gateway does not send 'gateway ready message by default'
+  $bGatewayReady = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data back from Alarm panel and parse it when it's complete
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      If bSimulate = False Then ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
+'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+'XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Standard sub to handle commands for a plugin
@@ -441,7 +690,6 @@ Public Sub QueuePacket(MySenMsg As MySensorMessage)
   ' add packet to queue
   sTxMsgQueue.Add(sMsgText & "\r\n")
   WriteMyDebugLog("Queued: " & sMsgText)
-    
 
   ' if controller is not busy process it
   If bInterfaceBusy = False Then DoQueue()
@@ -455,7 +703,7 @@ Public Sub DoQueue()
 
   Dim sMsgText As String[]
 
-  If bGatewayReady And sTxMsgQueue.Count > 0 Then
+  If $bGatewayReady And sTxMsgQueue.Count > 0 Then
     ' "Extract" first/oldest entry from the queue
     sMsgText = sTxMsgQueue.Extract(0, 1)
     WriteMyDebugLog("Sending from Queue: " & sMsgText[0], True)
@@ -475,12 +723,10 @@ Public Function SendMessage(sMsgText As String)
 
   If $sInterface = "tcp" Then
     ' send the message to the tcp stream
-    Try Write #hMySensorsTCP, sMsgText, Len(sMsgText)
-    If Error Then WriteMyDebugLog("Unable to write to TCP port! -> " & Error.Text)
+    hMySocket.Write(sMsgText, gb.String)
   Else
     ' send the message to the serial port
-    Try Write #hMySensorsSer, sMsgText, Len(sMsgText)
-    If Error Then WriteMyDebugLog("Unable to write to serial port! -> " & Error.Text)
+    hMySerial.Write(sMsgText, gb.String)
   Endif
 
   tMySensorsBusy.Delay = 10 ' 32 bytes @ 250 kbps is 1 ms
@@ -505,41 +751,6 @@ Public Sub tMySensorsBusy_Timer()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' disconnect from the host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
-
-  bGatewayReady = False
-
-  ' try to stop timers and close the connections
-  Try tReConnect.Stop
-  Try tMySensorsBusy.Stop
-  Try hMySensorsTCP.Close
-  Try hMySensorsSer.Close
-  Try hMySensorsRelayServer.Close
-  Try hMySensorsRelayClient.Remove
-
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
-
-  ' all ok
-  Return True
-
-Finally
-  IsRunning = False
-  ErrorText = ""
-  ErrorWhere = ""
-
-Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' inject packet into parser.
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Simulate(sPacket As String)
@@ -551,6 +762,7 @@ Public Sub Simulate(sPacket As String)
   For iCnt = 1 To Len(sPacket) Step 2
     ProcessReceivedChar(Val("&H" & Mid(sPacket, iCnt, 2)))
   Next
+
   bSimulate = False
 
 Catch ' some errors
@@ -559,218 +771,34 @@ Catch ' some errors
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Ethernet socket functions.
+' TCP heartbeat timer
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tHeartbeat_Timer()
 
-' connect to the host:port
-Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
+  Dim MySenReq As New MySensorMessage
 
-  ' try to close the connection
-  Try hMySensorsTCP.Close
-
-  ' get a new one
-  hMySensorsTCP = New Socket As "MySensorsTCP"
-  hMySensorsTCP.Connect($sTCPHost, $iTCPPort)
-
-  ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
-
-  ' Don't set IsRunning=True, this has to be done in _Ready
-
-  ' All went ok
-  Return True
-
-Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  IsRunning = False
-  ErrorText = Error.Text
-  ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-
-Public Sub MySensorsTCP_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
-
-  ' define timer for Interface busy
-  tMySensorsBusy = New Timer As "tMySensorsBusy"
-  tMySensorsBusy.Stop
-  
-  ' ethernet gateway does not send 'gateway ready message by default'
-  bGatewayReady = True
-
-End
-
-Public Sub MySensorsTCP_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
-
-End
-
-Public Sub MySensorsTCP_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  ConnectTCP()
-
-End
-
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' host ip address found
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySensorsTCP_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
-
-End
-
-Public Sub MySensorsTCP_Read()
-
-  Dim sData As Byte
-
-  Try sData = Read #hMySensorsTCP As Byte
-  If Error Then WriteMyDebugLog("Error reading data from the TCP port! -> " & Error.Text)
-  If bSimulate = False Then ProcessReceivedChar(sData)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Serial port functions.
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-' connect to the serial port
-Public Function ConnectSerial() As Boolean
-
-  ' try to close the connection
-  Try hMySensorsSer.Close
-
-  ' Reset error counter
-  iReadErrorCount = 0
-  dReadErrorSDate = 0
-  dReadErrorLDate = 0
-
-  ' get a new one
-  hMySensorsSer = New Serialport As "MySensorsSer"
-  With hMySensorsSer
-    .PortName = $sSerPort
-    .Speed = $sBaud
-    .Parity = 0
-    .DataBits = 8
-    .StopBits = 1
-    .FlowControl = 0
-    .Open()
+  With MySenReq
+    .node_id = 0
+    .child_sensor_id = 0
+    .message_type = C_INTERNAL
+    .ack = False
+    .sub_type = I_HEARTBEAT
+    .payload = "PING"
   End With
 
-  ' define timer for Interface busy
-  tMySensorsBusy = New Timer As "tMySensorsBusy"
-  tMySensorsBusy.Stop
-
-  ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
-  IsRunning = True
-
-  ' All went ok
-  Return True
-
-Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  IsRunning = False
-  ErrorText = Error.Text
-  ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-Public Sub MySensorsSer_Read()
-
-  Dim sData As Byte
-  Dim iStart As Integer
-  Dim iLast As Integer
-  Dim bWriteToLog As Boolean
-
-  Try sData = Read #hMySensorsSer As Byte
-  If Error Then
-    bWriteToLog = False
-    iReadErrorCount = iReadErrorCount + 1
-    If iReadErrorCount = 1 Then
-      dReadErrorSDate = Now
-      bWriteToLog = True
-    Else
-      iStart = DateDiff(dReadErrorSDate, Now, gb.Second)
-      iLast = DateDiff(dReadErrorLDate, Now, gb.Second)
-
-      ' First minute we report every second
-      If iStart < 60 And iLast >= 1 Then bWriteToLog = True
-      ' First hour we report every 5 seconds
-      If iStart >= 60 And iStart < 3600 And iLast >= 5 Then bWriteToLog = True
-      ' After first hour, we only report every minute
-      If iStart >= 3600 And iLast >= 60 Then bWriteToLog = True
-    Endif
-
-    If bWriteToLog Then
-      dReadErrorLDate = Now
-      WriteMyDebugLog("Error reading data from the serial port! -> " & Error.Text & " (Count: " & iReadErrorCount & ")")
-    Endif
-
-  Else If iReadErrorCount > 0 Then
-    iReadErrorCount = 0
-    dReadErrorSDate = 0
-    dReadErrorLDate = 0
-  Endif
-
-  If bSimulate = False Then ProcessReceivedChar(sData)
+  WriteMyDebugLog("Sending heartbeat (ping) request to TCP Gateway")
+  QueuePacket(MySenReq)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Message receive functions.
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 ' Process a character received by MySensorsTCP_Read or MySensorsSer_Read
 Private Sub ProcessReceivedChar(bTemp As Byte)
 
   ' at start-up we get sometimes a stream of null characters
-  If Not bGatewayReady And If bTemp = 0 Then
+  If Not $bGatewayReady And If bTemp = 0 Then
     Return
   Endif
 
@@ -778,36 +806,39 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   If $bRelayEnabled Then Try Write #hMySensorsRelaySocket, bTemp As Byte
 
   If bTemp = &H0A Then ' \n --> all bytes of the packet received
-    If Len(RecBuf) > 0 Then
-      Decode_Messages(RecBuf)
-      RecBuf = ""
+    If Len($sRecBuf) > 0 Then
+      ProcessReceivedPacket($sRecBuf)
+      $sRecBuf = ""
     Endif
   Else
-    RecBuf &= Chr(bTemp) ' store received char
-    If Len(RecBuf) > 128 Then
-      RecBuf = ""
-      If bGatewayReady
-        Main.WriteLog(LogLabel & "Buffer overflow, received until now '" & RecBuf & "'")
+    $sRecBuf &= Chr(bTemp) ' store received char
+    If Len($sRecBuf) > 128 Then
+      $sRecBuf = ""
+      If $bGatewayReady Then
+        Main.WriteLog(LogLabel & "Buffer overflow, received until now '" & $sRecBuf & "'")
       Endif
     Endif
   Endif
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' function called when a complete message is received
 ' Does do basic message parsing and calls other subs for the different message - types
-Private Sub Decode_Messages(sMsgText As String)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedPacket(sData As String)
 
   Dim MySenMsg As New MySensorMessage
   Dim Elt As String[]
 
-  WriteMyDebugLog("< " & RecBuf)
+  WriteMyDebugLog("< " & sData)
 
-  Elt = Split(sMsgText, ";")
-  If Elt.Count < 5 Then
-    WriteMyDebugLog("Ignore: " & sMsgText)
+  Elt = Split(sData, ";")
+  If Elt.Count <> 6 Then
+    WriteMyDebugLog("Ignore: " & sData)
     Return
   Endif
+
   With MySenMsg
     .node_id = Val(Elt[0])
     .child_sensor_id = Val(Elt[1])
@@ -835,9 +866,9 @@ Private Sub Decode_Messages(sMsgText As String)
       Return
   End Select
 
-  Catch
-    Main.WriteLog(LogLabel & "ERROR parsing '" & sMsgText & "': '" & Error.Text & "' at '" & Error.Where & "'")
-    WriteMyDebugLog("Ignore: " & sMsgText)
+Catch
+  Main.WriteLog(LogLabel & "ERROR parsing '" & sData & "': '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteMyDebugLog("Ignore: " & sData)
 
 End
 
@@ -968,13 +999,18 @@ Private Sub HandleInternal(MySenMsg As MySensorMessage)
       Main.WriteLog(LogLabel & "ERROR: Received unexpected I_REBOOT message")
     Case I_GATEWAY_READY         ' 14 -  Send by gateway To controller when startup Is Complete.
       HandleGatewayReady(MySenMsg)
+    Case I_HEARTBEAT             ' Heartbeat request, not applicable
+    Case I_HEARTBEAT_RESPONSE    ' Heartbeat response from node or gateway
+      HandleHeartbeatResponse(MySenMsg)
     Case Else
       Main.WriteLog(LogLabel & "ERROR: Unknown internal message type: " & Str(MySenMsg.sub_type))
   End Select
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle I_TIME Internal message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProvideTime(bNodeID As Byte, bChildID As Byte)
 
   Dim MySenMsg As New MySensorMessage
@@ -996,15 +1032,23 @@ Private Sub ProvideTime(bNodeID As Byte, bChildID As Byte)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle I_VERSION Internal message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub HandleVersion(MySenMsg As MySensorMessage)
 
-  sGatewayVersion = MySenMsg.payload
-  WriteMyDebugLog("Version of the MySensors gateway is '" & sGatewayVersion & "'.")
+  If MySenMsg.node_id = 0 Then
+    $sGatewayVersion = MySenMsg.payload
+    WriteMyDebugLog("Version of the MySensors gateway is '" & $sGatewayVersion & "'.")
+  Else
+    WriteMyDebugLog("Version of the MySensors node= " & MySenMsg.node_id & " is '" & MySenMsg.payload & "'.")
+  Endif
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle I_ID_REQUEST Internal message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProvideNodeID()
 
   Dim MySenMsg As New MySensorMessage
@@ -1045,7 +1089,9 @@ Private Sub ProvideNodeID()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle I_CONFIG Internal message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProvideConfig(bNodeID As Byte, bChildID As Byte)
 
   ' Config request From node.Reply With (M)etric Or (I)mperal back To sensor.
@@ -1065,29 +1111,37 @@ Private Sub ProvideConfig(bNodeID As Byte, bChildID As Byte)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle I_SKETCH_NAME Internal message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub HandleSketchName(MySenMsg As MySensorMessage)
 
   ' Optional sketch name that can be used To identify sensor In the Controller GUI
   WriteMyDebugLog("No support for I_SKETCH_NAME Internal message yet.")
+  MySenMsg = MySenMsg
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle I_SKETCH_VERSION Internal message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub HandleSketchVersion(MySenMsg As MySensorMessage)
 
   ' Optional sketch version that can be reported To keep track Of the version Of sensor In the Controller GUI.
   WriteMyDebugLog("No support for I_SKETCH_VERSION Internal message yet.")
+  MySenMsg = MySenMsg
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle I_GATEWAY_READY Internal message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub HandleGatewayReady(MySenMsg As MySensorMessage)
 
   Dim MySenReq As New MySensorMessage
 
   ' Send by gateway To controller when startup Is Complete.
-  bGatewayReady = True
+  $bGatewayReady = True
   WriteMyDebugLog("Gateway ready: \"" & MySenMsg.payload & "\"")
 
   ' Ask the gateway for it's version
@@ -1104,11 +1158,31 @@ Private Sub HandleGatewayReady(MySenMsg As MySensorMessage)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle I_HEARTBEAT_RESPONSE message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub HandleHeartbeatResponse(MySenMsg As MySensorMessage)
+
+  Dim iDeviceId As Integer
+
+  ' Only for valid nodes, we update the lastseen - otherwise we just ignore it
+  If MySenMsg.node_id >= 1 And If MySenMsg.node_id < 255 Then
+
+    ' Update lastseen of this device
+    iDeviceId = Devices.Find(Instance, Str(MySenMsg.node_id), InterfaceId)
+    If iDeviceId Then
+      Devices.UpdateLastSeenForDevice(iDeviceId)
+    Endif
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Handle Stream message-type
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub HandleStream(MySenMsg As MySensorMessage)
 
   WriteMyDebugLog("Handling Stream messages not implemented yet")
+  MySenMsg = MySenMsg
 
 End
 
@@ -1133,6 +1207,9 @@ Public Function StartRelay() As Boolean
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub MySensorsRelayServer_Connection(sHost As String)
 
   hMySensorsRelaySocket = New Socket As "MySensorsRelaySocket"
@@ -1148,6 +1225,9 @@ Public Sub MySensorsRelayServer_Connection(sHost As String)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub MySensorsRelayServer_Read()
 
   Dim sBuf As Byte
@@ -1157,6 +1237,9 @@ Public Sub MySensorsRelayServer_Read()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub MySensorsRelayServer_Error()
 
   ' handle error
@@ -1171,6 +1254,9 @@ Public Sub MySensorsRelayServer_Error()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub MySensorsRelayServer_Closed()
 
   Main.WriteLog(LogLabel & "Relay client connection closed.")
@@ -1181,7 +1267,6 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Utility functions
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 ' Write to the debug log with our log label if bDebug is enabled
 Private Sub WriteMyDebugLog(sText As String, Optional bStrip As Boolean)
 
@@ -1225,4 +1310,3 @@ Public Sub JsonRpc_Tools_MySensors_Get(cData As JSONCollection) As JSONCollectio
   Return cResult
 
 End
-

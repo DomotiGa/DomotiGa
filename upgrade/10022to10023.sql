@@ -257,6 +257,14 @@ DELETE FROM devicetypes WHERE id=707;
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (707,'RFLink Generic Device','RFLink Device','RFLink','\'FA500 001b523 D3\' or \'Conrad 123456 1\'');
 
 --
+-- Add heartbeat timer to MySensors, and 60 seconds
+--
+
+ALTER TABLE settings_mysensors ADD COLUMN `heartbeat` INT(11) NULL DEFAULT '0' AFTER `useack`;
+
+UPDATE settings_mysensors SET `heartbeat`=60;
+
+--
 -- Finally update to 1.0.023
 --
 

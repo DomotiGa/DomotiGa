@@ -2769,6 +2769,7 @@ CREATE TABLE `settings_mysensors` (
   `relayenabled` tinyint(1) NOT NULL DEFAULT '0',
   `relayport` int(11) DEFAULT NULL,
   `useack` tinyint(1) NOT NULL DEFAULT '0',
+  `heartbeat` int(11) DEFAULT '0',
   `debug` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
@@ -2780,7 +2781,7 @@ CREATE TABLE `settings_mysensors` (
 
 LOCK TABLES `settings_mysensors` WRITE;
 /*!40000 ALTER TABLE `settings_mysensors` DISABLE KEYS */;
-INSERT INTO `settings_mysensors` VALUES (0,0,'serial','192.168.100.7',5003,'/dev/ttyUSB1','115200',0,5004,-1,-1),(1,0,'serial','192.168.100.7',5003,'/dev/ttyUSB1','115200',0,5004,-1,0);
+INSERT INTO `settings_mysensors` VALUES (0,0,'serial','192.168.100.7',5003,'/dev/ttyUSB1','115200',0,5004,-1,60,0),(1,0,'serial','192.168.100.7',5003,'/dev/ttyUSB1','115200',0,5004,-1,60,0);
 /*!40000 ALTER TABLE `settings_mysensors` ENABLE KEYS */;
 UNLOCK TABLES;
 
