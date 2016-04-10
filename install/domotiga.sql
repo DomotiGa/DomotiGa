@@ -2797,7 +2797,7 @@ CREATE TABLE `settings_mysensors` (
 
 LOCK TABLES `settings_mysensors` WRITE;
 /*!40000 ALTER TABLE `settings_mysensors` DISABLE KEYS */;
-INSERT INTO `settings_mysensors` VALUES (0,0,'serial','192.168.100.7',5003,'/dev/ttyUSB1','115200',0,5004,-1,-1),(1,0,'serial','192.168.100.7',5003,'/dev/ttyUSB1','115200',0,5004,-1,-1);
+INSERT INTO `settings_mysensors` VALUES (0,0,'serial','192.168.100.7',5003,'/dev/ttyUSB1','115200',0,5004,-1,-1),(1,0,'serial','192.168.100.7',5003,'/dev/ttyUSB1','115200',0,5004,-1,0);
 /*!40000 ALTER TABLE `settings_mysensors` ENABLE KEYS */;
 UNLOCK TABLES;
 
