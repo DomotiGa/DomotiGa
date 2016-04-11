@@ -249,6 +249,12 @@ ALTER TABLE users ADD COLUMN `options1` INT(11) NULL DEFAULT '0' AFTER `cookie`;
 UPDATE users SET `options1`=1 WHERE `username` = 'admin';
 
 --
+-- Update admin field to -1, 1 gives Yii issues
+--
+
+UPDATE users SET `admin`=-1 WHERE `admin`=1;
+
+--
 -- Insert Generic RFLink device, then we don't have to add every device (it is unlikely all of them are used)
 --
 
