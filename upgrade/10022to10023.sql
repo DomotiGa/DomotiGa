@@ -276,6 +276,12 @@ ALTER TABLE settings_mysensors ADD COLUMN `heartbeat` INT(11) NULL DEFAULT '0' A
 UPDATE settings_mysensors SET `heartbeat`=60;
 
 --
+-- Fix an invalid '1' boolean in visonic table
+--
+
+UPDATE settings_visonic SET `autosynctime`=-1 WHERE `autosynctime`=1;
+
+--
 -- Finally update to 1.0.023
 --
 
