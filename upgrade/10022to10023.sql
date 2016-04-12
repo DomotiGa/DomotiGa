@@ -249,6 +249,11 @@ ALTER TABLE users ADD COLUMN `options1` INT(11) NULL DEFAULT '0' AFTER `cookie`;
 UPDATE users SET `options1`=1 WHERE `username` = 'admin';
 
 --
+-- Converted tinyint to smallint, due to a bug in gambas
+
+ALTER TABLE users CHANGE COLUMN `admin` `admin` SMALLINT(1) NULL DEFAULT NULL;
+
+--
 -- Update admin field to -1, 1 gives Yii issues
 --
 

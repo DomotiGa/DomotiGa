@@ -4935,7 +4935,7 @@ CREATE TABLE `users` (
   `username` varchar(64) DEFAULT NULL,
   `password` varchar(128) DEFAULT NULL,
   `fullname` varchar(32) DEFAULT NULL,
-  `admin` tinyint(1) DEFAULT NULL,
+  `admin` smallint(1) DEFAULT NULL,
   `comments` text,
   `lastlogin` varchar(32) DEFAULT NULL,
   `emailaddress` varchar(32) DEFAULT NULL,
@@ -4952,7 +4952,7 @@ CREATE TABLE `users` (
 
 LOCK TABLES `users` WRITE;
 /*!40000 ALTER TABLE `users` DISABLE KEYS */;
-INSERT INTO `users` VALUES (1,'admin','MD5Mn1Igc.Tbg4xXElsDbBJkp0sC2zm7/','Admin',-1,'','2008-11-06 14:12:13','admin@mydomain.com','',1),(2,'user','MD5ddyVVR4HVw86uoHoZUaIkIIX41vJ1.','User',0,'','2008-11-06 14:10:21','user@mydomain.com','',0),(3,'rakker','MD52Cj0430YBsVlStFEC.h.TBYHCyAk3/','AIBO Rakker',0,'','','aibo@mydomain.com','',0),(4,'mhsend','MD5Eizpjqv4.4WJFJbgP6XrhxRqfNvo21','mhsend user',0,NULL,NULL,NULL,'',0);
+INSERT INTO `users` VALUES (1,'admin','SHA256dY6P0S2HuvWGhtlRhvGNkL0y0NTxmNskFYqw54v4ltUWfAEaILjYRSW.','Admin',-1,'','2008-11-06 14:12:13','admin@mydomain.com','',1),(2,'user','MD5ddyVVR4HVw86uoHoZUaIkIIX41vJ1.','User',0,'','2008-11-06 14:10:21','user@mydomain.com','',0),(3,'rakker','MD52Cj0430YBsVlStFEC.h.TBYHCyAk3/','AIBO Rakker',0,'','','aibo@mydomain.com','',0),(4,'mhsend','MD5Eizpjqv4.4WJFJbgP6XrhxRqfNvo21','mhsend user',0,NULL,NULL,NULL,'',0);
 /*!40000 ALTER TABLE `users` ENABLE KEYS */;
 UNLOCK TABLES;
 
