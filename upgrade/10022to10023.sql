@@ -11,8 +11,8 @@ DELETE FROM plugins WHERE id=93;
 DELETE FROM plugins WHERE id=94;
 DELETE FROM plugins WHERE id=95;
 
-INSERT INTO plugins (`id`, `interface`, `name`, `type`) VALUES (94, 'GPS', 'GPS', 'class');
-INSERT INTO plugins (`id`, `interface`, `protocols`, `name`, `type`) values (95,'Buienradar','','Buienradar','class');
+INSERT INTO plugins (`id`, `interface`, `protocols`, `name`, `type`) values (94, 'GPS', '', 'GPS', 'class');
+INSERT INTO plugins (`id`, `interface`, `protocols`, `name`, `type`) values (95, 'Buienradar', '', 'Buienradar', 'class');
 
 --
 -- Extend serialport field length
@@ -27,7 +27,7 @@ ALTER TABLE settings_velbus CHANGE COLUMN `serialport` `serialport` VARCHAR(128)
 
 DELETE FROM devicetypes WHERE id=674;
 
-INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (674,'VMB8PB','Velbus - 8 channel pushbutton module','Velbus','13|1');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) values (674,'VMB8PB','Velbus - 8 channel pushbutton','Velbus','13|1');
 
 --
 -- Update Visonic settings
