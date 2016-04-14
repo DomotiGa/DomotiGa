@@ -48,6 +48,7 @@ Event {Ready}
 Event {WebSocketReady}
 Event {Write}
 Event {Reconnect} ' Only applicable in client mode
+Event {Authorization}(sData As String)
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Constants
@@ -146,6 +147,7 @@ Private $sHTTPCrossOrigin As String
 Private $sHTTPAccessControlRequestHeaders As String
 Private $sHTTPMethod As String = "GET"
 Private $sHTTPUrl As String = "/"
+Private $sHTTPAuthorization As String
 
 Private $sWebSocketOpCode As String
 Private $bWebSocketMask As Boolean
@@ -212,6 +214,7 @@ Public Sub Socket_Read()
   Dim aData As Byte[]
   Dim iLen As Integer
   Dim iRet As Integer
+  Dim bAllow As Boolean
 
   If $iEncrypt = Net.SSL Then
 
@@ -307,27 +310,41 @@ Public Sub Socket_Read()
             $bHTTPDeflate = False
             $sHTTPCrossOrigin = ""
             $sHTTPAccessControlRequestHeaders = ""
+            $sHTTPAuthorization = ""
 
             $sDataIn &= $sDataInExtra & sData
             $sDataInExtra = ""
 
             If Protocol_HTTPServer_Read() Then
 
-              Select $iDataType
-                Case &HFF + gb.Byte
-                  aData = New Byte[]
-                  For iLen = 1 To Len($sDataIn)
-                    aData.Add(Asc($sDataIn, iLen))
-                  Next
+              ' If we received an Authorization header, raise it as an event. Application needs to handle it
+              bAllow = Raise Authorization($sHTTPAuthorization)
 
-                  Raise Read(aData)
-                Case gb.Byte
-                  For iLen = 1 To Len($sDataIn)
-                    Raise Read(Asc($sDataIn, iLen))
-                  Next
-                Default
-                  Raise Read($sDataIn)
-              End Select
+              ' It is inverse, so if we receive=false then allow it
+              If Not bAllow Then
+
+                Select $iDataType
+                  Case &HFF + gb.Byte
+                    aData = New Byte[]
+                    For iLen = 1 To Len($sDataIn)
+                      aData.Add(Asc($sDataIn, iLen))
+                    Next
+
+                    Raise Read(aData)
+                  Case gb.Byte
+                    For iLen = 1 To Len($sDataIn)
+                      Raise Read(Asc($sDataIn, iLen))
+                    Next
+                  Default
+                    Raise Read($sDataIn)
+                End Select
+              Else
+                $sDataInExtra = ""
+
+                $iHTTPCode = 401 'Unauthorized
+                Send()
+                Close()
+              Endif
 
             Endif
 
@@ -343,6 +360,7 @@ Public Sub Socket_Read()
             $bHTTPDeflate = False
             $sHTTPCrossOrigin = ""
             $sHTTPAccessControlRequestHeaders = ""
+            $sHTTPAuthorization = ""
 
             $sDataIn &= $sDataInExtra & sData
             $sDataInExtra = ""
@@ -428,7 +446,7 @@ Public Sub Socket_Read()
                         For iLen = 1 To Len($sDataIn)
                           aData.Add(Asc($sDataIn, iLen))
                         Next
-        
+
                         Raise Read(aData)
                       Case gb.Byte
                         For iLen = 1 To Len($sDataIn)
@@ -625,6 +643,20 @@ Private Sub Protocol_HTTPServer_Read() As Boolean
     ' Don't accept upgrades on normal HTTP requests
     If $cHTTPConnection.Exist("UPGRADE") And If $iProtocol = PROTOCOL_HTTP Then
       $iHTTPCode = 400 'Bad Request
+      Send()
+      Close()
+      Return False
+    Endif
+  Endif
+
+  ' We received a HTTP Authentication basic header
+  If cHTTPHeader.Exist("AUTHORIZATION") Then
+    If InStr(cHTTPHeader["AUTHORIZATION"], "Basic ", gb.IgnoreCase) = 1 Then
+      ' Store the base64 encoded value into our internal variable
+      $sHTTPAuthorization = Mid(cHTTPHeader["AUTHORIZATION"], InStr(cHTTPHeader["AUTHORIZATION"], " ") + 1)
+    Else
+      ' We got an unknown authentication mechanism
+      $iHTTPCode = 401 'Unauthorized
       Send()
       Close()
       Return False
@@ -882,6 +914,8 @@ Private Sub Protocol_HTTPServer_Write()
     Case 200 ' OK
     Case 400
       sDataOut = "400 Bad Request"
+    Case 401
+      sDataOut = "401 Unauthorized"
     Case 405
       sDataOut = "405 Not Allowed"
     Case 408
