@@ -2444,6 +2444,7 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 		curl_easy_setopt( curl, CURLOPT_URL, ctrl->m_jsonrpcurl );
 
 		httpheader = curl_slist_append( httpheader, "Content-Type: application/json" );
+		httpheader = curl_slist_append( httpheader, "Connection: close" );
 		res = curl_easy_setopt( curl, CURLOPT_HTTPHEADER, httpheader );
 		res = curl_easy_setopt( curl, CURLOPT_CONNECTTIMEOUT, 3 );
 		res = curl_easy_setopt( curl, CURLOPT_TIMEOUT, 3 );
