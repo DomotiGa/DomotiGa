@@ -1427,7 +1427,7 @@ void RPC_NodeAdded( uint32 homeID, int nodeID )
 }
 
 //-----------------------------------------------------------------------------
-// <RPC_RemoveNode>
+// <RPC_NodeRemoved>
 // Node is removed from the Z-Wave network. Is only done if the open-zwave wrapper is running.
 //-----------------------------------------------------------------------------
 
@@ -1450,6 +1450,32 @@ void RPC_NodeRemoved( uint32 homeID, int nodeID )
 	}
 
 }
+
+//-----------------------------------------------------------------------------
+// <RPC_NodeReset>
+// Node is reset, and needs to be removed the Z-Wave network. It will automatically be re-added
+//-----------------------------------------------------------------------------
+
+void RPC_NodeReset( uint32 homeID, int nodeID )
+{
+	WriteLog( LogLevel_Debug, true, "NodeReset: HomeId=0x%x Node=%d", homeID, nodeID );
+
+	// Retrieve current controller information, we only should remove when controller is initialized
+	m_structCtrl* ctrl = GetControllerInfo( homeID );
+
+	if (( ctrl != NULL ) && ( ctrl->m_running == true ))
+	{
+		json_object *jparams = json_object_new_object();
+		json_object *jhomeid = json_object_new_int( homeID );
+		json_object *jnodeid = json_object_new_int( nodeID );
+		json_object_object_add( jparams, "homeid", jhomeid );
+		json_object_object_add( jparams, "nodeid", jnodeid );
+
+		cURL_Post_JSON( homeID, "openzwave.removenode", jparams );
+	}
+
+}
+
 
 //-----------------------------------------------------------------------------
 // <RPC_NodeNew>
@@ -1919,6 +1945,26 @@ void OnNotification
 			RPC_NodeRemoved( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
+		case Notification::Type_NodeReset:
+		{
+			uint32 const homeId = data->GetHomeId();
+			uint8 const nodeId = data->GetNodeId();
+
+			for ( list<NodeInfo*>::iterator it = g_nodes.begin(); it != g_nodes.end(); ++it )
+			{
+				NodeInfo* nodeInfo = *it;
+				if ( ( nodeInfo->m_homeId == homeId ) && ( nodeInfo->m_nodeId == nodeId ) )
+				{
+					g_nodes.erase( it );
+					break;
+				}
+			}
+
+			pthread_mutex_unlock( &g_criticalSection );
+
+			RPC_NodeReset( data->GetHomeId(), (int)data->GetNodeId() );
+			break;
+		}
 		case Notification::Type_NodeProtocolInfo:
 		{
 			RPC_NodeProtocolInfo( data->GetHomeId(), (int)data->GetNodeId() );
@@ -2161,227 +2207,205 @@ void OnNotification
 					break;
 				}
 			}
+			break;
+		}
+		case Notification::Type_ControllerCommand:
+		{
+			m_structCtrl* ctrl = GetControllerInfo( data->GetHomeId() );
+
+			switch ( (int)data->GetEvent() )
+			{
+				case Driver::ControllerState_Normal:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - Normal", data->GetHomeId() );
+					ctrl->m_controllerBusy = false;
+					break; 
+				}
+				case Driver::ControllerState_Starting:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - Starting", data->GetHomeId() );
+					break; 
+				}
+				case Driver::ControllerState_Cancel:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - Cancel", data->GetHomeId() );
+					ctrl->m_controllerBusy = false;
+					break; 
+				}
+				case Driver::ControllerState_Error:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - Error", data->GetHomeId() );
+					ctrl->m_controllerBusy = false;
+					break; 
+				}
+				case Driver::ControllerState_Waiting:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - Waiting", data->GetHomeId() );
+					break; 
+				}
+				case Driver::ControllerState_Sleeping:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - Sleeping", data->GetHomeId() );
+					break; 
+				}
+				case Driver::ControllerState_InProgress:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - InProgress", data->GetHomeId() );
+					break; 
+				}
+				case Driver::ControllerState_Completed:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - Completed", data->GetHomeId() );
+					ctrl->m_controllerBusy = false;
+					break; 
+				}
+				case Driver::ControllerState_Failed:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - Failed", data->GetHomeId() );
+					ctrl->m_controllerBusy = false;
+					break; 
+				}
+				case Driver::ControllerState_NodeOK:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - NodeOK", data->GetHomeId() );
+					ctrl->m_controllerBusy = false;
+					break; 
+				}
+				case Driver::ControllerState_NodeFailed:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - NodeFailed", data->GetHomeId() );
+					ctrl->m_controllerBusy = false;
+					break; 
+				}
+
+				default:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x - UNKNOWN (%d)", data->GetHomeId(), (int)data->GetEvent() );
+					break;
+				}
+
+			}
+
+			switch ( (int)data->GetNotification() )
+			{
+				case Driver::ControllerError_None:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=NONE", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_ButtonNotFound:
+				{
+					WriteLog( LogLevel_Debug, true, "ControllerCommand: HomeId=0x%x RC=ButtonNotFound", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_NodeNotFound:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=NodeNotFound", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_NotBridge:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=NodeNotFound", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_NotSUC:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=NodeNotFound", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_NotSecondary:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=NodeNotFound", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_NotPrimary:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=NodeNotFound", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_IsPrimary:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=NodeNotFound", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_NotFound:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=NotFound", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_Busy:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=Busy", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_Failed:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=Failed", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_Disabled:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=Disabled", data->GetHomeId() );
+					break;
+				}
+				case Driver::ControllerError_Overflow:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=Overflow", data->GetHomeId() );
+					break;
+				}
+				default:
+				{
+					WriteLog( LogLevel_Debug, false, "ControllerCommand: HomeId=0x%x RC=Default", data->GetHomeId() );
+					break;
+				}
+			}
+
+			// If the controller isn't busy anymore and we still got something in the queue, fire off the command now
+			if ( ctrl->m_controllerBusy == false )
+			{
+				if ( ! ctrl->m_cmd.empty() )
+				{
+					bool response;
+					m_cmdItem cmd;
+
+					cmd = ctrl->m_cmd.front();
+					ctrl->m_cmd.pop_front();
+
+					// Now start the BeginControllerCommand with the 2 supported options
+					switch( cmd.m_command ) {
+						case Driver::ControllerCommand_HasNodeFailed:
+						{
+							ctrl->m_controllerBusy = true;
+							WriteLog( LogLevel_Debug, true, "DomoZWave_HasNodeFailed: HomeId=0x%x Node=%d (Queued)", ctrl->m_homeId, cmd.m_nodeId );
+							response = Manager::Get()->HasNodeFailed( ctrl->m_homeId, cmd.m_nodeId );
+		                       			WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
+							break;
+						}
+						case Driver::ControllerCommand_RequestNodeNeighborUpdate:
+						{
+							ctrl->m_controllerBusy = true;
+							WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNodeNeighborUpdate: HomeId=0x%x Node=%d (Queued)", ctrl->m_homeId, cmd.m_nodeId );
+							response = Manager::Get()->RequestNodeNeighborUpdate( ctrl->m_homeId, cmd.m_nodeId );
+		              				WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
+							break;
+						}
+						default:
+						{
+							WriteLog( LogLevel_Debug, true, "DomoZWave_OnControllerUpdate: HomeId=0x%x Node=%d (Queued)", ctrl->m_homeId, cmd.m_nodeId );
+							WriteLog( LogLevel_Debug, false, "ERROR: Invalid Command %d", cmd.m_command );
+							break;
+						}
+					}
+				}
+			}
+
+			break;
 		}
 		default:
 		break;
 	}
 
 	pthread_mutex_unlock( &g_criticalSection );
-}
-
-//-----------------------------------------------------------------------------
-// <OnControllerUpdate>
-// Open-ZWave calls this whenever the controller state changes.
-//-----------------------------------------------------------------------------
-
-void OnControllerUpdate( Driver::ControllerState cs, Driver::ControllerError err, void *ct )
-{
-	m_structCtrl *ctrl = (m_structCtrl *)ct;
-
-	// Possible ControllerState values:
-	// ControllerState_Normal     - No command in progress.
-	// ControllerState_Starting   - The command is starting.
-	// ControllerState_Cancel     - The command was cancelled.
-	// ControllerState_Error      - Command invocation had error(s) and was aborted.
-	// ControllerState_Sleeping   - Controller command is on a sleep queue wait for device.
-	// ControllerState_Waiting    - Controller is waiting for a user action.
-	// ControllerState_InProgress - The controller is communicating with the other device to carry out the command.
-	// ControllerState_Completed  - The command has completed successfully.
-	// ControllerState_Failed     - The command has failed.
-	// ControllerState_NodeOK     - Used only with ControllerCommand_HasNodeFailed to indicate that the controller thinks the node is OK.
-	// ControllerState_NodeFailed - Used only with ControllerCommand_HasNodeFailed to indicate that the controller thinks the node has failed.
-
-	pthread_mutex_lock( &g_criticalSection );
-
-	switch (cs) {
-		case Driver::ControllerState_Normal:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - Normal - no command in progress", ctrl->m_homeId );
-			ctrl->m_controllerBusy = false;
-			break;
-		}
-		case Driver::ControllerState_Starting:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - Starting - the command is starting", ctrl->m_homeId );
-			break;
-		}
-		case Driver::ControllerState_Cancel:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - Cancel - the command was cancelled", ctrl->m_homeId );
-			break;
-		}
-		case Driver::ControllerState_Error:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - Error - command invocation had error(s) and was aborted", ctrl->m_homeId );
-			break;
-		}
-		case Driver::ControllerState_Sleeping:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - Sleeping - controller command is on a sleep queue wait for device", ctrl->m_homeId );
-			break;
-		}
-		case Driver::ControllerState_Waiting:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - Waiting - waiting for a user action", ctrl->m_homeId );
-			break;
-		}
-		case Driver::ControllerState_InProgress:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - InProgress - communicating with the other device", ctrl->m_homeId );
-			break;
-		}
-		case Driver::ControllerState_Completed:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - Completed - command has completed successfully", ctrl->m_homeId );
-			ctrl->m_controllerBusy = false;
-			break;
-		}
-		case Driver::ControllerState_Failed:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - Failed - command has failed", ctrl->m_homeId );
-			ctrl->m_controllerBusy = false;
-			break;
-		}
-		case Driver::ControllerState_NodeOK:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - NodeOK - the node is OK", ctrl->m_homeId );
-			ctrl->m_controllerBusy = false;
-
-			// Store Node State
-
-			break;
-		}
-		case Driver::ControllerState_NodeFailed:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - NodeFailed - the node has failed", ctrl->m_homeId );
-			ctrl->m_controllerBusy = false;
-
-			// Store Node State
-
-			break;
-		}
-		default:
-		{
-			WriteLog( LogLevel_Debug, true, "ControllerState Event: HomeId=0x%x - unknown response", ctrl->m_homeId );
-			ctrl->m_controllerBusy = false;
-			break;
-		}
-	}
-
-	// Additional possible error information
-	switch (err) {
-		case Driver::ControllerError_None:
-		{
-			//WriteLog( LogLevel_Debug, false, "Error=None" );
-			break;
-		}
-		case Driver::ControllerError_ButtonNotFound:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Button Not Found" );
-			break;
-		}
-		case Driver::ControllerError_NodeNotFound:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Node Not Found" );
-			break;
-		}
-		case Driver::ControllerError_NotBridge:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Not a Bridge" );
-			break;
-		}
-		case Driver::ControllerError_NotPrimary:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Not Primary Controller" );
-			break;
-		}
-		case Driver::ControllerError_IsPrimary:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Is Primary Controller" );
-			break;
-		}
-		case Driver::ControllerError_NotSUC:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Not Static Update Controller" );
-			break;
-		}
-		case Driver::ControllerError_NotSecondary:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Not Secondary Controller" );
-			break;
-		}
-		case Driver::ControllerError_NotFound:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Not Found" );
-			break;
-		}
-		case Driver::ControllerError_Busy:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Controller Busy" );
-			break;
-		}
-		case Driver::ControllerError_Failed:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Failed" );
-			break;
-		}
-		case Driver::ControllerError_Disabled:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Disabled" );
-			break;
-		}
-		case Driver::ControllerError_Overflow:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Overflow" );
-			break;
-		}
-		default:
-		{
-			WriteLog( LogLevel_Debug, false, "Error=Unknown error (%d)", err );
-			break;
-		}
-	}
-
-	pthread_mutex_unlock( &g_criticalSection );
-
-	// If the controller isn't busy anymore and we still got something in the queue, fire off the command now
-	if ( ctrl->m_controllerBusy == false )
-	{
-		if ( ! ctrl->m_cmd.empty() )
-		{
-			bool response;
-			m_cmdItem cmd;
-
-			cmd = ctrl->m_cmd.front();
-			ctrl->m_cmd.pop_front();
-
-			// Now start the BeginControllerCommand with the 2 supported options
-			switch( cmd.m_command ) {
-				case Driver::ControllerCommand_HasNodeFailed:
-				{
-					ctrl->m_controllerBusy = true;
-					WriteLog( LogLevel_Debug, true, "DomoZWave_HasNodeFailed: HomeId=0x%x Node=%d (Queued)", ctrl->m_homeId, cmd.m_nodeId );
-					response = Manager::Get()->HasNodeFailed( ctrl->m_homeId, cmd.m_nodeId );
-		                        WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
-					break;
-				}
-				case Driver::ControllerCommand_RequestNodeNeighborUpdate:
-				{
-					ctrl->m_controllerBusy = true;
-					WriteLog( LogLevel_Debug, true, "DomoZWave_RequestNodeNeighborUpdate: HomeId=0x%x Node=%d (Queued)", ctrl->m_homeId, cmd.m_nodeId );
-					response = Manager::Get()->RequestNodeNeighborUpdate( ctrl->m_homeId, cmd.m_nodeId );
-		                        WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"CommandSend":"ControllerBusy" );
-					break;
-				}
-				default:
-				{
-					WriteLog( LogLevel_Debug, true, "DomoZWave_OnControllerUpdate: HomeId=0x%x Node=%d (Queued)", ctrl->m_homeId, cmd.m_nodeId );
-					WriteLog( LogLevel_Debug, false, "ERROR: Invalid Command %d", cmd.m_command );
-					break;
-				}
-			}
-		}
-	}
 }
 
 //-----------------------------------------------------------------------------
