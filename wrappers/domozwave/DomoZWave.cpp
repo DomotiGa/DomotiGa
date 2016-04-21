@@ -2481,10 +2481,16 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 
 			// Decode JSON-RPC response
 			json_object *jrobj = json_tokener_parse( readBuffer.c_str() );
-			json_object *jrjsonrpc = json_object_object_get( jrobj, "jsonrpc" );
-			json_object *jrerror = json_object_object_get( jrobj, "error" );
-			json_object *jrresult = json_object_object_get( jrobj, "result" );
-			json_object *jrid = json_object_object_get( jrobj, "id" );
+			json_object *jrjsonrpc;
+			json_object *jrerror;
+			json_object *jrresult;
+			json_object *jrid;
+
+			// Retrieve values from json-rpc object
+			json_object_object_get_ex( jrobj, "jsonrpc", &jrjsonrpc );
+			json_object_object_get_ex( jrobj, "error", &jrerror );
+			json_object_object_get_ex( jrobj, "result", &jrresult );
+			json_object_object_get_ex( jrobj, "id", &jrid );
 
 			// Test for jsonrpc=2.0
 			if (( json_object_get_type( jrjsonrpc ) != json_type_string ) || ( strcmp( json_object_get_string( jrjsonrpc ), "2.0" ) != 0 ))
