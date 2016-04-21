@@ -2628,8 +2628,9 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	WriteLog( LogLevel_Debug, true, "DomoZWave_Init: Initializing Open-ZWave Wrapper" );
 
 	// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
+	// There is also a string value: ozw_version_string
 	char ozw_vers2[100];
-	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d", ozw_vers_major, ozw_vers_minor, ozw_vers_revision );
+	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d (%s)", ozw_vers_major, ozw_vers_minor, ozw_vers_revision, ozw_version_string );
 	WriteLog( LogLevel_Debug, false, "%s", ozw_vers2 );
 
 	pthread_mutexattr_t mutexattr;
@@ -2834,7 +2835,7 @@ const char* DomoZWave_OZWVersion( )
 
 	// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
 	char ozw_vers2[100];
-	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d", ozw_vers_major, ozw_vers_minor, ozw_vers_revision );
+	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d (%s)", ozw_vers_major, ozw_vers_minor, ozw_vers_revision, ozw_version_string );
 
 	ozw_vers = ozw_vers2;
 	return ozw_vers.c_str();
