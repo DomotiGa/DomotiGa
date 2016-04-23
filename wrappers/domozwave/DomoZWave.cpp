@@ -38,6 +38,7 @@ char domozwave_vers[] = "DomoZWave version 2.10";
 #include <ctime>
 #include <sys/time.h>
 #include <map>
+#include <semaphore.h>
 
 // json-rpc
 #include <json/json.h>
@@ -46,23 +47,12 @@ char domozwave_vers[] = "DomoZWave version 2.10";
 #include <curl/curl.h>
 
 // open-zwave
-#include "Options.h"
-#include "Log.h"
 #include "Manager.h"
-#include "Node.h"
-#include "Group.h"
 #include "Notification.h"
-#include "ValueStore.h"
-#include "Value.h"
-#include "ValueBool.h"
-#include "ValueByte.h"
-#include "ValueDecimal.h"
-#include "ValueInt.h"
-#include "ValueList.h"
-#include "ValueShort.h"
-#include "ValueString.h"
+#include "Options.h"
+#include "platform/Log.h"
 
-// wrapper
+// DomoZWave wrapper
 #include "DomoZWave.h"
 using namespace OpenZWave;
 
@@ -71,20 +61,6 @@ using namespace OpenZWave;
 //-----------------------------------------------------------------------------
 
 #define SSTR( x ) dynamic_cast< std::ostringstream & >( std::ostringstream() << std::dec << x ).str()
-
-//-----------------------------------------------------------------------------
-// Internal enum types
-//-----------------------------------------------------------------------------
-
-enum TypeNodeState
-{
-	DZType_Unknown = 0,
-	DZType_Alive,
-	DZType_Dead,
-	DZType_Sleep,
-	DZType_Awake,
-	DZType_Timeout
-};
 
 //-----------------------------------------------------------------------------
 // Variables
@@ -98,13 +74,21 @@ ofstream logfile;
 // Define serialport string, we require the serialport if we want to stop the Open Z-Wave library properly
 list<string> serialPortName;
 
-//
-int32 jsonrpcid = 0;
+// json-rpc id, normally we just increment this value with every new request
+int32 JsonRpcId = 0;
 
 // Enable/Disable DomoZWave debugging
 bool debugging;
 
-static pthread_mutex_t g_criticalSection;
+// Pthread Mutex for lock/unlock
+static pthread_mutex_t g_CriticalSection;
+static pthread_mutex_t g_JsonRpcThread;
+
+// Semaphore
+static sem_t s_JsonRpcThread;
+
+// Used in JSON-RPC thread to signal if we should stop the thread
+static int i_JsonRpcThread = 1;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Basic Command Class Mapping
@@ -127,7 +111,6 @@ typedef struct
 	time_t		m_time;
 } m_cmdItem;
 
-
 typedef struct
 {
 	string		m_serialPort;
@@ -140,7 +123,6 @@ typedef struct
 	uint8		m_userCodeEnrollNode;
 	time_t		m_userCodeEnrollTime;
 	time_t		m_lastWriteXML;
-	bool		m_running;
 	char		m_jsonrpcurl[255];
 } m_structCtrl;
 
@@ -197,7 +179,7 @@ typedef struct
 	uint8		instancecount;
 	string		commandclass;
 	time_t		m_LastSeen;
-	TypeNodeState	m_DeviceState;
+	uint8		m_DeviceState;
 	std::map<int,string> instancecommandclass;
 	std::map<int,std::map<int,string> > instanceLabel;
 	list<ValueID>	m_values;
@@ -205,6 +187,14 @@ typedef struct
 } NodeInfo;
 
 static list<NodeInfo*> g_nodes;
+
+typedef struct {
+	uint32 homeID;
+	char* method;
+	json_object *jparams;
+} StructJsonRpcInfo;
+
+list<StructJsonRpcInfo> m_JsonRpcInfo;
 
 ///////////////////////////////////////////////////////////////////////////////
 // NodeInfo Functions for Open Z-Wave
@@ -387,6 +377,51 @@ void WriteLog
 		va_end( args );
 	}
 }
+
+//-----------------------------------------------------------------------------
+// Second thread used for posting the JSON-RPC information to DomotiGa
+// Separate thread is required, otherwise the wrapper goes into a deadlock with
+// single threaded Gambas3
+//-----------------------------------------------------------------------------
+
+void *cURL_Post_JSON_Thread(void*)
+{
+	StructJsonRpcInfo JsonRpcInfo;
+	bool b_Empty;
+
+	while( i_JsonRpcThread )
+	{
+		// Wait until we received a semaphore
+		sem_wait( &s_JsonRpcThread );
+
+		// Check if we have entries in the queue
+		pthread_mutex_lock( &g_JsonRpcThread );
+		b_Empty = m_JsonRpcInfo.empty();
+		pthread_mutex_unlock( &g_JsonRpcThread );
+
+		while ( ! b_Empty )
+		{
+			// Remove the first entry from the queue
+			pthread_mutex_lock( &g_JsonRpcThread );
+			JsonRpcInfo = m_JsonRpcInfo.front();
+			m_JsonRpcInfo.pop_front();
+			pthread_mutex_unlock( &g_JsonRpcThread );
+
+			// Do the cURL POST with JSON-RPC
+			cURL_Post_JSON( JsonRpcInfo.homeID, JsonRpcInfo.method, JsonRpcInfo.jparams );
+
+			// Check if we got more entries
+			pthread_mutex_lock( &g_JsonRpcThread );
+			b_Empty = m_JsonRpcInfo.empty();
+			pthread_mutex_unlock( &g_JsonRpcThread );
+		}
+
+	}
+
+	// Required return for a thread
+	return NULL;
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // RPC Helper Functions
@@ -1362,8 +1397,17 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		json_object_object_add( jparams, "label", jlabel );
 		json_object_object_add( jparams, "unit", junit );
 
-		cURL_Post_JSON( homeID, "openzwave.setvalue", jparams );
+		StructJsonRpcInfo JsonRpcInfo;
+		JsonRpcInfo.homeID = homeID;
+		JsonRpcInfo.method = strdup("openzwave.setvalue");
+		JsonRpcInfo.jparams = jparams;
 
+		pthread_mutex_lock( &g_JsonRpcThread );
+		m_JsonRpcInfo.push_back(JsonRpcInfo);
+		pthread_mutex_unlock( &g_JsonRpcThread );
+
+		// Signal the thread to process data
+		sem_post( &s_JsonRpcThread );
 	} else {
 		WriteLog( LogLevel_Debug, false, "Value=%s", dev_value );
 		WriteLog( LogLevel_Debug, false, "Note=Value not send, CommandClassId & label combination isn't supported by DomotiGa (this is not an issue)" );
@@ -1435,19 +1479,23 @@ void RPC_NodeRemoved( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "NodeRemoved: HomeId=0x%x Node=%d", homeID, nodeID );
 
-	// Retrieve current controller information, we only should remove when controller is initialized
-	m_structCtrl* ctrl = GetControllerInfo( homeID );
+	json_object *jparams = json_object_new_object();
+	json_object *jhomeid = json_object_new_int( homeID );
+	json_object *jnodeid = json_object_new_int( nodeID );
+	json_object_object_add( jparams, "homeid", jhomeid );
+	json_object_object_add( jparams, "nodeid", jnodeid );
 
-	if (( ctrl != NULL ) && ( ctrl->m_running == true ))
-	{
-		json_object *jparams = json_object_new_object();
-		json_object *jhomeid = json_object_new_int( homeID );
-		json_object *jnodeid = json_object_new_int( nodeID );
-		json_object_object_add( jparams, "homeid", jhomeid );
-		json_object_object_add( jparams, "nodeid", jnodeid );
+	StructJsonRpcInfo JsonRpcInfo;
+	JsonRpcInfo.homeID = homeID;
+	JsonRpcInfo.method = strdup("openzwave.removenode");
+	JsonRpcInfo.jparams = jparams;
 
-		cURL_Post_JSON( homeID, "openzwave.removenode", jparams );
-	}
+	pthread_mutex_lock( &g_JsonRpcThread );
+	m_JsonRpcInfo.push_back(JsonRpcInfo);
+	pthread_mutex_unlock( &g_JsonRpcThread );
+
+	// Signal the thread to process data
+	sem_post( &s_JsonRpcThread );
 
 }
 
@@ -1460,20 +1508,23 @@ void RPC_NodeReset( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "NodeReset: HomeId=0x%x Node=%d", homeID, nodeID );
 
-	// Retrieve current controller information, we only should remove when controller is initialized
-	m_structCtrl* ctrl = GetControllerInfo( homeID );
+	json_object *jparams = json_object_new_object();
+	json_object *jhomeid = json_object_new_int( homeID );
+	json_object *jnodeid = json_object_new_int( nodeID );
+	json_object_object_add( jparams, "homeid", jhomeid );
+	json_object_object_add( jparams, "nodeid", jnodeid );
 
-	if (( ctrl != NULL ) && ( ctrl->m_running == true ))
-	{
-		json_object *jparams = json_object_new_object();
-		json_object *jhomeid = json_object_new_int( homeID );
-		json_object *jnodeid = json_object_new_int( nodeID );
-		json_object_object_add( jparams, "homeid", jhomeid );
-		json_object_object_add( jparams, "nodeid", jnodeid );
+	StructJsonRpcInfo JsonRpcInfo;
+	JsonRpcInfo.homeID = homeID;
+	JsonRpcInfo.method = strdup("openzwave.removenode");
+	JsonRpcInfo.jparams = jparams;
 
-		cURL_Post_JSON( homeID, "openzwave.removenode", jparams );
-	}
+	pthread_mutex_lock( &g_JsonRpcThread );
+	m_JsonRpcInfo.push_back(JsonRpcInfo);
+	pthread_mutex_unlock( &g_JsonRpcThread );
 
+	// Signal the thread to process data
+	sem_post( &s_JsonRpcThread );
 }
 
 
@@ -1598,8 +1649,17 @@ void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
 	json_object_object_add( jparams, "maxbaudrate", jmaxbaudrate );
 	json_object_object_add( jparams, "version", jversion );
 
-	cURL_Post_JSON( homeID, "openzwave.addnode", jparams );
+	StructJsonRpcInfo JsonRpcInfo;
+	JsonRpcInfo.homeID = homeID;
+	JsonRpcInfo.method = strdup("openzwave.addnode");
+	JsonRpcInfo.jparams = jparams;
 
+	pthread_mutex_lock( &g_JsonRpcThread );
+	m_JsonRpcInfo.push_back(JsonRpcInfo);
+	pthread_mutex_unlock( &g_JsonRpcThread );
+
+	// Signal the thread to process data
+	sem_post( &s_JsonRpcThread );
 }
 
 //-----------------------------------------------------------------------------
@@ -1658,8 +1718,17 @@ void RPC_NodeEvent( uint32 homeID, int nodeID, ValueID valueID, int value )
 	json_object_object_add( jparams, "valueid", jvalueid );
 	json_object_object_add( jparams, "value", jvalue );
 
-	cURL_Post_JSON( homeID, "openzwave.setvalue", jparams );
+	StructJsonRpcInfo JsonRpcInfo;
+	JsonRpcInfo.homeID = homeID;
+	JsonRpcInfo.method = strdup("openzwave.setvalue");
+	JsonRpcInfo.jparams = jparams;
 
+	pthread_mutex_lock( &g_JsonRpcThread );
+	m_JsonRpcInfo.push_back(JsonRpcInfo);
+	pthread_mutex_unlock( &g_JsonRpcThread );
+
+	// Signal the thread to process data
+	sem_post( &s_JsonRpcThread );
 }
 
 //-----------------------------------------------------------------------------
@@ -1702,7 +1771,17 @@ void RPC_NodeScene( uint32 homeID, int nodeID, ValueID valueID, int value )
 		json_object_object_add( jparams, "valueid", jvalueid );
 		json_object_object_add( jparams, "value", jvalue );
 
-		cURL_Post_JSON( homeID, "openzwave.setvalue", jparams );
+		StructJsonRpcInfo JsonRpcInfo;
+		JsonRpcInfo.homeID = homeID;
+		JsonRpcInfo.method = strdup("openzwave.setvalue");
+		JsonRpcInfo.jparams = jparams;
+
+		pthread_mutex_lock( &g_JsonRpcThread );
+		m_JsonRpcInfo.push_back(JsonRpcInfo);
+		pthread_mutex_unlock( &g_JsonRpcThread );
+
+		// Signal the thread to process data
+		sem_post( &s_JsonRpcThread );
 	} else {
 	}
 
@@ -1807,8 +1886,17 @@ void RPC_DriverReady( uint32 homeID, int nodeID )
 	json_object_object_add( jparams, "controllerid", jcontrollerid );
 	json_object_object_add( jparams, "serialport", jcontrollerpath );
 
-	cURL_Post_JSON( homeID, "openzwave.homeid", jparams );
+	StructJsonRpcInfo JsonRpcInfo;
+	JsonRpcInfo.homeID = homeID;
+	JsonRpcInfo.method = strdup("openzwave.homeid");
+	JsonRpcInfo.jparams = jparams;
 
+pthread_mutex_lock( &g_JsonRpcThread );
+	m_JsonRpcInfo.push_back(JsonRpcInfo);
+pthread_mutex_unlock( &g_JsonRpcThread );
+
+	// Signal the thread to process data
+	sem_post( &s_JsonRpcThread );
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1824,7 +1912,7 @@ void OnNotification
 	void* context
 )
 {
-	pthread_mutex_lock( &g_criticalSection );
+	pthread_mutex_lock( &g_CriticalSection );
 
 	switch( data->GetType() )
 	{
@@ -1871,7 +1959,7 @@ void OnNotification
 			if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
 			{
 				nodeInfo->m_LastSeen = time( NULL );
-				nodeInfo->m_DeviceState = DZType_Alive;
+				nodeInfo->m_DeviceState = Notification::Code_Alive;
 			}
 
 			// Check if zwcfg*xml has been written 3600+ sec, then flush to disk
@@ -1913,11 +2001,11 @@ void OnNotification
 			// The controller will always be alive
 			if ( ctrl->m_controllerId == data->GetNodeId() )
 			{ 
-				nodeInfo->m_DeviceState = DZType_Alive;
+				nodeInfo->m_DeviceState = Notification::Code_Alive;
 			}
 			else
 			{
-				nodeInfo->m_DeviceState = DZType_Unknown;
+				nodeInfo->m_DeviceState = 255;
 			}
 
 			g_nodes.push_back( nodeInfo );
@@ -1940,7 +2028,7 @@ void OnNotification
 				}
 			}
 
-			pthread_mutex_unlock( &g_criticalSection );
+			pthread_mutex_unlock( &g_CriticalSection );
 
 			RPC_NodeRemoved( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
@@ -1960,7 +2048,7 @@ void OnNotification
 				}
 			}
 
-			pthread_mutex_unlock( &g_criticalSection );
+			pthread_mutex_unlock( &g_CriticalSection );
 
 			RPC_NodeReset( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
@@ -1979,7 +2067,7 @@ void OnNotification
 			if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
 			{
 				nodeInfo->m_LastSeen = time( NULL );
-				nodeInfo->m_DeviceState = DZType_Alive;
+				nodeInfo->m_DeviceState = Notification::Code_Alive;
 			}
 			break;
 		}
@@ -2016,13 +2104,24 @@ void OnNotification
 				// The zwcfg*xml is written, save the current time
 				ctrl->m_lastWriteXML = time( NULL );
 
-				pthread_mutex_unlock( &g_criticalSection );
+				pthread_mutex_unlock( &g_CriticalSection );
 
 				json_object *jparams = json_object_new_object();
 				json_object *jhomeid = json_object_new_int( data->GetHomeId() );
 				json_object_object_add( jparams, "homeid", jhomeid );
 
-				cURL_Post_JSON( data->GetHomeId(), "openzwave.allqueried", jparams );
+				StructJsonRpcInfo JsonRpcInfo;
+				JsonRpcInfo.homeID = data->GetHomeId();
+				JsonRpcInfo.method = strdup("openzwave.allqueried");
+				JsonRpcInfo.jparams = jparams;
+
+				// Lock, store and unlock JSON-RPC request
+				pthread_mutex_lock( &g_JsonRpcThread );
+				m_JsonRpcInfo.push_back(JsonRpcInfo);
+				pthread_mutex_unlock( &g_JsonRpcThread );
+
+				// Signal the thread to process data
+				sem_post( &s_JsonRpcThread );
 			}
 			else
 			{
@@ -2106,7 +2205,7 @@ void OnNotification
 			if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
 			{
 			        nodeInfo->m_LastSeen = time( NULL );
-			        nodeInfo->m_DeviceState = DZType_Alive;
+			        nodeInfo->m_DeviceState = Notification::Code_Alive;
 			}
 			break;
 		}
@@ -2122,7 +2221,7 @@ void OnNotification
 					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
 					{
 						nodeInfo->m_LastSeen = time( NULL );
-						nodeInfo->m_DeviceState = DZType_Alive;
+						nodeInfo->m_DeviceState = Notification::Code_Alive;
 					}
 					break;
 				}
@@ -2139,12 +2238,12 @@ void OnNotification
 
 						if ( listening ) {
 							str = "Listening Device";
-							nodeInfo->m_DeviceState = DZType_Timeout;
+							nodeInfo->m_DeviceState = Notification::Code_Timeout;
 						}
 						else
 						{
 							str = "Sleeping Device - Reporting \"Sleep\"";
-							nodeInfo->m_DeviceState = DZType_Sleep;
+							nodeInfo->m_DeviceState = Notification::Code_Sleep;
 						}
 					}
 					WriteLog( LogLevel_Debug, true, "Code_Timeout: HomeId=0x%x Node=%d (%s)", data->GetHomeId(), (int)data->GetNodeId(), str.c_str() );
@@ -2163,7 +2262,7 @@ void OnNotification
 					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
 					{
 						nodeInfo->m_LastSeen = time( NULL );
-						nodeInfo->m_DeviceState = DZType_Awake;
+						nodeInfo->m_DeviceState = Notification::Code_Awake;
 					}
 					break;
 				}
@@ -2174,7 +2273,7 @@ void OnNotification
 					// Update DeviceState
 					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
 					{
-						nodeInfo->m_DeviceState = DZType_Sleep;
+						nodeInfo->m_DeviceState = Notification::Code_Sleep;
 					}
 					break;
 				}
@@ -2185,7 +2284,7 @@ void OnNotification
 					// Update DeviceState
 					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
 					{
-						nodeInfo->m_DeviceState = DZType_Dead;
+						nodeInfo->m_DeviceState = Notification::Code_Dead;
 					}
 					break;
 				}
@@ -2197,7 +2296,7 @@ void OnNotification
 					if ( NodeInfo* nodeInfo = GetNodeInfo( data ) )
 					{
 						nodeInfo->m_LastSeen = time( NULL );
-						nodeInfo->m_DeviceState = DZType_Alive;
+						nodeInfo->m_DeviceState = Notification::Code_Alive;
 					}
 					break;
 				}
@@ -2405,7 +2504,7 @@ void OnNotification
 		break;
 	}
 
-	pthread_mutex_unlock( &g_criticalSection );
+	pthread_mutex_unlock( &g_CriticalSection );
 }
 
 //-----------------------------------------------------------------------------
@@ -2425,9 +2524,11 @@ return size * nmemb;
 
 void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 {
+//pthread_mutex_lock( &g_jsonRpcCall );
+
 	// Increment the id and check we didn't reach our max
-	if ( jsonrpcid > 0xFFFF ) jsonrpcid = 0;
-	jsonrpcid++;
+	if ( JsonRpcId > 0xFFFF ) JsonRpcId = 0;
+	JsonRpcId++;
 
 	// Construct JSON-RPC request
 	json_object *jrequest = json_object_new_object();
@@ -2443,7 +2544,7 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 	}
 
 	// Add id, because cURL doesn't like "no-response"
-	json_object *jid = json_object_new_int( jsonrpcid );
+	json_object *jid = json_object_new_int( JsonRpcId );
 	json_object_object_add( jrequest, "id", jid );
 
 	WriteLog( LogLevel_Debug, true, "JSON-RPC: HomeId=0x%x Method=%s", homeID, method );
@@ -2527,7 +2628,7 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 			}
 
 			// Test for id
-			if (( json_object_get_type( jrid ) != json_type_int ) || ( json_object_get_int( jrid ) != jsonrpcid ))
+			if (( json_object_get_type( jrid ) != json_type_int ) || ( json_object_get_int( jrid ) != JsonRpcId ))
 			{
 				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a valid \"id\". Data=%s", method, readBuffer.c_str() );
 
@@ -2569,6 +2670,7 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 		// Always clean-up the cURL enviroment
 		curl_global_cleanup();
 	}
+//pthread_mutex_unlock( &g_jsonRpcCall );
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -2617,6 +2719,30 @@ bool DomoZWave_HomeIdPresent( uint32 home, const char* _param )
 
 void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logname, bool enableInitLog )
 {
+	// Create semaphore to tell the JSO-RPC thread to wait up and process data
+	sem_init( &s_JsonRpcThread, 0, 0 );
+	i_JsonRpcThread = 1;
+
+	// Create thread for JSON-RPC/WebSockets callback
+	pthread_t thread;
+
+	pthread_create( &thread, NULL, cURL_Post_JSON_Thread, NULL );
+	pthread_detach( thread );
+
+	// Create Mutex for the JSON-RPC thread
+	pthread_mutexattr_t mutexattr;
+
+	pthread_mutexattr_init ( &mutexattr );
+	pthread_mutexattr_settype( &mutexattr, PTHREAD_MUTEX_RECURSIVE );
+	pthread_mutex_init( &g_JsonRpcThread, &mutexattr );
+	pthread_mutexattr_destroy( &mutexattr );
+
+	// Create Mutex for general usage e.g. in OnNotification
+	pthread_mutexattr_init ( &mutexattr );
+	pthread_mutexattr_settype( &mutexattr, PTHREAD_MUTEX_RECURSIVE );
+	pthread_mutex_init( &g_CriticalSection, &mutexattr );
+	pthread_mutexattr_destroy( &mutexattr );
+
 	// Get a timestamp for Year and Month
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
@@ -2657,13 +2783,7 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d (%s)", ozw_vers_major, ozw_vers_minor, ozw_vers_revision, ozw_version_string );
 	WriteLog( LogLevel_Debug, false, "%s", ozw_vers2 );
 
-	pthread_mutexattr_t mutexattr;
-
-	pthread_mutexattr_init ( &mutexattr );
-	pthread_mutexattr_settype( &mutexattr, PTHREAD_MUTEX_RECURSIVE );
-	pthread_mutex_init( &g_criticalSection, &mutexattr );
-	pthread_mutexattr_destroy( &mutexattr );
-
+	// Configure open-zwave config and log
 	Options::Create( configdir, zwdir, "" );
 	Options::Get()->AddOptionBool( "AppendLogFile", false );
 	Options::Get()->AddOptionBool( "ConsoleOutput", false );
@@ -2676,14 +2796,14 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 
 	Options::Get()->Lock();
 
+	// Create our OpenZWave instance
 	Manager::Create();
 
 	// Enable OZW_Log.txt - if applicable
 	DomoZWave_Log( enableInitLog );
 
+	// Add watch for OnNotification
 	Manager::Get()->AddWatcher( OnNotification, NULL );
-
-// TODO create json something?
 
 }
 
@@ -2741,7 +2861,6 @@ void DomoZWave_AddSerialPort( const char* serialPort, const char* jsonrpcurl, bo
 	ctrl->m_controllerBusy = false;
 	ctrl->m_nodeId = 0;
 	ctrl->m_lastWriteXML = 0;
-	ctrl->m_running = true;
 
 	// Store the url
 	sprintf( ctrl->m_jsonrpcurl, "%s", jsonrpcurl );
@@ -2767,16 +2886,13 @@ void DomoZWave_RemoveSerialPort( const char* serialPort )
 	// Store the serialPort used
 	Name = serialPort; 
 
-	// Loop through available controllers and set running to false
-	// Otherwise the zwave.removenode can fail/hang
+	// Loop through available controllers and remove it
 	for ( list<m_structCtrl*>::iterator it = g_allControllers.begin(); it != g_allControllers.end(); ++it )
 	{
 		ctrl = *it;
 		if ( ctrl->m_serialPort == Name )
 		{
 			WriteLog( LogLevel_Debug, true, "SerialPort=%s (Remove)", serialPort );
-
-			ctrl->m_running = false;
 
 			// Only removedriver it is existed
 			Manager::Get()->RemoveDriver( serialPort );
@@ -2785,7 +2901,7 @@ void DomoZWave_RemoveSerialPort( const char* serialPort )
 
 	// Remove the ctrl from the list, it is removed now
 	if ( ctrl != NULL ) {
-		g_allControllers.remove ( ctrl );
+		g_allControllers.remove( ctrl );
 	}
 }
 
@@ -2798,33 +2914,23 @@ void DomoZWave_RemoveSerialPort( const char* serialPort )
 void DomoZWave_Destroy( )
 {
 
-	// Loop through available controllers and set running to false
-	// Otherwise the zwave.removenode can fail/hang
-	for ( list<m_structCtrl*>::iterator it = g_allControllers.begin(); it != g_allControllers.end(); ++it )
-	{
-		m_structCtrl* ctrl = *it;
-		ctrl->m_running = false;
-	}
-
+	// Remove all serialports
 	for ( list<string>::iterator it = serialPortName.begin(); it != serialPortName.end(); ++it )
 	{
 		string Name = *it;
 		Manager::Get()->RemoveDriver( Name );
 	}
 
-	pthread_mutex_lock( &g_criticalSection );
+	pthread_mutex_lock( &g_CriticalSection );
 
+	// Remove the OnNotification from the wrapper
 	Manager::Get()->RemoveWatcher( OnNotification, NULL );
 
 	Manager::Get()->Destroy();
-	//cout << OZW_datetime << "Destroyed manager" << endl;
 	Options::Get()->Destroy();
-	//cout << OZW_datetime << "Destroyed options" << endl;
 
-	pthread_mutex_unlock( &g_criticalSection );
-	pthread_mutex_destroy( &g_criticalSection );
-
-	serialPortName.clear();
+	pthread_mutex_unlock( &g_CriticalSection );
+	pthread_mutex_destroy( &g_CriticalSection );
 
 	WriteLog( LogLevel_Debug, true, "DomoZWave_Destroy: Destroyed Open-ZWave Wrapper" );
 
@@ -2834,8 +2940,18 @@ void DomoZWave_Destroy( )
 		logfile.close();
 	}
 
+	// Clear the current list of serialports
+	serialPortName.clear();
+
 	// Clear the current list of controllers
 	g_allControllers.clear();
+
+	// Remove semaphore
+	i_JsonRpcThread = 0;
+
+	// Signal the thread to process data - and stop
+	sem_post( &s_JsonRpcThread );
+	sem_destroy( &s_JsonRpcThread );
 }
 
 //-----------------------------------------------------------------------------
@@ -3426,39 +3542,34 @@ const char* DomoZWave_GetNodeStatus( uint32 home, int32 node )
 
 		switch ( nodeInfo->m_DeviceState )
 	        {
-			case DZType_Alive:
+			case Notification::Code_Alive:
 			{
 				status = "Alive";
 				break;
 			}
-			case DZType_Dead:
+			case Notification::Code_Dead:
 			{
 				status = "Dead";
 				break;
 			}
-			case DZType_Sleep:
+			case Notification::Code_Sleep:
 			{
 				status = "Sleep";
 				break;
 			}
-			case DZType_Awake:
+			case Notification::Code_Awake:
 			{
 				status = "Awake";
 				break;
 			}
-			case DZType_Timeout:
+			case Notification::Code_Timeout:
 			{
 				status = "Timeout";
 				break;
 			}
-			case DZType_Unknown:
-			{
-				status = "Unknown";
-				break;
-			}
 			default:
 			{
-				status = "Other";
+				status = "Unknown";
 				break;
 			}
 		}
@@ -4863,15 +4974,19 @@ void DomoZWave_ControllerHardReset( uint32 home )
 {
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_ControllerHardReset" ) == false ) return;
 
-	// Retrieve controller information and set running to false
-	m_structCtrl* ctrl = GetControllerInfo( home );
-	ctrl->m_running = false;
-
 	WriteLog( LogLevel_Debug, true, "DomoZWave_ControllerHardReset: HomeId=0x%x", home );
 	Manager::Get()->ResetController( home );
 
-	// TBC:
-	// We should remove the controller from the list and remove all values?
+	for ( list<m_structCtrl*>::iterator it = g_allControllers.begin(); it != g_allControllers.end(); ++it )
+	{
+		m_structCtrl* ctrl = *it;
+		if ( ctrl->m_homeId == home )
+		{
+			g_allControllers.remove(*it);
+			return;
+		}
+	}
+
 }
 
 //-----------------------------------------------------------------------------

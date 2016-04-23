@@ -9,17 +9,16 @@ CC     := gcc
 CXX    := g++
 LD     := g++
 
-DEBUG_CFLAGS    := -Wall -Wno-format -Wno-unknown-pragmas -g -DDEBUG -fPIC
-RELEASE_CFLAGS  := -Wall -Wno-unknown-pragmas -Wno-format -O3
+DEBUG_CFLAGS    := -Wall -Wno-format -Wno-unknown-pragmas -ggdb -g -DDEBUG -fPIC $(CPPFLAGS)
+RELEASE_CFLAGS  := -Wall -Wno-format -Wno-unknown-pragmas -O3 -fPIC $(CPPFLAGS)
 DEBUG_LDFLAGS	:= -g
 
 # Change for DEBUG or RELEASE
 CFLAGS	:= -c $(DEBUG_CFLAGS)
 LDFLAGS	:= $(DEBUG_LDFLAGS)
 
-INCLUDES	:= -I open-zwave/cpp/src/ -I open-zwave/cpp/src/command_classes/ -I open-zwave/cpp/src/value_classes/ \
-	-I open-zwave/cpp/src/platform/
-LIBVERS := $(wildcard open-zwave/cpp/src/vers.cpp)
+INCLUDES := -I open-zwave/cpp/src
+LIBVERS  := $(wildcard open-zwave/cpp/src/vers.cpp)
 LIBZWAVE := $(wildcard open-zwave/*.a)
 LIBOTHER := -ljson -lcurl -pthread -shared -ludev
 LIBS := $(LIBZWAVE) $(LIBOTHER)
@@ -45,6 +44,8 @@ libdomozwave.so:	DomoZWave.o
 
 clean:
 	rm -f libdomozwave.so DomoZWave.o
+
 install:
 	cp libdomozwave.so /usr/local/lib
 	ldconfig
+
