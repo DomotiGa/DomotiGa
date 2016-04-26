@@ -388,6 +388,9 @@ Public Sub hServerSocket_Connection(RemoteHost As String)
   ' Also support HTTP request in URL
   hS.HTTPRequestInUrl = "?request="
 
+  ' With JSON-RPC we also support simple HTTP request like 'method=value.set&device_id=5&value=5'
+  hS.HTTPRAWInUrl = "/json?"
+
   ' Overrule the content-type
   hS.HTTPHeaders = ["content-type: application/json"]
 
@@ -413,6 +416,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub hSocket_Read(sJsonData As Variant)
 
+  Dim iJsonType As Byte = 2
   Dim vTestData As Variant
   Dim vJsonData As New Variant[]
   Dim Entry As Variant
@@ -422,124 +426,195 @@ Public Sub hSocket_Read(sJsonData As Variant)
   Dim JsonBatch As Boolean
   Dim vId As Variant
   Dim jCol As JSONCollection
+  Dim aParam As String[]
+  Dim sParam As String
 
-  ' Remove all NewLine and Carriage Return
-  sJsonData = Replace(sJsonData, Chr(13), "")
-  sJsonData = Replace(sJsonData, Chr(10), "")
+  ' Check if we got a simple JSON request - we normally prefer the JSON-RPC 2.0
+  If InStr(sJsonData, "method=") = 1 Then
 
-  ' Try to decode the string
-  Try vTestData = JSON.Decode(sJsonData, True)
-  If Error Then
-    Last.Begin()
-    Last.Print(Util.JSONEncode(JsonError(JSONRPC_PARSEERROR)))
-    Last.Send()
+    ' Set it to JSON type 1
+    iJsonType = 1
 
-    Return
-  Endif
+    If InStr(sJsonData, "&") Then
+      sMethod = Mid(sJsonData, 8, InStr(sJsonData, "&") - 8)
+      sJsonData = Mid(sJsonData, InStr(sJsonData, "&") + 1)
+    Else
+      sMethod = Mid(sJsonData, 8)
+      sJsonData = ""
+    Endif
 
-  Try Entry = vTestData[0]
-  If Error Then
-    Last.Begin()
-    Last.Print(Util.JSONEncode(JsonError(JSONRPC_PARSEERROR)))
-    Last.Send() 
-    Return
-  Endif
+    Entry = New JSONCollection
+    aParam = Split(sJsonData, "&")
 
-  ' No array, just 1 call
-  If Entry = Null Then
-    JsonBatch = False
-    vJsonData.Add(vTestData)
-  Else
-    JsonBatch = True
-    vJsonData = vTestData
-  Endif
-
-  For Each Entry In vJsonData
-
-    Try sJSONVersion = Entry["jsonrpc"]
-    ' Check if we got a method name
-
-    If sJSONVersion = "2.0" Then
-      ' Check if we got a method name
-      Try sMethod = Entry["method"]
-      If Error Then
-        vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST))
-      Else
-        If TypeOf(Entry["method"]) = gb.String Then
-          Try vId = Entry["id"]
-
-          sMethod = LCase(sMethod)
-
-          If Not $cMethods.Exist(sMethod) Then
-            vOutput.Add(JsonError(JSONRPC_METHODNOTFOUND, vId))
+    If aParam.Count >= 1 Then
+      For Each sParam In aParam
+        If sParam Then
+          If InStr(sParam, "=") Then
+            Entry[Left(sParam, InStr(sParam, "=") - 1)] = URL.Decode(Mid(sParam, InStr(sParam, "=") + 1))
           Else
-            $iReply = 0 
-            $vReply = Null
+            ' Bad parameter
+            vOutput.Add(JsonError(JSONRPC_INVALIDPARAMS, 1, vId))
 
-            ' Convert the 'Null' to ""
-            If Entry["params"] Then
-              For Each Entry["params"]
-                If Entry["params"][Entry["params"].Key] = Null Then
-                  Entry["params"].Add("", Entry["params"].Key)
-                Else If TypeOf(Entry["params"][Entry["params"].Key]) = gb.Object And If Object.Type(Entry["params"][Entry["params"].Key]) = "JSONCollection" Then
-                  jCol = Entry[Entry["params"].Key]
-                  For Each jCol
-                    If jCol[jCol.Key] = Null Then
-                      jCol.Add("", jCol.Key)
-                    Endif
-                  Next
-                Endif
-              Next
-            Endif
-            ' Just pass all the data for testing
-            RemoteCall(sMethod, Entry["params"])
+            Try sJsonData = Util.JSONEncode(vOutput[0])
 
-            ' If id=Null then it is most likely a Json-Rpc notification, we shouldn't respond to it
-            If vId <> Null Then
+            Last.Begin()
+            Last.Print(sJsonData)
+            Last.Send()
 
-              ' The response from JSON-RPC handle can't be empty!
-              If $vReply = Null Then
-                If $iReply <> 0 Then
-                  vOutput.Add(JsonError($iReply, vId))
-                Else
-                  vOutput.Add(JsonError(JSONRPC_INTERNALERROR, vId))
-                Endif
-              Else
-                vOutput.Add(JsonToRpc($vReply, vId))
-              Endif
-            Endif
+            Return
           Endif
-        Else
-          vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST))
         Endif
+      Next
+    Endif
+
+    ' Just pass all the data for testing
+    RemoteCall(sMethod, Entry)
+
+    ' The response from JSON handle can't be empty!
+    If $vReply = Null Then
+      If $iReply <> 0 Then
+        vOutput.Add(JsonError($iReply, 1, vId))
+      Else
+        vOutput.Add(JsonError(JSONRPC_INTERNALERROR, 1, vId))
       Endif
     Else
-      vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST))
+
+    vOutput.Add(JsonToRpc($vReply, 1, vId))
+
     Endif
 
-  Next
-
-  If vOutput.Count >= 1 Then
-    If JsonBatch Then
-      Try sJsonData = Util.JSONEncode(vOutput)
-    Else
-      'Try sJsonData = Util.JSONEncode(vOutput[0])
-      Try sJsonData = Util.JSONEncode(vOutput[0])
-    Endif
+    Try sJsonData = Util.JSONEncode(vOutput[0])
 
     If Error Then
       ' JSON data is invalid, thrown an internal error
-      sJsonData = Util.JSONEncode(JsonError(JSONRPC_INTERNALERROR))
+      sJsonData = Util.JSONEncode(JsonError(JSONRPC_INTERNALERROR, 1))
     Endif
 
     Last.Begin()
     Last.Print(sJsonData)
     Last.Send()
+
+  Else
+
+    ' Remove all NewLine and Carriage Return
+    sJsonData = Replace(sJsonData, Chr(13), "")
+    sJsonData = Replace(sJsonData, Chr(10), "")
+
+    ' Try to decode the string
+    Try vTestData = JSON.Decode(sJsonData, True)
+    If Error Then
+      Last.Begin()
+      Last.Print(Util.JSONEncode(JsonError(JSONRPC_PARSEERROR, 2)))
+      Last.Send()
+
+      Return
+    Endif
+
+    Try Entry = vTestData[0]
+    If Error Then
+      Last.Begin()
+      Last.Print(Util.JSONEncode(JsonError(JSONRPC_PARSEERROR, 2)))
+      Last.Send() 
+      Return
+    Endif
+
+    ' No array, just 1 call
+    If Entry = Null Then
+      JsonBatch = False
+      vJsonData.Add(vTestData)
+    Else
+      JsonBatch = True
+      vJsonData = vTestData
+    Endif
+
+    For Each Entry In vJsonData
+
+      Try sJSONVersion = Entry["jsonrpc"]
+      ' Check if we got a method name
+
+      If sJSONVersion = "2.0" Then
+        ' Check if we got a method name
+        Try sMethod = Entry["method"]
+        If Error Then
+          vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST, 1))
+        Else
+          If TypeOf(Entry["method"]) = gb.String Then
+            Try vId = Entry["id"]
+
+            sMethod = LCase(sMethod)
+
+            If Not $cMethods.Exist(sMethod) Then
+              vOutput.Add(JsonError(JSONRPC_METHODNOTFOUND, 2, vId))
+            Else
+              $iReply = 0 
+              $vReply = Null
+
+              ' Convert the 'Null' to ""
+              If Entry["params"] Then
+                For Each Entry["params"]
+                  If Entry["params"][Entry["params"].Key] = Null Then
+                    Entry["params"].Add("", Entry["params"].Key)
+                  Else If TypeOf(Entry["params"][Entry["params"].Key]) = gb.Object And If Object.Type(Entry["params"][Entry["params"].Key]) = "JSONCollection" Then
+                    jCol = Entry[Entry["params"].Key]
+                    For Each jCol
+                      If jCol[jCol.Key] = Null Then
+                        jCol.Add("", jCol.Key)
+                      Endif
+                    Next
+                  Endif
+                Next
+              Endif
+
+              ' Just pass all the data for testing
+              RemoteCall(sMethod, Entry["params"])
+
+              ' If id=Null then it is most likely a Json-Rpc notification, we shouldn't respond to it
+              If vId <> Null Then
+
+                ' The response from JSON-RPC handle can't be empty!
+                If $vReply = Null Then
+                  If $iReply <> 0 Then
+                    vOutput.Add(JsonError($iReply, 2, vId))
+                  Else
+                    vOutput.Add(JsonError(JSONRPC_INTERNALERROR, 2, vId))
+                  Endif
+                Else
+                  vOutput.Add(JsonToRpc($vReply, 2, vId))
+                Endif
+              Endif
+            Endif
+          Else
+            vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST, 2))
+          Endif
+        Endif
+      Else
+        vOutput.Add(JsonError(JSONRPC_INVALIDREQUEST, 2))
+      Endif
+
+    Next
+
+    If vOutput.Count >= 1 Then
+      If JsonBatch Then
+        Try sJsonData = Util.JSONEncode(vOutput)
+      Else
+        'Try sJsonData = Util.JSONEncode(vOutput[0])
+        Try sJsonData = Util.JSONEncode(vOutput[0])
+      Endif
+
+      If Error Then
+        ' JSON data is invalid, thrown an internal error
+        sJsonData = Util.JSONEncode(JsonError(JSONRPC_INTERNALERROR, 2))
+      Endif
+
+      Last.Begin()
+      Last.Print(sJsonData)
+      Last.Send()
+    Endif
   Endif
 
 Catch
   Last.Begin()
-  Last.Print(Util.JSONEncode(JsonError(JSONRPC_INTERNALERROR)))
+  Last.Print(Util.JSONEncode(JsonError(JSONRPC_INTERNALERROR, iJsonType)))
   Last.Send()
 
 End
@@ -573,7 +648,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Create a Json Collection with a specific error message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub JsonError(iError As Integer, Optional vId As Variant = Null) As JSONCollection
+Private Sub JsonError(iError As Integer, iJsonType As Byte, Optional vId As Variant = Null) As JSONCollection
 
   Dim cJsonData As New JSONCollection
   Dim cError As New JSONCollection
@@ -595,10 +670,14 @@ Private Sub JsonError(iError As Integer, Optional vId As Variant = Null) As JSON
       cError.Add("Unknown error", "message")
   End Select
 
-  ' Build up the collection
-  cJsonData.Add("2.0", "jsonrpc")
-  cJsonData.Add(cError, "error")
-  cJsonData.Add(vId, "id")
+  ' Build up the collection - if we are JSON-RPC 2.0
+  If iJsonType = 1 Then
+    cJsonData.Add(cError, "error")
+  Else
+    cJsonData.Add("2.0", "jsonrpc")
+    cJsonData.Add(cError, "error")
+    cJsonData.Add(vId, "id")
+  Endif
 
   Return cJsonData
 
@@ -607,14 +686,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Convert a JsonCollection to a valid JSON-RPC 2.0 Collection
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub JsonToRpc(cJsonResponse As Variant, vId As Variant) As JSONCollection
+Private Sub JsonToRpc(cJsonResponse As Variant, iJsonType As Byte, vId As Variant) As JSONCollection
 
   Dim cJsonData As New JSONCollection
 
   ' Build up the collection
-  cJsonData.Add("2.0", "jsonrpc")
-  cJsonData.Add(cJsonResponse, "result")
-  cJsonData.Add(vId, "id")
+  If iJsonType = 1 Then
+    cJsonData.Add(cJsonResponse, "result")
+  Else
+    cJsonData.Add("2.0", "jsonrpc")
+    cJsonData.Add(cJsonResponse, "result")
+    cJsonData.Add(vId, "id")
+  Endif
 
   Return cJsonData
 
