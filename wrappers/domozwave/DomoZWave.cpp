@@ -410,6 +410,9 @@ void *cURL_Post_JSON_Thread(void*)
 			// Do the cURL POST with JSON-RPC
 			cURL_Post_JSON( JsonRpcInfo.homeID, JsonRpcInfo.method, JsonRpcInfo.jparams );
 
+			// Remove the json-rpc object
+ 			json_object_put( JsonRpcInfo.jparams );	
+
 			// Check if we got more entries
 			pthread_mutex_lock( &g_JsonRpcThread );
 			b_Empty = m_JsonRpcInfo.empty();
@@ -2524,7 +2527,6 @@ return size * nmemb;
 
 void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 {
-//pthread_mutex_lock( &g_jsonRpcCall );
 
 	// Increment the id and check we didn't reach our max
 	if ( JsonRpcId > 0xFFFF ) JsonRpcId = 0;
@@ -2624,6 +2626,10 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 
 				// Clean-up cURL
 				curl_easy_cleanup( curl );
+
+				// Remove the json-rpc object
+				json_object_put( jrobj );
+
 				return;
 			}
 
@@ -2634,6 +2640,10 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 
 				// Clean-up cURL
 				curl_easy_cleanup( curl );
+
+				// Remove the json-rpc object
+				json_object_put( jrobj );
+
 				return;
 			}
 
@@ -2660,6 +2670,9 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 					WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned invalid data. Data=%s", method, readBuffer.c_str() );
 				}
 			}
+
+			// Remove the json-rpc object
+			json_object_put( jrobj );
 		}
 
 		// Clean-up cURL
