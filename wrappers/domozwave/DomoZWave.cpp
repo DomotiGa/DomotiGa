@@ -77,6 +77,11 @@ list<string> serialPortName;
 // json-rpc id, normally we just increment this value with every new request
 int32 JsonRpcId = 0;
 
+// CURL variables
+CURL *curl;
+CURLcode rescurl;
+curl_slist *curlhttpheader = NULL;
+
 // Enable/Disable DomoZWave debugging
 bool debugging;
 
@@ -2516,8 +2521,8 @@ void OnNotification
 
 static size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp)
 {
-((std::string*)userp)->append((char*)contents, size * nmemb);
-return size * nmemb;
+	((string*)userp)->append((char*)contents, size * nmemb);
+	return size * nmemb;
 }
 
 //-----------------------------------------------------------------------------
@@ -2552,48 +2557,27 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 	WriteLog( LogLevel_Debug, true, "JSON-RPC: HomeId=0x%x Method=%s", homeID, method );
 	WriteLog( LogLevel_Debug, false, "Data=%s", json_object_to_json_string( jrequest ) );
 
-	CURL *curl;
-	CURLcode res;
-	curl_slist *httpheader = NULL;
 	string readBuffer;
 
-	// Initialize cURL
-	curl_global_init( CURL_GLOBAL_ALL );
-
-	// Get a cURL handle
-	curl = curl_easy_init( );
-	if( curl )
+	if ( curl )
 	{
 		m_structCtrl* ctrl = GetControllerInfo( homeID );
-		curl_easy_setopt( curl, CURLOPT_INTERFACE, "127.0.0.1" );
-		curl_easy_setopt( curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4 );
-		curl_easy_setopt( curl, CURLOPT_NOSIGNAL, 1 );
 		curl_easy_setopt( curl, CURLOPT_URL, ctrl->m_jsonrpcurl );
-
-		httpheader = curl_slist_append( httpheader, "Content-Type: application/json" );
-		httpheader = curl_slist_append( httpheader, "Connection: close" );
-		res = curl_easy_setopt( curl, CURLOPT_HTTPHEADER, httpheader );
-		res = curl_easy_setopt( curl, CURLOPT_CONNECTTIMEOUT, 3 );
-		res = curl_easy_setopt( curl, CURLOPT_TIMEOUT, 3 );
-
-		//CURLOPT_USERNAME
-		//CURLOPT_PASSWORD
-		//CURLOPT_HTTPAUTH
 
 		// Set the http headers - set content-type and remove 100-continue header
 		curl_easy_setopt( curl, CURLOPT_POSTFIELDS, json_object_to_json_string( jrequest ) );
 
-		//
+		// Set up the write callback and variable
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-		curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+		curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&readBuffer);
 
 		// Perform the request, rest will get the return code
-		res = curl_easy_perform( curl );
+		rescurl = curl_easy_perform( curl );
 
 		// Check for errors
-		if( res != CURLE_OK )
+		if( rescurl != CURLE_OK )
 		{
-			WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned cURL msg \"%s\"", method, curl_easy_strerror(res) );
+			WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned cURL msg \"%s\"", method, curl_easy_strerror(rescurl) );
 		}
 		else
 		{
@@ -2601,8 +2585,12 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 			if ( readBuffer == "" ) {
 				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a response", method );
 
-				// Clean-up cURL
-				curl_easy_cleanup( curl );
+				// Remove the json-rpc objects
+				json_object_put( jjsonrpc );
+				json_object_put( jmethod );
+				json_object_put( jparams );
+				json_object_put( jrequest );
+
 				return;
 			}
 
@@ -2624,11 +2612,17 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 			{
 				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a valid \"jsonrpc\" version. Data=%s", method, readBuffer.c_str() );
 
-				// Clean-up cURL
-				curl_easy_cleanup( curl );
-
-				// Remove the json-rpc object
+				// Remove the json-rpc objects
+				json_object_put( jrjsonrpc );
+				json_object_put( jrerror );
+				json_object_put( jrresult );
+				json_object_put( jrid );
 				json_object_put( jrobj );
+
+				json_object_put( jjsonrpc );
+				json_object_put( jmethod );
+				json_object_put( jparams );
+				json_object_put( jrequest );
 
 				return;
 			}
@@ -2638,11 +2632,17 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 			{
 				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a valid \"id\". Data=%s", method, readBuffer.c_str() );
 
-				// Clean-up cURL
-				curl_easy_cleanup( curl );
-
-				// Remove the json-rpc object
+				// Remove the json-rpc objects
+				json_object_put( jrjsonrpc );
+				json_object_put( jrerror );
+				json_object_put( jrresult );
+				json_object_put( jrid );
 				json_object_put( jrobj );
+
+				json_object_put( jjsonrpc );
+				json_object_put( jmethod );
+				json_object_put( jparams );
+				json_object_put( jrequest );
 
 				return;
 			}
@@ -2672,18 +2672,18 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 			}
 
 			// Remove the json-rpc object
+			json_object_put( jrjsonrpc );
+			json_object_put( jrerror );
+			json_object_put( jrresult );
+			json_object_put( jrid );
 			json_object_put( jrobj );
 		}
+	}
 
-		// Clean-up cURL
-		curl_easy_cleanup( curl );
-	}
-	else
-	{
-		// Always clean-up the cURL enviroment
-		curl_global_cleanup();
-	}
-//pthread_mutex_unlock( &g_jsonRpcCall );
+	json_object_put( jjsonrpc );
+	json_object_put( jmethod );
+	json_object_put( jparams );
+	json_object_put( jrequest );
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -2795,6 +2795,26 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	char ozw_vers2[100];
 	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d (%s)", ozw_vers_major, ozw_vers_minor, ozw_vers_revision, ozw_version_string );
 	WriteLog( LogLevel_Debug, false, "%s", ozw_vers2 );
+
+	// Initialize global libcurl
+	curl_global_init( CURL_GLOBAL_ALL );
+
+	// Get a cURL handle
+	curl = curl_easy_init( );
+	if ( curl )
+	{
+		curl_easy_setopt( curl, CURLOPT_INTERFACE, "127.0.0.1" );
+		curl_easy_setopt( curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4 );
+		curl_easy_setopt( curl, CURLOPT_NOSIGNAL, 1 );
+
+		// Reset header to NULL, else we can't do a restart
+		curlhttpheader = NULL;
+		curlhttpheader = curl_slist_append( curlhttpheader, "Content-Type: application/json" );
+		rescurl = curl_easy_setopt( curl, CURLOPT_HTTPHEADER, curlhttpheader );
+
+		rescurl = curl_easy_setopt( curl, CURLOPT_CONNECTTIMEOUT, 3 );
+		rescurl = curl_easy_setopt( curl, CURLOPT_TIMEOUT, 3 );
+	}
 
 	// Configure open-zwave config and log
 	Options::Create( configdir, zwdir, "" );
@@ -2938,6 +2958,11 @@ void DomoZWave_Destroy( )
 
 	// Remove the OnNotification from the wrapper
 	Manager::Get()->RemoveWatcher( OnNotification, NULL );
+
+	// Cleanup the possible libcurl variables 
+	if ( curlhttpheader ) curl_slist_free_all( curlhttpheader );
+	if ( curl ) curl_easy_cleanup( curl );
+	curl_global_cleanup();
 
 	Manager::Get()->Destroy();
 	Options::Get()->Destroy();
