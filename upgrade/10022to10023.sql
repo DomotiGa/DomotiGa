@@ -1,4 +1,53 @@
 --
+-- Table structure for table `settings_modbus`
+--
+
+DROP TABLE IF EXISTS `settings_modbus`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `settings_modbus` (
+  `id` int(11) NOT NULL,
+  `modbustype` varchar(32) DEFAULT NULL,
+  `enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `type` varchar(32) DEFAULT NULL,
+  `serialport` varchar(128) DEFAULT NULL,
+  `baudrate` varchar(32) DEFAULT NULL,
+  `stopbits` int(8) DEFAULT NULL,
+  `databits` int(8) DEFAULT NULL,
+  `parity` int(8) DEFAULT NULL,
+  `debug` tinyint(1) NOT NULL DEFAULT '0',
+  `polltime` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `settings_modbus`
+--
+
+LOCK TABLES `settings_modbus` WRITE;
+/*!40000 ALTER TABLE `settings_modbus` DISABLE KEYS */;
+INSERT INTO `settings_modbus` VALUES (0,'rtu',0,'192.168.100.7',502,'serial','/dev/ttyUSB0','9600',1,8,0,0,300),(1,'rtu',0,'192.168.100.7',502,'serial','/dev/ttyUSB0','9600',1,8,0,0,300);
+/*!40000 ALTER TABLE `settings_modbus` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Add Modbus to Table `plugin`
+--
+
+INSERT INTO plugins (`id`, `interface`, `name`, `protocols`, `type`) VALUES (98, 'Modbus Interface', 'Modbus', 'Modbus', 'class');
+
+--
+-- Add Modbus devicetypes
+--
+
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (675, 'Read Holding Register 16-bit Unsigned', '03 16-bit Unsigned', 'Modbus', '2:10'),(676,'Read Holding Register 16-bit Signed','03 16-bit Signed','Modbus','1:0'),(677, 'Read Holding Register 16-bit ASCII', '03 16-bit ASCII', 'Modbus', '2:10'),(678,'Read Holding Register 16-bit On/Off','03 16-bit On/Off','Modbus','1:0');
+
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (679, 'Read Holding Register 32-bit Unsigned', '03 32-bit Unsigned', 'Modbus', '2:10'),(708,'Read Holding Register 32-bit Signed','03 32-bit Signed','Modbus','1:0'),(709, 'Read Holding Register 32-bit ASCII', '03 32-bit ASCII', 'Modbus', '2:10'),(710,'Read Holding Register 32-bit IEEE','03 32-bit IEEE','Modbus','1:0');
+
+--
 -- Delete duplicate Wirelesstags Plugin
 --
 
