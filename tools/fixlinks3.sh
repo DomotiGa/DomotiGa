@@ -52,6 +52,7 @@ ln -s ../../DomotiGa3/.src/CKMTronicUDP.class
 ln -s ../../DomotiGa3/.src/CKNX.class
 ln -s ../../DomotiGa3/.src/CLEDMatrix.class
 ln -s ../../DomotiGa3/.src/CMochad.class
+ln -s ../../DomotiGa3/.src/CModbus.class
 ln -s ../../DomotiGa3/.src/CMQTT.class
 ln -s ../../DomotiGa3/.src/CMeteohub.class
 ln -s ../../DomotiGa3/.src/CMySensors.class
