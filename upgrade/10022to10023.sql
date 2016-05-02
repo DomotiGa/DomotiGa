@@ -282,6 +282,11 @@ UPDATE settings_mysensors SET `heartbeat`=60;
 UPDATE settings_visonic SET `autosynctime`=-1 WHERE `autosynctime`=1;
 
 --
+-- Update addressformat for MySensors
+--
+UPDATE devicetypes SET `addressformat`='<node-id> or <node-id.child-sensor-id>' WHERE `id`='315';
+
+--
 -- Finally update to 1.0.023
 --
 
