@@ -23,7 +23,7 @@
 '
 '  1. Write a "<moduletype>_Receive" sub routine
 '  2. Write a "<moduletype>_Send" sub routine
-'  3. Add the <moduletype> to the "Decode_packet" routine
+'  3. Add the <moduletype> to the "Decode_Packet" routine
 '  4. Add the <moduletype> to the "GetModuleType" routine
 '  5. Append in the "SendCommand" routine the calls to the "<moduletype>_Send" sub routine
 '
@@ -87,6 +87,7 @@ Private iReConnectRetry As Integer = 0 ' retries
 Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
 
 ' Velbus module types
+Const VMUNKNOWN As Byte = &H00
 Const VMB8PB As Byte = &H01
 Const VMB1RY As Byte = &H02
 Const VMB1BL As Byte = &H03
@@ -580,7 +581,7 @@ End
 Public Sub Socket_Read()
 
   Dim bData, bDataPart As Byte
-  Dim sPacket, sData As String
+  Dim sData As String
   Dim bTempData As New Byte[]
 
   If Last.Status <> Net.Connected Then Return
@@ -612,13 +613,7 @@ Public Sub Socket_Read()
       Endif
       If (iMsgRelayPart = (6 + CInt(bMsgRelaySize))) Then
         bMsgRelayStart = False
-        If $bDebug Then
-          sPacket = ""
-          For Each bDataPart In bMsgRelayData
-            sPacket &= Hex(bDataPart, 2) & "  "
-          Next
-          Main.WriteDebugLog(LogLabel & "<< " & sPacket)
-        Endif
+        If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & Util.ByteToHex(bDataPart))
 
         'create new array object to prevent the cQueue collection pointing to same reference for all items
         bTempData.Clear
@@ -660,7 +655,7 @@ Private Sub GetCurrentModuleStatus()
           For Each sModuleAddress In sGetStatusModules
             If sModuleAddress = Left(rResult!address, Len(sModuleAddress)) Then
               bInList = True
-              Exit
+              Break
             Endif
           Next
         End If
@@ -710,16 +705,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub WriteCommand(bDataPackage As Byte[], sKey As String)
 
-  Dim sMessage As String = ""
-  Dim bDataPart As Byte
-
-
-  If $bDebug Then
-    For Each bDataPart In bDataPackage
-      sMessage &= Hex(bDataPart, 2) & "  "
-    Next
-    Main.WriteDebugLog("[Velbus] > " & sMessage)
-  Endif
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & Util.ByteToHex(bDataPackage))
 
   If $sInterface = "tcp" Then
     ' send the message to the tcp stream
@@ -879,6 +865,8 @@ Private Sub CollectPackage(bTemp As Byte)
             If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: - Checksumbyte (" & Hex(bTemp, 2) & ") is OK")
           Else
             If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: Ignore packet -> wrong checksum " & Hex(bTemp, 2) & ", expected = " & Hex(CalcCheckSum(bCheckSumData, 2)))
+
+            If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & Util.ByteToHex(bCheckSumData) & " (CRC ERROR)")
             ResetReceivedPackage()
           Endif
         Else
@@ -888,19 +876,23 @@ Private Sub CollectPackage(bTemp As Byte)
             If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: Valid packet received, start decoding...")
 
             If $bDebug Then
-              sMessage = Hex(VB_STX, 2)
-              sMessage &= Hex(bMsgPrio, 2)
-              sMessage &= Hex(bMsgAddr, 2)
-              sMessage &= Hex(bMsgSize, 2)
+              sMessage = Hex(VB_STX, 2) & " "
+              sMessage &= Hex(bMsgPrio, 2) & " "
+              sMessage &= Hex(bMsgAddr, 2) & " "
+              sMessage &= Hex(bMsgSize, 2) & " "
               For iCnt = 0 To bMsgData.Count - 1
-                sMessage &= Hex(bMsgData[iCnt], 2)
+                sMessage &= Hex(bMsgData[iCnt], 2) & " "
               Next
-              sMessage &= bCheckSum
-              sMessage &= VB_ETX
-              Main.WriteDebugLog("[Velbus] < " & sMessage)
+              sMessage &= Hex(bCheckSum, 2) & " "
+              sMessage &= Hex(VB_ETX, 2)
+
+              Main.WriteDebugLog(LogLabel & "< " & sMessage)
+              Main.WriteDebugLog(LogLabel & "  Priority: " & IIf(bMsgPrio = VB_HPrio, "High", "Low"))
+              Main.WriteDebugLog(LogLabel & "  Address:  " & bMsgAddr)
+              Main.WriteDebugLog(LogLabel & "  Data Length: " & bMsgSize)
             Endif 
 
-            Decode_packet(bMsgAddr, bMsgData)
+            Decode_Packet(bMsgAddr, bMsgData)
             ResetReceivedPackage()
           Else
             If $bDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: Invalid byte '" & Hex(bTemp) & "' received at end of message")
@@ -966,16 +958,18 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Decode received data packet from velbus
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Decode_packet(bAddress As Byte, bData As Byte[])
+Private Sub Decode_Packet(bAddress As Byte, bData As Byte[])
 
   Dim bModuleType, bScanAddress As Byte
   Dim sModuleType As String
   Dim bSupported, bIgnoreModule As Boolean
 
-  ' velbus module type
+  ' velbus module type detection during scan
   If bData[0] = VB_MODULE_TYPE Then
     bModuleType = bData[1]
   Else
+    ' Retrieve the moduletype from the DB, or do a scan for it
+    ' &HFF = Scan, &H00 = Ignore
     bModuleType = GetModuleType(bAddress)
   Endif
 
@@ -1083,7 +1077,7 @@ Private Sub Decode_packet(bAddress As Byte, bData As Byte[])
       sModuleType = "VMBRF8RXS"
     Case &H00
       'unknown module type, no scan request scheduled
-    Case &h99
+    Case &H99
       'unknown module type, do nothing as scan request is scheduled to be sent
       bSupported = True
     Case Else
@@ -1092,18 +1086,26 @@ Private Sub Decode_packet(bAddress As Byte, bData As Byte[])
   End Select
 
   If Not bSupported Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Packet received from module " & sModuleType & " with address " & Hex(bAddress) & " which is not (yet) supported by DomotiGa code")
+
+    If bAddress = VMUNKNOWN Then
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Packet received from module with address 0x" & Hex(bAddress) & ", device isn't discovered or configured yet")
+    Else
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Packet received from module " & sModuleType & " with address 0x" & Hex(bAddress) & " which is not (yet) supported by DomotiGa code")
+    Endif
+
     bIgnoreModule = False
     For Each bScanAddress In VB_Modules_Unsupported
       If bScanAddress = bAddress Then
         bIgnoreModule = True
-        Exit
+        Break
       Endif
     Next
+
     If Not bIgnoreModule Then
       VB_Modules_Unsupported.Push(bAddress)
       If $bDebug Then Main.WriteDebugLog(LogLabel & "Ignoring future messages of unsupported module " & sModuleType & " with address " & Hex(bAddress))
     Endif
+
   Endif
 
 Catch
@@ -1181,12 +1183,12 @@ Private Function GetModuleType(Address As Byte, Optional DeviceId As Integer) As
           If InStr(rResult!address, "|") > 0 Then
             If HexStringToByte(UCase(Left(rResult!address, (InStr(rResult!address, "|") - 1)))) = Address Then
               iDeviceId = rResult!id
-              Exit
+              Break
             Endif
           Else
             If UCase(rResult!address) = Hex(Address, 2) Then
               iDeviceId = rResult!id
-              Exit
+              Break
             Endif
           Endif
         Next
@@ -1217,6 +1219,7 @@ Private Function GetModuleType(Address As Byte, Optional DeviceId As Integer) As
         Return VMB8PB
       Case Else
         Main.WriteDebugLog(LogLabel & "Unsupported velbus module '" & UCase(Devices.FindDeviceTypeNameForDeviceId(iDeviceId)) & "'")
+        Return &H00
     End Select
   Else
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown moduletype with address " & Hex(Address))
@@ -2251,3 +2254,4 @@ Catch ' some errors
   ErrorWhere = ""
 
 End
+
