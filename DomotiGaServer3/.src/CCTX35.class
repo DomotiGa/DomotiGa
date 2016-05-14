@@ -45,10 +45,15 @@ Private $sBaud As String
 Private $iPollTime As Integer
 Private $bGlobalX10 As Boolean
 Private $bDebug As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
 
-Private RecBuf As String
+Private $sMsgData As String
 
-Public hCTX35 As New SerialPort
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
+
 Public tCTX35Poll As Timer
 Public tCTX35Led As Timer
 Public tCTX35Busy As Timer
@@ -65,6 +70,8 @@ Private aCTX As New String[3, 7]    ' buffer received commands
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
 
+  Dim sStr As String
+
   KeyName = cPl.KeyName
   Instance = cPl.Instance
   If Instance <> 1 Then LogLabel = Replace(LogLabel, "] ", "#" & Instance & "] ")
@@ -76,17 +83,35 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iPollTime = cPl.Settings["polltime"]
   $bGlobalX10 = cPl.Settings["globalx10"]
   $bDebug = cPl.Settings["debug"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sInterface = cPl.Settings["type"]
+
+   If $bDebug Then
+    WriteDebugLog("*** Start Plugin: " & PluginFriendlyName & " ***")
+    WriteDebugLog("  Plugin Version: " & PluginVersion)
+  Endif
+
+  If $bDebug Then
+    For Each sStr In cPl.Settings
+      WriteDebugLog("  [Settings] " & cPl.Settings.Key & ": " & sStr)
+    Next
+  Endif
 
   InterfaceId = Devices.FindInterface("Xanura CTX35")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
-    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    WriteLog("ERROR: " & ErrorText)
     IsRunning = False
     Return
   Endif
 
   ' Connect/Initialize connection
-  Connect()
+  If InStr($sInterface, "tcp") Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
 
 End
 
@@ -100,17 +125,74 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+  
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Public Function ConnectSerial() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the port
-  Try hCTX35.Close
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
-  ' get a new one
-  hCTX35 = New Serialport As "CTX35"
+  ' get a new one - but store the retry counter between new instances
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
 
-  With hCTX35
+  With hMySerial
+    .DataType = gb.String
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = 0
@@ -141,8 +223,8 @@ Public Function Connect() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -154,17 +236,16 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' close port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Public Sub Disconnect() As Boolean
 
-  ' try stop running timers
-  Try tCTX35Poll.Stop
-  Try tCTX35Busy.Stop
-  Try tCTX35Led.Stop
+  ' Try to close the connection
+  Try hMySocket.Close
+  Try hMySerial.Close
 
-  ' try to close the connection
-  Try hCTX35.Close
+  ' Stop possible timers
+  StopTimers()
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
 
   ' all ok
   Return True
@@ -175,57 +256,175 @@ Finally
   ErrorWhere = ""
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & Error.Text)
   Return False
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Stop all timers
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
+
+  Try tCTX35Poll.Stop
+  Try tCTX35Busy.Stop
+  Try tCTX35Led.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteDebugLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+  WriteLog("ERROR: " & sMsg)
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim sData As String
+
+  If vVar Then
+    For Each sData In vVar
+      ProcessReceivedChar(sData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data back from MySensors gateway and parse it when it's complete
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim sData As String
+
+  If vVar Then
+    For Each sData In vVar
+      ProcessReceivedChar(sData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessReceivedChar(sData As String)
 
   Main.ControlLed("X10", "On")
   If Main.bServer Then tCTX35Led.Start
 
-  If sdata = "$" Then ' begin of packet
-    RecBuf = sData
+  If sData = "$" Then ' begin of packet
+    $sMsgData = sData
   Else
-    RecBuf &= sData
+    $sMsgData &= sData
   Endif
 
   ' the CTX35 sometimes sends an incomplete packet when sending BOFFBOFF, this fixes the packet so it's valid
-  If Right$(RecBuf, 9) = "BOFFBOFF8" Then RecBuf = Left$(RecBuf, -1) & "85#"
+  If Right$($sMsgData, 9) = "BOFFBOFF8" Then $sMsgData = Left$($sMsgData, -1) & "85#"
 
   ' received complete packet
-  If Right$(RecBuf, 1) = "#" Then
-    ProcessX10(RecBuf)
+  If Right$($sMsgData, 1) = "#" Then
+    ProcessX10($sMsgData)
   Endif
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessX10(sStr As String)
 
   Dim iPos As Integer = 1
   Dim sChar As String
 
-  RecBuf = ""
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sStr)
+  $sMsgData = ""
+
+  If $bDebug Then WriteDebugLog("< " & sStr)
 
   ' process special packets
   Select sStr
     Case "$<2800!4B#" ' ack packet
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "< Ack received!")
+      If $bDebug Then WriteDebugLog("< Ack received!")
       Return
     Case "$<2800?69#" ' wrong checksum received
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "< Wrong checksum!")
+      If $bDebug Then WriteDebugLog("< Wrong checksum!")
       Return
     Case "$<2800!S0CE#" ' interface buffer full
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "< Buffer is full!")
+      If $bDebug Then WriteDebugLog("< Buffer is full!")
       Return
   End Select
 
   ' check checksum first
   If Not TestCheckSum(sStr) Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Checksum error!")
+    If $bDebug Then WriteDebugLog("Checksum error!")
     Return
   Endif
 
@@ -261,6 +460,9 @@ Private Sub ProcessX10(sStr As String)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessCode(sType As String, sValue As String)
 
   Dim iCnt, iCnt2 As Integer
@@ -270,7 +472,7 @@ Private Sub ProcessCode(sType As String, sValue As String)
     Select sType
       Case "Code"
         bCodefound = False
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Code: " & sValue)
+        If $bDebug Then WriteDebugLog("Code: " & sValue)
         For iCnt2 = 0 To 2
           If aCTX[iCnt, 0] = sValue And Not aCTX[iCnt, 5] Then bCodefound = True
         Next
@@ -291,7 +493,7 @@ Private Sub ProcessCode(sType As String, sValue As String)
           aCTX[iCnt, 6] = ""
           Return
         Else If DateDiff(Time, aCTX[iCnt, 4], gb.Second) > 10 Then ' incomplete code/status, overwrite
-          Main.WriteDebugLog(LogLabel & "Received Code without Status : " & aCTX[iCnt, 0] & " " & aCTX[iCnt, 1] & " " & aCTX[iCnt, 2] & " " & aCTX[iCnt, 3] & " " & aCTX[iCnt, 4] & " " & aCTX[iCnt, 5] & " " & aCTX[iCnt, 6])
+          WriteDebugLog("Received Code without Status : " & aCTX[iCnt, 0] & " " & aCTX[iCnt, 1] & " " & aCTX[iCnt, 2] & " " & aCTX[iCnt, 3] & " " & aCTX[iCnt, 4] & " " & aCTX[iCnt, 5] & " " & aCTX[iCnt, 6])
           aCTX[iCnt, 0] = sValue
           aCTX[iCnt, 1] = ""
           aCTX[iCnt, 2] = ""
@@ -302,7 +504,7 @@ Private Sub ProcessCode(sType As String, sValue As String)
           Return
         Endif
       Case "Status Request"
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Status Request " & sValue)
+        If $bDebug Then WriteDebugLog("Status Request " & sValue)
         If aCTX[iCnt, 0] = "" Then
           Return
         Else If Left$(aCTX[iCnt, 0], 1) = Left$(sValue, 1) And aCTX[iCnt, 5] = "" Then
@@ -310,7 +512,7 @@ Private Sub ProcessCode(sType As String, sValue As String)
           Return
         Endif
       Case "Status"
-        If $bDebug Then Main.WriteDebugLog(LogLabel & " Status: " & sValue)
+        If $bDebug Then WriteDebugLog(" Status: " & sValue)
         If aCTX[iCnt, 2] = "" And Left$(aCTX[iCnt, 0], 1) = Left$(sValue, 1) Then
           aCTX[iCnt, 5] = "OK"
           aCTX[iCnt, 4] = Time
@@ -326,11 +528,14 @@ Private Sub ProcessCode(sType As String, sValue As String)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub UpdateX10(sCode As String, sCommand As String)
 
   Dim iDeviceId As Integer
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received command '" & sCommand & "' for device '" & sCode & "'")
+  If $bDebug Then WriteDebugLog("Received command '" & sCommand & "' for device '" & sCode & "'")
 
   If $bGlobalX10 Then
     iDeviceId = Devices.FindAll(Instance, sCode, 9999, "X10")
@@ -356,7 +561,7 @@ Public Sub tCTX35Busy_Timer()
   tCTX35Busy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending next command from Queue (count = " & cQueue.Count & ")")
+    If $bDebug Then WriteDebugLog("Sending next command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
 
@@ -399,19 +604,6 @@ Private Sub DoQueue()
 
 End
 
-Public Sub CTX35_Read()
-
-  Dim bData As Byte
-
-  Try bData = Read #Last As Byte
-  If Not Error Then
-    ProcessReceivedChar(Chr(bData))
-  Else
-    Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! ->" & ERROR.Text)
-  Endif
-
-End
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send packet to CTX35 interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -420,10 +612,15 @@ Private Sub WriteCommand(sBuffer As String, sKey As String)
   Main.ControlLed("X10", "On")
   If Main.bServer Then tCTX35Led.Start
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sBuffer)
+  If $bDebug Then WriteDebugLog("> " & sBuffer)
 
-  Try Print #hCTX35, sBuffer
-  If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! ->" & ERROR.Text)
+  If InStr($sInterface, "tcp") Then
+    ' send the message to the tcp stream
+    hMySocket.Write(sBuffer)
+  Else
+    ' send the message to the serial port
+    hMySerial.Write(sBuffer)
+  Endif
 
   ' remove sent command from queue
   cQueue.Remove(sKey)
@@ -448,7 +645,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
 
   ' check if it contains a valid address
   If Not (sAddress Like "[A-P][0-1][0-9]*") Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Got invalid address " & sAddress & "!")
+    If $bDebug Then WriteDebugLog("Got invalid address " & sAddress & "!")
     Return
   Endif
 
@@ -458,7 +655,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
   ' translate to CTX command
   sStr = X10toCTX(sValue)
   If Len(sStr) = 0 Then ' not valid
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Got invalid command " & sValue & "!")
+    If $bDebug Then WriteDebugLog("Got invalid command " & sValue & "!")
     Return
   Endif
 
@@ -536,4 +733,3 @@ Private Sub X10toCTX(sCommand As String) As String
   Return ""
 
 End
-

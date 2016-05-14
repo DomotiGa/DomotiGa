@@ -39,11 +39,14 @@ Private $bEnabled As Boolean
 Private $sSerPort As String
 Private $sBaud As String
 Private $bDebug As Boolean
+Private $sTCPHost As String
+Private $iTCPPort As Integer
+Private $sInterface As String
 
-Public hCurrentCost As New SerialPort
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 
-Public sBuffer As String
-Public sAddress As String
+Private $sMsgData As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -52,6 +55,8 @@ Public sAddress As String
 ' - Any other code per Class
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
+
+  Dim sStr As String
 
   KeyName = cPl.KeyName
   Instance = cPl.Instance
@@ -62,17 +67,35 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sSerPort = cPl.Settings["serialport"]
   $sBaud = cPl.Settings["baudrate"]
   $bDebug = cPl.Settings["debug"]
+  $sTCPHost = cPl.Settings["tcphost"]
+  $iTCPPort = cPl.Settings["tcpport"]
+  $sInterface = cPl.Settings["type"]
+
+   If $bDebug Then
+    WriteDebugLog("*** Start Plugin: " & PluginFriendlyName & " ***")
+    WriteDebugLog("  Plugin Version: " & PluginVersion)
+  Endif
+
+  If $bDebug Then
+    For Each sStr In cPl.Settings
+      WriteDebugLog("  [Settings] " & cPl.Settings.Key & ": " & sStr)
+    Next
+  Endif
 
   InterfaceId = Devices.FindInterface("Current Cost Receiver")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
-    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    WriteLog("ERROR: " & ErrorText)
     IsRunning = False
     Return
   Endif
 
   ' Connect/Initialize connection
-  Connect()
+  If InStr($sInterface, "tcp") Then
+    ConnectTCP()
+  Else
+    ConnectSerial()
+  Endif
 
 End
 
@@ -86,17 +109,75 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Function ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+  
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Public Function ConnectSerial() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the port
-  Try hCurrentCost.Close
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
-  ' get a new one
-  hCurrentCost = New Serialport As "CurrentCost"
+  ' get a new one - but store the retry counter between new instances
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
 
-  With hCurrentCost
+  With hMySerial
+    .DataType = gb.String
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = 0
@@ -114,8 +195,8 @@ Public Function Connect() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -129,10 +210,14 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Disconnect() As Boolean
 
-  ' try to close the connection
-  Try hCurrentCost.Close
+  ' Try to close the connection
+  Try hMySocket.Close
+  Try hMySerial.Close
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  ' Stop possible timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
 
   ' all ok
   Return True
@@ -143,26 +228,130 @@ Finally
   ErrorWhere = ""
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & Error.Text)
   Return False
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' read incoming serial data
+' Stop all timers
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub CurrentCost_Read()
+Private Sub StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteDebugLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+  WriteLog("ERROR: " & sMsg)
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
 
   Dim sData As String
 
-  Try sData = Read #hCurrentCost, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from serial port! -> " & Error.Text)
-  If sData = Chr(10) Or If sData = Chr(13) Then ' buffer until newline or cr then parse
-    If Right(sBuffer, 6) = "</msg>" Then ProcessMessage(sBuffer)
-    sBuffer = Null
-  Else
-    sBuffer &= sData
+  If vVar Then
+    For Each sData In vVar
+
+      If sData = Chr(13) Or If sData = Chr(10) Then ' buffer until newline or cr then parse
+        If Right($sMsgData, 6) = "</msg>" Then ProcessReceivedPacket($sMsgData)
+        $sMsgData = ""
+      Else
+        $sMsgData &= sData
+      Endif
+
+    Next
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data back from MySensors gateway and parse it when it's complete
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim sData As String
+
+  If vVar Then
+    For Each sData In vVar
+
+      If sData = Chr(13) Or If sData = Chr(10) Then ' buffer until newline or cr then parse
+        If Right($sMsgData, 6) = "</msg>" Then ProcessReceivedPacket($sMsgData)
+        $sMsgData = ""
+      Else
+        $sMsgData &= sData
+      Endif
+
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
 
 End
 
@@ -173,7 +362,7 @@ End
 ' It gets the ID for the device from the system and the device type) from the data.
 ' (1=electric value,' 2=electric pulse, 3=gas, 4=water.
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ProcessMessage(sStr As String)
+Private Sub ProcessReceivedPacket(sStr As String)
 
   Dim iDeviceId As Integer
   Dim aScan As String[]
@@ -192,7 +381,7 @@ Public Sub ProcessMessage(sStr As String)
     aScan = Scan(sStr, "*<id>*</id>*")
     sId = aScan[1]
     iDeviceId = Devices.Find(Instance, sId, InterfaceId, "CCOST")
-    Select Case sType
+    Select sType
       Case 1  'electric watt meter ie direct values
         GetPutRealTimeValueData(iDeviceId, sType, sStr)
       Case 2, 3, 4  ' pulse data 2 is electric, 3 is gas, 4 is water
@@ -208,6 +397,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetPutHistoryData(sStr As String)
 
+  sStr = sStr
   ' Two hourly history
   '<msg> start Of message
   ' <src> CC128 - v0.19</src> [ As For Real - Time]
@@ -293,7 +483,7 @@ Public Sub GetPutHistoryData(sStr As String)
   '</hist>
   '</msg>
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & " received history data.")
+  If $bDebug Then WriteDebugLog(" received history data.")
 
 End
 
@@ -307,6 +497,7 @@ Public Sub GetPutRealTimeValueData(iDeviceId As Integer, sType As String, sStr A
   Dim iValueNum As Integer = 0
   Dim sTargetList As String[]
 
+  sType = sType
   '<msg> start Of message
   ' <src> CC128 - v1.29 </src> source And software version * *
   ' <uid> 161 A582015AA09B </uid> unique ID * (see text †)
@@ -358,6 +549,7 @@ Public Sub GetPutRealTimePulseData(iDeviceId As Integer, sType As String, sStr A
   Dim bValid As Boolean
   Dim sTargetList As String[]
 
+  sType = sType
   '<msg> start Of message
   ' <src> CC128 - v1.29 </src> source And software version * *
   ' <uid> 161 A582015AA09B </uid> unique ID * (see previous text †)
@@ -373,7 +565,7 @@ Public Sub GetPutRealTimePulseData(iDeviceId As Integer, sType As String, sStr A
   '</msg> End Of message
 
   sTargetList = ["*<imp>*</*imp>", "*<ipu>*</ipu>*", "*<tmpr>*</tmpr>*"]
-  If $bDebug Then Main.WriteDebugLog(LogLabel & " received pulse data.")
+  If $bDebug Then WriteDebugLog(" received pulse data.")
   For Each sTarget In sTargetList
     Inc iValueNum
     sValue = ExtractValue(sStr, sTarget)

@@ -42,10 +42,10 @@ Private $sInterface As String
 Private $sSerPort As String
 Private $sBaud As String
 
-Public hDenon As New Socket
-Public hDenonSer As New SerialPort
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 
-Public sBuffer As String
+Private $sMsgData As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -54,6 +54,8 @@ Public sBuffer As String
 ' - Any other code per Class
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
+
+  Dim sStr As String
 
   KeyName = cPl.KeyName
   Instance = cPl.Instance
@@ -67,7 +69,18 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sSerPort = cPl.Settings["serialport"]
   $sBaud = cPl.Settings["baudrate"]
   $bDebug = cPl.Settings["debug"]
- 
+
+   If $bDebug Then
+    WriteDebugLog("*** Start Plugin: " & PluginFriendlyName & " ***")
+    WriteDebugLog("  Plugin Version: " & PluginVersion)
+  Endif
+
+  If $bDebug Then
+    For Each sStr In cPl.Settings
+      WriteDebugLog("  [Settings] " & cPl.Settings.Key & ": " & sStr)
+    Next
+  Endif
+
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
@@ -87,19 +100,42 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the tcp host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function ConnectTCP() As Boolean
 
-  ' try to close the connection
-  Try hDenon.Close
+  Dim iReconnectRetry As Integer = 0
 
-  ' get a new one
-  hDenon = New Socket As "Denon"
-  hDenon.Connect($sTCPHost, $iTCPPort)
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+  
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
 
@@ -107,8 +143,8 @@ Public Function ConnectTCP() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -122,12 +158,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function ConnectSerial() As Boolean
 
-  ' try to close the connection
-  Try hDenonSer.Close
+  Dim iReconnectRetry As Integer = 0
 
-  ' get a new one
-  hDenonSer = New Serialport As "DenonSer"
-  With hDenonSer
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+
+  ' get a new one - but store the retry counter between new instances
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = gb.String
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = 0
@@ -139,15 +180,15 @@ Public Function ConnectSerial() As Boolean
 
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+  WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -157,43 +198,18 @@ Catch ' some errors
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is connected
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Denon_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' send some commands to get the states of the device and write them back in variable.
-  SendCmd("MV?")
-  Sleep 0.5
-  SendCmd("SV?")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is closed
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Denon_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the tcp host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function Disconnect() As Boolean
 
-  ' try to close the connection
-  Try hDenon.Close
-  Try hDenonSer.Close
+  ' Try to close the connection
+  Try hMySocket.Close
+  Try hMySerial.Close
 
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
+  ' Stop possible timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
 
   ' all ok
   Return True
@@ -204,23 +220,135 @@ Finally
   ErrorWhere = ""
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & Error.Text)
   Return False
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to host
+' Stop all possible timers
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Denon_Error()
+Private Sub StopTimers()
 
-  Dim sMsg As String
+End
 
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteDebugLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
 
   IsRunning = False
   ErrorText = sMsg
+
+  WriteLog("ERROR: " & sMsg)
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim sData As String
+
+  If vVar Then
+    For Each sData In vVar
+
+      If sData = Chr$(13) Then ' buffer until linefeed then parse
+        If Len($sMsgData) > 1 Then ProcessReceivedPacket($sMsgData)
+        $sMsgData = ""
+      Else
+        $sMsgData &= sData
+      Endif
+
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  ' send some commands to get the states of the device and write them back in variable.
+  SendCmd("MV?")
+  Sleep 0.5
+  SendCmd("SV?")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data back from MySensors gateway and parse it when it's complete
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim sData As String
+
+  If vVar Then
+    For Each sData In vVar
+
+      If sData = Chr$(13) Then ' buffer until linefeed then parse
+        If Len($sMsgData) > 1 Then ProcessReceivedPacket($sMsgData)
+        $sMsgData = ""
+      Else
+        $sMsgData &= sData
+      Endif
+
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
 
 End
 
@@ -229,13 +357,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCmd(sCmd As String)
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending '" & sCmd & "' to Receiver.")
-  If $sInterface = "tcp" Then
-    Try Write #hDenon, sCmd & Chr$(13), Len(sCmd) + 1
-    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & Error.Text)
+  If $bDebug Then WriteDebugLog("Sending '" & sCmd & "' to Receiver.")
+
+  ' Append Carriage-Return
+  sCmd &= gb.Cr
+
+  If InStr($sInterface, "tcp") Then
+    ' send the message to the tcp stream
+    hMySocket.Write(sCmd)
   Else
-    Try Write #hDenonSer, sCmd & Chr$(13), Len(sCmd) + 1
-    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! -> " & Error.Text)
+    ' send the message to the serial port
+    hMySerial.Write(sCmd)
   Endif
 
 End
@@ -253,7 +385,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
     Case "off"
       SendCmd("PWSTANDBY")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
+      If $bDebug Then WriteDebugLog("Unsupported command received: " & sValue)
   End Select
 
 End
@@ -311,60 +443,30 @@ Public Sub SetCommand(sCmd As Variant, sValue As Variant, sAddress As String)
       ' send any correct command to receiver
       SendCmd(UCase(sValue))
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sCmd & " " & sValue)
+      If $bDebug Then WriteDebugLog("Unsupported command received: " & sCmd & " " & sValue)
   End Select
   ' TODO: has to be completed with others and zone 2
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' GetCommand, used by AVControl/FMusic
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub GetCommand(sCmd As String, sAddress As String)
 
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' data received on tcp socket
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Denon_Read()
-
-  Dim sData As String
-
-  Try sData = Read #hDenon, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
-  If sData = Chr$(13) Then ' buffer until linefeed then parse
-    If Len(sBuffer) > 1 Then ParseLine(sBuffer)
-    sBuffer = Null
-  Else
-    sBuffer &= sData
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' data received on serial port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub DenonSer_Read()
-
-  Dim sData As String
-
-  Try sData = Read #hDenonSer, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! -> " & Error.Text)
-  If sData = Chr$(13) Then ' buffer until linefeed then parse
-    If Len(sBuffer) > 1 Then ParseLine(sBuffer)
-    sBuffer = Null
-  Else
-    sBuffer &= sData
-  Endif
+  sCmd = sCmd
+  sAddress = sAddress
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' parse received data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseLine(sStr As String)
+Private Sub ProcessReceivedPacket(sStr As String)
 
   Dim sMaincat, sZonecat, sItem, sValue, sTemp As String
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received: " & sStr)
+  If $bDebug Then WriteDebugLog("Received: " & sStr)
 
   sMaincat = Left(sStr, 2)
   sZonecat = Mid(sStr, 3)
@@ -532,7 +634,7 @@ Private Sub ParseLine(sStr As String)
       ' not implemented yet
 
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Not implemented yet!")
+      If $bDebug Then WriteDebugLog("Not implemented yet!")
   End Select
 
 End
@@ -543,7 +645,6 @@ End
 Private Sub DenonSetValue(sItem As String, vValue As Variant)
 
   Main.SetGlobalVar("Denon_" & sItem, vValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received Item: " & sItem & " Value: " & vValue)
+  If $bDebug Then WriteDebugLog("Received Item: " & sItem & " Value: " & vValue)
 
 End
-
