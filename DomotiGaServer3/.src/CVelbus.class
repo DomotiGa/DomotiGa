@@ -18,12 +18,13 @@
 '   VMB8PN   - 8 Push button module
 '   VMBDME   - Dimmer module
 '   VMBGPO   - Oled touch panel (Black or White)
+'   VMBDMI   - Velbus dimmer for resistive or inductive load
 '
 ' To add support for additional modules make these changes
 '
 '  1. Write a "<moduletype>_Receive" sub routine
 '  2. Write a "<moduletype>_Send" sub routine
-'  3. Add the <moduletype> to the "Decode_Packet" routine
+'  3. Add the <moduletype> to the "ProcessReceivedPacket" routine
 '  4. Add the <moduletype> to the "GetModuleType" routine
 '  5. Append in the "SendCommand" routine the calls to the "<moduletype>_Send" sub routine
 '
@@ -39,7 +40,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Velbus"
 Public PluginFriendlyName As String = "Velleman Velbus"
-Public PluginVersion As String = "1.01"
+Public PluginVersion As String = "1.02"
 Public PluginAuthor As String = "BreFra"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -227,6 +228,9 @@ Const VB_EEPROM_STATUS As Byte = &HFE
 Const VB_MODULE_TYPE As Byte = &HFF
 
 ' Velbus package details
+Private $bMsgPrev As Byte
+Private $aMsgData As New Byte[]
+
 Private bMsgStart As Boolean = False
 Private iMsgPart As Integer
 Private bMsgSize As Byte
@@ -276,6 +280,12 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     WriteDebugLog("  Plugin Version: " & PluginVersion)
   Endif
 
+  If $bDebug Then
+    For Each sStr In cPl.Settings
+      WriteDebugLog("  [Settings] " & cPl.Settings.Key & ": " & sStr)
+    Next
+  Endif
+
   InterfaceId = Devices.FindInterface("Velbus Interface")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
@@ -300,12 +310,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Endif
   Else
     Main.WriteLog(LogLabel & "Relay disabled.")
-  Endif
-
-  If $bDebug Then
-    For Each sStr In cPl.Settings
-      WriteDebugLog("  [Settings] " & cPl.Settings.Key & ": " & sStr)
-    Next
   Endif
 
 End
@@ -616,7 +620,7 @@ End
 Public Sub VelbusRelay_Error()
 
   ' handle errors
-  Select Case hVelbusRelay.Status
+  Select hVelbusRelay.Status
     Case Net.CannotCreateSocket
       Main.WriteDebugLog(LogLabel & "Relay The system does not allow to create a socket.")
     Case Net.CannotBindSocket
@@ -689,6 +693,9 @@ Public Sub Socket_Read()
   
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Socket_Closed()
 
   Main.WriteLog(LogLabel & "Relay client connection closed.")
@@ -830,7 +837,7 @@ Private Function CreateVelbusPackage(bPriority As Byte, bAddress As Byte, bDataS
   End If
 
   'Calc checksum
-  bCHK = CalcCheckSum(bPacket)
+  bCHK = CalculateCRC(bPacket)
   bPacket.Add(bCHK)
 
   'ETX
@@ -848,6 +855,7 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   Dim bCheckSumData As New Byte[0]
   Dim iCnt As Integer ' = 1
   Dim sMessage As String
+  Dim iSize As Integer
 
   'Example data packet
   ' +---------------------------- STX,  Start of packet
@@ -871,103 +879,89 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
     If hRelayVBSocket.Status = Net.Connected Then Try Write #hRelayVBSocket, bTemp As Byte
   Endif
 
-  If bMsgStart Then
-    Inc iMsgPart
+  If $aMsgData.Count >= 1 Then
 
-    If bExtraDebug Then Main.WriteDebugLog((LogLabel & "- CollectPackage: Byte " & CString(iMsgPart)) & ", data = " & Hex(bTemp))
+    $aMsgData.Add(bTemp)
 
-    If (iMsgPart < 4) Then 'Receive prefix of packet
-      Select Case iMsgPart
-        Case 1 'Priority
-          bMsgPrio = bTemp
-          If bExtraDebug Then
-            If bMsgPrio = VB_HPrio Then Main.WriteDebugLog(LogLabel & "- CollectPackage: - Priority = High")
-            If bMsgPrio = VB_LPrio Then Main.WriteDebugLog(LogLabel & "- CollectPackage: - Priority = Low")
-          Endif
-        Case 2 'Address
-          bMsgAddr = bTemp
-          If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: - Address = " & Hex(bMsgAddr, 2))
-        Case 3 'RTR / Size
-          If (bTemp = &H40) Then
-            'Scan (Module Type) packet
-            bMsgSize = &H00
-            If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: - Packet type = Scan")
-          Else
-            If (CInt(bTemp) > -1) And (CInt(bTemp) < 9) Then
-              bMsgSize = bTemp
-              If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: - Size = " & CStr(bMsgSize))
-            Else
-              ResetReceivedPackage()
-              If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: - Size = [INVALID], ignoring data")
-            Endif
-          Endif
-      End Select
-    Else
-      If iMsgPart < (bMsgSize + 4)
-        'Receive data of packet
-        bMsgData.Add(bTemp)
-        If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: - Databyte " & (iMsgPart - 4) & " = " & Hex(bTemp, 2))
-      Else
-        If iMsgPart = (bMsgSize + 4)
-          bCheckSum = bTemp
-          'Calculate checksum
-          bCheckSumData.Add(VB_STX)
-          bCheckSumData.Add(bMsgPrio)
-          bCheckSumData.Add(bMsgAddr)
-          bCheckSumData.Add(bMsgSize)
-          For iCnt = 0 To CInt(bMsgSize - 1)
-            bCheckSumData.Add(bMsgData[iCnt])
-          Next
-          If bTemp = CalcCheckSum(bCheckSumData) Then
-            bMsgChk = True
-            If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: - Checksumbyte (" & Hex(bTemp, 2) & ") is OK")
-          Else
-            If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: Ignore packet -> wrong checksum " & Hex(bTemp, 2) & ", expected = " & Hex(CalcCheckSum(bCheckSumData, 2)))
+    Select $aMsgData.Count
+      Case 1 ' Do nothing
+      Case 2 ' Priority
+        If $aMsgData[1] <> VB_LPRIO And If $aMsgData[1] <> VB_HPRIO Then
+          ' Invalid priority
+          WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID PRIORITY)")
+          $aMsgData.Clear()
+          $bMsgPrev = bTemp
+          Return
+        Endif
+      Case 3 ' Address
+      Case 4 ' RTR / Size
+      Default ' check for length / checksum / EOL
 
-            If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & Util.ByteToHex(bCheckSumData) & " (CRC ERROR)")
-            ResetReceivedPackage()
-          Endif
-        Else
-          'End byte
+        iSize = ($aMsgData[3] And &H0F)
+        If iSize > 8 Then
+          WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID SIZE: RECEIVED '" & iSize & "', MAX IS '8')")
+          $aMsgData.Clear()
+          $bMsgPrev = bTemp
+        Endif
+
+        ' Check if we didn't receive too much data
+        If $aMsgData.Count > (iSize + 6) Then
+          WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID PACKET: NO EOL FOUND)")
+          $aMsgData.Clear()
+          $bMsgPrev = bTemp
+          Return
+          Return
+        Endif
+
+        ' Check if we received exact amount of bytes
+        If $aMsgData.Count = (iSize + 6) Then
+          ' Current byte needs to be VB_ETX
           If bTemp = VB_ETX Then
-            'Process packet
-            If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: Valid packet received, start decoding...")
+            ' Do checksum - includes VB_STX until CRC byte
+            If CalculateCRC($aMsgData.Copy(0, $aMsgData.Count - 2)) = $aMsgData[$aMsgData.Count - 2] Then
+              ' Parse data - if it is NOT a scan packet only
 
-            If $bDebug Then
-              sMessage = Hex(VB_STX, 2) & " "
-              sMessage &= Hex(bMsgPrio, 2) & " "
-              sMessage &= Hex(bMsgAddr, 2) & " "
-              sMessage &= Hex(bMsgSize, 2) & " "
-              For iCnt = 0 To bMsgData.Count - 1
-                sMessage &= Hex(bMsgData[iCnt], 2) & " "
-              Next
-              sMessage &= Hex(bCheckSum, 2) & " "
-              sMessage &= Hex(VB_ETX, 2)
+              If $bDebug Then
+                WriteDebugLog("< " & Util.ByteToHex($aMsgData))
+                WriteDebugLog("  Priority: " & IIf($aMsgData[1] = VB_HPRIO, "HIGH", "LOW"))
+                WriteDebugLog("  Address: " & $aMsgData[2])
+                WriteDebugLog("  RTR: " & IIf(($aMsgData[3] And &HF40) = &HF40, "ON", "OFF"))
+                WriteDebugLog("  Data Length: " & iSize)
+              Endif
 
-              Main.WriteDebugLog(LogLabel & "< " & sMessage)
-              Main.WriteDebugLog(LogLabel & "  Priority: " & IIf(bMsgPrio = VB_HPrio, "High", "Low"))
-              Main.WriteDebugLog(LogLabel & "  Address:  " & bMsgAddr)
-              Main.WriteDebugLog(LogLabel & "  Data Length: " & bMsgSize)
-            Endif 
+              If iSize > 0 Then
+                ProcessReceivedPacket($aMsgData[2], $aMsgData.Copy(4, iSize)) 
+              Endif
+            Else
+              WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID CRC: EXPECTED '" & Hex(CalculateCRC($aMsgData.Copy(0, $aMsgData.Count - 2)), 2) & "', RECEIVED '" & Hex($aMsgData[$aMsgData.Count - 2], 2) & "')")
+            Endif
 
-            If bMsgSize > 0 Then Decode_Packet(bMsgAddr, bMsgData)
-
-            ResetReceivedPackage()
+            $aMsgData.Clear()
+            $bMsgPrev = bTemp
           Else
-            If $bDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: Invalid byte '" & Hex(bTemp) & "' received at end of message")
+            WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID PACKET: NO EOL FOUND)")
+            $aMsgData.Clear()
+            $bMsgPrev = bTemp
+            Return
           Endif
         Endif
-      Endif
-    Endif
+
+    End Select
 
   Else
     If bTemp = VB_STX Then
-      'start byte received
-      bMsgStart = True
-      If bExtraDebug Then Main.WriteDebugLog(LogLabel & "- CollectPackage: Start receiving new packet")
-      iMsgPart = 0
-    Endif
+      $aMsgData.Add(bTemp)
+    Else
+      $aMsgData.Add(bTemp)
+      WriteDebugLog("< " & Util.ByteToHex($aMsgData) & " (INVALID START PACKET)")
+      If $bDebug Then WriteDebugLog("ERROR: Invalid data")
+      $aMsgData.Clear()
+      $bMsgPrev = bTemp
+      Return
+    Endif 
   Endif
+
+  $bMsgPrev = bTemp
 
   Main.ControlLed("Velbus", "Off")
 
@@ -992,7 +986,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Calculate package checksum
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub CalcCheckSum(bPacket As Byte[]) As Byte
+Private Sub CalculateCRC(bPacket As Byte[]) As Byte
 
   Dim icnt As Integer
   Dim iChcksum As Integer = 0
@@ -1017,13 +1011,19 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Decode received data packet from velbus
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Decode_Packet(bAddress As Byte, bData As Byte[])
+Private Sub ProcessReceivedPacket(bAddress As Byte, bData As Byte[])
 
   Dim bModuleType, bScanAddress As Byte
   Dim sModuleType As String
   Dim bSupported, bIgnoreModule As Boolean
 
-  If $bDebug Then WriteDebugLog("  " & DisplayCommandType(bData[0]))
+  ' Temp only
+  If $bDebug Then
+    WriteDebugLog("  ### Address: " & bAddress)
+    WriteDebugLog("  ### Data: " & Util.ByteToHex(bData))
+  Endif
+
+  If $bDebug Then WriteDebugLog("  Command: " & DisplayCommandType(bData[0]))
 
   ' velbus module type detection during scan
   If bData[0] = VB_MODULE_TYPE Then
@@ -1037,7 +1037,7 @@ Private Sub Decode_Packet(bAddress As Byte, bData As Byte[])
   bSupported = False
   sModuleType = DisplayModuleType(bModuleType)
 
-  Select Case bModuleType
+  Select bModuleType
     Case VMB8PB
       bSupported = True
       VMB8PB_Receive(bAddress, bData)
@@ -1065,8 +1065,10 @@ Private Sub Decode_Packet(bAddress As Byte, bData As Byte[])
     Case VMB7IN
       bSupported = True
       VMB7IN_Receive(bAddress, bData)
-    Case &H99
-      'unknown module type, do nothing as scan request is scheduled to be sent
+    Case VMBDMI
+      bSupported = True
+      VMBDMI_Receive(bAddress, bData)
+    Case &H99 ' Unknown module type, do nothing as scan request is scheduled to be sent
       bSupported = True
     Case Else
       sModuleType = "<unknown type> (" & Hex(bModuleType) & ")"
@@ -1076,9 +1078,9 @@ Private Sub Decode_Packet(bAddress As Byte, bData As Byte[])
   If Not bSupported Then
 
     If bModuleType = VMUNKNOWN Then
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Packet received from module with address 0x" & Hex(bAddress) & ", device isn't discovered or configured yet")
+      WriteDebugLog("  Packet received from module with address " & bAddress & ", device isn't discovered or configured yet")
     Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Packet received from module " & sModuleType & " with address 0x" & Hex(bAddress) & " which is not (yet) supported by DomotiGa code")
+      WriteDebugLog("  Packet received from module " & sModuleType & " with address " & bAddress & " which is not (yet) supported by DomotiGa code")
     Endif
 
     bIgnoreModule = False
@@ -1097,7 +1099,7 @@ Private Sub Decode_Packet(bAddress As Byte, bData As Byte[])
   Endif
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: Failed to decode packet '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Failed to decode packet '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -1112,7 +1114,7 @@ Private Function HexStringToByte(sValue As String) As Byte
   If Len(sValue) = 4 Then sValue = Right(sValue, 2)
 
   For icnt = 1 To 2
-    Select Case UCase(Mid(sValue, icnt, 1))
+    Select UCase(Mid(sValue, icnt, 1))
       Case "1"
         iValue += 1
       Case "2"
@@ -1288,7 +1290,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String, Optional DeviceId As 
     bModuleType = GetModuleType(bAddress)
   Endif
 
-  Select Case bModuleType
+  Select bModuleType
     Case VMB4RY
       If UCase(sCmd) = "STATUS" Then
         VMB4RY_Send(bAddress, 1, sCmd)
@@ -1365,11 +1367,9 @@ Private Sub VMB4RY_Receive(Address As Byte, DataByte As Byte[])
   sAddress = Hex(Address, 2)
   For iChannel = 0 To 3
     Relay[iChannel] = Devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), InterfaceId, "VMB4RY Channel " & CStr(iChannel + 1))
-    Select Case DataByte[0]
-      Case VB_STATUS
-        'Do nothing?
-      Case VB_MODULE_TYPE
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "VMB4RY - Module type message received")
+    Select DataByte[0]
+      Case VB_STATUS ' Do nothing
+      Case VB_MODULE_TYPE ' Do nothing
       Case VB_SWITCH_OFF
         If BTst(DataByte[1], iChannel) Then Devices.ValueUpdate(Relay[iChannel], 1, "Off", Devices.ValueType_Switch)
       Case VB_SWITCH_ON
@@ -1406,7 +1406,7 @@ Private Sub VMB4RY_Send(ModuleAddress As Byte, iChannel As Integer, sAction As S
   Dim bPrio As Byte
 
   If (iChannel >= 1) And (iChannel <= 4) Then
-    Select Case UCase(sAction)
+    Select UCase(sAction)
       Case "ON"
         bTempData.Add(VB_SWITCH_ON)
         bTempData.Add(BSet(&H00, (iChannel - 1)))
@@ -1450,11 +1450,9 @@ Private Sub VMB4RYNO_Receive(Address As Byte, DataByte As Byte[])
   Endif
 
   sAddress = Hex(Address, 2)
-  Select Case DataByte[0]
-    Case VB_STATUS
-      'Do nothing?
-    Case VB_MODULE_TYPE
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "VMB4RYNO - Module type message received")
+  Select DataByte[0]
+    Case VB_STATUS ' Do nothing
+    Case VB_MODULE_TYPE ' Do nothing
     Case VB_SWITCH_OFF
       For iChannel = 0 To 4
         Relay[iChannel] = Devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), InterfaceId, "VMB4RYNO Channel " & CStr(iChannel + 1))
@@ -1513,7 +1511,7 @@ Private Sub VMB4RYNO_Send(ModuleAddress As Byte, iChannel As Integer, sAction As
   Dim bPrio As Byte
 
   If (iChannel >= 1) And (iChannel <= 5) Then
-    Select Case UCase(sAction)
+    Select UCase(sAction)
       Case "ON"
         bTempData.Add(VB_SWITCH_ON)
         bTempData.Add(BSet(&H00, (iChannel - 1)))
@@ -1553,11 +1551,9 @@ Private Sub VMB4RYLD_Receive(Address As Byte, DataByte As Byte[])
   Endif
 
   sAddress = Hex(Address, 2)
-  Select Case DataByte[0]
-    Case VB_STATUS
-      'Do nothing?
-    Case VB_MODULE_TYPE
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "VMB4RYLD - Module type message received")
+  Select DataByte[0]
+    Case VB_STATUS ' Do nothing
+    Case VB_MODULE_TYPE ' Do nothing
     Case VB_SWITCH_OFF
       For iChannel = 0 To 4
         Relay[iChannel] = Devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), InterfaceId, "VMB4RYLD Channel " & CStr(iChannel + 1))
@@ -1657,10 +1653,8 @@ Private Sub VMB2BLE_Receive(Address As Byte, DataByte As Byte[])
   sAddress = Hex(Address, 2)
 
   Select Case DataByte[0]
-    Case VB_STATUS
-      'Do nothing?
-    Case VB_MODULE_TYPE
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "VMB2BLE - Module type message received")
+    Case VB_STATUS ' Do nothing
+    Case VB_MODULE_TYPE ' Do nothing
     Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
       If BTst(DataByte[1], 0) Then Update_LED_Status(VMB2BLE_device_id, DataByte[0])
     Case VB_BLIND_STATUS
@@ -1762,11 +1756,9 @@ Private Sub VMBDME_Receive(Address As Byte, DataByte As Byte[])
   sAddress = Hex(Address, 2)
   VMBDME_device_id = Devices.Find(Instance, sAddress, InterfaceId, "VMBDME")
 
-  Select Case DataByte[0]
-      Case VB_STATUS
-        'Do nothing?
-      Case VB_MODULE_TYPE
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "VMBDME - Module type message received")
+  Select DataByte[0]
+      Case VB_STATUS ' Do nothing
+      Case VB_MODULE_TYPE ' Do nothing
       Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
         If BTst(DataByte[1], 0) Then Update_LED_Status(VMBDME_device_id, DataByte[0])
       Case VB_SLIDER_STATUS, VB_DIMMER_STATUS
@@ -1801,7 +1793,7 @@ Private Sub VMBDME_Send(ModuleAddress As Byte, sAction As String)
     sCommand = sAction
   Endif
 
-  Select Case UCase(sCommand)
+  Select UCase(sCommand)
     Case "ON"
       bPrio = VB_HPrio
       bTempData.Add(VB_DIMMER_SET)
@@ -1866,15 +1858,14 @@ Private Sub VMB4DC_Receive(Address As Byte, DataByte As Byte[])
   For iChannel = 0 To 3
     iDimmer[iChannel] = Devices.Find(Instance, sAddress & "|" & CStr(iChannel + 1), InterfaceId, "VMB4DC Channel " & CStr(iChannel + 1))
 
-    Select Case DataByte[0]
-      ' If $bDebug Then Main.WriteDebugLog((LogLabel & "Decoding packet type: ") & CStr(bData[0]))
-      Case VB_STATUS
-        'Do nothing?
+    Select DataByte[0]
+      Case VB_STATUS ' Do nothing
+      Case VB_MODULE_TYPE ' Do nothing
       Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
         If BTst(DataByte[1], iChannel) Then Update_LED_Status(iDimmer[iChannel], DataByte[0])
       Case VB_SLIDER_STATUS
         If BTst(DataByte[1], iChannel) Then
-          Select Case DataByte[2]
+          Select DataByte[2]
             Case &H64 '100%
               Devices.ValueUpdate(iDimmer[iChannel], 1, "On")
             Case &H00 '0%
@@ -1919,7 +1910,7 @@ Private Sub VMB4DC_Send(ModuleAddress As Byte, iChannel As Integer, sAction As S
   Endif
   
   If (iChannel >= 1) And (iChannel <= 4) Then
-    Select Case UCase(sCommand)
+    Select UCase(sCommand)
       Case "ON"
         bPrio = VB_HPrio
         bTempData.Add(VB_DIMMER_SET)
@@ -1973,7 +1964,9 @@ Private Sub VMB7IN_Receive(Address As Byte, DataByte As Byte[])
   For iCnt = 0 To 6
     iChannel[iCnt] = Devices.Find(Instance, sAddress & "|" & CStr(iCnt + 1), InterfaceId, "VMB7IN Channel " & CStr(iCnt + 1))
   Next
-  Select Case DataByte[0]
+
+  Select DataByte[0]
+    Case VB_MODULE_TYPE ' Do nothing
     Case VB_STATUS
       For iCnt = 0 To 6
         If BTst(DataByte[1], iCnt) Then Devices.ValueUpdate(iChannel[iCnt], 1, "Pressed")
@@ -2033,7 +2026,7 @@ Private Sub VMB7IN_Send(ModuleAddress As Byte, sAction As String)
     sCommand = sAction
   Endif
   
-  Select Case UCase(sCommand)
+  Select UCase(sCommand)
     Case "STATUS"
       bPrio = VB_LPrio
       bTempData.Add(VB_MODULE_STATUS)
@@ -2063,9 +2056,8 @@ Private Sub VMBGPO_Receive(Address As Byte, DataByte As Byte[])
   Endif
 
   sAddress = Hex(Address, 2)
-  Select Case DataByte[0]
-      Case VB_STATUS
-        'todo
+  Select DataByte[0]
+      Case VB_STATUS ' Todo
       Case VB_TEMP
         VMBGPO_device_id = Devices.Find(Instance, sAddress, InterfaceId, "Velbus VMBGPO panel")
         If DataByte.Count = 7 Then
@@ -2114,7 +2106,7 @@ Private Sub VMBGPO_Send(ModuleAddress As Byte, sAction As String)
   Dim bTempData As New Byte[]
   Dim bPrio As Byte
 
-  Select Case UCase(sAction)
+  Select UCase(sAction)
     Case "STATUS"
       bPrio = VB_LPrio
       bTempData.Add(VB_MODULE_STATUS)
@@ -2138,7 +2130,7 @@ Private Sub VMB8PB_Receive(Address As Byte, DataByte As Byte[])
   For iCnt = 0 To 7
     iChannel[iCnt] = Devices.Find(Instance, sAddress & "|" & CStr(iCnt + 1), InterfaceId, "VMB8PB Channel " & CStr(iCnt + 1))
   Next
-  Select Case DataByte[0]
+  Select DataByte[0]
     Case VB_STATUS
       For iCnt = 0 To 7
         If BTst(DataByte[1], iCnt) Then Devices.ValueUpdate(iChannel[iCnt], 1, "Pressed")
@@ -2179,7 +2171,7 @@ Private Sub VMB8PB_Send(ModuleAddress As Byte, sAction As String)
     sCommand = sAction
   Endif
 
-  Select Case UCase(sCommand)
+  Select UCase(sCommand)
     Case "STATUS"
       bPrio = VB_LPrio
       bTempData.Add(VB_MODULE_STATUS)
@@ -2191,23 +2183,54 @@ Private Sub VMB8PB_Send(ModuleAddress As Byte, sAction As String)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBDMI: Velbus dimmer for resistive or inductive load
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBDMI_Receive(bAddress As Byte, aData As Byte[])
+
+  Dim iDeviceId As Integer
+  Dim sValue As String
+
+  iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, "VMBDMI")
+
+  Select aData
+    Case VB_STATUS ' Do nothing
+    Case VB_MODULE_TYPE ' Do nothing
+    Case VB_DIMMER_CONTROLLER_STATUS
+      Select aData[2]
+        Case &H64 ' 100%
+          sValue = "On"
+        Case &H00 ' 0%
+          sValue = "Off"
+        Case Else
+          sValue = "Dim " & Str(aData[2])
+      End Select
+
+      If $bDebug Then WriteDebugLog("  Value: " & sValue)
+      Devices.ValueUpdate(iDeviceId, 1, sValue)
+
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Update LED status of push button
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Update_LED_Status(DeviceId As Integer, bLedStatus As Byte)
+Private Sub Update_LED_Status(iDeviceId As Integer, bLedStatus As Byte)
 
-  Select Case bLedStatus
+  Select bLedStatus
     Case VB_LED_CLEAR
-      Devices.ValueUpdate(DeviceId, 2, "Off")
+      Devices.ValueUpdate(iDeviceId, 2, "Off")
     Case VB_LED_SET
-      Devices.ValueUpdate(DeviceId, 2, "On")
+      Devices.ValueUpdate(iDeviceId, 2, "On")
     Case VB_LED_BLINK_SLOW
-      Devices.ValueUpdate(DeviceId, 2, "Blink slow")
+      Devices.ValueUpdate(iDeviceId, 2, "Blink slow")
     Case VB_LED_BLINK_FAST
-      Devices.ValueUpdate(DeviceId, 2, "Blink fast")
+      Devices.ValueUpdate(iDeviceId, 2, "Blink fast")
     Case VB_LED_BLINK_VERY_FAST
-      Devices.ValueUpdate(DeviceId, 2, "Blink very fast")
+      Devices.ValueUpdate(iDeviceId, 2, "Blink very fast")
   End Select
 
 End
