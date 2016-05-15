@@ -88,6 +88,7 @@ bool debugging;
 // Pthread Mutex for lock/unlock
 static pthread_mutex_t g_CriticalSection;
 static pthread_mutex_t g_JsonRpcThread;
+static pthread_mutex_t g_WriteLogThread;
 
 // Semaphore
 static sem_t s_JsonRpcThread;
@@ -325,6 +326,9 @@ void WriteLog
 	va_list args;
 	string tfilename;
 
+	// Lock now, to prevent garbage logging
+	pthread_mutex_lock( &g_WriteLogThread );
+
 	if ( ( _log == LogLevel_Error ) || ( ( _log == LogLevel_Debug ) && ( debugging ) ) )
 	{
 		va_start( args, _format );
@@ -381,6 +385,8 @@ void WriteLog
 
 		va_end( args );
 	}
+
+	pthread_mutex_unlock( &g_WriteLogThread );
 }
 
 //-----------------------------------------------------------------------------
@@ -402,28 +408,38 @@ void *cURL_Post_JSON_Thread(void*)
 		// Check if we have entries in the queue
 		pthread_mutex_lock( &g_JsonRpcThread );
 		b_Empty = m_JsonRpcInfo.empty();
-		pthread_mutex_unlock( &g_JsonRpcThread );
 
 		while ( ! b_Empty )
 		{
 			// Remove the first entry from the queue
-			pthread_mutex_lock( &g_JsonRpcThread );
 			JsonRpcInfo = m_JsonRpcInfo.front();
 			m_JsonRpcInfo.pop_front();
-			pthread_mutex_unlock( &g_JsonRpcThread );
+
+if ( JsonRpcInfo.jparams != NULL )
+{
+WriteLog( LogLevel_Debug, false, "XXXData=%s", json_object_to_json_string( JsonRpcInfo.jparams ) );
+}
+else
+{
+WriteLog( LogLevel_Debug, false, "XXXData=NULL" );
+}
 
 			// Do the cURL POST with JSON-RPC
+			pthread_mutex_unlock( &g_JsonRpcThread );
 			cURL_Post_JSON( JsonRpcInfo.homeID, JsonRpcInfo.method, JsonRpcInfo.jparams );
+			pthread_mutex_lock( &g_JsonRpcThread );
 
 			// Remove the json-rpc object
- 			json_object_put( JsonRpcInfo.jparams );	
+			if ( JsonRpcInfo.jparams != NULL )
+			{
+ 				json_object_put( JsonRpcInfo.jparams );	
+			}
 
 			// Check if we got more entries
-			pthread_mutex_lock( &g_JsonRpcThread );
 			b_Empty = m_JsonRpcInfo.empty();
-			pthread_mutex_unlock( &g_JsonRpcThread );
 		}
 
+		pthread_mutex_unlock( &g_JsonRpcThread );
 	}
 
 	// Required return for a thread
@@ -1458,6 +1474,8 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		
 		WriteLog( LogLevel_Debug, false, "Value%d=%s", valueid, dev_result );
 
+		pthread_mutex_lock( &g_JsonRpcThread );
+
 		json_object *jparams = json_object_new_object();
 		json_object *jhomeid = json_object_new_int( homeID );
 		json_object *jnodeid = json_object_new_int( nodeID );
@@ -1480,7 +1498,8 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		JsonRpcInfo.method = strdup("openzwave.setvalue");
 		JsonRpcInfo.jparams = jparams;
 
-		pthread_mutex_lock( &g_JsonRpcThread );
+WriteLog( LogLevel_Debug, false, "YYYData=%s", json_object_to_json_string( JsonRpcInfo.jparams ) );
+
 		m_JsonRpcInfo.push_back(JsonRpcInfo);
 		pthread_mutex_unlock( &g_JsonRpcThread );
 
@@ -1557,6 +1576,8 @@ void RPC_NodeRemoved( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "NodeRemoved: HomeId=0x%x Node=%d", homeID, nodeID );
 
+	pthread_mutex_lock( &g_JsonRpcThread );
+
 	json_object *jparams = json_object_new_object();
 	json_object *jhomeid = json_object_new_int( homeID );
 	json_object *jnodeid = json_object_new_int( nodeID );
@@ -1568,8 +1589,8 @@ void RPC_NodeRemoved( uint32 homeID, int nodeID )
 	JsonRpcInfo.method = strdup("openzwave.removenode");
 	JsonRpcInfo.jparams = jparams;
 
-	pthread_mutex_lock( &g_JsonRpcThread );
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
+
 	pthread_mutex_unlock( &g_JsonRpcThread );
 
 	// Signal the thread to process data
@@ -1586,6 +1607,8 @@ void RPC_NodeReset( uint32 homeID, int nodeID )
 {
 	WriteLog( LogLevel_Debug, true, "NodeReset: HomeId=0x%x Node=%d", homeID, nodeID );
 
+	pthread_mutex_lock( &g_JsonRpcThread );
+
 	json_object *jparams = json_object_new_object();
 	json_object *jhomeid = json_object_new_int( homeID );
 	json_object *jnodeid = json_object_new_int( nodeID );
@@ -1597,8 +1620,8 @@ void RPC_NodeReset( uint32 homeID, int nodeID )
 	JsonRpcInfo.method = strdup("openzwave.removenode");
 	JsonRpcInfo.jparams = jparams;
 
-	pthread_mutex_lock( &g_JsonRpcThread );
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
+
 	pthread_mutex_unlock( &g_JsonRpcThread );
 
 	// Signal the thread to process data
@@ -1700,6 +1723,8 @@ void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
 	WriteLog( LogLevel_Debug, false, "Name=%s", name );
 	WriteLog( LogLevel_Debug, false, "Location=%s", location );
 
+	pthread_mutex_lock( &g_JsonRpcThread );
+
 	json_object *jparams = json_object_new_object();
 	json_object *jhomeid = json_object_new_int( homeID );
 	json_object *jnodeid = json_object_new_int( nodeID );
@@ -1732,8 +1757,8 @@ void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
 	JsonRpcInfo.method = strdup("openzwave.addnode");
 	JsonRpcInfo.jparams = jparams;
 
-	pthread_mutex_lock( &g_JsonRpcThread );
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
+
 	pthread_mutex_unlock( &g_JsonRpcThread );
 
 	// Signal the thread to process data
@@ -1783,6 +1808,8 @@ void RPC_NodeEvent( uint32 homeID, int nodeID, ValueID valueID, int value )
 
 	WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
 
+	pthread_mutex_lock( &g_JsonRpcThread );
+
 	json_object *jparams = json_object_new_object();
 	json_object *jhomeid = json_object_new_int( homeID );
 	json_object *jnodeid = json_object_new_int( nodeID );
@@ -1801,8 +1828,8 @@ void RPC_NodeEvent( uint32 homeID, int nodeID, ValueID valueID, int value )
 	JsonRpcInfo.method = strdup("openzwave.setvalue");
 	JsonRpcInfo.jparams = jparams;
 
-	pthread_mutex_lock( &g_JsonRpcThread );
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
+
 	pthread_mutex_unlock( &g_JsonRpcThread );
 
 	// Signal the thread to process data
@@ -1836,6 +1863,9 @@ void RPC_NodeScene( uint32 homeID, int nodeID, ValueID valueID, int value )
 
 	// Only send it if it isn't a scene action command class
 	if ( id != COMMAND_CLASS_SCENE_ACTIVATION ) {
+
+		pthread_mutex_lock( &g_JsonRpcThread );
+
 		json_object *jparams = json_object_new_object();
 		json_object *jhomeid = json_object_new_int( homeID );
 		json_object *jnodeid = json_object_new_int( nodeID );
@@ -1854,8 +1884,8 @@ void RPC_NodeScene( uint32 homeID, int nodeID, ValueID valueID, int value )
 		JsonRpcInfo.method = strdup("openzwave.setvalue");
 		JsonRpcInfo.jparams = jparams;
 
-		pthread_mutex_lock( &g_JsonRpcThread );
 		m_JsonRpcInfo.push_back(JsonRpcInfo);
+
 		pthread_mutex_unlock( &g_JsonRpcThread );
 
 		// Signal the thread to process data
@@ -1956,6 +1986,8 @@ void RPC_DriverReady( uint32 homeID, int nodeID )
 
 	WriteLog( LogLevel_Debug, false, "ControllerPath=%s", controllerPath.c_str() );
 
+	pthread_mutex_lock( &g_JsonRpcThread );
+
 	json_object *jparams = json_object_new_object();
 	json_object *jhomeid = json_object_new_int( homeID );
 	json_object *jcontrollerid = json_object_new_int( nodeID );
@@ -1969,9 +2001,9 @@ void RPC_DriverReady( uint32 homeID, int nodeID )
 	JsonRpcInfo.method = strdup("openzwave.homeid");
 	JsonRpcInfo.jparams = jparams;
 
-pthread_mutex_lock( &g_JsonRpcThread );
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
-pthread_mutex_unlock( &g_JsonRpcThread );
+
+	pthread_mutex_unlock( &g_JsonRpcThread );
 
 	// Signal the thread to process data
 	sem_post( &s_JsonRpcThread );
@@ -2184,6 +2216,8 @@ void OnNotification
 
 				pthread_mutex_unlock( &g_CriticalSection );
 
+				pthread_mutex_lock( &g_JsonRpcThread );
+
 				json_object *jparams = json_object_new_object();
 				json_object *jhomeid = json_object_new_int( data->GetHomeId() );
 				json_object_object_add( jparams, "homeid", jhomeid );
@@ -2194,8 +2228,8 @@ void OnNotification
 				JsonRpcInfo.jparams = jparams;
 
 				// Lock, store and unlock JSON-RPC request
-				pthread_mutex_lock( &g_JsonRpcThread );
 				m_JsonRpcInfo.push_back(JsonRpcInfo);
+
 				pthread_mutex_unlock( &g_JsonRpcThread );
 
 				// Signal the thread to process data
@@ -2820,6 +2854,11 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	pthread_mutex_init( &g_JsonRpcThread, &mutexattr );
 	pthread_mutexattr_destroy( &mutexattr );
 
+	pthread_mutexattr_init ( &mutexattr );
+	pthread_mutexattr_settype( &mutexattr, PTHREAD_MUTEX_RECURSIVE );
+	pthread_mutex_init( &g_WriteLogThread, &mutexattr );
+	pthread_mutexattr_destroy( &mutexattr );
+
 	// Create Mutex for general usage e.g. in OnNotification
 	pthread_mutexattr_init ( &mutexattr );
 	pthread_mutexattr_settype( &mutexattr, PTHREAD_MUTEX_RECURSIVE );
@@ -3040,6 +3079,8 @@ void DomoZWave_Destroy( )
 	pthread_mutex_unlock( &g_CriticalSection );
 	pthread_mutex_destroy( &g_CriticalSection );
 
+// Destroy WriteLogThread
+
 	WriteLog( LogLevel_Debug, true, "DomoZWave_Destroy: Destroyed Open-ZWave Wrapper" );
 
 	// Close the logfile now
@@ -3060,6 +3101,9 @@ void DomoZWave_Destroy( )
 	// Signal the thread to process data - and stop
 	sem_post( &s_JsonRpcThread );
 	sem_destroy( &s_JsonRpcThread );
+
+	pthread_mutex_destroy( &g_JsonRpcThread );
+	pthread_mutex_destroy( &g_WriteLogThread );
 }
 
 //-----------------------------------------------------------------------------
