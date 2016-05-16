@@ -194,7 +194,10 @@ typedef struct
 
 static list<NodeInfo*> g_nodes;
 
+int32 QueueId = 0;
+
 typedef struct {
+        uint32 QueueId;
 	uint32 homeID;
 	char* method;
 	json_object *jparams;
@@ -417,11 +420,11 @@ void *cURL_Post_JSON_Thread(void*)
 
 if ( JsonRpcInfo.jparams != NULL )
 {
-WriteLog( LogLevel_Debug, false, "XXXData=%s", json_object_to_json_string( JsonRpcInfo.jparams ) );
+WriteLog( LogLevel_Debug, false, "Id=%d DataOut=%s", JsonRpcInfo.QueueId, json_object_to_json_string( JsonRpcInfo.jparams ) );
 }
 else
 {
-WriteLog( LogLevel_Debug, false, "XXXData=NULL" );
+WriteLog( LogLevel_Debug, false, "DataOut=NULL" );
 }
 
 			// Do the cURL POST with JSON-RPC
@@ -738,6 +741,17 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 			{
 				dev_index = 4;
 				dev_label = "Lock-Info";
+				strcpy( dev_result, dev_value );
+			}
+
+			break;
+		}
+		case COMMAND_CLASS_COLOR:
+		{
+			if ( ( label == "Color" ) && ( type == ValueID::ValueType_String ) )
+			{
+				dev_index = 5;
+				dev_label = label;
 				strcpy( dev_result, dev_value );
 			}
 
@@ -1494,13 +1508,15 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		json_object_object_add( jparams, "unit", junit );
 
 		StructJsonRpcInfo JsonRpcInfo;
+		QueueId++;
+		JsonRpcInfo.QueueId = QueueId;
 		JsonRpcInfo.homeID = homeID;
 		JsonRpcInfo.method = strdup("openzwave.setvalue");
 		JsonRpcInfo.jparams = jparams;
 
-WriteLog( LogLevel_Debug, false, "YYYData=%s", json_object_to_json_string( JsonRpcInfo.jparams ) );
+WriteLog( LogLevel_Debug, false, "ID=%d DataIn=%s", QueueId, json_object_to_json_string( JsonRpcInfo.jparams ) );
 
-		m_JsonRpcInfo.push_back(JsonRpcInfo);
+		m_JsonRpcInfo.push_back( JsonRpcInfo );
 		pthread_mutex_unlock( &g_JsonRpcThread );
 
 		// Signal the thread to process data
@@ -1585,6 +1601,8 @@ void RPC_NodeRemoved( uint32 homeID, int nodeID )
 	json_object_object_add( jparams, "nodeid", jnodeid );
 
 	StructJsonRpcInfo JsonRpcInfo;
+	QueueId++;
+	JsonRpcInfo.QueueId = QueueId;
 	JsonRpcInfo.homeID = homeID;
 	JsonRpcInfo.method = strdup("openzwave.removenode");
 	JsonRpcInfo.jparams = jparams;
@@ -1616,6 +1634,8 @@ void RPC_NodeReset( uint32 homeID, int nodeID )
 	json_object_object_add( jparams, "nodeid", jnodeid );
 
 	StructJsonRpcInfo JsonRpcInfo;
+	QueueId++;
+	JsonRpcInfo.QueueId = QueueId;
 	JsonRpcInfo.homeID = homeID;
 	JsonRpcInfo.method = strdup("openzwave.removenode");
 	JsonRpcInfo.jparams = jparams;
@@ -1753,6 +1773,8 @@ void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
 	json_object_object_add( jparams, "version", jversion );
 
 	StructJsonRpcInfo JsonRpcInfo;
+	QueueId++;
+	JsonRpcInfo.QueueId = QueueId;
 	JsonRpcInfo.homeID = homeID;
 	JsonRpcInfo.method = strdup("openzwave.addnode");
 	JsonRpcInfo.jparams = jparams;
@@ -1824,6 +1846,8 @@ void RPC_NodeEvent( uint32 homeID, int nodeID, ValueID valueID, int value )
 	json_object_object_add( jparams, "value", jvalue );
 
 	StructJsonRpcInfo JsonRpcInfo;
+	QueueId++;
+	JsonRpcInfo.QueueId = QueueId;
 	JsonRpcInfo.homeID = homeID;
 	JsonRpcInfo.method = strdup("openzwave.setvalue");
 	JsonRpcInfo.jparams = jparams;
@@ -1880,6 +1904,8 @@ void RPC_NodeScene( uint32 homeID, int nodeID, ValueID valueID, int value )
 		json_object_object_add( jparams, "value", jvalue );
 
 		StructJsonRpcInfo JsonRpcInfo;
+		QueueId++;
+		JsonRpcInfo.QueueId = QueueId;
 		JsonRpcInfo.homeID = homeID;
 		JsonRpcInfo.method = strdup("openzwave.setvalue");
 		JsonRpcInfo.jparams = jparams;
@@ -1997,6 +2023,8 @@ void RPC_DriverReady( uint32 homeID, int nodeID )
 	json_object_object_add( jparams, "serialport", jcontrollerpath );
 
 	StructJsonRpcInfo JsonRpcInfo;
+	QueueId++;
+	JsonRpcInfo.QueueId = QueueId;
 	JsonRpcInfo.homeID = homeID;
 	JsonRpcInfo.method = strdup("openzwave.homeid");
 	JsonRpcInfo.jparams = jparams;
@@ -2641,6 +2669,8 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 	if ( JsonRpcId > 0xFFFF ) JsonRpcId = 0;
 	JsonRpcId++;
 
+	pthread_mutex_lock( &g_JsonRpcThread );
+
 	// Construct JSON-RPC request
 	json_object *jrequest = json_object_new_object();
 
@@ -2660,6 +2690,8 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 
 	WriteLog( LogLevel_Debug, true, "JSON-RPC: HomeId=0x%x Method=%s", homeID, method );
 	WriteLog( LogLevel_Debug, false, "Data=%s", json_object_to_json_string( jrequest ) );
+
+	pthread_mutex_unlock( &g_JsonRpcThread );	
 
 	string readBuffer;
 
@@ -2685,15 +2717,21 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 		}
 		else
 		{
+			pthread_mutex_lock( &g_JsonRpcThread );
+
 			// Check if the buffer is empty, then it is an invalid one anyway
 			if ( readBuffer == "" ) {
 				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a response", method );
+
+				pthread_mutex_lock( &g_JsonRpcThread );
 
 				// Remove the json-rpc objects
 				json_object_put( jjsonrpc );
 				json_object_put( jmethod );
 				json_object_put( jparams );
 				json_object_put( jrequest );
+
+				pthread_mutex_unlock( &g_JsonRpcThread );
 
 				return;
 			}
@@ -2728,6 +2766,8 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 				json_object_put( jparams );
 				json_object_put( jrequest );
 
+				pthread_mutex_unlock( &g_JsonRpcThread );
+
 				return;
 			}
 
@@ -2748,6 +2788,7 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 				json_object_put( jparams );
 				json_object_put( jrequest );
 
+				pthread_mutex_unlock( &g_JsonRpcThread );
 				return;
 			}
 
@@ -2781,13 +2822,19 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 			json_object_put( jrresult );
 			json_object_put( jrid );
 			json_object_put( jrobj );
+
+			pthread_mutex_unlock( &g_JsonRpcThread );
 		}
 	}
+
+	pthread_mutex_lock( &g_JsonRpcThread );
 
 	json_object_put( jjsonrpc );
 	json_object_put( jmethod );
 	json_object_put( jparams );
 	json_object_put( jrequest );
+
+	pthread_mutex_unlock( &g_JsonRpcThread );
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -5856,7 +5903,7 @@ const char* DomoZWave_CommandClassIdName(int class_value)
 		case 0x30: return "COMMAND_CLASS_SENSOR_BINARY";
 		case 0x31: return "COMMAND_CLASS_SENSOR_MULTILEVEL";
 		case 0x32: return "COMMAND_CLASS_METER";
-		case 0x33: return "COMMAND_CLASS_ZIP_ADV_SERVER";
+		case 0x33: return "COMMAND_CLASS_COLOR";
 		case 0x34: return "COMMAND_CLASS_ZIP_ADV_CLIENT";
 		case 0x35: return "COMMAND_CLASS_METER_PULSE";
 		case 0x38: return "COMMAND_CLASS_THERMOSTAT_HEATING";
