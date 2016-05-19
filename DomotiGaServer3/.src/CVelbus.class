@@ -22,6 +22,7 @@
 
 '   VMB6PBN  - Push-button interface for 6-/4-fold niko® push-buttons
 '   VMB8PBU  - 8-channel push-button module
+'   VMBGP1   - one touch buttons
 '   VMBGP2   - two touch buttons
 '   VMBGP4   - four touch buttons
 '   VMBGPOD  - Touch panel with Oled display
@@ -48,7 +49,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Velbus"
 Public PluginFriendlyName As String = "Velleman Velbus"
-Public PluginVersion As String = "1.02-2016-05-28 21:54"
+Public PluginVersion As String = "1.02-2016-05-19 21:30"
 Public PluginAuthor As String = "BreFra"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -177,6 +178,8 @@ Const VB_FIRMWARE_MEM_WRITE As Byte = &H66
 Const VB_FIRMWARE_MEM As Byte = &H67
 Const VB_FIRMWARE_MEM_WRITE_CONFIRM As Byte = &H68
 Const VB_FIRMWARE_MEM_READ As Byte = &H69
+Const VB_DAYLIGHT_SAVING As Byte = &HAF ' COMMAND_SET_DAYLIGHT_SAVING
+Const VB_SUBTYPE As Byte = &HB0 ' COMMAND_SUBTYPE
 Const VB_DISABLE_PROGRAM As Byte = &HB1 ' COMMAND_DISABLE_PROGRAM
 Const VB_ENABLE_PROGRAM As Byte = &HB2 ' COMMAND_ENABLE_PROGRAM
 Const VB_SELECT_PROGRAM As Byte = &HB3 ' COMMAND_SELECT_PROGRAM
@@ -481,7 +484,7 @@ Private Sub Run()
   tVelbusScan.Stop
 
   ' request current status of all connected velbus modules
-  GetCurrentModuleStatus()
+  GetModuleTypeStatusClock()
 
 End
 
@@ -714,22 +717,23 @@ Public Sub Socket_Closed()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Get current status of all known Velbus modules
+' Get current type/status/clock of all known Velbus modules
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub GetCurrentModuleStatus()
+Private Sub GetModuleTypeStatusClock()
 
   Dim rResult As Result
   Dim bInList As Boolean
-  Dim sGetStatusModules As New String[]
+  Dim aKnownModules As New String[]
   Dim sAddress As String
 
-  If $bDebug Then WriteDebugLog("Retrieving status from device(s)")
+  If $bDebug Then WriteDebugLog("Retrieving moduletype/status/clock from device(s)")
 
-  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
+  ' Get device list for this interface/instance - sorted on address
+  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance, "address")
+
   If rResult And If rResult.Available Then
-    For Each rResult
 
-      If $bDebug Then WriteDebugLog("Device: " & rResult!address)
+    For Each rResult
 
       'check if scan is not already sent
       bInList = False
@@ -740,23 +744,22 @@ Private Sub GetCurrentModuleStatus()
         sAddress = UCase(rResult!address)
       Endif
 
-      If sGetStatusModules.Exist(sAddress) Then bInList = True
+      If aKnownModules.Exist(sAddress) Then bInList = True
 
       If Not bInList Then
-        sGetStatusModules.Add(sAddress)
+        If $bDebug Then WriteDebugLog("Device: " & rResult!address)
 
-        ' Request module_type in debug mode
-        If $bDebug Then
-          Try QueueCommand(CreateVelbusPackage(VB_LPRIO, CInt(sAddress), [], True))
-        Endif
+        aKnownModules.Add(sAddress)
 
+        ' Request module_type in debug mode only
+        If $bDebug Then SendCommand(sAddress, "MODULETYPE")
         SendCommand(sAddress, "STATUS", rResult!id)
         SendCommand(sAddress, "CLOCK", rResult!id)
       Endif
     Next
   Endif
 
-  If $bDebug Then WriteDebugLog("Retrieving status from device(s) Finished")
+  If $bDebug Then WriteDebugLog("List of device(s) Finished")
 
 Catch
   WriteDebugLog("ERROR: Get current state of modules: '" & Error.Text & "' at '" & Error.Where & "'")
@@ -944,7 +947,7 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
               If $bDebug Then
                 WriteDebugLog("< " & Util.ByteToHex($aMsgData))
                 WriteDebugLog("  Priority: " & IIf($aMsgData[1] = VB_HPRIO, "HIGH", "LOW"))
-                WriteDebugLog("  Address: " & $aMsgData[2])
+                WriteDebugLog("  Address: " & Hex($aMsgData[2], 2))
                 WriteDebugLog("  RTR: " & IIf(($aMsgData[3] And &HF40) = &HF40, "ON", "OFF"))
                 WriteDebugLog("  Data Length: " & iSize)
               Endif
@@ -1018,7 +1021,6 @@ End
 Private Sub ProcessReceivedPacket(bAddress As Byte, bData As Byte[])
 
   Dim bModuleType, bScanAddress As Byte
-  Dim sModuleType As String
   Dim bSupported, bIgnoreModule As Boolean
 
   If $bDebug Then WriteDebugLog("  Command: " & DisplayCommandType(bData[0]))
@@ -1033,11 +1035,11 @@ Private Sub ProcessReceivedPacket(bAddress As Byte, bData As Byte[])
   Endif
 
   bSupported = False
-  sModuleType = DisplayModuleType(bModuleType)
+  $sModuleType = DisplayModuleType(bModuleType)
 
   ' Report module type, if we have an idea
   If bModuleType <> &H00 And If bModuleType <> &HFF Then
-    If $bDebug Then WriteDebugLog("  ModuleType: " & sModuleType)
+    If $bDebug Then WriteDebugLog("  ModuleType: " & $sModuleType)
   Else
     If $bDebug Then WriteDebugLog("  ModuleType: UNKNOWN")
   Endif
@@ -1085,6 +1087,12 @@ Private Sub ProcessReceivedPacket(bAddress As Byte, bData As Byte[])
     Case VMB6PBN
       bSupported = True
       VMB6PBN_Receive(bAddress, bData)
+    Case VMBGP1
+      bSupported = True
+      VMBGP1_Receive(bAddress, bData)
+    Case VMBGP1
+      bSupported = True
+      VMBGP1_Receive(bAddress, bData)
     Case VMBGP2
       bSupported = True
       VMBGP2_Receive(bAddress, bData)
@@ -1097,16 +1105,18 @@ Private Sub ProcessReceivedPacket(bAddress As Byte, bData As Byte[])
     Case &H99 ' Unknown module type, do nothing as scan request is scheduled to be sent
       bSupported = True
     Case &H00
-      sModuleType = "<unknown type> (" & Hex(bModuleType, 2) & ")"
+      bSupported = True
+    Case Else
+      $sModuleType = "<unknown type> (" & Hex(bModuleType, 2) & ")"
       bSupported = False
   End Select
 
   If Not bSupported Then
 
     If bModuleType = VMUNKNOWN Then
-      WriteDebugLog("  Packet received from module with address " & bAddress & ", device isn't discovered or configured yet")
+      WriteDebugLog("  Packet received from module with address '" & Hex(bAddress, 2) & "', device isn't discovered or configured yet")
     Else
-      WriteDebugLog("  Packet received from module " & sModuleType & " with address " & bAddress & " which is not (yet) supported by DomotiGa code")
+      WriteDebugLog("  Packet received from module " & $sModuleType & " with address '" & Hex(bAddress, 2) & "' which is not (yet) supported by DomotiGa code")
     Endif
 
     bIgnoreModule = False
@@ -1119,7 +1129,7 @@ Private Sub ProcessReceivedPacket(bAddress As Byte, bData As Byte[])
 
     If Not bIgnoreModule Then
       VB_Modules_Unsupported.Add(bAddress)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Ignoring future messages of unsupported module " & sModuleType & " with address " & Hex(bAddress, 2))
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Ignoring future messages of unsupported module '" & $sModuleType & "' with address '" & Hex(bAddress, 2) & "'")
     Endif
 
   Endif
@@ -1239,6 +1249,8 @@ Private Function GetModuleType(bAddress As Byte, Optional DeviceId As Integer) A
         Return VMB8PBU
       Case "VMB6PBN"
         Return VMB6PBN
+      Case "VMBGP1"
+        Return VMBGP1
       Case "VMBGP2"
         Return VMBGP2
       Case "VMBGP4"
@@ -1322,7 +1334,22 @@ Public Sub SendCommand(sAddress As String, sCmd As String, Optional DeviceId As 
 
   Dim bAddress, bModuleType As Byte
 
-  bAddress = HexStringToByte(Left(sAddress, 2))
+  sCmd = UCase(sCmd)
+
+  If $bDebug Then WriteDebugLog("Send Command to address '" & sAddress & "' command '" & sCmd & "'")
+
+  Try bAddress = HexStringToByte(Left(sAddress, 2))
+  If Error Then
+    WriteDebugLog("ERROR: Can't convert '" & sAddress & "' to a valid numeric value")
+    Return
+  Endif
+
+  ' If we request the module-type, send the special packet
+  If sCmd = "MODULETYPE" Then
+    Try QueueCommand(CreateVelbusPackage(VB_LPRIO, bAddress, [], True))
+    Return
+  Endif
+
   If DeviceId Then
     bModuleType = GetModuleType(bAddress, DeviceId)
   Else
@@ -1331,8 +1358,6 @@ Public Sub SendCommand(sAddress As String, sCmd As String, Optional DeviceId As 
 
   ' Get the module type name
   $sModuleType = DisplayModuleType(bModuleType)
-
-  If $bDebug Then WriteDebugLog("Send Command to address '" & sAddress & "' command '" & sCmd & "'")
 
   Select bModuleType
     Case VMB4RY
@@ -1380,7 +1405,12 @@ Public Sub SendCommand(sAddress As String, sCmd As String, Optional DeviceId As 
     Case VMB7IN
       VMB7in_Send(bAddress, sCmd)
     Case VMB2BLE
-      VMB2BLE_Send(bAddress, sCmd)
+      If UCase(sCmd) = "STATUS" Then
+        VMB2BLE_Send(bAddress, 1, sCmd)
+        VMB2BLE_Send(bAddress, 1, sCmd)
+      Else
+        VMB2BLE_Send(bAddress, CInt(Right(sAddress, 1)), sCmd)
+      Endif
     Case VMB8PB
       VMB8PB_Send(bAddress, sCmd)
     Case VMBDMI
@@ -1391,16 +1421,23 @@ Public Sub SendCommand(sAddress As String, sCmd As String, Optional DeviceId As 
       VMB8PBU_Send(bAddress, sCmd)
     Case VMB6PBN
       VMB6PBN_Send(bAddress, sCmd)
+    Case VMBGP1
+      VMBGP1_Send(bAddress, sCmd)
     Case VMBGP2
       VMBGP2_Send(bAddress, sCmd)
     Case VMBGP4
       VMBGP4_Send(bAddress, sCmd)
     Case VMBGPOD
       VMBGPOD_Send(bAddress, sCmd)
+    Case VMBPIRC
+      VMBPIRC_Send(bAddress, sCmd)
     Case Else
       WriteDebugLog("Unable to send command to unknown or not (yet) unsupported Velbus module at address " & sAddress)
       Return
   End Select
+
+Catch
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -1418,12 +1455,12 @@ Private Sub VMB4RY_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       ' If we got enough info, report build info
       If aData.Count = 8 Then
-      WriteDebugLog("  Build: " & Format(aData[6], "00") & Format(aData[7], "00"))
+      WriteDebugLog("  Build: " & Hex(aData[6], 2) & Hex(aData[7], 2))
       Endif
     Case VB_SWITCH_OFF
       For iChannel = 1 To 4
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RY Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched off status received")
           Devices.ValueUpdate(iDeviceId, 1, "Off", Devices.ValueType_Switch)
         Endif
@@ -1431,7 +1468,7 @@ Private Sub VMB4RY_Receive(bAddress As Byte, aData As Byte[])
     Case VB_SWITCH_ON
       For iChannel = 1 To 4
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RY Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched on status received")
           Devices.ValueUpdate(iDeviceId, 1, "On", Devices.ValueType_Switch)
         Endif
@@ -1439,14 +1476,14 @@ Private Sub VMB4RY_Receive(bAddress As Byte, aData As Byte[])
     Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
       For iChannel = 1 To 4
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RY Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           Update_LED_Status(iDeviceId, aData[0]) 
         Endif
       Next
     Case VB_RELAY_STATUS
       For iChannel = 1 To 4
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RY Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " changed")
           sRelayStatus = IIf(BTst(aData[3], iChannel), "On", "Off")
           Devices.ValueUpdate(iDeviceId, 1, sRelayStatus, Devices.ValueType_Switch)
@@ -1520,13 +1557,13 @@ Private Sub VMB4RYNO_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
     Case VB_SWITCH_OFF
       For iChannel = 1 To 5
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RYNO Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched off status received")
           Devices.ValueUpdate(iDeviceId, 1, "Off", Devices.ValueType_Switch)
         Endif
@@ -1534,7 +1571,7 @@ Private Sub VMB4RYNO_Receive(bAddress As Byte, aData As Byte[])
     Case VB_SWITCH_ON
       For iChannel = 1 To 5
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RYNO Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched on status received")
           Devices.ValueUpdate(iDeviceId, 1, "On", Devices.ValueType_Switch)
         Endif
@@ -1542,7 +1579,7 @@ Private Sub VMB4RYNO_Receive(bAddress As Byte, aData As Byte[])
     Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
       For iChannel = 1 To 5
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RYNO Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " LED status received")
           Update_LED_Status(iDeviceId, aData[0]) 
         Endif
@@ -1550,7 +1587,7 @@ Private Sub VMB4RYNO_Receive(bAddress As Byte, aData As Byte[])
     Case VB_RELAY_STATUS
       For iChannel = 1 To 5
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RYNO Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           sRelayStatus = IIf(BTst(aData[3], 0), "On", "Off")
           If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & ", switched " & sRelayStatus)
           Devices.ValueUpdate(iDeviceId, 1, sRelayStatus, Devices.ValueType_Switch)
@@ -1618,13 +1655,13 @@ Private Sub VMB4RYLD_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
     Case VB_SWITCH_OFF
       For iChannel = 1 To 5
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RYLD Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           If $bDebug Then Main.WriteDebugLog(LogLabel & "  Relay channel: " & iChannel & " switched off status received")
           Devices.ValueUpdate(iDeviceId, 1, "Off", Devices.ValueType_Switch)
         Endif
@@ -1632,7 +1669,7 @@ Private Sub VMB4RYLD_Receive(bAddress As Byte, aData As Byte[])
     Case VB_SWITCH_ON
       For iChannel = 1 To 5
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RYLD Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched on status received")
           Devices.ValueUpdate(iDeviceId, 1, "On", Devices.ValueType_Switch)
         Endif
@@ -1640,7 +1677,7 @@ Private Sub VMB4RYLD_Receive(bAddress As Byte, aData As Byte[])
     Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
       For iChannel = 1 To 5
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RYLD Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " LED status received")
           Update_LED_Status(iDeviceId, aData[0]) 
         Endif
@@ -1648,7 +1685,7 @@ Private Sub VMB4RYLD_Receive(bAddress As Byte, aData As Byte[])
     Case VB_RELAY_STATUS
       For iChannel = 1 To 5
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4RYLD Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           sRelayStatus = IIf(BTst(aData[3], 0), "On", "Off")
           If $bDebug Then WriteDebugLog("  Relay channel: " & iChannel & " switched " & sRelayStatus)
           Devices.ValueUpdate(iDeviceId, 1, sRelayStatus, Devices.ValueType_Switch)
@@ -1716,19 +1753,19 @@ Private Sub VMB2BLE_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
     Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
       If BTst(aData[1], 0) Then
         iChannel = 1 ' fixed?
-        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, " VMB2BLE Blind " & iChannel)
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Blind " & iChannel)
         Update_LED_Status(iDeviceId, aData[0])
       Endif
     Case VB_BLIND_STATUS
       For iChannel = 1 To 2
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, " VMB2BLE Blind " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Blind " & iChannel)
 
           If BTst(aData[3], 0) Then
             sValue = "Blind up"
@@ -1759,13 +1796,13 @@ Private Sub VMB2BLE_Receive(bAddress As Byte, aData As Byte[])
     Case VB_CLOCK
       If $bDebug Then
         WriteDebugLog("  Weekday: " & Util.DisplayWeekday(aData[1]))
-        WriteDebugLog("  Hour: " & Format(aData[2], 00))
-        WriteDebugLog("  Minute: " & Format(aData[3], 00))
+        WriteDebugLog("  Hour: " & Format(aData[2], "00"))
+        WriteDebugLog("  Minute: " & Format(aData[3], "00"))
       Endif
     Case VB_DATE
       If $bDebug Then
-        WriteDebugLog("  Day: " & Format(aData[1], 00))
-        WriteDebugLog("  Month: " & Format(aData[2], 00))
+        WriteDebugLog("  Day: " & Format(aData[1], "00"))
+        WriteDebugLog("  Month: " & Format(aData[2], "00"))
         WriteDebugLog("  Year: " & CInt(aData[3]) * 256 + aData[4])
       Endif
     Case Else
@@ -1841,15 +1878,15 @@ Private Sub VMBDME_Receive(bAddress As Byte, aData As Byte[])
     Case VB_STATUS ' Do nothing
     Case VB_MODULE_TYPE
       If $bDebug Then
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
     Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
       If BTst(aData[1], 0) Then
-        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, "VMBDME")
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType)
         Update_LED_Status(iDeviceId, aData[0])
       Endif
     Case VB_SLIDER_STATUS, VB_DIMMER_STATUS
-      iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, "VMBDME")
+      iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType)
       Select aData[2]
         Case &H64 '100%
           sValue = "On"
@@ -1880,12 +1917,6 @@ Private Sub VMBDME_Send(bAddress As Byte, sAction As String)
     iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
   Else
     sCommand = sAction
-  Endif
-
-  If $bDebug Then
-    WriteDebugLog("Sending Command to VMBDME")
-    WriteDebugLog("  Command: " & UCase(sCommand))
-    If UCase(sCommand) = "DIM" Then WriteDebugLog("  Dim: " & iDim)
   Endif
 
   Select UCase(sCommand)
@@ -1944,20 +1975,20 @@ Private Sub VMB4DC_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
     Case VB_LED_BLINK_FAST, VB_LED_BLINK_SLOW, VB_LED_BLINK_VERY_FAST, VB_LED_CLEAR, VB_LED_SET
       For iChannel = 1 To 4
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4DC Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           Update_LED_Status(iDeviceId, aData[0])
         Endif
       Next
     Case VB_SLIDER_STATUS
       For iChannel = 1 To 4
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4DC Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           Select aData[2]
             Case &H64 '100%
               sValue = "On"
@@ -1977,7 +2008,7 @@ Private Sub VMB4DC_Receive(bAddress As Byte, aData As Byte[])
     Case VB_DIMMER_STATUS
       For iChannel = 1 To 4
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4DC Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & "Channel " & iChannel)
           iDimmerValue = Round((CInt(aData[2]) / 2.56), 0)
           If $bDebug Then WriteDebugLog("  Dim Status: " & iDimmerValue)
           Devices.ValueUpdate(iDeviceId, 1, iDimmerValue)
@@ -1986,7 +2017,7 @@ Private Sub VMB4DC_Receive(bAddress As Byte, aData As Byte[])
     Case VB_DIMMER_CONTROLLER_STATUS
       For iChannel = 1 To 4
         If BTst(aData[1], iChannel - 1) Then
-          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB4DC Channel " & iChannel)
+          iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
           If $bDebug Then WriteDebugLog("  Dim Status: " & aData[3])
           devices.ValueUpdate(iDeviceId, 1, "Dim " & aData[3])
         Endif
@@ -2072,12 +2103,12 @@ Private Sub VMB7IN_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
     Case VB_STATUS
       For iChannel = 1 To 7
-        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB7IN Channel " & iChannel)
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
         If BTst(aData[1], iChannel - 1) Then
           If $bDebug Then WriteDebugLog("  Status: Pressed")
           Devices.ValueUpdate(iDeviceId, 1, "Pressed")
@@ -2093,7 +2124,7 @@ Private Sub VMB7IN_Receive(bAddress As Byte, aData As Byte[])
       Next
     Case VB_INPUT_STATUS
       For iChannel = 1 To 7
-        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB7IN Channel " & iChannel)
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
         If BTst(aData[1], iChannel - 1) Then 
           If $bDebug Then WriteDebugLog("  Input Status: Pressed")
           Devices.ValueUpdate(iDeviceId, 1, "Pressed") 
@@ -2121,7 +2152,7 @@ Private Sub VMB7IN_Receive(bAddress As Byte, aData As Byte[])
           iEnergyUse = 0
         Endif
 
-        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB7IN Channel " & iChannel)
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
         If $bDebug Then 
           WriteDebugLog("  Energy Use: " & iEnergyUse)
           WriteDebugLog("  Energy Counter: " & iEnergyCounter)
@@ -2132,14 +2163,18 @@ Private Sub VMB7IN_Receive(bAddress As Byte, aData As Byte[])
     Case VB_CLOCK
       If $bDebug Then
         WriteDebugLog("  Weekday: " & Util.DisplayWeekday(aData[1]))
-        WriteDebugLog("  Hour: " & Format(aData[2], 00))
-        WriteDebugLog("  Minute: " & Format(aData[3], 00))
+        WriteDebugLog("  Hour: " & Format(aData[2], "00"))
+        WriteDebugLog("  Minute: " & Format(aData[3], "00"))
       Endif
     Case VB_DATE
       If $bDebug Then
-        WriteDebugLog("  Day: " & Format(aData[1], 00))
-        WriteDebugLog("  Month: " & Format(aData[2], 00))
+        WriteDebugLog("  Day: " & Format(aData[1], "00"))
+        WriteDebugLog("  Month: " & Format(aData[2], "00"))
         WriteDebugLog("  Year: " & CInt(aData[3]) * 256 + aData[4])
+      Endif
+    Case VB_DAYLIGHT_SAVING
+      If $bDebug Then
+        WriteDebugLog("  Daylight saving: " & IIf(aData[1] = 0, "Disabled", "Enabled"))
       Endif
     Case Else
       WriteDebugLog("  *** Unsupported Command ***")
@@ -2191,13 +2226,13 @@ Private Sub VMBGPO_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
     Case VB_TEMP
       If aData.Count = 7 Then
 
-        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, "Velbus VMBGPO panel")
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType, $sModuleType & " Panel")
 
         If BTst(aData[2], 0) And BTst(aData[2], 1) And BTst(aData[2], 2) And BTst(aData[2], 3) And BTst(aData[2], 4) Then
           iTemperature = -0.0625
@@ -2232,13 +2267,13 @@ Private Sub VMBGPO_Receive(bAddress As Byte, aData As Byte[])
     Case VB_CLOCK
       If $bDebug Then
         WriteDebugLog("  Weekday: " & Util.DisplayWeekday(aData[1]))
-        WriteDebugLog("  Hour: " & Format(aData[2], 00))
-        WriteDebugLog("  Minute: " & Format(aData[3], 00))
+        WriteDebugLog("  Hour: " & Format(aData[2], "00"))
+        WriteDebugLog("  Minute: " & Format(aData[3], "00"))
       Endif
     Case VB_DATE
       If $bDebug Then
-        WriteDebugLog("  Day: " & Format(aData[1], 00))
-        WriteDebugLog("  Month: " & Format(aData[2], 00))
+        WriteDebugLog("  Day: " & Format(aData[1], "00"))
+        WriteDebugLog("  Month: " & Format(aData[2], "00"))
         WriteDebugLog("  Year: " & CInt(aData[3]) * 256 + aData[4])
       Endif
     Case Else
@@ -2282,12 +2317,12 @@ Private Sub VMB8PB_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       ' If we got enough info, report build info
       If aData.Count = 7 Then
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
 
     Case VB_STATUS
       For iChannel = 1 To 8
-        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB8PB Channel " & iChannel)
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
         If BTst(aData[1], iChannel - 1) Then
           If $bDebug Then WriteDebugLog("  Status: Pressed")
           Devices.ValueUpdate(iDeviceId, 1, "Pressed")
@@ -2303,7 +2338,7 @@ Private Sub VMB8PB_Receive(bAddress As Byte, aData As Byte[])
       Next
     Case VB_INPUT_STATUS
       For iChannel = 1 To 8
-        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, "VMB8PB Channel " & iChannel)
+        iDeviceId = Devices.Find(Instance, Hex(bAddress, 2) & "|" & iChannel, InterfaceId, $sModuleType, $sModuleType & " Channel " & iChannel)
         If BTst(aData[1], iChannel - 1) Then 
           If $bDebug Then WriteDebugLog("  Input Status: Pressed")
           Devices.ValueUpdate(iDeviceId, 1, "Pressed") 
@@ -2360,11 +2395,11 @@ Private Sub VMBDMI_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
     Case VB_DIMMER_CONTROLLER_STATUS
-      iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, "VMBDMI")
+      iDeviceId = Devices.Find(Instance, Hex(bAddress, 2), InterfaceId, $sModuleType)
 
       Select aData[2]
         Case &H64 ' 100%
@@ -2397,12 +2432,6 @@ Private Sub VMBDMI_Send(bAddress As Byte, sAction As String)
     iDim = Right(sAction, Len(sAction) - InStr(sAction, " "))
   Else
     sCommand = UCase(sAction)
-  Endif
-
-  If $bDebug Then
-    WriteDebugLog("Sending Command to VMBDMI")
-    WriteDebugLog("  Command: " & UCase(sCommand))
-    If UCase(sCommand) = "DIM" Then WriteDebugLog("  Dim: " & iDim)
   Endif
 
   Select sCommand
@@ -2459,25 +2488,46 @@ Private Sub VMBPIRC_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
     Case VB_CLOCK
       If $bDebug Then
         WriteDebugLog("  Weekday: " & Util.DisplayWeekday(aData[1]))
-        WriteDebugLog("  Hour: " & Format(aData[2], 00))
-        WriteDebugLog("  Minute: " & Format(aData[3], 00))
+        WriteDebugLog("  Hour: " & Format(aData[2], "00"))
+        WriteDebugLog("  Minute: " & Format(aData[3], "00"))
       Endif
     Case VB_DATE
       If $bDebug Then
-        WriteDebugLog("  Day: " & Format(aData[1], 00))
-        WriteDebugLog("  Month: " & Format(aData[2], 00))
+        WriteDebugLog("  Day: " & Format(aData[1], "00"))
+        WriteDebugLog("  Month: " & Format(aData[2], "00"))
         WriteDebugLog("  Year: " & CInt(aData[3]) * 256 + aData[4])
       Endif
 
     Case Else
       WriteDebugLog("  *** Unsupported Command ***")
   End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBPIRC_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  sAction = UCase(sAction)
+
+  Select sAction
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+    Case "CLOCK" ' ???
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
 
 End
 
@@ -2490,8 +2540,8 @@ Private Sub VMBPIRO_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
 
     Case Else
@@ -2530,8 +2580,8 @@ Private Sub VMB8PBU_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
 
     Case Else
@@ -2570,8 +2620,8 @@ Private Sub VMB6PBN_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
 
     Case Else
@@ -2604,6 +2654,48 @@ Private Sub VMB6PBN_Send(bAddress As Byte, sAction As String)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Support for VMBGP1 module
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGP1_Receive(bAddress As Byte, aData As Byte[])
+
+  Select aData[0]
+    Case VB_MODULE_TYPE
+      If $bDebug Then
+        WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
+      Endif
+
+    Case Else
+      WriteDebugLog("  *** Unsupported Command ***")
+  End Select
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub VMBGP1_Send(bAddress As Byte, sAction As String)
+
+  Dim aData As New Byte[]
+  Dim bPrio As Byte
+
+  sAction = UCase(sAction)
+
+  Select sAction
+    Case "STATUS"
+      bPrio = VB_LPRIO
+      aData.Add(VB_MODULE_STATUS)
+    Case "CLOCK"
+      bPrio = VB_LPRIO
+      aData.Add(VB_CLOCK_REQUEST)
+    Case Else
+      WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+  End Select
+
+  If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Support for VMBGP2 module
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub VMBGP2_Receive(bAddress As Byte, aData As Byte[])
@@ -2612,8 +2704,8 @@ Private Sub VMBGP2_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
 
     Case Else
@@ -2654,8 +2746,8 @@ Private Sub VMBGP4_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
 
     Case Else
@@ -2696,8 +2788,8 @@ Private Sub VMBGPOD_Receive(bAddress As Byte, aData As Byte[])
     Case VB_MODULE_TYPE
       If $bDebug Then
         WriteDebugLog("  SerialNumber: " & CStr(aData[2] * 256 + aData[3]))
-        WriteDebugLog("  MemoryMap: " & aData[4])
-        WriteDebugLog("  Build: " & Format(aData[5], "00") & Format(aData[6], "00"))
+        WriteDebugLog("  MemoryMap: " & Hex(aData[4], 2))
+        WriteDebugLog("  Build: " & Hex(aData[5], 2) & Hex(aData[6], 2))
       Endif
 
     Case Else
@@ -3058,8 +3150,12 @@ Private Sub DisplayCommandType(bType As Byte) As String
       Return "VB_EEPROM_STATUS"
     Case VB_MODULE_TYPE
       Return "VB_MODULE_TYPE"
+    Case VB_DAYLIGHT_SAVING
+      Return "VB_DAYLIGHT_SAVING"
+    Case VB_SUBTYPE
+      Return "VB_SUBTYPE"
     Default
-      Return "Unknown (" & Hex(bType, 2) & ")"
+      Return "UNKNOWN (" & Hex(bType, 2) & ")"
   End Select
 
 End
