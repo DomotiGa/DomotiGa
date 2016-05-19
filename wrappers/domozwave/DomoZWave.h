@@ -265,6 +265,6 @@ const char* DomoZWave_SpecificTypeName( int generictype, int specifictype );
 // Thermostate and Scenes are not supported (yet)
 //-----------------------------------------------------------------------------
 
-void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams );
+void cURL_Post_JSON(uint32 QueueId, uint32 HomeId, char* Method, char* PostData );
 
 }

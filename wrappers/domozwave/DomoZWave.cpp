@@ -74,9 +74,6 @@ ofstream logfile;
 // Define serialport string, we require the serialport if we want to stop the Open Z-Wave library properly
 list<string> serialPortName;
 
-// json-rpc id, normally we just increment this value with every new request
-int32 JsonRpcId = 0;
-
 // CURL variables
 CURL *curl;
 CURLcode rescurl;
@@ -194,13 +191,13 @@ typedef struct
 
 static list<NodeInfo*> g_nodes;
 
-int32 QueueId = 0;
+uint32 QueueId = 0;
 
 typedef struct {
         uint32 QueueId;
-	uint32 homeID;
-	char* method;
-	json_object *jparams;
+        uint32 HomeId;
+	char Method[64];
+        char Params[512];
 } StructJsonRpcInfo;
 
 list<StructJsonRpcInfo> m_JsonRpcInfo;
@@ -393,6 +390,26 @@ void WriteLog
 }
 
 //-----------------------------------------------------------------------------
+// Escape a string to be valid json. Escape '/' and '"'
+//-----------------------------------------------------------------------------
+string EscapeJsonString( string data )
+{
+	size_t pos = 0;
+	while((pos = data.find("/", pos)) != string::npos) {
+		data.replace(pos, 1, "\\/");
+		pos += 2;
+	}
+
+	pos = 0;
+	while((pos = data.find("\"", pos)) != string::npos) {
+		data.replace(pos, 1, "\\\"");
+		pos += 2;
+	}
+
+	return data;
+}
+
+//-----------------------------------------------------------------------------
 // Second thread used for posting the JSON-RPC information to DomotiGa
 // Separate thread is required, otherwise the wrapper goes into a deadlock with
 // single threaded Gambas3
@@ -401,6 +418,7 @@ void WriteLog
 void *cURL_Post_JSON_Thread(void*)
 {
 	StructJsonRpcInfo JsonRpcInfo;
+	char PostData[1024];
 	bool b_Empty;
 
 	while( i_JsonRpcThread )
@@ -408,8 +426,10 @@ void *cURL_Post_JSON_Thread(void*)
 		// Wait until we received a semaphore
 		sem_wait( &s_JsonRpcThread );
 
-		// Check if we have entries in the queue
+		// Lock the json-rpc thread
 		pthread_mutex_lock( &g_JsonRpcThread );
+
+		// Check if we have entries in the queue
 		b_Empty = m_JsonRpcInfo.empty();
 
 		while ( ! b_Empty )
@@ -418,25 +438,25 @@ void *cURL_Post_JSON_Thread(void*)
 			JsonRpcInfo = m_JsonRpcInfo.front();
 			m_JsonRpcInfo.pop_front();
 
-if ( JsonRpcInfo.jparams != NULL )
-{
-WriteLog( LogLevel_Debug, false, "Id=%d DataOut=%s", JsonRpcInfo.QueueId, json_object_to_json_string( JsonRpcInfo.jparams ) );
-}
-else
-{
-WriteLog( LogLevel_Debug, false, "DataOut=NULL" );
-}
+			// Unlock the json-rpc thread again
+			pthread_mutex_unlock( &g_JsonRpcThread );
+
+			if ( strlen(JsonRpcInfo.Params) != 0 )
+			{
+				snprintf( PostData, sizeof(PostData), "{\"jsonrpc\": \"2.0\", \"method\": \"%s\", \"params\": %s, \"id\": %d}", &JsonRpcInfo.Method, &JsonRpcInfo.Params, JsonRpcInfo.QueueId );
+WriteLog( LogLevel_Debug, false, "Id=%d Queue=%d DataOut=%s", JsonRpcInfo.QueueId, m_JsonRpcInfo.size(), &PostData );
+			}
+			else
+			{
+				snprintf( PostData, sizeof(PostData), "{\"jsonrpc\": \"2.0\", \"method\": \"%s\", \"id\": %d}", &JsonRpcInfo.Method, JsonRpcInfo.QueueId );
+WriteLog( LogLevel_Debug, false, "Id=%d Queue=%d DataOut=NULL", JsonRpcInfo.QueueId, m_JsonRpcInfo.size() );
+			}
 
 			// Do the cURL POST with JSON-RPC
-			pthread_mutex_unlock( &g_JsonRpcThread );
-			cURL_Post_JSON( JsonRpcInfo.homeID, JsonRpcInfo.method, JsonRpcInfo.jparams );
-			pthread_mutex_lock( &g_JsonRpcThread );
+			cURL_Post_JSON( JsonRpcInfo.QueueId, JsonRpcInfo.HomeId, &JsonRpcInfo.Method[0], &PostData[0] );
 
-			// Remove the json-rpc object
-			if ( JsonRpcInfo.jparams != NULL )
-			{
- 				json_object_put( JsonRpcInfo.jparams );	
-			}
+			// Lock it again
+			pthread_mutex_lock( &g_JsonRpcThread );
 
 			// Check if we got more entries
 			b_Empty = m_JsonRpcInfo.empty();
@@ -460,12 +480,12 @@ WriteLog( LogLevel_Debug, false, "DataOut=NULL" );
 // shuts down
 //-----------------------------------------------------------------------------
 
-void RPC_ValueRemoved( uint32 homeID, int nodeID, ValueID valueID )
+void RPC_ValueRemoved( uint32 HomeId, int nodeID, ValueID valueID )
 {
 	int id = valueID.GetCommandClassId();
 	int genre = valueID.GetGenre();
 
-	WriteLog( LogLevel_Debug, true, "ValueRemoved: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "ValueRemoved: HomeId=0x%x Node=%d", HomeId, nodeID );
 	WriteLog( LogLevel_Debug, false, "Genre=%s (%d)", DomoZWave_GenreIdName(genre), genre );
 	WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(id), id );
 	WriteLog( LogLevel_Debug, false, "Instance=%d", valueID.GetInstance() );
@@ -478,7 +498,7 @@ void RPC_ValueRemoved( uint32 homeID, int nodeID, ValueID valueID )
 // If it was from a known command class we'll report that value back to DomotiGa.
 //-----------------------------------------------------------------------------
 
-void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
+void RPC_ValueChanged( uint32 HomeId, int nodeID, ValueID valueID, bool add )
 {
 	int id = valueID.GetCommandClassId();
 	int genre = valueID.GetGenre();
@@ -504,7 +524,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 	}
 	catch(...) {}
 
-	WriteLog( LogLevel_Debug, true, "%s: HomeId=0x%x Node=%d", (add)?"ValueAdded":"ValueChanged", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "%s: HomeId=0x%x Node=%d", (add)?"ValueAdded":"ValueChanged", HomeId, nodeID );
 	WriteLog( LogLevel_Debug, false, "Genre=%s (%d)", DomoZWave_GenreIdName(genre), genre );
 	WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(id), id );
 	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
@@ -512,10 +532,10 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 	WriteLog( LogLevel_Debug, false, "Label=%s", label.c_str() );
 	WriteLog( LogLevel_Debug, false, "Units=%s", unit.c_str() );
 
-	nodeInfo = GetNodeInfo( homeID, nodeID );
+	nodeInfo = GetNodeInfo( HomeId, nodeID );
 	if ( nodeInfo == NULL )
 	{
-		WriteLog( LogLevel_Error, false, "ERROR: %s: HomeId=0x%x Node=%d - Node exists in Z-Wave Network, but not in internal Open-ZWave wrapper list - Please report this as a BUG", (add)?"ValueAdded":"ValueChanged", homeID, nodeID );
+		WriteLog( LogLevel_Error, false, "ERROR: %s: HomeId=0x%x Node=%d - Node exists in Z-Wave Network, but not in internal Open-ZWave wrapper list - Please report this as a BUG", (add)?"ValueAdded":"ValueChanged", HomeId, nodeID );
 		return;
 	}
 
@@ -628,7 +648,7 @@ void RPC_ValueChanged( uint32 homeID, int nodeID, ValueID valueID, bool add )
 		// The mapped commandclass has to be found
 		if ( ! found )
 		{
-WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - CommandClass Basic can't be mapped to the '%s', because it doesn't exist (bug in device?)", homeID, nodeID, instanceID, DomoZWave_CommandClassIdName(nodeInfo->basicmapping) );
+WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - CommandClass Basic can't be mapped to the '%s', because it doesn't exist (bug in device?)", HomeId, nodeID, instanceID, DomoZWave_CommandClassIdName(nodeInfo->basicmapping) );
                         return;
 		}
 	}
@@ -1467,7 +1487,7 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		// Check if the index/label exists in our list
 		if ( valueid >= nodeInfo->instanceLabel[instanceID].size() )
 		{
-			WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d Index=%d Label=%s - Index/Label hasn't been added during ValueAdd - Please report this as a BUG", homeID, nodeID, instanceID, dev_index, dev_label.c_str() );
+			WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d Index=%d Label=%s - Index/Label hasn't been added during ValueAdd - Please report this as a BUG", HomeId, nodeID, instanceID, dev_index, dev_label.c_str() );
 			return;
 		}
 
@@ -1488,35 +1508,21 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 		
 		WriteLog( LogLevel_Debug, false, "Value%d=%s", valueid, dev_result );
 
+		// Lock our json-rpc thread
 		pthread_mutex_lock( &g_JsonRpcThread );
 
-		json_object *jparams = json_object_new_object();
-		json_object *jhomeid = json_object_new_int( homeID );
-		json_object *jnodeid = json_object_new_int( nodeID );
-		json_object *jinstanceid = json_object_new_int( instanceID );
-		json_object *jvalueid = json_object_new_int( valueid );
-		json_object *jvalue = json_object_new_string( dev_result );
-		json_object *jlabel = json_object_new_string( label.c_str() );
-		json_object *junit = json_object_new_string( unit.c_str() );
-
-		json_object_object_add( jparams, "homeid", jhomeid );
-		json_object_object_add( jparams, "nodeid", jnodeid );
-		json_object_object_add( jparams, "instanceid", jinstanceid );
-		json_object_object_add( jparams, "valueid", jvalueid );
-		json_object_object_add( jparams, "value", jvalue );
-		json_object_object_add( jparams, "label", jlabel );
-		json_object_object_add( jparams, "unit", junit );
-
 		StructJsonRpcInfo JsonRpcInfo;
+
+		if ( QueueId > 0xFFFF ) QueueId = 0;
 		QueueId++;
 		JsonRpcInfo.QueueId = QueueId;
-		JsonRpcInfo.homeID = homeID;
-		JsonRpcInfo.method = strdup("openzwave.setvalue");
-		JsonRpcInfo.jparams = jparams;
-
-WriteLog( LogLevel_Debug, false, "ID=%d DataIn=%s", QueueId, json_object_to_json_string( JsonRpcInfo.jparams ) );
+		JsonRpcInfo.HomeId = HomeId;
+		strcpy( JsonRpcInfo.Method, "openzwave.setvalue" );
+		snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"instanceid\": %d, \"valueid\": %d, \"value\": \"%s\", \"label\": \"%s\", \"unit\": \"%s\"}", HomeId, nodeID, instanceID, valueid, &dev_result, EscapeJsonString( label ).c_str(), EscapeJsonString( unit ).c_str() );
 
 		m_JsonRpcInfo.push_back( JsonRpcInfo );
+
+		// Done, we can unlock again
 		pthread_mutex_unlock( &g_JsonRpcThread );
 
 		// Signal the thread to process data
@@ -1531,7 +1537,7 @@ WriteLog( LogLevel_Debug, false, "ID=%d DataIn=%s", QueueId, json_object_to_json
 	if (( id == COMMAND_CLASS_USER_CODE ) && ( instanceID == 1 ) && ( genre == ValueID::ValueGenre_User ) && ( valueID.GetIndex() == 0 ) && ( valueID.GetType() == ValueID::ValueType_Raw ))
 	{
 
-		m_structCtrl* ctrl = GetControllerInfo( homeID );
+		m_structCtrl* ctrl = GetControllerInfo( HomeId );
 
 		// Only do the enrollment, if it matches are preselected node
 		if ( ctrl->m_userCodeEnrollNode == nodeID )
@@ -1578,9 +1584,9 @@ WriteLog( LogLevel_Debug, false, "ID=%d DataIn=%s", QueueId, json_object_to_json
 //
 //-----------------------------------------------------------------------------
 
-void RPC_NodeAdded( uint32 homeID, int nodeID )
+void RPC_NodeAdded( uint32 HomeId, int nodeID )
 {
-	WriteLog( LogLevel_Debug, true, "NodeAdd: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "NodeAdd: HomeId=0x%x Node=%d", HomeId, nodeID );
 }
 
 //-----------------------------------------------------------------------------
@@ -1588,27 +1594,25 @@ void RPC_NodeAdded( uint32 homeID, int nodeID )
 // Node is removed from the Z-Wave network. Is only done if the open-zwave wrapper is running.
 //-----------------------------------------------------------------------------
 
-void RPC_NodeRemoved( uint32 homeID, int nodeID )
+void RPC_NodeRemoved( uint32 HomeId, int NodeId )
 {
-	WriteLog( LogLevel_Debug, true, "NodeRemoved: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "NodeRemoved: HomeId=0x%x Node=%d", HomeId, NodeId );
 
+	// Lock
 	pthread_mutex_lock( &g_JsonRpcThread );
 
-	json_object *jparams = json_object_new_object();
-	json_object *jhomeid = json_object_new_int( homeID );
-	json_object *jnodeid = json_object_new_int( nodeID );
-	json_object_object_add( jparams, "homeid", jhomeid );
-	json_object_object_add( jparams, "nodeid", jnodeid );
-
 	StructJsonRpcInfo JsonRpcInfo;
+
+	if ( QueueId > 0xFFFF ) QueueId = 0;
 	QueueId++;
 	JsonRpcInfo.QueueId = QueueId;
-	JsonRpcInfo.homeID = homeID;
-	JsonRpcInfo.method = strdup("openzwave.removenode");
-	JsonRpcInfo.jparams = jparams;
+	JsonRpcInfo.HomeId = HomeId;
+	strcpy( JsonRpcInfo.Method, "openzwave.removenode" );
+	snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d}", HomeId, NodeId );
 
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
 
+	// Done, unlock again
 	pthread_mutex_unlock( &g_JsonRpcThread );
 
 	// Signal the thread to process data
@@ -1621,27 +1625,24 @@ void RPC_NodeRemoved( uint32 homeID, int nodeID )
 // Node is reset, and needs to be removed the Z-Wave network. It will automatically be re-added
 //-----------------------------------------------------------------------------
 
-void RPC_NodeReset( uint32 homeID, int nodeID )
+void RPC_NodeReset( uint32 HomeId, int NodeId )
 {
-	WriteLog( LogLevel_Debug, true, "NodeReset: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "NodeReset: HomeId=0x%x Node=%d", HomeId, NodeId );
 
 	pthread_mutex_lock( &g_JsonRpcThread );
 
-	json_object *jparams = json_object_new_object();
-	json_object *jhomeid = json_object_new_int( homeID );
-	json_object *jnodeid = json_object_new_int( nodeID );
-	json_object_object_add( jparams, "homeid", jhomeid );
-	json_object_object_add( jparams, "nodeid", jnodeid );
-
 	StructJsonRpcInfo JsonRpcInfo;
+
+	if ( QueueId > 0xFFFF ) QueueId = 0;
 	QueueId++;
 	JsonRpcInfo.QueueId = QueueId;
-	JsonRpcInfo.homeID = homeID;
-	JsonRpcInfo.method = strdup("openzwave.removenode");
-	JsonRpcInfo.jparams = jparams;
+	JsonRpcInfo.HomeId = HomeId;
+	strcpy( JsonRpcInfo.Method, "openzwave.removenode" );
+	snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d}", HomeId, NodeId );
 
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
 
+	// Done, unlock again
 	pthread_mutex_unlock( &g_JsonRpcThread );
 
 	// Signal the thread to process data
@@ -1654,9 +1655,9 @@ void RPC_NodeReset( uint32 homeID, int nodeID )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_NodeNew( uint32 homeID, int nodeID )
+void RPC_NodeNew( uint32 HomeId, int nodeID )
 {
-	WriteLog( LogLevel_Debug, true, "NodeNew: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "NodeNew: HomeId=0x%x Node=%d", HomeId, nodeID );
 }
 
 //-----------------------------------------------------------------------------
@@ -1664,7 +1665,7 @@ void RPC_NodeNew( uint32 homeID, int nodeID )
 // We got results to a Protocol Info query, send them over to DomotiGa
 //-----------------------------------------------------------------------------
 
-void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
+void RPC_NodeProtocolInfo( uint32 HomeId, int NodeId )
 {
 	int32 basic;
 	int32 generic;
@@ -1682,22 +1683,22 @@ void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
 	uint8 basicmapping = 0;
 	char buffer[50];
 
-        try { basic = Manager::Get()->GetNodeBasic( homeID, nodeID ); } catch(...) {}
-        try { generic = Manager::Get()->GetNodeGeneric( homeID, nodeID ); } catch(...) {}
-        try { specific = Manager::Get()->GetNodeSpecific( homeID, nodeID ); } catch(...) {}
-        try { listening = Manager::Get()->IsNodeListeningDevice( homeID, nodeID ); } catch(...) {}
-        try { frequentlistening = Manager::Get()->IsNodeFrequentListeningDevice( homeID, nodeID ); } catch(...) {}
-        try { beaming = Manager::Get()->IsNodeBeamingDevice( homeID, nodeID ); } catch(...) {}
-        try { routing = Manager::Get()->IsNodeRoutingDevice( homeID, nodeID ); } catch(...) {}
-        try { security = Manager::Get()->IsNodeSecurityDevice( homeID, nodeID ); } catch(...) {}
-        try { maxbaudrate = Manager::Get()->GetNodeMaxBaudRate( homeID, nodeID ); } catch(...) {}
-        try { nodetype = Manager::Get()->GetNodeType( homeID, nodeID).c_str(); } catch(...) {}
-        try { name = Manager::Get()->GetNodeName( homeID, nodeID).c_str(); } catch(...) {}
-        try { location = Manager::Get()->GetNodeLocation( homeID, nodeID).c_str(); } catch(...) {}
-        try { version = Manager::Get()->GetNodeVersion( homeID, nodeID ); } catch(...) {}
+        try { basic = Manager::Get()->GetNodeBasic( HomeId, NodeId ); } catch(...) {}
+        try { generic = Manager::Get()->GetNodeGeneric( HomeId, NodeId ); } catch(...) {}
+        try { specific = Manager::Get()->GetNodeSpecific( HomeId, NodeId ); } catch(...) {}
+        try { listening = Manager::Get()->IsNodeListeningDevice( HomeId, NodeId ); } catch(...) {}
+        try { frequentlistening = Manager::Get()->IsNodeFrequentListeningDevice( HomeId, NodeId ); } catch(...) {}
+        try { beaming = Manager::Get()->IsNodeBeamingDevice( HomeId, NodeId ); } catch(...) {}
+        try { routing = Manager::Get()->IsNodeRoutingDevice( HomeId, NodeId ); } catch(...) {}
+        try { security = Manager::Get()->IsNodeSecurityDevice( HomeId, NodeId ); } catch(...) {}
+        try { maxbaudrate = Manager::Get()->GetNodeMaxBaudRate( HomeId, NodeId ); } catch(...) {}
+        try { nodetype = Manager::Get()->GetNodeType( HomeId, NodeId ).c_str(); } catch(...) {}
+        try { name = Manager::Get()->GetNodeName( HomeId, NodeId ).c_str(); } catch(...) {}
+        try { location = Manager::Get()->GetNodeLocation( HomeId, NodeId ).c_str(); } catch(...) {}
+        try { version = Manager::Get()->GetNodeVersion( HomeId, NodeId ); } catch(...) {}
 
 	// Get NodeInfo information
-	if ( NodeInfo* nodeInfo = GetNodeInfo( homeID, nodeID ) )
+	if ( NodeInfo* nodeInfo = GetNodeInfo( HomeId, NodeId ) )
 	{
 		// This is a "new" node, we set basicmapping to 0 now
 		nodeInfo->basicmapping = 0;
@@ -1725,7 +1726,7 @@ void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
 		}
 	}
 
-	WriteLog( LogLevel_Debug, true, "NodeProtocolInfo: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "NodeProtocolInfo: HomeId=0x%x Node=%d", HomeId, NodeId );
 	WriteLog( LogLevel_Debug, false, "Basic=%d", basic );
 	WriteLog( LogLevel_Debug, false, "Generic=%d", generic );
 	WriteLog( LogLevel_Debug, false, "Specific=%d", specific );
@@ -1745,42 +1746,18 @@ void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
 
 	pthread_mutex_lock( &g_JsonRpcThread );
 
-	json_object *jparams = json_object_new_object();
-	json_object *jhomeid = json_object_new_int( homeID );
-	json_object *jnodeid = json_object_new_int( nodeID );
-	json_object *jbasic = json_object_new_int( basic );
-	json_object *jgeneric = json_object_new_int( generic );
-	json_object *jspecific = json_object_new_int( specific );
-	json_object *jlistening = json_object_new_boolean( listening );
-	json_object *jfrequentlistening = json_object_new_boolean( frequentlistening );
-	json_object *jbeaming = json_object_new_boolean( beaming );
-	json_object *jrouting = json_object_new_boolean( routing );
-	json_object *jsecurity = json_object_new_boolean( security );
-	json_object *jmaxbaudrate = json_object_new_int( maxbaudrate );
-	json_object *jversion = json_object_new_int( version );
-
-	json_object_object_add( jparams, "homeid", jhomeid );
-	json_object_object_add( jparams, "nodeid", jnodeid );
-	json_object_object_add( jparams, "basic", jbasic );
-	json_object_object_add( jparams, "generic", jgeneric );
-	json_object_object_add( jparams, "specific", jspecific );
-	json_object_object_add( jparams, "listening", jlistening );
-	json_object_object_add( jparams, "frequentlistening", jfrequentlistening );
-	json_object_object_add( jparams, "beaming", jbeaming );
-	json_object_object_add( jparams, "routing", jrouting );
-	json_object_object_add( jparams, "security", jsecurity );
-	json_object_object_add( jparams, "maxbaudrate", jmaxbaudrate );
-	json_object_object_add( jparams, "version", jversion );
-
 	StructJsonRpcInfo JsonRpcInfo;
+
+	if ( QueueId > 0xFFFF ) QueueId = 0;
 	QueueId++;
 	JsonRpcInfo.QueueId = QueueId;
-	JsonRpcInfo.homeID = homeID;
-	JsonRpcInfo.method = strdup("openzwave.addnode");
-	JsonRpcInfo.jparams = jparams;
+	JsonRpcInfo.HomeId = HomeId;
+	strcpy( JsonRpcInfo.Method, "openzwave.addnode" );
+snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"basic\": %d, \"generic\": %d, \"specific\": %d, \"listening\": %s, \"frequentlistening\": %s, \"beaming\": %s, \"routing\": %s, \"security\": %s, \"maxbaudrate\": %d, \"version\": %d}", HomeId, NodeId, basic, generic, specific, (listening)?"true":"false", (frequentlistening)?"true":"false", (beaming)?"true":"false", (routing)?"true":"false", (security)?"true":"false", maxbaudrate, version ); 
 
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
 
+	// Done, unlock again
 	pthread_mutex_unlock( &g_JsonRpcThread );
 
 	// Signal the thread to process data
@@ -1792,9 +1769,9 @@ void RPC_NodeProtocolInfo( uint32 homeID, int nodeID )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_Group( uint32 homeID, int nodeID )
+void RPC_Group( uint32 HomeId, int NodeId )
 {
-	WriteLog( LogLevel_Debug, true, "GroupEvent: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "GroupEvent: HomeId=0x%x Node=%d", HomeId, NodeId );
 }
 
 //-----------------------------------------------------------------------------
@@ -1802,58 +1779,48 @@ void RPC_Group( uint32 homeID, int nodeID )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_NodeEvent( uint32 homeID, int nodeID, ValueID valueID, int value )
+void RPC_NodeEvent( uint32 HomeId, int NodeId, ValueID valueID, int value )
 {
 	int id = valueID.GetCommandClassId();
 	int instanceID = valueID.GetInstance();
-	int value_no = 1;
-	char dev_value[1024];
+	int valueid = 1;
+	char dev_result[1024];
 
 	// Instance can never be zero, we need to be backwards compatible
 	if ( instanceID == 0 ) {
 		instanceID = 1;
 	}
 
-	WriteLog( LogLevel_Debug, true, "NodeEvent: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "NodeEvent: HomeId=0x%x Node=%d", HomeId, NodeId );
 	WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(id), id );
 	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
 	WriteLog( LogLevel_Debug, false, "Type=Byte (raw value=%d)", value );
-	snprintf( dev_value, 1024, "%d", value );
+	snprintf( dev_result, sizeof(dev_result), "%d", value );
 
-	if ( strcmp( dev_value, "255" ) == 0 )
+	if ( strcmp( dev_result, "255" ) == 0 )
 	{
-		strcpy( dev_value, "On" );
+		strcpy( dev_result, "On" );
 	}
 	else {
-		strcpy( dev_value, "Off" );
+		strcpy( dev_result, "Off" );
 	}
 
-	WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
+	WriteLog( LogLevel_Debug, false, "Value%d=%s", valueid, dev_result );
 
 	pthread_mutex_lock( &g_JsonRpcThread );
 
-	json_object *jparams = json_object_new_object();
-	json_object *jhomeid = json_object_new_int( homeID );
-	json_object *jnodeid = json_object_new_int( nodeID );
-	json_object *jinstanceid = json_object_new_int( instanceID );
-	json_object *jvalueid = json_object_new_int( value_no );
-	json_object *jvalue = json_object_new_string( dev_value );
-
-	json_object_object_add( jparams, "homeid", jhomeid );
-	json_object_object_add( jparams, "nodeid", jnodeid );
-	json_object_object_add( jparams, "instanceid", jinstanceid );
-	json_object_object_add( jparams, "valueid", jvalueid );
-	json_object_object_add( jparams, "value", jvalue );
-
 	StructJsonRpcInfo JsonRpcInfo;
+
+	if ( QueueId > 0xFFFF ) QueueId = 0;
 	QueueId++;
 	JsonRpcInfo.QueueId = QueueId;
-	JsonRpcInfo.homeID = homeID;
-	JsonRpcInfo.method = strdup("openzwave.setvalue");
-	JsonRpcInfo.jparams = jparams;
+	JsonRpcInfo.HomeId = HomeId;
+	strcpy( JsonRpcInfo.Method, "openzwave.setvalue" );
+	snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"instanceid\": %d, \"valueid\": %d, \"value\": \"%s\"}", HomeId, NodeId, instanceID, valueid, &dev_result );
 
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
 
+	// Done, unlock again
 	pthread_mutex_unlock( &g_JsonRpcThread );
 
 	// Signal the thread to process data
@@ -1865,11 +1832,11 @@ void RPC_NodeEvent( uint32 homeID, int nodeID, ValueID valueID, int value )
 // Handle Scene event
 //-----------------------------------------------------------------------------
 
-void RPC_NodeScene( uint32 homeID, int nodeID, ValueID valueID, int value )
+void RPC_NodeScene( uint32 HomeId, int NodeId, ValueID valueID, int value )
 {
 	int id = valueID.GetCommandClassId();
 	int instanceID = valueID.GetInstance();
-	int value_no = 1;
+	int valueid = 1;
 	char dev_value[1024];
 
 	// Instance can never be zero, we need to be backwards compatible
@@ -1877,41 +1844,31 @@ void RPC_NodeScene( uint32 homeID, int nodeID, ValueID valueID, int value )
 		instanceID = 1;
 	}
 
-	WriteLog( LogLevel_Debug, true, "NodeScene: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "NodeScene: HomeId=0x%x Node=%d", HomeId, NodeId );
 	WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(id), id );
 	WriteLog( LogLevel_Debug, false, "Instance=%d", instanceID );
 	WriteLog( LogLevel_Debug, false, "Type=Byte (raw value=%d)", value );
 	snprintf( dev_value, 1024, "%d", value );
 
-	WriteLog( LogLevel_Debug, false, "Value%d=%s", value_no, dev_value );
+	WriteLog( LogLevel_Debug, false, "Value%d=%s", valueid, dev_value );
 
 	// Only send it if it isn't a scene action command class
 	if ( id != COMMAND_CLASS_SCENE_ACTIVATION ) {
 
 		pthread_mutex_lock( &g_JsonRpcThread );
 
-		json_object *jparams = json_object_new_object();
-		json_object *jhomeid = json_object_new_int( homeID );
-		json_object *jnodeid = json_object_new_int( nodeID );
-		json_object *jinstanceid = json_object_new_int( instanceID );
-		json_object *jvalueid = json_object_new_int( value_no );
-		json_object *jvalue = json_object_new_string( dev_value );
-
-		json_object_object_add( jparams, "homeid", jhomeid );
-		json_object_object_add( jparams, "nodeid", jnodeid );
-		json_object_object_add( jparams, "instanceid", jinstanceid );
-		json_object_object_add( jparams, "valueid", jvalueid );
-		json_object_object_add( jparams, "value", jvalue );
-
 		StructJsonRpcInfo JsonRpcInfo;
+
+		if ( QueueId > 0xFFFF ) QueueId = 0;
 		QueueId++;
 		JsonRpcInfo.QueueId = QueueId;
-		JsonRpcInfo.homeID = homeID;
-		JsonRpcInfo.method = strdup("openzwave.setvalue");
-		JsonRpcInfo.jparams = jparams;
+		JsonRpcInfo.HomeId = HomeId;
+		strcpy( JsonRpcInfo.Method, "openzwave.setvalue" );
+		snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"instanceid\": %d, \"valueid\": %d, \"value\": \"%s\"}", HomeId, NodeId, instanceID, valueid, &dev_value );
 
 		m_JsonRpcInfo.push_back(JsonRpcInfo);
 
+		// Done, unlock again
 		pthread_mutex_unlock( &g_JsonRpcThread );
 
 		// Signal the thread to process data
@@ -1926,9 +1883,9 @@ void RPC_NodeScene( uint32 homeID, int nodeID, ValueID valueID, int value )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_PollingEnabled( uint32 homeID, int nodeID )
+void RPC_PollingEnabled( uint32 HomeId, int NodeId )
 {
-	WriteLog( LogLevel_Debug, true, "PollingEnabled: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "PollingEnabled: HomeId=0x%x Node=%d", HomeId, NodeId );
 }
 
 //-----------------------------------------------------------------------------
@@ -1936,9 +1893,9 @@ void RPC_PollingEnabled( uint32 homeID, int nodeID )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_PollingDisabled( uint32 homeID, int nodeID )
+void RPC_PollingDisabled( uint32 HomeId, int NodeId )
 {
-	WriteLog( LogLevel_Debug, true, "PollingDisabled: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "PollingDisabled: HomeId=0x%x Node=%d", HomeId, NodeId );
 }
 
 //-----------------------------------------------------------------------------
@@ -1946,7 +1903,7 @@ void RPC_PollingDisabled( uint32 homeID, int nodeID )
 //
 //-----------------------------------------------------------------------------
 
-void RPC_NodeNaming( uint32 homeID, int nodeID )
+void RPC_NodeNaming( uint32 HomeId, int NodeId )
 {
 	string manufacturerid;
 	string manufacturername;
@@ -1954,13 +1911,13 @@ void RPC_NodeNaming( uint32 homeID, int nodeID )
 	string productid;
 	string productname;
 
-	try { manufacturerid =  Manager::Get()->GetNodeManufacturerId( homeID, nodeID ); } catch(...) {}
-	try { manufacturername = Manager::Get()->GetNodeManufacturerName( homeID, nodeID ); } catch(...) {}
-	try { producttype = Manager::Get()->GetNodeProductType( homeID, nodeID ); } catch(...) {}
-	try { productid = Manager::Get()->GetNodeProductId( homeID, nodeID ); } catch(...) {}
-	try { productname = Manager::Get()->GetNodeProductName( homeID, nodeID ); } catch(...) {}
+	try { manufacturerid =  Manager::Get()->GetNodeManufacturerId( HomeId, NodeId ); } catch(...) {}
+	try { manufacturername = Manager::Get()->GetNodeManufacturerName( HomeId, NodeId ); } catch(...) {}
+	try { producttype = Manager::Get()->GetNodeProductType( HomeId, NodeId ); } catch(...) {}
+	try { productid = Manager::Get()->GetNodeProductId( HomeId, NodeId ); } catch(...) {}
+	try { productname = Manager::Get()->GetNodeProductName( HomeId, NodeId ); } catch(...) {}
 
-	WriteLog( LogLevel_Debug, true, "NodeNaming: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "NodeNaming: HomeId=0x%x Node=%d", HomeId, NodeId );
 	WriteLog( LogLevel_Debug, false, "ManufacturerId=%s", manufacturerid.c_str() );
 	WriteLog( LogLevel_Debug, false, "ManufacturerName=%s", manufacturername.c_str() );
 	WriteLog( LogLevel_Debug, false, "ProductType=%s, ProductId=%s", producttype.c_str(), productid.c_str() );
@@ -1972,26 +1929,26 @@ void RPC_NodeNaming( uint32 homeID, int nodeID )
 // The driver is ready, add it to our internal controller list
 //-----------------------------------------------------------------------------
 
-void RPC_DriverReady( uint32 homeID, int nodeID )
+void RPC_DriverReady( uint32 HomeId, int nodeID )
 {
 	// Retrieve the serialport name of this homeid
 	string controllerPath;
 
-	try { controllerPath = Manager::Get()->GetControllerPath( homeID ); } catch(...) {}
+	try { controllerPath = Manager::Get()->GetControllerPath( HomeId ); } catch(...) {}
 
 	for ( list<m_structCtrl*>::iterator it = g_allControllers.begin(); it != g_allControllers.end(); ++it )
 	{
 		m_structCtrl* ctrl = *it;
 		if ( ctrl->m_serialPort == controllerPath )
 		{
-			ctrl->m_homeId = homeID;
+			ctrl->m_homeId = HomeId;
 			ctrl->m_controllerId = nodeID;
 		}
 	}
 
-	WriteLog( LogLevel_Debug, true, "DriverReady: HomeId=0x%x Node=%d", homeID, nodeID );
+	WriteLog( LogLevel_Debug, true, "DriverReady: HomeId=0x%x Node=%d", HomeId, nodeID );
 
-	switch( Manager::Get()->GetControllerInterfaceType( homeID ) )
+	switch( Manager::Get()->GetControllerInterfaceType( HomeId ) )
 	{
 		case Driver::ControllerInterface_Serial:
 		{
@@ -2014,23 +1971,18 @@ void RPC_DriverReady( uint32 homeID, int nodeID )
 
 	pthread_mutex_lock( &g_JsonRpcThread );
 
-	json_object *jparams = json_object_new_object();
-	json_object *jhomeid = json_object_new_int( homeID );
-	json_object *jcontrollerid = json_object_new_int( nodeID );
-	json_object *jcontrollerpath = json_object_new_string( controllerPath.c_str() );
-	json_object_object_add( jparams, "homeid", jhomeid );
-	json_object_object_add( jparams, "controllerid", jcontrollerid );
-	json_object_object_add( jparams, "serialport", jcontrollerpath );
-
 	StructJsonRpcInfo JsonRpcInfo;
+
+	if ( QueueId > 0xFFFF ) QueueId = 0;
 	QueueId++;
 	JsonRpcInfo.QueueId = QueueId;
-	JsonRpcInfo.homeID = homeID;
-	JsonRpcInfo.method = strdup("openzwave.homeid");
-	JsonRpcInfo.jparams = jparams;
+	JsonRpcInfo.HomeId = HomeId;
+	strcpy( JsonRpcInfo.Method, "openzwave.homeid" );
+	snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"controllerid\": %d, \"serialport\": \"%s\"}", HomeId, nodeID, EscapeJsonString( controllerPath ).c_str() );
 
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
 
+	// Done, unlock again
 	pthread_mutex_unlock( &g_JsonRpcThread );
 
 	// Signal the thread to process data
@@ -2246,18 +2198,19 @@ void OnNotification
 
 				pthread_mutex_lock( &g_JsonRpcThread );
 
-				json_object *jparams = json_object_new_object();
-				json_object *jhomeid = json_object_new_int( data->GetHomeId() );
-				json_object_object_add( jparams, "homeid", jhomeid );
-
 				StructJsonRpcInfo JsonRpcInfo;
-				JsonRpcInfo.homeID = data->GetHomeId();
-				JsonRpcInfo.method = strdup("openzwave.allqueried");
-				JsonRpcInfo.jparams = jparams;
+
+				if ( QueueId > 0xFFFF ) QueueId = 0;
+				QueueId++;
+				JsonRpcInfo.QueueId = QueueId;
+				JsonRpcInfo.HomeId = data->GetHomeId();
+				strcpy( JsonRpcInfo.Method, "openzwave.allqueried" );
+				snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d}", data->GetHomeId() );
 
 				// Lock, store and unlock JSON-RPC request
 				m_JsonRpcInfo.push_back(JsonRpcInfo);
 
+				// Done, unlock again
 				pthread_mutex_unlock( &g_JsonRpcThread );
 
 				// Signal the thread to process data
@@ -2662,46 +2615,18 @@ static size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *use
 // Call CURL to post the JSON-RPC to DomotiGa
 //-----------------------------------------------------------------------------
 
-void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
+void cURL_Post_JSON(uint32 QueueId, uint32 HomeId, char* Method, char* PostData )
 {
-
-	// Increment the id and check we didn't reach our max
-	if ( JsonRpcId > 0xFFFF ) JsonRpcId = 0;
-	JsonRpcId++;
-
-	pthread_mutex_lock( &g_JsonRpcThread );
-
-	// Construct JSON-RPC request
-	json_object *jrequest = json_object_new_object();
-
-	json_object *jjsonrpc = json_object_new_string( "2.0" );
-	json_object *jmethod = json_object_new_string( method );
-
-	json_object_object_add( jrequest, "jsonrpc", jjsonrpc );
-	json_object_object_add( jrequest, "method", jmethod );
-	if ( jparams != NULL )
-	{
-		json_object_object_add( jrequest, "params", jparams );
-	}
-
-	// Add id, because cURL doesn't like "no-response"
-	json_object *jid = json_object_new_int( JsonRpcId );
-	json_object_object_add( jrequest, "id", jid );
-
-	WriteLog( LogLevel_Debug, true, "JSON-RPC: HomeId=0x%x Method=%s", homeID, method );
-	WriteLog( LogLevel_Debug, false, "Data=%s", json_object_to_json_string( jrequest ) );
-
-	pthread_mutex_unlock( &g_JsonRpcThread );	
 
 	string readBuffer;
 
 	if ( curl )
 	{
-		m_structCtrl* ctrl = GetControllerInfo( homeID );
+		m_structCtrl* ctrl = GetControllerInfo( HomeId );
 		curl_easy_setopt( curl, CURLOPT_URL, ctrl->m_jsonrpcurl );
 
 		// Set the http headers - set content-type and remove 100-continue header
-		curl_easy_setopt( curl, CURLOPT_POSTFIELDS, json_object_to_json_string( jrequest ) );
+		curl_easy_setopt( curl, CURLOPT_POSTFIELDS, PostData );
 
 		// Set up the write callback and variable
 		curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
@@ -2713,132 +2638,46 @@ void cURL_Post_JSON( uint32 homeID, const char* method, json_object *jparams )
 		// Check for errors
 		if( rescurl != CURLE_OK )
 		{
-			WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned cURL msg \"%s\"", method, curl_easy_strerror(rescurl) );
+			WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned cURL msg \"%s\"", Method, curl_easy_strerror(rescurl) );
 		}
 		else
 		{
-			pthread_mutex_lock( &g_JsonRpcThread );
 
 			// Check if the buffer is empty, then it is an invalid one anyway
 			if ( readBuffer == "" ) {
-				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a response", method );
-
-				pthread_mutex_lock( &g_JsonRpcThread );
-
-				// Remove the json-rpc objects
-				json_object_put( jjsonrpc );
-				json_object_put( jmethod );
-				json_object_put( jparams );
-				json_object_put( jrequest );
-
-				pthread_mutex_unlock( &g_JsonRpcThread );
-
+				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a response", Method );
 				return;
 			}
 
-			// Decode JSON-RPC response
-			json_object *jrobj = json_tokener_parse( readBuffer.c_str() );
-			json_object *jrjsonrpc;
-			json_object *jrerror;
-			json_object *jrresult;
-			json_object *jrid;
+			// Define variable for find
+			size_t pos;
 
-			// Retrieve values from json-rpc object
-			json_object_object_get_ex( jrobj, "jsonrpc", &jrjsonrpc );
-			json_object_object_get_ex( jrobj, "error", &jrerror );
-			json_object_object_get_ex( jrobj, "result", &jrresult );
-			json_object_object_get_ex( jrobj, "id", &jrid );
+			// Try to find jsonrpc 2.0 in the received data
+			pos = readBuffer.find("{\"jsonrpc\": \"2.0\"");
 
-			// Test for jsonrpc=2.0
-			if (( json_object_get_type( jrjsonrpc ) != json_type_string ) || ( strcmp( json_object_get_string( jrjsonrpc ), "2.0" ) != 0 ))
+			if ( pos == string::npos )
 			{
-				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a valid \"jsonrpc\" version. Data=%s", method, readBuffer.c_str() );
-
-				// Remove the json-rpc objects
-				json_object_put( jrjsonrpc );
-				json_object_put( jrerror );
-				json_object_put( jrresult );
-				json_object_put( jrid );
-				json_object_put( jrobj );
-
-				json_object_put( jjsonrpc );
-				json_object_put( jmethod );
-				json_object_put( jparams );
-				json_object_put( jrequest );
-
-				pthread_mutex_unlock( &g_JsonRpcThread );
-
+				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a valid \"jsonrpc\" version. Data=%s", Method, readBuffer.c_str() );
 				return;
 			}
 
-			// Test for id
-			if (( json_object_get_type( jrid ) != json_type_int ) || ( json_object_get_int( jrid ) != JsonRpcId ))
+			pos = readBuffer.find("{\"jsonrpc\": \"2.0\", \"result\": true, \"id\":");
+
+			if ( pos == string::npos )
 			{
-				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" didn't return a valid \"id\". Data=%s", method, readBuffer.c_str() );
-
-				// Remove the json-rpc objects
-				json_object_put( jrjsonrpc );
-				json_object_put( jrerror );
-				json_object_put( jrresult );
-				json_object_put( jrid );
-				json_object_put( jrobj );
-
-				json_object_put( jjsonrpc );
-				json_object_put( jmethod );
-				json_object_put( jparams );
-				json_object_put( jrequest );
-
-				pthread_mutex_unlock( &g_JsonRpcThread );
+				WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned error. Data=%s", Method, readBuffer.c_str() );
 				return;
 			}
 
-			// Check if we got a result
-			if ( json_object_get_type( jrresult ) == json_type_boolean )
-			{
-					if ( json_object_get_boolean( jrresult ) == true )
-					{
-						WriteLog( LogLevel_Debug, false, "JSON-RPC call successful" );
-					}
-					else
-					{
-						WriteLog( LogLevel_Error, true, "JSON-RPC call failed" );
-					}
-			}
-			else
-			{
-				if ( json_object_get_type( jrerror ) == json_type_object )
-				{
-					WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned error. Data=%s", method, readBuffer.c_str() );
-				}
-				else
-				{
-					WriteLog( LogLevel_Error, true, "ERROR: JSON-RPC call \"%s\" returned invalid data. Data=%s", method, readBuffer.c_str() );
-				}
-			}
+			WriteLog( LogLevel_Debug, false, "JSON-RPC call successful" );
 
-			// Remove the json-rpc object
-			json_object_put( jrjsonrpc );
-			json_object_put( jrerror );
-			json_object_put( jrresult );
-			json_object_put( jrid );
-			json_object_put( jrobj );
-
-			pthread_mutex_unlock( &g_JsonRpcThread );
 		}
 	}
 
-	pthread_mutex_lock( &g_JsonRpcThread );
-
-	json_object_put( jjsonrpc );
-	json_object_put( jmethod );
-	json_object_put( jparams );
-	json_object_put( jrequest );
-
-	pthread_mutex_unlock( &g_JsonRpcThread );
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// C style bindings are required since we call these functions from gambas.
+// C style bindings are required since we call these functions from Gambas3
 ///////////////////////////////////////////////////////////////////////////////
 
 extern "C" {
@@ -2977,7 +2816,7 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	Options::Get()->AddOptionBool( "AppendLogFile", false );
 	Options::Get()->AddOptionBool( "ConsoleOutput", false );
 
-	// Disable polling, this will be enabled in a later moment
+	// Disable polling, this will be enabled at a later moment
 	Options::Get()->AddOptionInt( "PollInterval", 0 );
 	Options::Get()->AddOptionBool( "IntervalBetweenPolls", true );
 	Options::Get()->AddOptionBool( "SuppressValueRefresh", false );
