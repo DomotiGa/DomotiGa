@@ -80,10 +80,6 @@ Private tVelbusBusy As Timer
 Private bBusBusy As Boolean
 Private cQueue As New Collection
 
-' Scan buffer
-Private tVelbusScan As Timer
-Private cScanQueue As New Collection
-
 ' Interface objects
 Public hMySocket As CSocket
 Public hMySerial As CSerialPort
@@ -92,6 +88,15 @@ Public tVelbus As Timer
 Public hVelbusRelay As New ServerSocket
 Public hRelayVelbusClient As Object[]
 Public hRelayVBSocket As New Socket
+
+' Velbus package details
+Private $bMsgPrev As Byte
+Private $aMsgData As New Byte[]
+
+Private $sModuleType As String
+
+' Collection to store addresses of Velbus modules
+Private $aModuleList As New Collection
 
 ' Velbus module types
 Const VMUNKNOWN As Byte = &H00
@@ -248,19 +253,10 @@ Const VB_EEPROM_READ As Byte = &HFD ' COMMAND_READ_DATA_FROM_MEMORY
 Const VB_EEPROM_STATUS As Byte = &HFE ' COMMAND_MEMORY_DATA
 Const VB_MODULE_TYPE As Byte = &HFF
 
-' Velbus package details
-Private $bMsgPrev As Byte
-Private $aMsgData As New Byte[]
-
-Private $sModuleType As String
-
 Private bMsgRelayStart As Boolean = False
 Private iMsgRelayPart As Integer
 Private bMsgRelaySize As Byte
 Private bMsgRelayData As New Byte[0]
-
-' Array to store addresses of unsupported Velbus modules
-Private VB_Modules_Unsupported As New Byte[0]
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -450,7 +446,6 @@ Public Sub Disconnect() As Boolean
 
   ' try stop running timers
   Try tVelbusBusy.Stop
-  Try tVelbusScan.Stop
 
   Try hVelbusRelay.Close
 
@@ -478,10 +473,6 @@ Private Sub Run()
   ' define timer for Interface busy
   tVelbusBusy = New Timer As "tVelbusBusy"
   tVelbusBusy.Stop
-
-  ' define timer for scan requests
-  tVelbusScan = New Timer As "tVelbusScan"
-  tVelbusScan.Stop
 
   ' request current status of all connected velbus modules
   GetModuleTypeStatusClock()
@@ -1020,8 +1011,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessReceivedPacket(bAddress As Byte, bData As Byte[])
 
-  Dim bModuleType, bScanAddress As Byte
-  Dim bSupported, bIgnoreModule As Boolean
+  Dim bModuleType As Byte
 
   If $bDebug Then WriteDebugLog("  Command: " & DisplayCommandType(bData[0]))
 
@@ -1034,11 +1024,19 @@ Private Sub ProcessReceivedPacket(bAddress As Byte, bData As Byte[])
     bModuleType = GetModuleType(bAddress)
   Endif
 
-  bSupported = False
+  ' If the moduletype is unknown, maybe we received a moduletype now? If we did, store and use now
+  If bModuleType = VMUNKNOWN Then
+    If bData.Count >= 2 And If bData[0] = VB_MODULE_TYPE Then
+      $aModuleList[Hex(bAddress, 2)] = bData[1]
+      bModuleType = bData[1]
+    Endif
+  Endif
+
+  ' Get the readable moduletype name
   $sModuleType = DisplayModuleType(bModuleType)
 
   ' Report module type, if we have an idea
-  If bModuleType <> &H00 And If bModuleType <> &HFF Then
+  If bModuleType = VMUNKNOWN Then
     If $bDebug Then WriteDebugLog("  ModuleType: " & $sModuleType)
   Else
     If $bDebug Then WriteDebugLog("  ModuleType: UNKNOWN")
@@ -1046,93 +1044,48 @@ Private Sub ProcessReceivedPacket(bAddress As Byte, bData As Byte[])
 
   Select bModuleType
     Case VMB8PB
-      bSupported = True
       VMB8PB_Receive(bAddress, bData)
     Case VMB4RY
-      bSupported = True
       VMB4RY_Receive(bAddress, bData)
     Case VMB4RYLD
-      bSupported = True
       VMB4RYLD_Receive(bAddress, bData)
     Case VMB4RYNO
-      bSupported = True
       VMB4RYNO_Receive(bAddress, bData)
     Case VMB4DC
-      bSupported = True
       VMB4DC_Receive(bAddress, bData)
     Case VMBDME
-      bSupported = True
       VMBDME_Receive(bAddress, bData)
     Case VMB2BLE
-      bSupported = True
       VMB2BLE_Receive(bAddress, bData)
     Case VMBGPO
-      bSupported = True
       VMBGPO_Receive(bAddress, bData)
     Case VMB7IN
-      bSupported = True
       VMB7IN_Receive(bAddress, bData)
     Case VMBDMI
-      bSupported = True
       VMBDMI_Receive(bAddress, bData)
     Case VMBPIRC
-      bSupported = True
       VMBPIRC_Receive(bAddress, bData)
     Case VMBPIRO
-      bSupported = True
       VMBPIRO_Receive(bAddress, bData)
     Case VMB8PBU
-      bSupported = True
       VMB8PBU_Receive(bAddress, bData)
     Case VMB6PBN
-      bSupported = True
       VMB6PBN_Receive(bAddress, bData)
     Case VMBGP1
-      bSupported = True
       VMBGP1_Receive(bAddress, bData)
     Case VMBGP1
-      bSupported = True
       VMBGP1_Receive(bAddress, bData)
     Case VMBGP2
-      bSupported = True
       VMBGP2_Receive(bAddress, bData)
     Case VMBGP4
-      bSupported = True
       VMBGP4_Receive(bAddress, bData)
     Case VMBGPOD
-      bSupported = True
       VMBGPOD_Receive(bAddress, bData)
-    Case &H99 ' Unknown module type, do nothing as scan request is scheduled to be sent
-      bSupported = True
     Case &H00
-      bSupported = True
-    Case Else
-      $sModuleType = "<unknown type> (" & Hex(bModuleType, 2) & ")"
-      bSupported = False
-  End Select
-
-  If Not bSupported Then
-
-    If bModuleType = VMUNKNOWN Then
       WriteDebugLog("  Packet received from module with address '" & Hex(bAddress, 2) & "', device isn't discovered or configured yet")
-    Else
-      WriteDebugLog("  Packet received from module " & $sModuleType & " with address '" & Hex(bAddress, 2) & "' which is not (yet) supported by DomotiGa code")
-    Endif
-
-    bIgnoreModule = False
-    For Each bScanAddress In VB_Modules_Unsupported
-      If bScanAddress = bAddress Then
-        bIgnoreModule = True
-        Break
-      Endif
-    Next
-
-    If Not bIgnoreModule Then
-      VB_Modules_Unsupported.Add(bAddress)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Ignoring future messages of unsupported module '" & $sModuleType & "' with address '" & Hex(bAddress, 2) & "'")
-    Endif
-
-  Endif
+    Case Else
+      WriteDebugLog("  Packet received from module '" & $sModuleType & "' with address '" & Hex(bAddress, 2) & "' which is not (yet) supported by DomotiGa code")
+  End Select
 
 Catch
   WriteLog("ERROR: Failed to decode packet '" & Error.Text & "' at '" & Error.Where & "'")
@@ -1222,6 +1175,7 @@ Private Function GetModuleType(bAddress As Byte, Optional DeviceId As Integer) A
 
   If iDeviceId Then
     sDeviceType = UCase(Devices.FindDeviceTypeNameForDeviceId(iDeviceId))
+
     Select sDeviceType 
       Case "VMB4RY"
         Return VMB4RY
@@ -1258,71 +1212,23 @@ Private Function GetModuleType(bAddress As Byte, Optional DeviceId As Integer) A
       Case "VMBGPOD"
         Return VMBGPOD
       Case Else
-        WriteDebugLog("Unsupported velbus module '" & sDeviceType & "' for id '" & iDeviceId & "'")
-        Return &H00
+        WriteDebugLog("  Unsupported velbus module '" & sDeviceType & "' for id '" & iDeviceId & "'")
+        Return VMUNKNOWN
     End Select
   Else
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown moduletype with address " & Hex(bAddress, 2))
 
-    bIgnoreModule = False
-    'To prevent scan broadcaststorms ignore scheduled scan if it's already in queue 
-    For Each bScanAddress In cScanQueue
-      If bScanAddress = bAddress Then bIgnoreModule = True
-    Next
-    'ignore scan request for unsupported modules
-    For Each bScanAddress In VB_Modules_Unsupported
-      If bScanAddress = bAddress Then bIgnoreModule = True
-    Next
-    If Not bIgnoreModule Then
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Send discover (SCAN) request onto velbus to request module type at address " & Hex(bAddress, 2))
-      QueueScanCommand(bAddress)
-      Return &H99
+    ' Check if we seen the device already, because we should send a SCAN only once
+    If Not $aModuleList.Exist(Hex(bAddress, 2)) Then
+      ' New module
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "  Send discover (SCAN) request to request module type at address " & Hex(bAddress, 2))
+      $aModuleList.Add(VMUNKNOWN, Hex(bAddress, 2))
+      SendCommand(Hex(bAddress, 2), "MODULETYPE")
     Else
-      Return &H00
+      ' Seen it already, maybe we know the moduletype already?
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown moduletype with address " & Hex(bAddress, 2))
     Endif
-  Endif
 
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Velbus scan reset
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tVelbusScan_Timer()
-
-  tVelbusScan.Stop
-
-  If cScanQueue.Count Then ' if there are more scan commands left in queue, send next one
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending scan request from Queue (count = " & cQueue.Count & ")")
-    DoScanQueue()
-  Endif
-
-End
-
-Private Sub QueueScanCommand(bAddress As Byte)
-
-  ' add scanrequest to queue
-  cScanQueue.Add(bAddress, Rnd)
-  tVelbusScan.Delay = 10000 'wait 10 sec to send scan request to prevent broadcast storm of scan requests
-  tVelbusScan.Start
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Process next item in queue
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub DoScanQueue()
-
-  Dim bAddress As Byte
-
-  For Each bAddress In cScanQueue
-    QueueCommand(CreateVelbusPackage(VB_LPRIO, bAddress, [], True))
-    Break ' only do first one. Timer will trigger next command
-  Next
-
-  cScanQueue.Remove(cScanQueue.Key)
-  If cScanQueue.Count > 0 Then
-    tVelbusScan.Delay = 10000 'wait 10 sec to send scan request to prevent broadcast storm of scan requests
-    tVelbusScan.Start
+    Return $aModuleList[Hex(bAddress, 2)]
   Endif
 
 End
@@ -1803,7 +1709,7 @@ Private Sub VMB2BLE_Receive(bAddress As Byte, aData As Byte[])
       If $bDebug Then
         WriteDebugLog("  Day: " & Format(aData[1], "00"))
         WriteDebugLog("  Month: " & Format(aData[2], "00"))
-        WriteDebugLog("  Year: " & CInt(aData[3]) * 256 + aData[4])
+        WriteDebugLog("  Year: " & CStr(aData[3] * 256 + aData[4]))
       Endif
     Case Else
       WriteDebugLog("  *** Unsupported Command ***")
@@ -2170,7 +2076,7 @@ Private Sub VMB7IN_Receive(bAddress As Byte, aData As Byte[])
       If $bDebug Then
         WriteDebugLog("  Day: " & Format(aData[1], "00"))
         WriteDebugLog("  Month: " & Format(aData[2], "00"))
-        WriteDebugLog("  Year: " & CInt(aData[3]) * 256 + aData[4])
+        WriteDebugLog("  Year: " & CStr(aData[3] * 256 + aData[4]))
       Endif
     Case VB_DAYLIGHT_SAVING
       If $bDebug Then
@@ -2274,7 +2180,7 @@ Private Sub VMBGPO_Receive(bAddress As Byte, aData As Byte[])
       If $bDebug Then
         WriteDebugLog("  Day: " & Format(aData[1], "00"))
         WriteDebugLog("  Month: " & Format(aData[2], "00"))
-        WriteDebugLog("  Year: " & CInt(aData[3]) * 256 + aData[4])
+        WriteDebugLog("  Year: " & CStr(aData[3] * 256 + aData[4]))
       Endif
     Case Else
       WriteDebugLog("  *** Unsupported Command ***")
@@ -2501,7 +2407,7 @@ Private Sub VMBPIRC_Receive(bAddress As Byte, aData As Byte[])
       If $bDebug Then
         WriteDebugLog("  Day: " & Format(aData[1], "00"))
         WriteDebugLog("  Month: " & Format(aData[2], "00"))
-        WriteDebugLog("  Year: " & CInt(aData[3]) * 256 + aData[4])
+        WriteDebugLog("  Year: " & CStr(aData[3] * 256 + aData[4]))
       Endif
 
     Case Else
