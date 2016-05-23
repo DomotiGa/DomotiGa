@@ -1,5 +1,17 @@
 
 --
+-- Remove invalid devicetype with protocol=trc022
+--
+
+DELETE FROM devicetypes WHERE id=388;
+
+--
+-- Update RFXComTRX protocol list, remove TRC022
+--
+
+UPDATE plugins set protocols='X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss BlindsT0 BlindsT1 BlindsT2 BlindsT3 BlindsT4 BlindsT5 BlindsT6 BlindsT7 BlindsT8 BlindsT9 BlindsT10 Meiantech ByronSX ByronMP SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagintrx WT AOKE EuroDomest Smartwares SelectPlus' WHERE id=35;
+
+--
 -- Modify existing Velbus modules description
 --
 
