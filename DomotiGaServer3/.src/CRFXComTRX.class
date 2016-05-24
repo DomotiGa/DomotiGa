@@ -52,6 +52,7 @@ Private $bRelayEnabled As Boolean
 Private $iReceiverType As Integer
 Private $iFirmWareVersion As Integer
 Private $sHardwareVersion As String
+Private $sFirmwareType As String
 Private $aEnabledProtocols As New String[]
 
 Public hMySocket As CSocket
@@ -63,7 +64,7 @@ Public tRFXComTRXReset As Timer
 Public tRFXComTRXBusy As Timer
 Private bResetActive As Boolean = True
 Private RecBuf As New Byte[30]
-Private RecBytes As Byte
+Private $bRecBytes As Byte
 Public bSimulate As Boolean
 Private iSeq As Integer
 Private cQueue As New Collection    ' command buffer
@@ -80,16 +81,17 @@ Const sTypeInterfaceNoExtendedHardware As Byte = &H2
 Const sTypeInterfaceRFYRemoteList As Byte = &3
 Const sTypeInterfaceWrongCommand As Byte = &HFF
 
-' interface commands
+' Protocol list Msg4 - interface commands
 Const msg3undec As Byte = &H80
 Const msg3RFU6 As Byte = &H40
 Const msg3BYRONSX As Byte = &H20
 Const msg3RSL As Byte = &H10
-Const msg3LIGHTING4 As Byte = &H8
-Const msg3FINEOFFSET As Byte = &H4
-Const msg3RUBICSON As Byte = &H2
-Const msg3AE As Byte = &H1
+Const msg3LIGHTING4 As Byte = &H08
+Const msg3FINEOFFSET As Byte = &H04
+Const msg3RUBICSON As Byte = &H02
+Const msg3AE As Byte = &H01
 
+' Protocol list Msg4
 Const msg4BlindsT1 As Byte = &H80 ' RollerTrol or Hasta new
 Const msg4BlindsT0 As Byte = &H40 ' Hasta old
 Const msg4PROGUARD As Byte = &H20
@@ -99,14 +101,19 @@ Const msg4HIDEKI As Byte = &H4
 Const msg4AD As Byte = &H2
 Const msg4MERTIK As Byte = &H1
 
+' Protocol list Msg5
 Const msg5VISONIC As Byte = &H80
 Const msg5ATI As Byte = &H40
 Const msg5OREGON As Byte = &H20
 Const msg5MEIANTECH As Byte = &H10
 Const msg5HOMEEASYEU As Byte = &H8
-Const msg5AC As Byte = &H4
-Const msg5ARC As Byte = &H2
-Const msg5X10 As Byte = &H1
+Const msg5AC As Byte = &H04
+Const msg5ARC As Byte = &H02
+Const msg5X10 As Byte = &H01
+
+' Protocol list Msg6
+Const msg6HomeConfort As Byte = &H02
+Const msg6KEELOQ As Byte = &H01
 
 Const cmdRESET As Byte = &H0 ' reset the receiver/transceiver
 Const cmdSTATUS As Byte = &H2 ' return firmware versions and configuration of the interface
@@ -480,7 +487,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   InterfaceId = Devices.FindInterface("RFXCom Transceiver")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
-    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    WriteLog("ERROR: " & ErrorText)
     IsRunning = False
     Return
   Endif
@@ -498,12 +505,12 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Start RFXCom Relaying
   If $bRelayEnabled Then
     If StartRelay() Then
-      Main.WriteLog(LogLabel & "Relay listening for client on port " & $iRelayPort)
+      WriteLog("Relay listening for client on port " & $iRelayPort)
     Else
-      Main.WriteLog(LogLabel & "ERROR: Relay FAILED to listen on port " & $iRelayPort)
+      WriteLog("ERROR: Relay FAILED to listen on port " & $iRelayPort)
     Endif
   Else
-    Main.WriteLog(LogLabel & "Relay disabled.")
+    WriteLog("Relay disabled.")
   Endif
 
 End
@@ -514,6 +521,267 @@ End
 Public Sub StopPlugin()
 
   Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+  ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the serial port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectSerial() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
+
+  ' get a new one - but store the retry counter between new instances
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = &HFF + gb.Byte ' Byte[]
+    .PortName = $sSerPort
+    .Speed = $sBaud
+    .Parity = 0
+    .DataBits = 8
+    .StopBits = 1
+    .FlowControl = 0
+    .Open()
+  End With
+
+  ' define timer for RFXComTRX reset
+  tRFXComTRXReset = New Timer As "tRFXComTRXReset"
+  tRFXComTRXReset.Delay = 1000
+  tRFXComTRXReset.Stop
+
+  ' define timer for Interface busy
+  tRFXComTRXBusy = New Timer As "tRFXComTRXBusy"
+  tRFXComTRXBusy.Stop
+
+  ' Write to main logfile we connected successfully
+  WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+  IsRunning = True
+
+  ResetInterface()
+
+  ' All went ok
+  Return True
+
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Disconnect() As Boolean
+
+  ' Try to close the connection
+  Try hMySocket.Close
+  Try hMySerial.Close
+  Try hRelayTRXClient.Remove
+
+  ' Stop possible timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Stop all timers
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
+
+  Try tRFXComTRXBusy.Stop
+  Try hRFXComTRXRelay.Close
+  Try tRFXComTRXReset.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Socket closed by remote
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+  WriteLog("ERROR: " & sMsg)
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      If bSimulate = False Then ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  ' define timer for RFXComTRX reset
+  tRFXComTRXReset = New Timer As "tRFXComTRXReset"
+  tRFXComTRXReset.Delay = 1000
+  tRFXComTRXReset.Stop
+
+  ' define timer for Interface busy
+  tRFXComTRXBusy = New Timer As "tRFXComTRXBusy"
+  tRFXComTRXBusy.Stop
+
+  ResetInterface()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' got data from serialport
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      If bSimulate = False Then ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
 
 End
 
@@ -554,7 +822,7 @@ Public Sub tRFXComTRXReset_Timer()
 
 End
 
-Public Function StartRelay() As Boolean
+Public Sub StartRelay() As Boolean
 
   hRFXComTRXRelay = New ServerSocket As "RFXComTRXRelay"
   hRFXComTRXRelay.Type = Net.Internet
@@ -572,107 +840,17 @@ Public Function StartRelay() As Boolean
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' connect to the host:port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
-
-  Dim iReconnectRetry As Integer = 0
-
-  ' try to close the connection
-  Try hMySocket.Close
-  Try iReconnectRetry = hMySocket.ReconnectRetry
-
-  ' get a new one - but also pass on our previous reconnect counter
-  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
-
-  hMySocket.DataType = &HFF + gb.Byte
-  hMySocket.Connect($sTCPHost, $iTCPPort)
-
-  ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
-
-  ' Don't set IsRunning=True, this has to be done in _Ready 
-
-  ' All went ok
-  Return True
-
-Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  IsRunning = False
-  ErrorText = Error.Text
-  ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' connect to the serial port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectSerial() As Boolean
-
-  Dim iReconnectRetry As Integer = 0
-
-  ' try to close the port
-  Try hMySerial.Close
-  Try iReconnectRetry = hMySerial.ReconnectRetry
-
-  ' get a new one - but store the retry counter between new instances
-  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
-
-  With hMySerial
-    .DataType = &HFF + gb.Byte ' Byte[]
-    .PortName = $sSerPort
-    .Speed = $sBaud
-    .Parity = 0
-    .DataBits = 8
-    .StopBits = 1
-    .FlowControl = 0
-    .Open()
-  End With
-
-  ' define timer for RFXComTRX reset
-  tRFXComTRXReset = New Timer As "tRFXComTRXReset"
-  tRFXComTRXReset.Delay = 1000
-  tRFXComTRXReset.Stop
-
-  ' define timer for Interface busy
-  tRFXComTRXBusy = New Timer As "tRFXComTRXBusy"
-  tRFXComTRXBusy.Stop
-
-  ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
-  IsRunning = True
-
-  ResetInterface()
-
-  ' All went ok
-  Return True
-
-Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  IsRunning = False
-  ErrorText = Error.Text
-  ErrorWhere = Error.Where
-
-  Return False
-
-End
-
 Public Sub RFXComTRXRelay_Connection(sHost As String)
 
   hRelayTRXSocket = New Socket As "RelayTRXSocket"
   ' accept client
   If hRFXComTRXRelay.Status <= Net.Inactive Then Return
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Relay connection request from client " & sHost)
+  WriteDebugLog("Relay connection request from client " & sHost)
 
   hRelayTRXSocket = hRFXComTRXRelay.Accept()
   hRelayTRXClient.Add(hRelayTRXSocket)
   If $bDebug Then
-    If hRelayTRXSocket.Status = Net.Connected Then Main.WriteLog(LogLabel & "Relay client connection from ip address " & hRelayTRXSocket.RemoteHost & " (" & DNS.ResolveHost(hRelayTRXSocket.RemoteHost) & " ) accepted.")
+    If hRelayTRXSocket.Status = Net.Connected Then WriteLog("Relay client connection from IP address " & hRelayTRXSocket.RemoteHost & " (" & DNS.ResolveHost(hRelayTRXSocket.RemoteHost) & " ) accepted.")
   Endif
 
 End
@@ -691,18 +869,18 @@ Public Sub RFXComTRXRelay_Error()
   ' handle error
   Select Case hRFXComTRXRelay.Status
     Case Net.CannotCreateSocket
-      Main.WriteDebugLog(LogLabel & "Relay the system does not allow to create a socket.")
+      WriteLog("Relay the system does not allow to create a socket.")
     Case Net.CannotBindSocket
-      Main.WriteDebugLog(LogLabel & "Relay cannot bind socket.")
+      WriteLog("Relay cannot bind socket.")
     Case Net.CannotListen
-      Main.WriteDebugLog(LogLabel & "Relay cannot listen on port.")
+      WriteLog("Relay cannot listen on port.")
   End Select
 
 End
 
 Public Sub RFXComTRXRelay_Closed()
 
-  Main.WriteLog(LogLabel & "Relay client connection closed.")
+  WriteLog("Relay client connection closed.")
   hRelayTRXClient.Remove(hRelayTRXClient.Find(Last))
 
 End
@@ -710,12 +888,15 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' reset interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ResetInterface()
+Public Sub ResetInterface()
 
   ProtocolSetup("RESET")
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Send Commands
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sCmd As String)
 
   Dim iDeviceId As Integer
@@ -754,9 +935,12 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
     Case "BLINDST0", "BLINDST1", "BLINDST2", "BLINDST3", "BLINDST4", "BLINDST5", "BLINDST6", "BLINDST7", "BLINDST8", "BLINDST9", "BLINDST10" ' Blinds1
       Blinds1(sType, sAddress, sCmd)
     Case Else
-      Main.WriteDebugLog(LogLabel & " The '" & sType & "' protocol is not (yet) supported by the RFXComTRX plugin!")
+      WriteDebugLog(" The '" & sType & "' protocol is not (yet) supported by the RFXComTRX plugin!")
       Return
   End Select
+
+Catch
+  WriteLog("ERROR: SendCommand '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -780,10 +964,9 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' protocol commands
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ProtocolSetup(sType As String, Optional aMode As Byte[])
+Public Sub ProtocolSetup(sType As String, Optional aMode As Byte[])
 
   Dim bCmd As New Byte[14]
-  Dim b As Byte
   Dim sText As String
 
   bCmd[0] = &HD
@@ -817,19 +1000,14 @@ Public Function ProtocolSetup(sType As String, Optional aMode As Byte[])
 
   If sType = "RESET" Then
     tRFXComTRXReset.Start
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Resetting interface, 1 second timer started.")
+    WriteDebugLog("Resetting interface, 1 second timer started.")
   Endif
   If sType = "STATUS" Then bResetActive = False
 
-  If Not $bDebug Then Return
-  Main.WriteDebugLogChars(LogLabel & sText & ": ")
-  For Each b In bCmd
-    WriteMessage(Hex(b, 2) & " ", True)
-  Next
-  Main.WriteDebugLogChars("\n", True)
+  If $bDebug Then WriteDebugLog(sText & ": " & Util.ByteToHex(bCmd))
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -845,25 +1023,25 @@ Private Sub Decode_RecXmitMessage()
 
   Select Case RecBuf[2]
     Case sTypeReceiverLockError
-      WriteMessage("Subtype           = Receiver lock error.")
-      WriteMessage("Sequence no.      = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype           = Receiver lock error.")
+      WriteDebugLog("Sequence no.      = " & CStr(RecBuf[3]))
     Case sTypeTransmitterResponse
-      WriteMessage("Subtype           = Transmitter Response.")
-      WriteMessage("Sequence nbr      = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype           = Transmitter Response.")
+      WriteDebugLog("Sequence nbr      = " & CStr(RecBuf[3]))
       Select Case RecBuf[4]
         Case &H0
-          WriteMessage("Response          = ACK, data correctly transmitted.")
+          WriteDebugLog("Response          = ACK, data correctly transmitted.")
         Case &H1
-          WriteMessage("Response          = ACK, but transmit started after 6 seconds delay anyway with RF receive data detected.")
+          WriteDebugLog("Response          = ACK, but transmit started after 6 seconds delay anyway with RF receive data detected.")
         Case &H2
-          WriteMessage("Response          = NAK, transmitter did not lock on the requested transmit frequency.")
+          WriteDebugLog("Response          = NAK, transmitter did not lock on the requested transmit frequency.")
         Case &H3
-          WriteMessage("Response          = NAK, AC address zero in id1-id4 not allowed.")
+          WriteDebugLog("Response          = NAK, AC address zero in id1-id4 not allowed.")
         Case Else
-          WriteMessage("ERROR: Unexpected message type=" & Hex(RecBuf[4]))
+          WriteLog("ERROR: Unexpected message type=" & Hex(RecBuf[4]))
       End Select
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
       Return
   End Select
 
@@ -874,13 +1052,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Function WriteCommand(bBuffer As Byte[], sKey As String)
 
-  Dim iCnt As Integer
-  Dim sMessage As String
-
-  For iCnt = 0 To bBuffer[0]
-    sMessage &= Hex(bBuffer[iCnt], 2)
-  Next
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
+  If $bDebug Then WriteDebugLog("> " & Util.ByteToHex(bBuffer.Copy(0, bBuffer[0])))
 
   ' Write the complete string - not byte-for-byte
   If $sInterface = "tcp" Then
@@ -910,42 +1082,9 @@ Public Sub tRFXComTRXBusy_Timer()
   tRFXComTRXBusy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    If $bDebug Then WriteDebugLog("Sending command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' disconnect from the host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
-
-  ' Try to close the connection
-  Try hMySocket.Close
-  Try hMySerial.Close
-  Try tRFXComTRXBusy.Stop
-  Try hRFXComTRXRelay.Close
-  Try tRFXComTRXReset.Stop
-  Try hRelayTRXClient.Remove
-
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
-
-  ' all ok
-  Return True
-
-Finally
-  IsRunning = False
-  ErrorText = ""
-  ErrorWhere = ""
-
-Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
 
 End
 
@@ -956,7 +1095,7 @@ Public Sub Simulate(sPacket As String)
 
   Dim iCnt As Integer
 
-  If $bDebug Then Main.WriteDebugLogChars(("RFXCom transceiver Simulate String: ") & sPacket & "\n")
+  If $bDebug Then WriteDebugLog("RFXCom transceiver Simulate String: " & sPacket)
 
   For iCnt = 1 To Len(sPacket) Step 2
     ProcessReceivedChar(Val("&H" & Mid(sPacket, iCnt, 2)))
@@ -964,116 +1103,7 @@ Public Sub Simulate(sPacket As String)
   bSimulate = False
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Socket closed by remote
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySocket_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' host ip address found
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySocket_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to tcp host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySocket_Error(sMsg As String)
-
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' received data from the tcp port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySocket_Read(vVar As Variant)
-
-  Dim bData As Byte
-
-  If vVar Then
-    For Each bData In vVar
-      If bSimulate = False Then ProcessReceivedChar(bData)
-    Next
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' tcp socket is connected
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySocket_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' define timer for RFXComTRX reset
-  tRFXComTRXReset = New Timer As "tRFXComTRXReset"
-  tRFXComTRXReset.Delay = 1000
-  tRFXComTRXReset.Stop
-
-  ' define timer for Interface busy
-  tRFXComTRXBusy = New Timer As "tRFXComTRXBusy"
-  tRFXComTRXBusy.Stop
-
-  ResetInterface()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Called when we should reconnect to the tcp host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySocket_Reconnect()
-
-  ConnectTCP()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Handle errors
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySerial_Error(sMsg As String)
-
-  Main.WriteDebugLog(LogLabel & "ERROR: " & sMsg)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' got data from serialport
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySerial_Read(vVar As Variant)
-
-  Dim bData As Byte
-
-  If vVar Then
-    For Each bData In vVar
-      If bSimulate = False Then ProcessReceivedChar(bData)
-    Next
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Handle reconnect(s)
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MySerial_Reconnect()
-
-  ' ReConnect/Initialize connection
-  ConnectSerial()
+  WriteLog("ERROR: Simulate '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -1088,31 +1118,26 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   Endif
 
   Main.ControlLed("RFXCom", "On")
-  If RecBytes = 0 Then ' 1st char of a packet received
-    If bTemp <> 0 Then
-      If $bDebug Then Main.WriteDebugLogChars(LogLabel & "< ", 0)
-    Else
-      Return  ' ignore 1st char if 0
-    Endif
+  If $bRecBytes = 0 Then ' 1st char of a packet received
+    If bTemp = 0 Then Return ' ignore 1st char if 0
   Endif
 
-  Try RecBuf[RecBytes] = bTemp ' store received char
+  Try RecBuf[$bRecBytes] = bTemp ' store received char
   If Error Then
-    RecBytes = 0 ' temp hack (overflow)
-    RecBuf = Null
+    If $bDebug Then WriteDebugLog("< " & Util.ByteToHex(RecBuf) & " (INVALID PACKET: BUFFER OVERFLOW)")
+    $bRecBytes = 0 ' temp hack (overflow)
     Return
   Endif
-  Inc RecBytes  ' increment char counter
 
-  If RecBytes > RecBuf[0] Then ' all bytes of the packet received?
-    If $bDebug Then Main.WriteDebugLogChars(Hex(bTemp, 2) & "\n", 1)
+  Inc $bRecBytes ' increment char counter
+
+  If $bRecBytes > RecBuf[0] Then ' all bytes of the packet received?
+    If $bDebug Then WriteDebugLog("< " & Util.ByteToHex(RecBuf.Copy(0, $bRecBytes)))
     Decode_Messages()  ' decode message
-    RecBytes = 0  ' set to zero to receive next message
+    $bRecBytes = 0  ' set to zero to receive next message
 
     ' Disable RFXCom Led
     Main.ControlLed("RFXCom", "Off")
-  Else
-    If $bDebug Then Main.WriteDebugLogChars(Hex(bTemp, 2), 1) ' write the output to the screen
   Endif
 
 End
@@ -1121,165 +1146,167 @@ Private Sub Decode_Messages()
 
   Select Case RecBuf[1]
     Case pTypeInterfaceMessage
-      WriteMessage("Packettype        = Interface Message")
+      WriteDebugLog("Packettype        = Interface Message")
       Decode_InterfaceMessage()
 
     Case pTypeRecXmitMessage
-      WriteMessage("Packettype        = Receiver/Transmitter Message")
+      WriteDebugLog("Packettype        = Receiver/Transmitter Message")
       Decode_RecXmitMessage()
 
     Case pTypeUndecoded
-      WriteMessage("Packettype        = Undecoded RF Message")
+      WriteDebugLog("Packettype        = Undecoded RF Message")
       Decode_UnDecoded()
 
     Case pTypeLighting1
-      WriteMessage("Packettype    = Lighting1")
+      WriteDebugLog("Packettype    = Lighting1")
       Decode_Lighting1()
 
     Case pTypeLighting2
-      WriteMessage("Packettype    = Lighting2")
+      WriteDebugLog("Packettype    = Lighting2")
       Decode_Lighting2()
 
     Case pTypeLighting3
-      WriteMessage("Packettype    = Lighting3")
+      WriteDebugLog("Packettype    = Lighting3")
       Decode_Lighting3()
 
     Case pTypeLighting4
-      WriteMessage("Packettype    = Lighting4")
+      WriteDebugLog("Packettype    = Lighting4")
       Decode_Lighting4()
 
     Case pTypeLighting5
-      WriteMessage("Packettype    = Lighting5")
+      WriteDebugLog("Packettype    = Lighting5")
       Decode_Lighting5()
 
     Case pTypeLighting6
-      WriteMessage("Packettype    = Lighting6")
+      WriteDebugLog("Packettype    = Lighting6")
       Decode_Lighting6()
 
     Case pTypeChime
-      WriteMessage("Packettype    = Chime")
+      WriteDebugLog("Packettype    = Chime")
       Decode_Chime()
 
     Case pTypeCurtain1
-      WriteMessage("Packettype    = Curtain1")
+      WriteDebugLog("Packettype    = Curtain1")
       Decode_Curtain1()
 
     Case pTypeSecurity1
-      WriteMessage("Packettype    = Security1")
+      WriteDebugLog("Packettype    = Security1")
       Decode_Security1()
 
     Case pTypeCamera1
-      WriteMessage("Packettype    = Camera1")
+      WriteDebugLog("Packettype    = Camera1")
       Decode_Camera1()
 
     Case pTypeBlinds
-      WriteMessage("Packettype    = Blinds1")
+      WriteDebugLog("Packettype    = Blinds1")
       Decode_Blinds1()
 
     Case pTypeRemote
-      WriteMessage("Packettype    = Remote control & IR")
+      WriteDebugLog("Packettype    = Remote control & IR")
       Decode_Remote()
 
     Case pTypeThermostat1
-      WriteMessage("Packettype    = Thermostat1")
+      WriteDebugLog("Packettype    = Thermostat1")
       Decode_Thermostat1()
 
     Case pTypeThermostat2
-      WriteMessage("Packettype    = Thermostat2")
+      WriteDebugLog("Packettype    = Thermostat2")
       Decode_Thermostat2()
 
     Case pTypeThermostat3
-      WriteMessage("Packettype    = Thermostat3")
+      WriteDebugLog("Packettype    = Thermostat3")
       Decode_Thermostat3()
 
     Case pTypeBBQ
-      WriteMessage("Packettype    = BBQ")
+      WriteDebugLog("Packettype    = BBQ")
       Decode_BBQ()
 
     Case pTypeTEMP_RAIN
-      WriteMessage("Packettype    = TEMP_RAIN")
+      WriteDebugLog("Packettype    = TEMP_RAIN")
       Decode_TempRain()
 
     Case pTypeTEMP
-      WriteMessage("Packettype    = TEMP")
+      WriteDebugLog("Packettype    = TEMP")
       Decode_Temp()
 
     Case pTypeHUM
-      WriteMessage("Packettype    = HUM")
+      WriteDebugLog("Packettype    = HUM")
       Decode_Hum()
 
     Case pTypeTEMP_HUM
-      WriteMessage("Packettype    = TEMP_HUM")
+      WriteDebugLog("Packettype    = TEMP_HUM")
       Decode_TempHum()
 
     Case pTypeBARO
-      WriteMessage("Packettype    = BARO")
+      WriteDebugLog("Packettype    = BARO")
       Decode_Baro()
 
     Case pTypeTEMP_HUM_BARO
-      WriteMessage("Packettype    = TEMP_HUM_BARO")
+      WriteDebugLog("Packettype    = TEMP_HUM_BARO")
       Decode_TempHumBaro()
 
     Case pTypeRAIN
-      WriteMessage("Packettype    = RAIN")
+      WriteDebugLog("Packettype    = RAIN")
       Decode_Rain()
 
     Case pTypeWIND
-      WriteMessage("Packettype    = WIND")
+      WriteDebugLog("Packettype    = WIND")
       Decode_Wind()
 
     Case pTypeUV
-      WriteMessage("Packettype    = UV")
+      WriteDebugLog("Packettype    = UV")
       Decode_Uv()
 
     Case pTypeDT
-      WriteMessage("Packettype    = DT")
+      WriteDebugLog("Packettype    = DT")
       Decode_DateTime()
 
     Case pTypeCURRENT
-      WriteMessage("Packettype    = CURRENT")
+      WriteDebugLog("Packettype    = CURRENT")
       Decode_Current()
 
     Case pTypeENERGY
-      WriteMessage("Packettype    = ENERGY")
+      WriteDebugLog("Packettype    = ENERGY")
       Decode_Energy()
 
     Case pTypeCURRENTENERGY
-      WriteMessage("Packettype    = CURRENT_ENERGY")
+      WriteDebugLog("Packettype    = CURRENT_ENERGY")
       Decode_CurrentEnergy()
 
     Case pTypePOWER
-      WriteMessage("Packettype    = POWER")
+      WriteDebugLog("Packettype    = POWER")
       Decode_Power()
 
     Case pTypeGAS
-      WriteMessage("Packettype    = GAS")
+      WriteDebugLog("Packettype    = GAS")
       Decode_Gas()
 
     Case pTypeWATER
-      WriteMessage("Packettype    = WATER")
+      WriteDebugLog("Packettype    = WATER")
       Decode_Water()
 
     Case pTypeWEIGHT
-      WriteMessage("Packettype    = WEIGHT")
+      WriteDebugLog("Packettype    = WEIGHT")
       Decode_Weight()
 
     Case pTypeRFXSensor
-      WriteMessage("Packettype    = RFXSensor")
+      WriteDebugLog("Packettype    = RFXSensor")
       Decode_RFXSensor()
 
     Case pTypeRFXMeter
-      WriteMessage("Packettype    = RFXMeter")
+      WriteDebugLog("Packettype    = RFXMeter")
       Decode_RFXMeter()
 
     Case pTypeFS20
-      WriteMessage("Packettype    = FS20")
+      WriteDebugLog("Packettype    = FS20")
       Decode_FS20()
 
     Case Else
-      WriteMessage("ERROR: Unknown Packet type: " & Hex(RecBuf[1], 2))
-      Return
+      WriteLog("ERROR: Unknown Packet type=" & Hex(RecBuf[1], 2))
   End Select
+
+Catch ' some errors
+  WriteLog("ERROR: Decode_Messages '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -1319,242 +1346,270 @@ Private Sub Decode_InterfaceMessage()
 
   Select Case RecBuf[2]
     Case sTypeInterfaceResponse
-      WriteMessage("Subtype           = Interface Response")
-      WriteMessage("Sequence no.      = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype           = Interface Response")
+      WriteDebugLog("Sequence no.      = " & CStr(RecBuf[3]))
       Select Case RecBuf[4]
         Case cmdSTATUS, cmdSETMODE, cmdSAVE, cmd310, cmd315, cmd800, cmd800F, cmd830, cmd830F, cmd835, cmd835F, cmd895
           Select Case RecBuf[4]
             Case cmdSTATUS
-              WriteMessage("Response on cmnd  = Get Status")
+              WriteDebugLog("Response on cmnd  = Get Status")
             Case cmdSETMODE
-              WriteMessage("Response on cmnd  = Set Mode")
+              WriteDebugLog("Response on cmnd  = Set Mode")
             Case cmdSAVE
-              WriteMessage("Response on cmnd  = Save Settings")
+              WriteDebugLog("Response on cmnd  = Save Settings")
             Case cmd310
-              WriteMessage("Response on cmnd  = Select 310MHz")
+              WriteDebugLog("Response on cmnd  = Select 310MHz")
             Case cmd315
-              WriteMessage("Response on cmnd  = Select 315MHz")
+              WriteDebugLog("Response on cmnd  = Select 315MHz")
             Case cmd800
-              WriteMessage("Response on cmnd  = Select 868.00MHz")
+              WriteDebugLog("Response on cmnd  = Select 868.00MHz")
             Case cmd800F
-              WriteMessage("Response on cmnd  = Select 868.00MHz FSK")
+              WriteDebugLog("Response on cmnd  = Select 868.00MHz FSK")
             Case cmd830
-              WriteMessage("Response on cmnd  = Select 868.30MHz")
+              WriteDebugLog("Response on cmnd  = Select 868.30MHz")
             Case cmd830F
-              WriteMessage("Response on cmnd  = Select 868.30MHz FSK")
+              WriteDebugLog("Response on cmnd  = Select 868.30MHz FSK")
             Case cmd835
-              WriteMessage("Response on cmnd  = Select 868.35MHz")
+              WriteDebugLog("Response on cmnd  = Select 868.35MHz")
             Case cmd835F
-              WriteMessage("Response on cmnd  = Select 868.35MHz FSK")
+              WriteDebugLog("Response on cmnd  = Select 868.35MHz FSK")
             Case cmd895
-              WriteMessage("Response on cmnd  = Select 868.95MHz")
+              WriteDebugLog("Response on cmnd  = Select 868.95MHz")
             Case Else
-              WriteMessage("Error: unknown response")
+              WriteDebugLog("Error: unknown response")
           End Select
 
           Select Case RecBuf[5]
             Case recType310
-              WriteMessage("Transceiver type  = 310MHz")
+              WriteDebugLog("Transceiver type  = 310MHz")
             Case recType315
-              WriteMessage("Receiver type     = 315MHz")
+              WriteDebugLog("Receiver type     = 315MHz")
             Case recType43392
-              WriteMessage("Receiver type     = 433.92MHz (receive only)")
+              WriteDebugLog("Receiver type     = 433.92MHz (receive only)")
             Case trxType43392
-              WriteMessage("Transceiver type  = 433.92MHz")
+              WriteDebugLog("Transceiver type  = 433.92MHz")
             Case recType86800
-              WriteMessage("Receiver type     = 868.00MHz")
+              WriteDebugLog("Receiver type     = 868.00MHz")
             Case recType86800FSK
-              WriteMessage("Receiver type     = 868.00MHz FSK")
+              WriteDebugLog("Receiver type     = 868.00MHz FSK")
             Case recType86830
-              WriteMessage("Receiver type     = 868.30MHz")
+              WriteDebugLog("Receiver type     = 868.30MHz")
             Case recType86830FSK
-              WriteMessage("Receiver type     = 868.30MHz FSK")
+              WriteDebugLog("Receiver type     = 868.30MHz FSK")
             Case recType86835
-              WriteMessage("Receiver type     = 868.35MHz")
+              WriteDebugLog("Receiver type     = 868.35MHz")
             Case recType86835FSK
-              WriteMessage("Receiver type     = 868.35MHz FSK")
+              WriteDebugLog("Receiver type     = 868.35MHz FSK")
             Case recType86895
-              WriteMessage("Receiver type     = 868.95MHz")
+              WriteDebugLog("Receiver type     = 868.95MHz")
             Case Else
-              WriteMessage("Receiver type     = Unknown")
+              WriteDebugLog("Receiver type     = Unknown")
           End Select
 
           $iReceiverType = RecBuf[5]
-          $iFirmWareVersion = RecBuf[6]
-          $sHardwareVersion = RecBuf[10] & "." & RecBuf[11]
-          WriteMessage("Firmware version  = " & $iFirmWareVersion)
-          WriteMessage("Hardware version  = " & $sHardwareVersion)
+          $sHardwareVersion = RecBuf[11] & "." & RecBuf[12]
+          $sFirmwareType = ""
+
+          ' If the interface message is bigger then 14 - most likely 1001+ firmware
+          If $bRecBytes > 14 Then
+            $iFirmWareVersion = 1000 + RecBuf[6]
+            Select RecBuf[14]
+              Case &H01 ' Type1
+                $sFirmwareType = "Type1"
+              Case &H02 ' Type2
+                $sFirmwareType = "Type2"
+              Case &H03 ' Ext1/2
+                $sFirmwareType = "Ext"
+            End Select
+          Else
+            $iFirmWareVersion = RecBuf[6]
+          Endif
+
+          WriteDebugLog("Firmware version  = " & $iFirmWareVersion)
+          WriteDebugLog("Hardware version  = " & $sHardwareVersion)
+          If $sFirmwareType Then WriteDebugLog("Firmware type = " & $sFirmwareType)
 
           ' Clear the enabled protocol list
           $aEnabledProtocols.Clear()
 
           If (RecBuf[7] And msg3undec) <> 0 Then
-            WriteMessage("Undecoded              enabled")
+            WriteDebugLog("Undecoded              enabled")
             $aEnabledProtocols.Add("Undec")
           Else
-            WriteMessage("Undecoded              disabled")
+            WriteDebugLog("Undecoded              disabled")
           Endif
           If (RecBuf[9] And msg5X10) <> 0 Then
-            WriteMessage("X10                    enabled")
+            WriteDebugLog("X10                    enabled")
             $aEnabledProtocols.Add("X10")
           Else
-            WriteMessage("X10                    disabled")
+            WriteDebugLog("X10                    disabled")
           Endif
           If (RecBuf[9] And msg5ARC) <> 0 Then
-            WriteMessage("ARC HomeEasy, ...      enabled")
+            WriteDebugLog("ARC HomeEasy, ...      enabled")
             $aEnabledProtocols.Add("ARC")
           Else
-            WriteMessage("ARC HomeEasy, ...      disabled")
+            WriteDebugLog("ARC HomeEasy, ...      disabled")
           Endif
           If (RecBuf[9] And msg5AC) <> 0 Then
-            WriteMessage("AC HomeEasy, KAKU, ... enabled")
+            WriteDebugLog("AC HomeEasy, KAKU, ... enabled")
             $aEnabledProtocols.Add("AC")
           Else
-            WriteMessage("AC HomeEasy, KAKU, ... disabled")
+            WriteDebugLog("AC HomeEasy, KAKU, ... disabled")
           Endif
           If (RecBuf[9] And msg5HOMEEASYEU) <> 0 Then
-            WriteMessage("HomeEasy EU            enabled")
+            WriteDebugLog("HomeEasy EU            enabled")
             $aEnabledProtocols.Add("HomeEasyEU")
           Else
-            WriteMessage("HomeEasy EU            disabled")
+            WriteDebugLog("HomeEasy EU            disabled")
           Endif
           If (RecBuf[9] And msg5MEIANTECH) <> 0 Then
-            WriteMessage("Meiantech/Atlantic     enabled")
+            WriteDebugLog("Meiantech/Atlantic     enabled")
             $aEnabledProtocols.Add("Meiantech")
           Else
-            WriteMessage("Meiantech/Atlantic     disabled")
+            WriteDebugLog("Meiantech/Atlantic     disabled")
           Endif
           If (RecBuf[9] And msg5OREGON) <> 0 Then
-            WriteMessage("Oregon Scientific      enabled")
+            WriteDebugLog("Oregon Scientific      enabled")
             $aEnabledProtocols.Add("Oregon")
           Else
-            WriteMessage("Oregon Scientific      disabled")
+            WriteDebugLog("Oregon Scientific      disabled")
           Endif
           If (RecBuf[9] And msg5ATI) <> 0 Then
-            WriteMessage("ATI                    enabled")
+            WriteDebugLog("ATI                    enabled")
             $aEnabledProtocols.Add("ATI")
           Else
-            WriteMessage("ATI                    disabled")
+            WriteDebugLog("ATI                    disabled")
           Endif
           If (RecBuf[9] And msg5VISONIC) <> 0 Then
-            WriteMessage("Visonic                enabled")
+            WriteDebugLog("Visonic                enabled")
             $aEnabledProtocols.Add("Visonic")
           Else
-            WriteMessage("Visonic                disabled")
+            WriteDebugLog("Visonic                disabled")
           Endif
           If (RecBuf[8] And msg4MERTIK) <> 0 Then
-            WriteMessage("Mertik Maxitrol        enabled")
+            WriteDebugLog("Mertik Maxitrol        enabled")
             $aEnabledProtocols.Add("Mertik")
           Else
-            WriteMessage("Mertik Maxitrol        disabled")
+            WriteDebugLog("Mertik Maxitrol        disabled")
           Endif
           If (RecBuf[8] And msg4AD) <> 0 Then
-            WriteMessage("AD LightwaveRF         enabled")
+            WriteDebugLog("AD LightwaveRF         enabled")
             $aEnabledProtocols.Add("AD")
           Else
-            WriteMessage("AD LightwaveRF         disabled")
+            WriteDebugLog("AD LightwaveRF         disabled")
           Endif
           If (RecBuf[8] And msg4HIDEKI) <> 0 Then
-            WriteMessage("Hideki/UPM             enabled")
+            WriteDebugLog("Hideki/UPM             enabled")
             $aEnabledProtocols.Add("Hideki")
           Else
-            WriteMessage("Hideki/UPM             disabled")
+            WriteDebugLog("Hideki/UPM             disabled")
           Endif
           If (RecBuf[8] And msg4LACROSSE) <> 0 Then
-            WriteMessage("La Crosse              enabled")
+            WriteDebugLog("La Crosse              enabled")
             $aEnabledProtocols.Add("LaCrosse")
           Else
-            WriteMessage("La Crosse              disabled")
+            WriteDebugLog("La Crosse              disabled")
           Endif
           If (RecBuf[8] And msg4FS20) <> 0 Then
-            WriteMessage("FS20                   enabled")
+            WriteDebugLog("FS20                   enabled")
             $aEnabledProtocols.Add("FS20")
           Else
-            WriteMessage("FS20                   disabled")
+            WriteDebugLog("FS20                   disabled")
           Endif
           If (RecBuf[8] And msg4PROGUARD) <> 0 Then
-            WriteMessage("ProGuard               enabled")
+            WriteDebugLog("ProGuard               enabled")
             $aEnabledProtocols.Add("ProGuard")
           Else
-            WriteMessage("ProGuard               disabled")
+            WriteDebugLog("ProGuard               disabled")
           Endif
           If (RecBuf[8] And msg4BlindsT0) <> 0 Then
-            WriteMessage("BlindsT0               enabled")
+            WriteDebugLog("BlindsT0               enabled")
             $aEnabledProtocols.Add("BlindsT0")
           Else
-            WriteMessage("BlindsT0               disabled")
+            WriteDebugLog("BlindsT0               disabled")
           Endif
           If (RecBuf[8] And msg4BlindsT1) <> 0 Then
-            WriteMessage("BlindsT1/T2/T3/T4      enabled")
+            WriteDebugLog("BlindsT1/T2/T3/T4      enabled")
             $aEnabledProtocols.Add("BlindsT1")
           Else
-            WriteMessage("BlindsT1/T2/T3/T4      disabled")
+            WriteDebugLog("BlindsT1/T2/T3/T4      disabled")
           Endif
           If (RecBuf[7] And msg3AE) <> 0 Then
-            WriteMessage("AE Blyss               enabled")
+            WriteDebugLog("AE Blyss               enabled")
             $aEnabledProtocols.Add("AE")
           Else
-            WriteMessage("AE Blyss               disabled")
+            WriteDebugLog("AE Blyss               disabled")
           Endif
           If (RecBuf[7] And msg3RUBICSON) <> 0 Then
-            WriteMessage("Rubicson               enabled")
+            WriteDebugLog("Rubicson               enabled")
             $aEnabledProtocols.Add("RUBiCSON")
           Else
-            WriteMessage("Rubicson               disabled")
+            WriteDebugLog("Rubicson               disabled")
           Endif
           If (RecBuf[7] And msg3FINEOFFSET) <> 0 Then
-            WriteMessage("FineOffset             enabled")
+            WriteDebugLog("FineOffset             enabled")
             $aEnabledProtocols.Add("FineOffset")
           Else
-            WriteMessage("FineOffset             disabled")
+            WriteDebugLog("FineOffset             disabled")
           Endif
           If (RecBuf[7] And msg3LIGHTING4) <> 0 Then
-            WriteMessage("Lighting4              enabled")
+            WriteDebugLog("Lighting4              enabled")
             $aEnabledProtocols.Add("Lighting4")
           Else
-            WriteMessage("Lighting4              disabled")
+            WriteDebugLog("Lighting4              disabled")
           Endif
           If (RecBuf[7] And msg3RSL) <> 0 Then
-            WriteMessage("RSL                    enabled")
+            WriteDebugLog("RSL                    enabled")
             $aEnabledProtocols.Add("RSL")
           Else
-            WriteMessage("RSL                    disabled")
+            WriteDebugLog("RSL                    disabled")
           Endif
           If (RecBuf[7] And msg3BYRONSX) <> 0 Then
-            WriteMessage("ByronSX                enabled")
+            WriteDebugLog("ByronSX                enabled")
             $aEnabledProtocols.Add("ByronSX")
           Else
-            WriteMessage("ByronSX                disabled")
+            WriteDebugLog("ByronSX                disabled")
           Endif
           If (RecBuf[7] And msg3RFU6) <> 0 Then
-            WriteMessage("RFU protocol 6         enabled")
+            WriteDebugLog("RFU protocol 6         enabled")
             $aEnabledProtocols.Add("RFU6")
           Else
-            WriteMessage("RFU protocol 6         disabled")
+            WriteDebugLog("RFU protocol 6         disabled")
           Endif
+          If (RecBuf[10] And msg6KEELOQ) <> 0 Then
+            WriteDebugLog("Keeloq                 enabled")
+          Else
+            WriteDebugLog("Keeloq                 disabled")
+          Endif
+          If (RecBuf[10] And msg6HomeConfort) <> 0 Then
+            WriteDebugLog("Home Confort           enabled")
+          Else
+            WriteDebugLog("Home Confort           disabled")
+          Endif
+
         Case Else
-          WriteMessage("ERROR: Unexpected response for Packet type=" & Hex(RecBuf[1]) & ", Sub type=" & Hex(RecBuf[2]) & " msg=" & Hex(RecBuf[4]))
+          WriteLog("ERROR: Unexpected response for Packet type=" & Hex(RecBuf[1]) & ", Sub type=" & Hex(RecBuf[2]) & " msg=" & Hex(RecBuf[4]))
           Return
       End Select
     Case sTypeInterfaceUnknownRTSremote
-      WriteMessage("Subtype           = Unknown RTS remote, Use the Cmndr to create a remote in the RFXtrx433E.")
-      WriteMessage("Sequence no.      = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype           = Unknown RTS remote, Use the Cmndr to create a remote in the RFXtrx433E.")
+      WriteDebugLog("Sequence no.      = " & CStr(RecBuf[3]))
       Return
     Case sTypeInterfaceNoExtendedHardware
-      WriteMessage("Subtype           = No RFXtrx433E hardware detected.")
-      WriteMessage("Sequence no.      = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype           = No RFXtrx433E hardware detected.")
+      WriteDebugLog("Sequence no.      = " & CStr(RecBuf[3]))
       Return
     Case sTypeInterfaceRFYRemoteList
       If RecBuf[6] = 0 And If RecBuf[7] = 0 And If RecBuf[8] = 0 And If RecBuf[9] = 0 Then
-        WriteMessage("Subtype           = RFY remote #" & RecBuf[5] & " is empty.")
+        WriteDebugLog("Subtype           = RFY remote #" & RecBuf[5] & " is empty.")
       Else
-        WriteMessage("Subtype           = RFY remote #" & RecBuf[5] & " has ID 0x" & Hex(RecBuf[6], 1) & Hex(RecBuf[7], 2) & Hex(RecBuf[8], 2) & " " & Hex(RecBuf[9], 1))
+        WriteDebugLog("Subtype           = RFY remote #" & RecBuf[5] & " has ID 0x" & Hex(RecBuf[6], 1) & Hex(RecBuf[7], 2) & Hex(RecBuf[8], 2) & " " & Hex(RecBuf[9], 1))
       End If
-      WriteMessage("Sequence no.      = " & CStr(RecBuf[3]))
+      WriteDebugLog("Sequence no.      = " & CStr(RecBuf[3]))
       Return
     Case sTypeInterfaceWrongCommand
-      WriteMessage("Subtype           = Protocol not supported in this firmware version, wrong command or flash the latest firmware!")
-      WriteMessage("Sequence no.      = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype           = Protocol not supported in this firmware version, wrong command or flash the latest firmware!")
+      WriteDebugLog("Sequence no.      = " & CStr(RecBuf[3]))
       Return
   End Select
 
@@ -1604,57 +1659,51 @@ End
 
 Private Sub Decode_UnDecoded()
 
-  Dim iCnt As Integer
-
-  WriteMessage("UnDecoded ", False)
+  WriteDebugLog("UnDecoded ", False)
   Select Case RecBuf[2]
     Case sTypeUac
-      WriteMessage("AC:", False)
+      WriteDebugLog("AC:", False)
     Case sTypeUarc
-      WriteMessage("ARC:", False)
+      WriteDebugLog("ARC:", False)
     Case sTypeUati
-      WriteMessage("ATI:", False)
+      WriteDebugLog("ATI:", False)
     Case sTypeUhideki
-      WriteMessage("HIDEKI/UPM:", False)
+      WriteDebugLog("HIDEKI/UPM:", False)
     Case sTypeUlacrosse
-      WriteMessage("LACROSSE/VINKING:", False)
+      WriteDebugLog("LACROSSE/VINKING:", False)
     Case sTypeUad
-      WriteMessage("AD:", False)
+      WriteDebugLog("AD:", False)
     Case sTypeUmertik
-      WriteMessage("MERTIK:", False)
+      WriteDebugLog("MERTIK:", False)
     Case sTypeUoregon1
-      WriteMessage("OREGON1:", False)
+      WriteDebugLog("OREGON1:", False)
     Case sTypeUoregon2
-      WriteMessage("OREGON2:", False)
+      WriteDebugLog("OREGON2:", False)
     Case sTypeUoregon3
-      WriteMessage("OREGON3:", False)
+      WriteDebugLog("OREGON3:", False)
     Case sTypeUproguard
-      WriteMessage("PROGUARD:", False)
+      WriteDebugLog("PROGUARD:", False)
     Case sTypeUvisonic
-      WriteMessage("VISONIC:", False)
+      WriteDebugLog("VISONIC:", False)
     Case sTypeUnec
-      WriteMessage("NEC:", False)
+      WriteDebugLog("NEC:", False)
     Case sTypeUfs20
-      WriteMessage("FS20:", False)
+      WriteDebugLog("FS20:", False)
     Case sTypeUblinds
-      WriteMessage("BLINDS:", False)
+      WriteDebugLog("BLINDS:", False)
     Case sTypeUrubicson
-      WriteMessage("RUBICSON:", False)
+      WriteDebugLog("RUBICSON:", False)
     Case sTypeUae
-      WriteMessage("AE:", False)
+      WriteDebugLog("AE:", False)
     Case sTypeUfineoffset
-      WriteMessage("FINEOFFSET:", False)
+      WriteDebugLog("FINEOFFSET:", False)
     Case sTypeUrgb
-      WriteMessage("RGB:", False)
+      WriteDebugLog("RGB:", False)
     Case sTypeUrts
-      WriteMessage("SOMFY RTS:", False)
+      WriteDebugLog("SOMFY RTS:", False)
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]) & " " & Util.ByteToHex(RecBuf.Copy(4, RecBuf[0] - 4)))
   End Select
-  For iCnt = 0 To RecBuf[0] - RecBuf[4]
-    WriteMessage(Hex(RecBuf[RecBuf[4] + iCnt]), False)
-  Next
-  WriteMessage(" ")
 
 End
 
@@ -1680,10 +1729,10 @@ Private Sub Decode_Lighting1()
   Select Case RecBuf[2]
     Case sTypeX10
       sType = "X10"
-      WriteMessage("Subtype       = X10")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-      WriteMessage("Housecode     = " & Chr(RecBuf[4]))
-      WriteMessage("Unitcode      = " & CStr(RecBuf[5]))
+      WriteDebugLog("Subtype       = X10")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Housecode     = " & Chr(RecBuf[4]))
+      WriteDebugLog("Unitcode      = " & CStr(RecBuf[5]))
       sAddress = Chr(RecBuf[4]) & Format(CStr(RecBuf[5]), "00")
       Select Case RecBuf[6]
         Case &H0
@@ -1699,16 +1748,16 @@ Private Sub Decode_Lighting1()
         Case &H6
           sCmd = "All Off"
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
     Case sTypeARC
       sType = "ARC"
-      WriteMessage("Subtype       = ARC")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-      WriteMessage("Housecode     = " & Chr(RecBuf[4]))
-      WriteMessage("Unitcode      = " & CStr(RecBuf[5]))
+      WriteDebugLog("Subtype       = ARC")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Housecode     = " & Chr(RecBuf[4]))
+      WriteDebugLog("Unitcode      = " & CStr(RecBuf[5]))
       sAddress = Chr(RecBuf[4]) & Format(CStr(RecBuf[5]), "00")
       Select Case RecBuf[6]
         Case &H0
@@ -1722,15 +1771,16 @@ Private Sub Decode_Lighting1()
         Case &H7
           sCmd = "Chime"
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[7], 4)))
+
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[7], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, UCase(sType))
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
@@ -1764,17 +1814,17 @@ Private Sub Decode_Lighting2()
       Select Case RecBuf[2]
         Case sTypeAC
           sType = "AC"
-          WriteMessage("Subtype       = AC")
+          WriteDebugLog("Subtype       = AC")
         Case sTypeHEU
           sType = "HEEU"
-          WriteMessage("Subtype       = HomeEasy EU")
+          WriteDebugLog("Subtype       = HomeEasy EU")
         Case sTypeANSLUT
           sType = "Anslut"
-          WriteMessage("Subtype       = ANSLUT")
+          WriteDebugLog("Subtype       = ANSLUT")
       End Select
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = Hex(RecBuf[4]) & Hex(RecBuf[5], 2) & Hex(RecBuf[6], 2) & Hex(RecBuf[7], 2) & " " & CStr(RecBuf[8])
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       Select Case RecBuf[9]
         Case &H0
           sCmd = "Off"
@@ -1788,17 +1838,18 @@ Private Sub Decode_Lighting2()
           sCmd = "Group On"
         Case &H5
           sCmd = "Dim " & CStr(RecBuf[10])
-          WriteMessage("Command       = Group " & sCmd)
+          WriteDebugLog("Command       = Group " & sCmd)
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[11], 4)))
+
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[11], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, UCase(sType))
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
@@ -1827,8 +1878,8 @@ Private Sub Decode_Lighting3()
   Select Case RecBuf[2]
     Case sTypeKoppla
       sType = "Koppla"
-      WriteMessage("Subtype       = Ikea Koppla")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = Ikea Koppla")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       Select Case RecBuf[7]
         Case &H0
           sCmd = "Off"
@@ -1844,17 +1895,17 @@ Private Sub Decode_Lighting3()
           Else If RecBuf[7] >= &H18 And RecBuf[7] < &H20 Then
             sCmd = "Bright"
           Else
-            WriteMessage("Command       = Unknown")
+            WriteDebugLog("Command       = Unknown")
             Return
           Endif
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
       Return
   End Select
 
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, UCase(sType))
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
@@ -1877,7 +1928,7 @@ End
 
 Private Sub Decode_Lighting4()
 
-  WriteMessage("Not implemented")
+  WriteDebugLog("Decoding Lighting4 not implemented")
 
 End
 
@@ -1905,10 +1956,10 @@ Private Sub Decode_Lighting5()
   Select Case RecBuf[2]
     Case sTypeLightwaveRF
       sType = "LightwaveRF"
-      WriteMessage("Subtype       = LightwaveRF")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = LightwaveRF")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = Hex(RecBuf[4], 2) & Hex(RecBuf[5], 2) & Hex(RecBuf[6], 2) & " " & CStr(RecBuf[7])
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       Select Case RecBuf[8]
         Case &H0
           sCmd = "Off"
@@ -1941,16 +1992,16 @@ Private Sub Decode_Lighting5()
         Case &H10
           sCmd = "Dim " & CInt(RecBuf[9] * 3.2)
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
     Case sTypeEMW100
       sType = "EMW100"
-      WriteMessage("Subtype       = EMW100")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = EMW100")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = Hex(RecBuf[4], 2) & Hex(RecBuf[5], 2) & Hex(RecBuf[6], 2) & " " & CStr(RecBuf[7])
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       Select Case RecBuf[8]
         Case &H0
           sCmd = "Off"
@@ -1959,16 +2010,16 @@ Private Sub Decode_Lighting5()
         Case &H2
           sCmd = "Learn"
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
     Case sTypeBBSB
       sType = "BBSB"
-      WriteMessage("Subtype       = BBSB New")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = BBSB New")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = Hex(RecBuf[4], 2) & Hex(RecBuf[5], 2) & Hex(RecBuf[6], 2) & " " & CStr(RecBuf[7])
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       Select Case RecBuf[8]
         Case &H0
           sCmd = "Off"
@@ -1979,15 +2030,16 @@ Private Sub Decode_Lighting5()
         Case &H3
           sCmd = "Group On"
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[10], 4)))
+
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[10], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, UCase(sType))
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
@@ -2019,12 +2071,12 @@ Private Sub Decode_Lighting6()
   Select Case RecBuf[2]
     Case sTypeBlyss
       sType = "Blyss"
-      WriteMessage("Subtype       = Blyss")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = Blyss")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = Hex(RecBuf[4], 2) & Hex(RecBuf[5], 2) & " " & CStr(RecBuf[7])
-      WriteMessage("ID            = " & sAddress)
-      WriteMessage("Group code    = " & Chr(RecBuf[6]))
-      WriteMessage("Unit code    = " & RecBuf[7])
+      WriteDebugLog("ID            = " & sAddress)
+      WriteDebugLog("Group code    = " & Chr(RecBuf[6]))
+      WriteDebugLog("Unit code    = " & RecBuf[7])
       Select Case RecBuf[8]
         Case &H0
           sCmd = "On"
@@ -2035,17 +2087,18 @@ Private Sub Decode_Lighting6()
         Case &H3
           sCmd = "Group Off"
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
-      WriteMessage("Cmnd Sequence = " & RecBuf[9])
-      WriteMessage("RFU           = " & RecBuf[10])
+      WriteDebugLog("Command       = " & sCmd)
+      WriteDebugLog("Cmnd Sequence = " & RecBuf[9])
+      WriteDebugLog("RFU           = " & RecBuf[10])
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
+
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, UCase(sType))
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
@@ -2077,41 +2130,42 @@ Private Sub Decode_Security1()
   Select Case RecBuf[2]
     Case sTypeSecX10
       sType = "X10SecDW"
-      WriteMessage("Subtype       = X10 security")
+      WriteDebugLog("Subtype       = X10 security")
     Case sTypeSecX10M
       sType = "X10SecMotion"
-      WriteMessage("Subtype       = X10 security motion")
+      WriteDebugLog("Subtype       = X10 security motion")
     Case sTypeSecX10R
       sType = "X10SecRemote"
-      WriteMessage("Subtype       = X10 security remote")
+      WriteDebugLog("Subtype       = X10 security remote")
     Case sTypeKD101
       sType = "KD101"
-      WriteMessage("Subtype       = KD101 smoke detector")
+      WriteDebugLog("Subtype       = KD101 smoke detector")
     Case sTypePowercodeSensor
       sType = "PowerCodeDW"
-      WriteMessage("Subtype       = Visonic PowerCode sensor - primary contact")
+      WriteDebugLog("Subtype       = Visonic PowerCode sensor - primary contact")
     Case sTypePowercodeMotion
       sType = "PowerCodeMotion"
-      WriteMessage("Subtype       = Visonic PowerCode motion")
+      WriteDebugLog("Subtype       = Visonic PowerCode motion")
     Case sTypeCodesecure
       sType = "CodeSecure"
-      WriteMessage("Subtype       = Visonic CodeSecure")
+      WriteDebugLog("Subtype       = Visonic CodeSecure")
     Case sTypePowercodeAux
       sType = "PowerCodeAux"
-      WriteMessage("Subtype       = Visonic PowerCode sensor - auxiliary contact")
+      WriteDebugLog("Subtype       = Visonic PowerCode sensor - auxiliary contact")
     Case sTypeMeiantech
       sType = "Meiantech"
-      WriteMessage("Subtype       = Meiantech/Atlantic/Aidebao")
+      WriteDebugLog("Subtype       = Meiantech/Atlantic/Aidebao")
     Case sTypeSA30
       sType = "SA30"
-      WriteMessage("Subtype       = SA30 smoke detector")
+      WriteDebugLog("Subtype       = SA30 smoke detector")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress("x10sec " & CStr(RecBuf[4] * 65536 + RecBuf[5] * 256 + RecBuf[6]))
-  WriteMessage("ID1-3         = " & sAddress)
+  WriteDebugLog("ID1-3         = " & sAddress)
 
   Select Case RecBuf[7]
     Case sStatusNormal
@@ -2178,10 +2232,11 @@ Private Sub Decode_Security1()
       sCmd = "No Motion"
       sTamper = "Tamper"
     Case Else
-      WriteMessage("Status        = Unknown")
+      WriteDebugLog("Status        = Unknown")
       Return
   End Select
-  WriteMessage("Status        = " & sCmd & " " & sTamper)
+
+  WriteDebugLog("Status        = " & sCmd & " " & sTamper)
 
   If sType <> sTypeKD101 And If sType <> sTypeSA30 Then ' they don't support battery low
     If (RecBuf[8] And &HF) = 0 Then
@@ -2189,9 +2244,9 @@ Private Sub Decode_Security1()
     Else
       sBatt = "OK"
     Endif
-    WriteMessage("Battery level = " & sBatt)
+    WriteDebugLog("Battery level = " & sBatt)
   Endif
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value & battery status
   If iDeviceId Then
@@ -2223,10 +2278,10 @@ Private Sub Decode_Camera1()
   Select Case RecBuf[2]
     Case sTypeNinja
       sType = "ninja"
-      WriteMessage("Subtype       = X10 Ninja/Robocam")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = X10 Ninja/Robocam")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = sType & " " & Chr(RecBuf[4])
-      WriteMessage("Address       = " & sAddress)
+      WriteDebugLog("Address       = " & sAddress)
       Select Case RecBuf[5]
         Case &H0
           sType = "Left"
@@ -2261,15 +2316,16 @@ Private Sub Decode_Camera1()
         Case &HF
           sType = "Sweep Program"
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[6], 4)))
+
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[6], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
@@ -2299,20 +2355,20 @@ Private Sub Decode_Blinds1()
   Select Case RecBuf[2]
     Case sTypeBlindsT0
       sType = "Blinds0"
-      WriteMessage("Subtype       = Safy / RollerTrol / Hasta new")
+      WriteDebugLog("Subtype       = Safy / RollerTrol / Hasta new")
     Case sTypeBlindsT1
       sType = "Blinds1"
-      WriteMessage("Subtype       = Hasta old")
+      WriteDebugLog("Subtype       = Hasta old")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ": " & Hex(RecBuf[2]))
   End Select
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = sType & " " & Hex(RecBuf[4], 2) & Hex(RecBuf[5], 2) & Hex(RecBuf[6], 2)
-  WriteMessage("Address       = " & sAddress)
+  WriteDebugLog("Address       = " & sAddress)
   If RecBuf[7] = 15 Then
-    WriteMessage("Unit          = All")
+    WriteDebugLog("Unit          = All")
   Else
-    WriteMessage("Unit          = " & RecBuf[7])
+    WriteDebugLog("Unit          = " & RecBuf[7])
   Endif
 
   Select Case RecBuf[8]
@@ -2327,11 +2383,12 @@ Private Sub Decode_Blinds1()
     Case &H4
       sCmd = "Set Limit"
     Case Else
-      WriteMessage("Command       = Unknown")
+      WriteDebugLog("Command       = Unknown")
       Return
   End Select
-  WriteMessage("Command       = " & sCmd)
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
+
+  WriteDebugLog("Command       = " & sCmd)
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd, Devices.ValueType_Blinds)
@@ -2359,10 +2416,10 @@ Private Sub Decode_Remote()
   Select Case RecBuf[2]
     Case sTypeATI
       sType = "ATI"
-      WriteMessage("Subtype       = ATI Remote Wonder")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = ATI Remote Wonder")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = CStr(RecBuf[4])
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       Select Case RecBuf[5]
         Case &H0
           sCmd = "A"
@@ -2506,13 +2563,13 @@ Private Sub Decode_Remote()
           sCmd = "Unknown"
           Return
       End Select
-      WriteMessage("Command       = " & SCmd)
+      WriteDebugLog("Command       = " & SCmd)
     Case sTypeATI2
       sType = "ATI2"
-      WriteMessage("Subtype       = ATI Remote Wonder II")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = ATI Remote Wonder II")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = CStr(RecBuf[4])
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       Select Case RecBuf[5]
         Case &H0
           sCmd = "A"
@@ -2657,21 +2714,21 @@ Private Sub Decode_Remote()
         Case &H7D
           sCmd = "X-End"
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
       If (RecBuf[6] And &H1) = &H1 Then
-        WriteMessage("  (Button press = odd)")
+        WriteDebugLog("  (Button press = odd)")
       Else
-        WriteMessage("  (Button press = even)")
+        WriteDebugLog("  (Button press = even)")
       Endif
     Case sTypeMedion
       sType = "MEDION"
-      WriteMessage("Subtype       = Medion Remote")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = Medion Remote")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = CStr(RecBuf[4])
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       Select Case RecBuf[5]
         Case &H0
           sCmd = "Mute"
@@ -2812,16 +2869,16 @@ Private Sub Decode_Remote()
         Case &H7D
           sCmd = "X-End"
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
     Case sTypePCremote
       sType = "PCREMOTE"
-      WriteMessage("Subtype       = PC Remote")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = PC Remote")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = CStr(RecBuf[4])
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       Select Case RecBuf[5]
         Case &H2
           sCmd = "0"
@@ -2922,15 +2979,16 @@ Private Sub Decode_Remote()
         Case &H7D
           sCmd = "Right mouse-End"
         Case Else
-          WriteMessage("Command       = Unknown")
+          WriteDebugLog("Command       = Unknown")
           Return
       End Select
-      WriteMessage("Command       = " & sCmd)
+      WriteDebugLog("Command       = " & sCmd)
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1], 2) & ":" & Hex(RecBuf[2], 2))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1], 2) & ":" & Hex(RecBuf[2], 2))
       Return
   End Select
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[6], 4)))
+
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[6], 4)))
   iDeviceId = Devices.Find(Instance, "default", InterfaceId, sType)
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd, Devices.ValueType_Remote)
@@ -2939,7 +2997,7 @@ End
 
 Private Sub Decode_FS20()
 
-  WriteMessage("Not implemented yet")
+  WriteDebugLog("Decoding FS20 not implemented")
 
 End
 
@@ -2968,28 +3026,28 @@ Private Sub Decode_Thermostat1()
   Select Case RecBuf[2]
     Case sTypeDigimax
       sType = "Digimax"
-      WriteMessage("Subtype       = Digimax")
+      WriteDebugLog("Subtype       = Digimax")
     Case sTypeDigimaxShort
       sType = "Digimax"
-      WriteMessage("Subtype       = Digimax with short format")
+      WriteDebugLog("Subtype       = Digimax with short format")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress(sType & " " & CStr(RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("ID            = " & sAddress)
   sTemp = CStr(RecBuf[6])
-  WriteMessage("Temperature   = " & sTemp & " °C")
+  WriteDebugLog("Temperature   = " & sTemp & " °C")
   If RecBuf[2] = sTypeDigimax Then
     sSetTemp = CStr(RecBuf[7])
-    WriteMessage("Set           = " & sSetTemp & " °C")
+    WriteDebugLog("Set           = " & sSetTemp & " °C")
     If (RecBuf[8] And &H80) = 0 Then
       sCmd = "Heating"
     Else
       sCmd = "Cooling"
     Endif
-    WriteMessage("Mode          = " & sCmd)
+    WriteDebugLog("Mode          = " & sCmd)
     Select Case (RecBuf[8] And &H3)
       Case 0
         sStatus = "Not Available"
@@ -3000,9 +3058,10 @@ Private Sub Decode_Thermostat1()
       Case 3
         sStatus = "Initializing"
     End Select
-    WriteMessage("Status        = " & sStatus)
+    WriteDebugLog("Status        = " & sStatus)
   Endif
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
+
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values
   If iDeviceId Then
@@ -3028,7 +3087,7 @@ End
 
 Private Sub Decode_Thermostat2()
 
-  WriteMessage("Not implemented")
+  WriteDebugLog("Decoding Thermostat2 not implemented")
 
 End
 
@@ -3054,17 +3113,17 @@ Private Sub Decode_Thermostat3()
   Select Case RecBuf[2]
     Case sTypeMertikG6RH4T1
       sType = "Mertik"
-      WriteMessage("Subtype       = Mertik G6R-H4T1")
+      WriteDebugLog("Subtype       = Mertik G6R-H4T1")
     Case sTypeMertikG6RH4TB
       sType = "Mertik"
-      WriteMessage("Subtype       = Mertik G6R-H4TB")
+      WriteDebugLog("Subtype       = Mertik G6R-H4TB")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence nbr  = " & CStr(RecBuf[3]))
+  WriteDebugLog("Sequence nbr  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress(sType & " " & CStr(RecBuf[4] + 65536 & RecBuf[5] * 256 + RecBuf[6]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("ID            = " & sAddress)
   Select Case RecBuf[7]
     Case 0
       sCmd = "Off"
@@ -3090,15 +3149,16 @@ Private Sub Decode_Thermostat3()
       If RecBuf[2] = sTypeMertikG6RH4T1 Then
         sCmd = "Stop"
       Else
-        WriteMessage("Command       = Unknown")
+        WriteDebugLog("Command       = Unknown")
         Return
       Endif
     Case Else
-      WriteMessage("Command       = Unknown")
+      WriteDebugLog("Command       = Unknown")
       Return
   End Select
-  WriteMessage("Command       = " & sCmd)
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
+
+  WriteDebugLog("Command       = " & sCmd)
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sCmd)
@@ -3130,42 +3190,43 @@ Private Sub Decode_Rain()
   Select Case RecBuf[2]
     Case sTypeRAIN1
       sType = "rain1"
-      WriteMessage("Subtype       = RAIN1 - RGR126/682/918")
+      WriteDebugLog("Subtype       = RAIN1 - RGR126/682/918")
     Case sTypeRAIN2
       sType = "rain2"
-      WriteMessage("Subtype       = RAIN2 - PCR800")
+      WriteDebugLog("Subtype       = RAIN2 - PCR800")
     Case sTypeRAIN3
       sType = "rain3"
-      WriteMessage("Subtype       = RAIN3 - TFA")
+      WriteDebugLog("Subtype       = RAIN3 - TFA")
     Case sTypeRAIN4
       sType = "rain4"
-      WriteMessage("Subtype       = RAIN4 - UPM RG700")
+      WriteDebugLog("Subtype       = RAIN4 - UPM RG700")
     Case sTypeRAIN5
       sType = "rain5"
-      WriteMessage("Subtype       = RAIN5 - LaCrosse WS2300")
+      WriteDebugLog("Subtype       = RAIN5 - LaCrosse WS2300")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("ID            = " & sAddress)
   If RecBuf[2] = sTypeRAIN1 Then
     sRainRate = CStr((RecBuf[6] * 256) + RecBuf[7])
-    WriteMessage("Rain rate     = " & sRainRate & " mm/h")
+    WriteDebugLog("Rain rate     = " & sRainRate & " mm/h")
   Else
     sRainRate = CStr(((RecBuf[6] * 256) + RecBuf[7]) / 100)
-    WriteMessage("Rain rate     = " & sRainRate & " mm/h")
+    WriteDebugLog("Rain rate     = " & sRainRate & " mm/h")
   Endif
   sRainTotal = CStr(((RecBuf[8] * 65535) + RecBuf[9] * 256 + RecBuf[10]) / 10)
-  WriteMessage("Total rain    = " & sRainTotal & " mm")
-  WriteMessage("Signal level  = " & Lsr(RecBuf[11], 4))
+  WriteDebugLog("Total rain    = " & sRainTotal & " mm")
+  WriteDebugLog("Signal level  = " & Lsr(RecBuf[11], 4))
   If (Recbuf[11] And &HF) = 0 Then
     sBatt = "Low"
   Else
     sBatt = "OK"
   Endif
-  WriteMessage("Battery       = " & sBatt)
+  WriteDebugLog("Battery       = " & sBatt)
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
   If iDeviceId Then
@@ -3200,57 +3261,58 @@ Private Sub Decode_Temp()
   Select Case RecBuf[2]
     Case sTypeTEMP1
       sType = "temp1"
-      WriteMessage("Subtype       = TEMP1 - THR128/138, THC138")
+      WriteDebugLog("Subtype       = TEMP1 - THR128/138, THC138")
     Case sTypeTEMP2
       sType = "temp2"
-      WriteMessage("Subtype       = TEMP2 - THC238/268,THN132,THWR288,THRN122,THN122,AW129/131")
+      WriteDebugLog("Subtype       = TEMP2 - THC238/268,THN132,THWR288,THRN122,THN122,AW129/131")
     Case sTypeTEMP3
       sType = "temp3"
-      WriteMessage("Subtype       = TEMP3 - THWR800")
+      WriteDebugLog("Subtype       = TEMP3 - THWR800")
     Case sTypeTEMP4
       sType = "temp4"
-      WriteMessage("Subtype       = TEMP4 - RTHN318")
+      WriteDebugLog("Subtype       = TEMP4 - RTHN318")
     Case sTypeTEMP5
       sType = "temp5"
-      WriteMessage("Subtype       = TEMP5 - LaCrosse TX3, TX4, TX17")
+      WriteDebugLog("Subtype       = TEMP5 - LaCrosse TX3, TX4, TX17")
     Case sTypeTEMP6
       sType = "temp6"
-      WriteMessage("Subtype       = TEMP6 - TS15C")
+      WriteDebugLog("Subtype       = TEMP6 - TS15C")
     Case sTypeTEMP7
       sType = "temp7"
-      WriteMessage("Subtype       = TEMP7 - Viking 02811, Proove TSS330")
+      WriteDebugLog("Subtype       = TEMP7 - Viking 02811, Proove TSS330")
     Case sTypeTEMP8
       sType = "temp8"
-      WriteMessage("Subtype       = TEMP8 - LaCrosse WS2300")
+      WriteDebugLog("Subtype       = TEMP8 - LaCrosse WS2300")
     Case sTypeTEMP9
       sType = "temp9"
-      WriteMessage("Subtype       = TEMP9 - RUBiCSON")
+      WriteDebugLog("Subtype       = TEMP9 - RUBiCSON")
     Case sTypeTEMP10
       sType = "temp10"
-      WriteMessage("Subtype       = TEMP10 - TFA 30.3133")
+      WriteDebugLog("Subtype       = TEMP10 - TFA 30.3133")
     Case sTypeTEMP11
       sType = "temp11"
-      WriteMessage("Subtype       = TEMP11 - WT0122")
+      WriteDebugLog("Subtype       = TEMP11 - WT0122")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
+
   sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+  WriteDebugLog("ID            = " & sAddress)
   If (RecBuf[6] And &H80) = 0 Then
     sTemp = CStr((RecBuf[6] * 256 + RecBuf[7]) / 10)
   Else
     sTemp = "-" & CStr(((RecBuf[6] And &H7F) * 256 + RecBuf[7]) / 10)
   Endif
-  WriteMessage("Temperature   = " & sTemp & " °C")
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
+  WriteDebugLog("Temperature   = " & sTemp & " °C")
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
   If (RecBuf[8] And &HF) = 0 Then
     sBatt = "Low"
   Else
     sBatt = "OK"
   Endif
-  WriteMessage("Battery       = OK")
+  WriteDebugLog("Battery       = OK")
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value & battery status
   If iDeviceId Then
@@ -3288,19 +3350,20 @@ Private Sub Decode_Hum()
   Select Case RecBuf[2]
     Case sTypeHUM1
       sType = "hum1"
-      WriteMessage("Subtype       = HUM1 - LaCrosse TX3")
+      WriteDebugLog("Subtype       = HUM1 - LaCrosse TX3")
     Case sTypeHUM2
       sType = "hum2"
-      WriteMessage("Subtype       = HUM2 - LaCrosse WS2300")
+      WriteDebugLog("Subtype       = HUM2 - LaCrosse WS2300")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("ID            = " & sAddress)
   sHumid = RecBuf[6]
-  WriteMessage("Humidity      = " & sHumid & " %")
+  WriteDebugLog("Humidity      = " & sHumid & " %")
   Select Case RecBuf[7]
     Case &H0
       sComfort = "Dry"
@@ -3311,14 +3374,14 @@ Private Sub Decode_Hum()
     Case &H3
       sComfort = "Wet"
   End Select
-  WriteMessage("Status        = " & sComfort)
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
+  WriteDebugLog("Status        = " & sComfort)
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
   If (RecBuf[8] And &HF) = 0 Then
     sBatt = "Low"
   Else
     sBatt = "OK"
   Endif
-  WriteMessage("Battery       = " & sBatt)
+  WriteDebugLog("Battery       = " & sBatt)
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value & battery status
   If iDeviceId Then
@@ -3354,56 +3417,57 @@ Private Sub Decode_TempHum()
 
   Select Case RecBuf[2]
     Case sTypeTH1
-      WriteMessage("Subtype       = TH1 - THGN122/123/132,THGR122/228/238/268")
+      WriteDebugLog("Subtype       = TH1 - THGN122/123/132,THGR122/228/238/268")
       sType = "th1"
     Case sTypeTH2
-      WriteMessage("Subtype       = TH2 - THGR810")
+      WriteDebugLog("Subtype       = TH2 - THGR810")
       sType = "th2"
     Case sTypeTH3
-      WriteMessage("Subtype       = TH3 - RTGR328")
+      WriteDebugLog("Subtype       = TH3 - RTGR328")
       sType = "th3"
     Case sTypeTH4
-      WriteMessage("Subtype       = TH4 - THGR328")
+      WriteDebugLog("Subtype       = TH4 - THGR328")
       sType = "th4"
     Case sTypeTH5
-      WriteMessage("Subtype       = TH5 - WTGR800")
+      WriteDebugLog("Subtype       = TH5 - WTGR800")
       sType = "th5"
     Case sTypeTH6
-      WriteMessage("Subtype       = TH6 - THGR918,THGRN228,THGN500")
+      WriteDebugLog("Subtype       = TH6 - THGR918,THGRN228,THGN500")
       sType = "th6"
     Case sTypeTH7
-      WriteMessage("Subtype       = TH7 - TFA TS34C")
+      WriteDebugLog("Subtype       = TH7 - TFA TS34C")
       sType = "th7"
     Case sTypeTH8
-      WriteMessage("Subtype       = TH8 - ESIC WT440H/450H")
+      WriteDebugLog("Subtype       = TH8 - ESIC WT440H/450H")
       sType = "th8"
     Case sTypeTH9
-      WriteMessage("Subtype       = TH9 - Viking 02038, 02035 (02035 has no humidity)")
+      WriteDebugLog("Subtype       = TH9 - Viking 02038, 02035 (02035 has no humidity)")
       sType = "th9"
     Case sTypeTH10
-      WriteMessage("Subtype       = TH10 - Rubicson")
+      WriteDebugLog("Subtype       = TH10 - Rubicson")
       sType = "th10"
     Case sTypeTH11
-      WriteMessage("Subtype       = TH11 - EW109")
+      WriteDebugLog("Subtype       = TH11 - EW109")
       sType = "th11"
     Case sTypeTH12
-      WriteMessage("Subtype       = TH12 - Imagintronix Soil Sensor")
+      WriteDebugLog("Subtype       = TH12 - Imagintronix Soil Sensor")
       sType = "th12"
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence no.  = " & RecBuf[3])
+
+  WriteDebugLog("Sequence no.  = " & RecBuf[3])
   sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("ID            = " & sAddress)
   If (RecBuf[6] And &H80) = 0 Then
     sTemp = CStr((RecBuf[6] * 256 + RecBuf[7]) / 10)
   Else
     sTemp = "-" & CStr(((RecBuf[6] And &H7F) * 256 + RecBuf[7]) / 10)
   Endif
-  WriteMessage("Temperature   = " & sTemp & " °C")
+  WriteDebugLog("Temperature   = " & sTemp & " °C")
   sHumid = RecBuf[8]
-  WriteMessage("Humidity      = " & sHumid & " %")
+  WriteDebugLog("Humidity      = " & sHumid & " %")
   Select Case RecBuf[9]
     Case &H0
       sComfort = "Dry"
@@ -3414,8 +3478,8 @@ Private Sub Decode_TempHum()
     Case &H3
       sComfort = "Wet"
   End Select
-  WriteMessage("Status        = " & sComfort)
-  WriteMessage("Signal level  = " & Lsr(RecBuf[10], 4))
+  WriteDebugLog("Status        = " & sComfort)
+  WriteDebugLog("Signal level  = " & Lsr(RecBuf[10], 4))
   If RecBuf[2] = sTypeTH6 Then
     sBatt = (RecBuf[10] * 10) + 10
   Else
@@ -3425,7 +3489,7 @@ Private Sub Decode_TempHum()
       sBatt = "OK"
     Endif
   Endif
-  WriteMessage("Battery       = " & sBatt)
+  WriteDebugLog("Battery       = " & sBatt)
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value & battery status
   If iDeviceId Then
@@ -3471,26 +3535,27 @@ Private Sub Decode_TempHumBaro()
   Select Case RecBuf[2]
     Case sTypeTH1
       sType = "thb1"
-      WriteMessage("Subtype       = THB1 - BTHR918, BTHGN129")
+      WriteDebugLog("Subtype       = THB1 - BTHR918, BTHGN129")
     Case sTypeTH2
       sType = "thb2"
-      WriteMessage("Subtype       = THB2 - BTHR918N, BTHR968")
+      WriteDebugLog("Subtype       = THB2 - BTHR918N, BTHR968")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("ID            = " & sAddress)
   If (RecBuf[6] And &H80) = 0 Then
     sTemp = CStr((RecBuf[6] * 256 + RecBuf[7]) / 10)
-    WriteMessage("Temperature   = " & sTemp & " °C")
+    WriteDebugLog("Temperature   = " & sTemp & " °C")
   Else
     sTemp = "-" & CStr(((RecBuf[6] And &H7F) * 256 + RecBuf[7]) / 10)
-    WriteMessage("Temperature   = " & sTemp & " °C")
+    WriteDebugLog("Temperature   = " & sTemp & " °C")
   Endif
   sHumid = CStr(RecBuf[8])
-  WriteMessage("Humidity      = " & sHumid & " %")
+  WriteDebugLog("Humidity      = " & sHumid & " %")
   Select Case RecBuf[9]
     Case &H0
       sComfort = "Status        = Dry"
@@ -3503,7 +3568,7 @@ Private Sub Decode_TempHumBaro()
   End Select
 
   sBaro = CStr(RecBuf[10] * 256 + RecBuf[11])
-  WriteMessage("Barometer     = " & sBaro)
+  WriteDebugLog("Barometer     = " & sBaro)
   Select Case RecBuf[12]
     Case &H0
       sForecast = "No Info Avail"
@@ -3516,14 +3581,14 @@ Private Sub Decode_TempHumBaro()
     Case &H4
       sForecast = "Rain"
   End Select
-  WriteMessage("Forecast      = " & sForecast)
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[13], 4)))
+  WriteDebugLog("Forecast      = " & sForecast)
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[13], 4)))
   If (RecBuf[13] And &HF) = 0 Then
     sBatt = "Low"
   Else
     sBatt = "OK"
   Endif
-  WriteMessage("Battery       = " & sBatt)
+  WriteDebugLog("Battery       = " & sBatt)
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
   If iDeviceId Then
@@ -3566,20 +3631,20 @@ Private Sub Decode_Uv()
   Select Case RecBuf[2]
     Case sTypeUV1
       sType = "uv1"
-      WriteMessage("Subtype       = UV1 - UVN128, UV138")
+      WriteDebugLog("Subtype       = UV1 - UVN128, UV138")
     Case sTypeUV2
       sType = "uv2"
-      WriteMessage("Subtype       = UV2 - UVN800")
+      WriteDebugLog("Subtype       = UV2 - UVN800")
     Case sTypeUV3
       sType = "uv3"
-      WriteMessage("Subtype       = UV3 - TFA")
+      WriteDebugLog("Subtype       = UV3 - TFA")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
   sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+  WriteDebugLog("ID            = " & sAddress)
 
   If RecBuf[2] = sTypeUV3 Then
     If (RecBuf[7] And &H80) = 0 Then
@@ -3587,11 +3652,11 @@ Private Sub Decode_Uv()
     Else
       sTemp = "-" & Round(((RecBuf[7] And &H7F) * 256 + RecBuf[8]) / 10)
     Endif
-    WriteMessage("Temperature   = " & sTemp & " °C")
+    WriteDebugLog("Temperature   = " & sTemp & " °C")
   Endif
 
   sLevel = CStr(RecBuf[6])
-  WriteMessage("Level         = " & sLevel)
+  WriteDebugLog("Level         = " & sLevel)
   If RecBuf[6] < 3 Then
     sStatus = "Low"
   Else If RecBuf[6] < 6
@@ -3603,14 +3668,14 @@ Private Sub Decode_Uv()
   Else
     sStatus = "Dangerous"
   Endif
-  WriteMessage("Status        = " & sStatus)
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
+  WriteDebugLog("Status        = " & sStatus)
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[9], 4)))
   If (RecBuf[9] And &HF) = 0 Then
     sBatt = "Low"
   Else
     sbatt = "OK"
   Endif
-  WriteMessage("Battery       = " & sBatt)
+  WriteDebugLog("Battery       = " & sBatt)
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
   If iDeviceId Then
@@ -3625,19 +3690,7 @@ End
 
 Private Sub Decode_Baro()
 
-  WriteMessage("Not implemented")
-
-End
-
-Private Sub WriteMessage(sText As String, Optional bNoReturn As Boolean)
-
-  If Not $bDebug Then Return
-
-  If bNoReturn Then
-    Main.WriteDebugLogChars(sText, True)
-  Else
-    Main.WriteDebugLog(LogLabel & sText)
-  Endif
+  WriteDebugLog("Not implemented")
 
 End
 
@@ -3674,49 +3727,49 @@ Private Sub Decode_Wind()
   Select Case RecBuf[2]
     Case sTypeWIND1
       sType = "wind1"
-      WriteMessage("Subtype       = WIND1 - WTGR800")
+      WriteDebugLog("Subtype       = WIND1 - WTGR800")
     Case sTypeWIND2
       sType = "wind2"
-      WriteMessage("Subtype       = WIND2 - WGR800")
+      WriteDebugLog("Subtype       = WIND2 - WGR800")
     Case sTypeWIND3
       sType = "wind3"
-      WriteMessage("Subtype       = WIND3 - STR918, WGR918")
+      WriteDebugLog("Subtype       = WIND3 - STR918, WGR918")
     Case sTypeWIND4
       sType = "wind4"
-      WriteMessage("Subtype       = WIND4 - TFA")
+      WriteDebugLog("Subtype       = WIND4 - TFA")
     Case sTypeWIND5
       sType = "wind5"
-      WriteMessage("Subtype       = WIND5 - UPM WDS500")
+      WriteDebugLog("Subtype       = WIND5 - UPM WDS500")
     Case sTypeWIND6
       sType = "wind6"
-      WriteMessage("Subtype       = WIND5 - LaCrosse WS2300")
+      WriteDebugLog("Subtype       = WIND5 - LaCrosse WS2300")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("ID            = " & sAddress)
   sDirection = CStr((RecBuf[6] * 256) + RecBuf[7])
-  WriteMessage("Direction     = " & sDirection & " degrees")
+  WriteDebugLog("Direction     = " & sDirection & " degrees")
   sDirectionDescr = WindDirection(sDirection)
-  WriteMessage("Direction Desc= " & sDirectionDescr)
+  WriteDebugLog("Direction Desc= " & sDirectionDescr)
 
   ' TOFIX
   ' intSpeed = (recbuf(WIND.av_speedh) * 256) + recbuf(WIND.av_speedl)
   ' IF recbuf(WIND.subtype) <> WIND.WIND5 THEN
-  '     WriteMessage("Average speed = " & (intSpeed / 10).ToString & " mtr/sec = " & Math.Round((intSpeed * 0.36), 2).ToString & " km/hr = " & Math.Round((intSpeed * 0.223693629) / 10, 2).ToString & " mph")
+  '     WriteDebugLog("Average speed = " & (intSpeed / 10).ToString & " mtr/sec = " & Math.Round((intSpeed * 0.36), 2).ToString & " km/hr = " & Math.Round((intSpeed * 0.223693629) / 10, 2).ToString & " mph")
   ' END IF
   ' intSpeed = (recbuf(WIND.gusth) * 256) + recbuf(WIND.gustl)
-  ' WriteMessage("Wind gust     = " & (intSpeed / 10).ToString & " mtr/sec = " & Math.Round((intSpeed * 0.36), 2).ToString & " km/hr = " & Math.Round((intSpeed * 0.223693629) / 10, 2).ToString & " mph")
+  ' WriteDebugLog("Wind gust     = " & (intSpeed / 10).ToString & " mtr/sec = " & Math.Round((intSpeed * 0.36), 2).ToString & " km/hr = " & Math.Round((intSpeed * 0.223693629) / 10, 2).ToString & " mph")
 
   If RecBuf[2] <> sTypeWIND5 Then
     sAvgSpeed = CStr(((RecBuf[8] * 256) + RecBuf[9])) * 0.36
-    WriteMessage("Average speed = " & sAvgSpeed & " mtr/sec")
+    WriteDebugLog("Average speed = " & sAvgSpeed & " mtr/sec")
   Endif
   sWindGust = CStr(((RecBuf[10] * 256) + RecBuf[11])) * 0.36
-  WriteMessage("Wind gust     = " & sWindGust & " mtr/sec")
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[16], 4)))
+  WriteDebugLog("Wind gust     = " & sWindGust & " mtr/sec")
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[16], 4)))
 
   If RecBuf[2] = sTypeWIND4 Then
     sAddressTemp = ConvertAddress(sType & "-temp " & (RecBuf[4] * 256 + RecBuf[5]))
@@ -3726,13 +3779,13 @@ Private Sub Decode_Wind()
     Else
       sTemp = "-" & Round(((RecBuf[12] And &H7F) * 256 + RecBuf[13]) / 10)
     Endif
-    WriteMessage("Temperature   = " & sTemp & " °C")
+    WriteDebugLog("Temperature   = " & sTemp & " °C")
     If (RecBuf[14] And &H80) = 0 Then
       sChill = Round((RecBuf[14] * 256 + RecBuf[15]) / 10)
     Else
       sChill = "-" & Round(((RecBuf[14] And &H7F) * 256 + RecBuf[15]) / 10)
     Endif
-    WriteMessage("Chill         = " & sChill & " °C")
+    WriteDebugLog("Chill         = " & sChill & " °C")
   Endif
   If RecBuf[2] = sTypeWIND3 Then
     sBatt = (RecBuf[16] * 10) + 10
@@ -3743,7 +3796,7 @@ Private Sub Decode_Wind()
       sBatt = "OK"
     Endif
   Endif
-  WriteMessage("Battery       = " & sBatt)
+  WriteDebugLog("Battery       = " & sBatt)
   ' find device id
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
@@ -3834,7 +3887,7 @@ End
 
 Private Sub Decode_DateTime()
 
-  WriteMessage("Decoding DateTime not implemented yet.")
+  WriteDebugLog("Decoding DateTime not implemented yet.")
 
 End
 
@@ -3865,28 +3918,28 @@ Private Sub Decode_Current()
   Select Case RecBuf[2]
     Case sTypeELEC1
       sType = "elec1"
-      WriteMessage("Subtype       = ELEC1 - OWL CM113, Electrisave, cent-a-meter")
+      WriteDebugLog("Subtype       = ELEC1 - OWL CM113, Electrisave, cent-a-meter")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("ID            = " & sAddress)
-  WriteMessage("Count         = " & CStr(RecBuf[6]))
+  WriteDebugLog("ID            = " & sAddress)
+  WriteDebugLog("Count         = " & CStr(RecBuf[6]))
   sCt1 = CStr(((RecBuf[7] * 256) + RecBuf[8]) / 10)
-  WriteMessage("Channel 1     = " & sCt1 & " ampere")
+  WriteDebugLog("Channel 1     = " & sCt1 & " ampere")
   sCt2 = CStr(((RecBuf[9] * 256) + RecBuf[10]) / 10)
-  WriteMessage("Channel 2     = " & sCt2 & " ampere")
+  WriteDebugLog("Channel 2     = " & sCt2 & " ampere")
   sCt3 = CStr(((RecBuf[11] * 256) + RecBuf[12]) / 10)
-  WriteMessage("Channel 3     = " & sCt3 & " ampere")
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[13], 4)))
+  WriteDebugLog("Channel 3     = " & sCt3 & " ampere")
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[13], 4)))
   If (RecBuf[13] And &HF) = 0 Then
     sBatt = "Low"
   Else
     sBatt = "OK"
   Endif
-  WriteMessage("Battery       = " & sBatt)
+  WriteDebugLog("Battery       = " & sBatt)
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
   If iDeviceId Then
@@ -3930,29 +3983,29 @@ Private Sub Decode_Energy()
   Select Case RecBuf[2]
     Case sTypeELEC2
       sType = "elec2"
-      WriteMessage("Subtype       = ELEC2 - OWL CM119, CM160")
+      WriteDebugLog("Subtype       = ELEC2 - OWL CM119, CM160")
     Case sTypeELEC3
       sType = "elec3"
-      WriteMessage("Subtype       = ELEC3 - OWL CM180")
+      WriteDebugLog("Subtype       = ELEC3 - OWL CM180")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("ID            = " & sAddress)
   sInstantUsage = CStr(RecBuf[7] * 16777216 + RecBuf[8] * 65536 + RecBuf[9] * 256 + RecBuf[10])
-  WriteMessage("Count         = " & CStr(RecBuf[6]))
-  WriteMessage("Instant usage = " & sInstantUsage & " Watt")
+  WriteDebugLog("Count         = " & CStr(RecBuf[6]))
+  WriteDebugLog("Instant usage = " & sInstantUsage & " Watt")
   sTotalUsage = CStr(RecBuf[11] * 1099511627776 + RecBuf[12] * 4294967296 + RecBuf[13] * 16777216 + RecBuf[14] * 65536 + RecBuf[15] * 256 + RecBuf[16])
-  WriteMessage("Total usage   = " & sTotalUsage & " Wh")
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[17], 4)))
+  WriteDebugLog("Total usage   = " & sTotalUsage & " Wh")
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[17], 4)))
   If (RecBuf[17] And &HF) = 0 Then
     sBatt = "Low"
   Else
     sBatt = "OK"
   Endif
-  WriteMessage("Battery       = " & sBatt)
+  WriteDebugLog("Battery       = " & sBatt)
   ' find device id
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update values & battery status
@@ -3967,13 +4020,13 @@ End
 
 Private Sub Decode_Gas()
 
-  WriteMessage("Decoding Gas not implemented yet.")
+  WriteDebugLog("Decoding Gas not implemented")
 
 End
 
 Private Sub Decode_Water()
 
-  WriteMessage("Decoding water not implemented yet.")
+  WriteDebugLog("Decoding water not implemented")
 
 End
 
@@ -3999,20 +4052,20 @@ Private Sub Decode_Weight()
   Select Case RecBuf[2]
     Case sTypeWEIGHT1
       sType = "weight1"
-      WriteMessage("Subtype       = BWR101/BWR102")
+      WriteDebugLog("Subtype       = BWR101/BWR102")
     Case sTypeWEIGHT2
       sType = "weight2"
-      WriteMessage("Subtype       = GR101")
+      WriteDebugLog("Subtype       = GR101")
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+  WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
   sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-  WriteMessage("ID            = " & sAddress)
+  WriteDebugLog("ID            = " & sAddress)
   sWeight = CStr((RecBuf[6] * 25.6) + RecBuf[7] / 10)
-  WriteMessage("Weight        = " & sWeight & " kg")
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
+  WriteDebugLog("Weight        = " & sWeight & " kg")
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[8], 4)))
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   ' update value in kg
   If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, Format(sWeight, ".###"), Devices.ValueType_Weight)
@@ -4041,59 +4094,59 @@ Private Sub Decode_RFXSensor()
     Case sTypeRFXSensorTemp
       sType = "rfxsensor"
       sSubType = "temp"
-      WriteMessage("Subtype       = Temperature")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = Temperature")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       sValue = CStr((RecBuf[5] * 256 + RecBuf[6]) / 100)
-      WriteMessage("Msg           = " & sValue & " °C")
+      WriteDebugLog("Msg           = " & sValue & " °C")
     Case sTypeRFXSensorAD
       sType = "rfxsensor"
       sSubType = "ad"
-      WriteMessage("Subtype       = A/D")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = A/D")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       sValue = CStr(RecBuf[5] * 256 + RecBuf[6])
-      WriteMessage("Msg           = " & sValue & " mV")
+      WriteDebugLog("Msg           = " & sValue & " mV")
     Case sTypeRFXSensorVolt
       sType = "rfxsensor"
       sSubType = "volt"
-      WriteMessage("Subtype       = Voltage")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = Voltage")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       sValue = CStr(RecBuf[5] * 256 + RecBuf[6])
-      WriteMessage("Msg           = " & sValue & " mV")
+      WriteDebugLog("Msg           = " & sValue & " mV")
     Case sTypeRFXSensorMessage
-      WriteMessage("Subtype       = Message")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-      WriteMessage("ID            = " & CStr(RecBuf[4]))
+      WriteDebugLog("Subtype       = Message")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("ID            = " & CStr(RecBuf[4]))
       Select Case RecBuf[6]
         Case &H1
-          WriteMessage("Msg           = sensor addresses incremented")
+          WriteDebugLog("Msg           = sensor addresses incremented")
         Case &H2
-          WriteMessage("Msg           = battery low detected")
+          WriteDebugLog("Msg           = battery low detected")
         Case &H81
-          WriteMessage("Msg           = no 1-wire device connected")
+          WriteDebugLog("Msg           = no 1-wire device connected")
         Case &H82
-          WriteMessage("Msg           = 1-Wire ROM CRC error")
+          WriteDebugLog("Msg           = 1-Wire ROM CRC error")
         Case &H83
-          WriteMessage("Msg           = 1-Wire device connected is not a DS18B20 or DS2438")
+          WriteDebugLog("Msg           = 1-Wire device connected is not a DS18B20 or DS2438")
         Case &H84
-          WriteMessage("Msg           = no end of read signal received from 1-Wire device")
+          WriteDebugLog("Msg           = no end of read signal received from 1-Wire device")
         Case &H85
-          WriteMessage("Msg           = 1-Wire scratchpad CRC error")
+          WriteDebugLog("Msg           = 1-Wire scratchpad CRC error")
         Case Else
-          WriteMessage("ERROR: Unknown message")
+          WriteLog("ERROR: Unknown message from RFXSensor")
           Return
       End Select
-      WriteMessage("Msg           = " & CStr(RecBuf[5] * 256 + RecBuf[6]))
+      WriteDebugLog("Msg           = " & CStr(RecBuf[5] * 256 + RecBuf[6]))
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Signal level  = " & CStr(Lsr(RecBuf[7], 4)))
+  WriteDebugLog("Signal level  = " & CStr(Lsr(RecBuf[7], 4)))
 
   Select Case sSubType
     Case "ad", "volt"
@@ -4142,138 +4195,138 @@ Private Sub Decode_RFXMeter()
     Case sTypeRFXMeterCount
       sType = "rfxmeter"
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-      WriteMessage("Subtype       = RFXMeter counter")
-      WriteMessage("Sequence no.  = " & RecBuf[3])
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("Subtype       = RFXMeter counter")
+      WriteDebugLog("Sequence no.  = " & RecBuf[3])
+      WriteDebugLog("ID            = " & sAddress)
       lCounter = Lsl(CLong(RecBuf[6]), 24) + Lsl(CLong(RecBuf[7]), 16) + Lsl(CLong(RecBuf[8]), 8) + RecBuf[9]
-      WriteMessage("Counter       = " & lCounter)
-      WriteMessage("if RFXPwr     = " & CStr((lCounter / 1000)) & " kWh")
+      WriteDebugLog("Counter       = " & lCounter)
+      WriteDebugLog("if RFXPwr     = " & CStr((lCounter / 1000)) & " kWh")
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
       iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
       If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, CStr(lCounter))
     Case sTypeRFXMeterInterval
       sType = "rfxmeter"
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-      WriteMessage("Subtype       = RFXMeter new interval time set")
-      WriteMessage("Sequence no.  = " & RecBuf[3])
-      WriteMessage("ID            = " & sAddress)
-      WriteMessage("Interval time = ", False)
+      WriteDebugLog("Subtype       = RFXMeter new interval time set")
+      WriteDebugLog("Sequence no.  = " & RecBuf[3])
+      WriteDebugLog("ID            = " & sAddress)
+      WriteDebugLog("Interval time = ", False)
       Select Case RecBuf[8]
         Case &H1
-          WriteMessage("30 seconds")
+          WriteDebugLog("30 seconds")
         Case &H2
-          WriteMessage("1 minute")
+          WriteDebugLog("1 minute")
         Case &H4
-          WriteMessage("6 minutes")
+          WriteDebugLog("6 minutes")
         Case &H8
-          WriteMessage("12 minutes")
+          WriteDebugLog("12 minutes")
         Case &H10
-          WriteMessage("15 minutes")
+          WriteDebugLog("15 minutes")
         Case &H20
-          WriteMessage("30 minutes")
+          WriteDebugLog("30 minutes")
         Case &H40
-          WriteMessage("45 minutes")
+          WriteDebugLog("45 minutes")
         Case &H80
-          WriteMessage("1 hour")
+          WriteDebugLog("1 hour")
       End Select
     Case sTypeRFXMeterCalib
       sType = "rfxmeter"
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
       Select Case (RecBuf[7] And &HC0)
         Case &H0
-          WriteMessage("Subtype       = Calibrate mode for channel 1")
+          WriteDebugLog("Subtype       = Calibrate mode for channel 1")
         Case &H40
-          WriteMessage("Subtype       = Calibrate mode for channel 2")
+          WriteDebugLog("Subtype       = Calibrate mode for channel 2")
         Case &H80
-          WriteMessage("Subtype       = Calibrate mode for channel 3")
+          WriteDebugLog("Subtype       = Calibrate mode for channel 3")
       End Select
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
       lCounter = Lsl(CLong(RecBuf[6]), 24) + Lsl(CLong(RecBuf[7]), 16) + Lsl(CLong(RecBuf[8]), 8) + RecBuf[9]
       lCounter = (Lsl(CLong(RecBuf[7] And &H3F), 16) + Lsl(CLong(RecBuf[8]), 8) + RecBuf[9]) / 1000
-      WriteMessage("Calibrate cnt = " & lCounter & " msec")
-      WriteMessage("RFXPwr        = " & CStr(Round(1 / ((16 * lCounter) / (3600000 / 62.5)), 3)) & " kW", False)
+      WriteDebugLog("Calibrate cnt = " & lCounter & " msec")
+      WriteDebugLog("RFXPwr        = " & CStr(Round(1 / ((16 * lCounter) / (3600000 / 62.5)), 3)) & " kW", False)
     Case sTypeRFXMeterAddr
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-      WriteMessage("Subtype       = New address set, push button for next address")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("Subtype       = New address set, push button for next address")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("ID            = " & sAddress)
     Case sTypeRFXMeterCounterReset
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
       Select Case (RecBuf[7] And &HC0)
         Case &H0
-          WriteMessage("Subtype       = Push the button for next mode within 5 seconds or else RESET COUNTER channel 1 will be executed")
+          WriteDebugLog("Subtype       = Push the button for next mode within 5 seconds or else RESET COUNTER channel 1 will be executed")
         Case &H40
-          WriteMessage("Subtype       = Push the button for next mode within 5 seconds or else RESET COUNTER channel 2 will be executed")
+          WriteDebugLog("Subtype       = Push the button for next mode within 5 seconds or else RESET COUNTER channel 2 will be executed")
         Case &H80
-          WriteMessage("Subtype       = Push the button for next mode within 5 seconds or else RESET COUNTER channel 3 will be executed")
+          WriteDebugLog("Subtype       = Push the button for next mode within 5 seconds or else RESET COUNTER channel 3 will be executed")
       End Select
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("ID            = " & sAddress)
     Case sTypeRFXMeterCounterSet
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
       Select Case (RecBuf[7] And &HC0)
         Case &H0
-          WriteMessage("Subtype       = Counter channel 1 is reset to zero")
+          WriteDebugLog("Subtype       = Counter channel 1 is reset to zero")
         Case &H40
-          WriteMessage("Subtype       = Counter channel 2 is reset to zero")
+          WriteDebugLog("Subtype       = Counter channel 2 is reset to zero")
         Case &H80
-          WriteMessage("Subtype       = Counter channel 3 is reset to zero")
+          WriteDebugLog("Subtype       = Counter channel 3 is reset to zero")
       End Select
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-      WriteMessage("ID            = " & sAddress)
-      WriteMessage("Counter       = " & Lsl(CLong(RecBuf[6]), 24) + Lsl(CLong(RecBuf[7]), 16) + Lsl(CLong(RecBuf[8]), 8) + RecBuf[9])
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("ID            = " & sAddress)
+      WriteDebugLog("Counter       = " & Lsl(CLong(RecBuf[6]), 24) + Lsl(CLong(RecBuf[7]), 16) + Lsl(CLong(RecBuf[8]), 8) + RecBuf[9])
     Case sTypeRFXMeterSetInterval
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-      WriteMessage("Subtype       = Push the button for next mode within 5 seconds or else SET INTERVAL MODE will be entered")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("Subtype       = Push the button for next mode within 5 seconds or else SET INTERVAL MODE will be entered")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("ID            = " & sAddress)
     Case sTypeRFXMeterSetCalib
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
       Select Case (RecBuf[7] And &HC0)
         Case &H0
-          WriteMessage("Subtype       = Push the button for next mode within 5 seconds or else CALIBRATION mode for channel 1 will be executed")
+          WriteDebugLog("Subtype       = Push the button for next mode within 5 seconds or else CALIBRATION mode for channel 1 will be executed")
         Case &H40
-          WriteMessage("Subtype       = Push the button for next mode within 5 seconds or else CALIBRATION mode for channel 2 will be executed")
+          WriteDebugLog("Subtype       = Push the button for next mode within 5 seconds or else CALIBRATION mode for channel 2 will be executed")
         Case &H80
-          WriteMessage("Subtype       = Push the button for next mode within 5 seconds or else CALIBRATION mode for channel 3 will be executed")
+          WriteDebugLog("Subtype       = Push the button for next mode within 5 seconds or else CALIBRATION mode for channel 3 will be executed")
     End Select
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("ID            = " & sAddress)
     Case sTypeRFXMeterSetAddr
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-      WriteMessage("Subtype       = Push the button for next mode within 5 seconds or else SET ADDRESS MODE will be entered")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("Subtype       = Push the button for next mode within 5 seconds or else SET ADDRESS MODE will be entered")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("ID            = " & sAddress)
     Case sTypeRFXMeterIdent
       sAddress = ConvertAddress(sType & " " & (RecBuf[4] * 256 + RecBuf[5]))
-      WriteMessage("Subtype       = RFXMeter identification")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
-      WriteMessage("ID            = " & sAddress)
-      WriteMessage("FW version    = " & Hex(RecBuf[8]))
-      WriteMessage("Interval time = ", False)
+      WriteDebugLog("Subtype       = RFXMeter identification")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("ID            = " & sAddress)
+      WriteDebugLog("FW version    = " & Hex(RecBuf[8]))
+      WriteDebugLog("Interval time = ", False)
       Select Case RecBuf[9]
         Case &H1
-          WriteMessage("30 seconds")
+          WriteDebugLog("30 seconds")
         Case &H2
-          WriteMessage("1 minute")
+          WriteDebugLog("1 minute")
         Case &H4
-          WriteMessage("6 minutes")
+          WriteDebugLog("6 minutes")
         Case &H8
-          WriteMessage("12 minutes")
+          WriteDebugLog("12 minutes")
         Case &H10
-          WriteMessage("15 minutes")
+          WriteDebugLog("15 minutes")
         Case &H20
-          WriteMessage("30 minutes")
+          WriteDebugLog("30 minutes")
         Case &H40
-          WriteMessage("45 minutes")
+          WriteDebugLog("45 minutes")
         Case &H80
-          WriteMessage("1 hour")
+          WriteDebugLog("1 hour")
       End Select
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Signal level  = " & Lsr(RecBuf[10], 4))
+  WriteDebugLog("Signal level  = " & Lsr(RecBuf[10], 4))
 
 End
 
@@ -4307,10 +4360,10 @@ Private Sub Decode_Chime()
   Select Case RecBuf[2]
     Case sTypeByronSX
       sType = "ByronSX"
-      WriteMessage("Subtype       = Byron SX")
-      WriteMessage("Sequence no.  = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = Byron SX")
+      WriteDebugLog("Sequence no.  = " & CStr(RecBuf[3]))
       sAddress = Hex(RecBuf[4], 2) & Hex(RecBuf[5], 2)
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
 
       Select Case RecBuf[6]
         Case 1, 13
@@ -4324,24 +4377,25 @@ Private Sub Decode_Chime()
         Case Else
          sSound = "Undefined (" & Hex(RecBuf[6]) & ")"
       End Select
-      WriteMessage("Sound         = " & sSound)
+      WriteDebugLog("Sound         = " & sSound)
     Case sTypeByronMP
       sType = "ByronMP"
-      WriteMessage("Subtype       = Byron MP001")
-      WriteMessage("Sequence no. = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = Byron MP001")
+      WriteDebugLog("Sequence no. = " & CStr(RecBuf[3]))
       sAddress = Hex(RecBuf[4], 2) & Hex(RecBuf[5], 2)
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
     Case sTypeSelectPlus
       sType = "SelectPlus"
-      WriteMessage("Subtype       = SelectPlus")
-      WriteMessage("Sequence no. = " & CStr(RecBuf[3]))
+      WriteDebugLog("Subtype       = SelectPlus")
+      WriteDebugLog("Sequence no. = " & CStr(RecBuf[3]))
       sAddress = Hex(RecBuf[4], 2) & Hex(RecBuf[5], 2)
-      WriteMessage("ID            = " & sAddress)
+      WriteDebugLog("ID            = " & sAddress)
     Case Else
-      WriteMessage("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
+      WriteLog("ERROR: Unknown Sub type for Packet type=" & Hex(RecBuf[1]) & ":" & Hex(RecBuf[2]))
       Return
   End Select
-  WriteMessage("Signal level  = " & Lsr(RecBuf[7], 4))
+
+  WriteDebugLog("Signal level  = " & Lsr(RecBuf[7], 4))
 
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
   If iDeviceId Then
@@ -4364,31 +4418,31 @@ End
 
 Private Sub Decode_Curtain1()
 
-  WriteMessage("Decoding Curtain1 not implemented yet.")
+  WriteDebugLog("Decoding Curtain1 not implemented")
 
 End
 
 Private Sub Decode_BBQ()
 
-  WriteMessage("Decoding BBQ not implemented yet.")
+  WriteDebugLog("Decoding BBQ not implemented")
 
 End
 
 Private Sub Decode_TempRain()
 
-  WriteMessage("Decoding TempRain not implemented yet.")
+  WriteDebugLog("Decoding TempRain not implemented")
 
 End
 
 Private Sub Decode_CurrentEnergy()
 
-  WriteMessage("Decoding CurrentEnergy not implemented yet.")
+  WriteDebugLog("Decoding CurrentEnergy not implemented")
 
 End
 
 Private Sub Decode_Power()
 
-  WriteMessage("Decoding Power not implemented yet.")
+  WriteDebugLog("Decoding Power not implemented")
 
 End
 
@@ -4432,12 +4486,12 @@ Public Sub Lighting1(sType As String, sAddress As String, sCommand As String, Op
     Case "ENERGENIE"
       bBuf[2] = 8
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Lighting1 type : " & sType)
+      WriteLog("ERROR: Not a valid Lighting1 type=" & sType)
       Return
   End Select
 
   If (Len(sAddress) <> 3) Then
-    Main.WriteDebugLog(LogLabel & "Not a valid X10 address: " & sAddress)
+    WriteLog("ERROR: Not a valid X10 address=" & sAddress)
     Return
   Endif
 
@@ -4445,31 +4499,31 @@ Public Sub Lighting1(sType As String, sAddress As String, sCommand As String, Op
     Case sTypeX10, sTypeARC, sTypeWaveman
       ' check A-P and 1-16
       If Not (Left$(sAddress, 1) Like "[A-P]") Or If Not (Right$(sAddress, 1) Like "[0-9]")
-        Main.WriteDebugLog(LogLabel & "Not a valid X10 address: " & sAddress)
+        WriteLog("ERROR: Not a valid X10 address=" & sAddress)
         Return
       Endif
     Case sTypeAB400D, sTypeIMPULS
       ' check A-P and 1-64
       If Not (Left$(sAddress, 1) Like "[A-P]") Or If Not (Right$(sAddress, 1) Like "[0-9]")
-        Main.WriteDebugLog(LogLabel & "Not a valid AB400 or IMPULS address: " & sAddress)
+        WriteLog("ERROR: Not a valid AB400 or IMPULS address=" & sAddress)
         Return
       Endif
     Case sTypePhilips
       ' check A-P and 1-8
       If Not (Left$(sAddress, 1) Like "[A-P]") Or If Not (Right$(sAddress, 1) Like "[1-8]")
-        Main.WriteDebugLog(LogLabel & "Not a valid Philips SBC address: " & sAddress)
+        WriteLog("ERROR: Not a valid Philips SBC address=" & sAddress)
         Return
       Endif
     Case sTypeRisingSun, sTypeEnergenie
       ' check A-P and 1-4
       If Not (Left$(sAddress, 1) Like "[A-P]") Or If Not (Right$(sAddress, 1) Like "[1-4]")
-        Main.WriteDebugLog(LogLabel & "Not a valid RisingSun/Energenie address: " & sAddress)
+        WriteLog("ERROR: Not a valid RisingSun/Energenie address=" & sAddress)
         Return
       Endif
     Case sTypeEMW200
       ' check A-C and 1-4
       If Not (Left$(sAddress, 1) Like "[A-C]") Or If Not (Right$(sAddress, 1) Like "[1-4]")
-        Main.WriteDebugLog(LogLabel & "Not a valid EMW200 address: " & sAddress)
+        WriteLog("ERROR: Not a valid EMW200 address=" & sAddress)
         Return
       Endif
   End Select
@@ -4495,20 +4549,20 @@ Public Sub Lighting1(sType As String, sAddress As String, sCommand As String, Op
       bBuf[6] = 6
     Case "CHIME"
       If bBuf[2] <> sTypeARC Then
-        Main.WriteDebugLog(LogLabel & "Invalid Lighting1 command '" & sCmd & "' given for '" & sType & "' type!")
+        WriteLog("ERROR: Invalid Lighting1 command '" & sCmd & "' given for '" & sType & "' type!")
         Return
       Endif
       bBuf[6] = 7
       bBuf[5] = 8
     Case Else
-      Main.WriteDebugLog(LogLabel & "Unknown Lighting1 command '" & sCmd & "' given!")
+      WriteLog("ERROR: Unknown Lighting1 command '" & sCmd & "' given!")
       Return
   End Select
   bBuf[7] = 0
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Lighting1 '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -4552,7 +4606,7 @@ Public Sub Lighting2(sType As String, sAddress As String, sCommand As String, Op
     Case "ANSLUT"
       bBuf[2] = 2
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Lighting2 type : " & sType)
+      WriteLog("ERROR: Not a valid Lighting2 type=" & sType)
       Return
   End Select
 
@@ -4568,14 +4622,14 @@ Public Sub Lighting2(sType As String, sAddress As String, sCommand As String, Op
       sUnit = 0
     Endif
   Else
-    Main.WriteDebugLog(LogLabel & "Address has wrong format, use '<Device> <Unit>'!")
+    WriteLog("ERROR: Address has wrong format, use '<Device> <Unit>'!")
     Return
   Endif
 
   If Len(sAddress) = 9 And If Left(sAddress, 2) = "0x" Then
     sAddress = Right(sAddress, 7)
   Else If Len(sAddress) <> 7 Then
-    Main.WriteDebugLog(LogLabel & "Device address length must be 7 characters, or 9 if you use 0x in front!")
+    WriteLog("ERROR: Device address length must be 7 characters, or 9 if you use 0x in front!")
     Return
   Endif
 
@@ -4613,7 +4667,7 @@ Public Sub Lighting2(sType As String, sAddress As String, sCommand As String, Op
         iDim = Round(0.15 * iBrightness) ' 16 steps
         bBuf[10] = CByte(iDim)
       Else
-        Main.WriteDebugLog(LogLabel & "Unknown Lighting2 command '" & sCmd & "' given!")
+        WriteDebugLog("ERROR: Unknown Lighting2 command '" & sCmd & "' given!")
         Return
       Endif
   End Select
@@ -4621,7 +4675,7 @@ Public Sub Lighting2(sType As String, sAddress As String, sCommand As String, Op
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Lighting2 '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -4692,7 +4746,7 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
     Case "EURODOMEST"
       bBuf[2] = 9
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Lighting5 type : " & sType)
+      WriteLog("ERROR: Not a valid Lighting5 type: " & sType)
       Return
   End Select
 
@@ -4701,17 +4755,17 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
     sAddress = aAddr[0]
     sUnit = aAddr[1]
   Else
-    Main.WriteDebugLog(LogLabel & "Lighting5 address has wrong format, use '<Device> <Unit>'!")
+    WriteLog("ERROR: Lighting5 address has wrong format, use '<Device> <Unit>'!")
     Return
   Endif
 
   If sAddress = "000000" Or If sAddress = "0x000000" Then
-    Main.WriteDebugLog(LogLabel & "Lighting5 invalid address '" & sAddress & "' specified!")
+    WriteLog("ERROR: Lighting5 invalid address '" & sAddress & "' specified!")
     Return
   Endif
   If Len(sAddress) = 8 And If Left(sAddress, 2) = "0x" Then sAddress = Right(sAddress, 6)
   If Len(sAddress) <> 6 Then
-    Main.WriteDebugLog(LogLabel & "Lighting5 device address length must be 6 characters, or 8 if you use 0x in front!")
+    WriteLog("ERROR: Lighting5 device address length must be 6 characters, or 8 if you use 0x in front!")
     Return
   Endif
 
@@ -4777,7 +4831,7 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
             iDim = Val(Replace(sCmd, "COLOURCYCLE ", ""))
             bBuf[9] = CByte(iDim)
           Else
-            Main.WriteDebugLog(LogLabel & "Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
+            WriteLog("ERROR: Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
             Return
           Endif
       End Select
@@ -4790,7 +4844,7 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
         Case "LEARN"
           bBuf[8] = 2
         Case Else
-          Main.WriteDebugLog(LogLabel & "Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
+          WriteLog("ERROR: Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
           Return
       End Select
     Case sTypeBBSB, sTypeRSL, sTypeEurodomest
@@ -4804,7 +4858,7 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
         Case "ALL ON", "GROUP ON"
           bBuf[8] = 3
         Case Else
-          Main.WriteDebugLog(LogLabel & "Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
+          WriteLog("ERROR: Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
           Return
       End Select
     Case sTypeMDREMOTE
@@ -4832,7 +4886,7 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
         Case "MODE-"
           bBuf[8] = 10
         Case Else
-          Main.WriteDebugLog(LogLabel & "Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
+          WriteLog("ERROR: Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
           Return
       End Select
     Case sTypeAokeRelay
@@ -4842,7 +4896,7 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
         Case "OFF"
           bBuf[8] = 0
         Case Else
-          Main.WriteDebugLog(LogLabel & "Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
+          WriteLog("ERROR: Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
           Return
       End Select
     Case sTypeRGBTRC02, sTypeRGBTRC02_2
@@ -4869,7 +4923,7 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
             Endif
             bBuf[8] = CByte(iColor)
           Else
-            Main.WriteDebugLog(LogLabel & "Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
+            WriteLog("ERROR: Invalid Lighting5 command '" & sCmd & "' for type '" & sType & "' given!")
             Return
           Endif
       End Select
@@ -4895,12 +4949,13 @@ Public Sub Lighting5(sType As String, sAddress As String, sCommand As String)
           bBuf[8] = 3
       End Select
     Case Else
-        Main.WriteDebugLog(LogLabel & "Unknown Lighting5 type '" & bBuf[2] & "' given!")
+      WriteLog("ERROR: Unknown Lighting5 type '" & bBuf[2] & "' given!")
   End Select
+
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Lighting5 '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -4938,7 +4993,7 @@ Public Sub Lighting6(sType As String, sAddress As String, sCommand As String)
   Dim sUnit As String
 
   If $iFirmWareVersion < 47 Then
-    Main.WriteDebugLog((LogLabel & "For Lighting6 support the firmware version must be >= 47, flash your RFXtrx433 with the latest firmware!"))
+    WriteLog("ERROR: For Lighting6 support the firmware version must be >= 47, flash your RFXtrx433 with the latest firmware!")
     Return
   Endif
 
@@ -4947,7 +5002,7 @@ Public Sub Lighting6(sType As String, sAddress As String, sCommand As String)
     Case "BLYSS"
       bBuf[2] = 0
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Lighting6 type : " & sType)
+      WriteLog("ERROR: Not a valid Lighting6 type=" & sType)
       Return
   End Select
 
@@ -4960,19 +5015,19 @@ Public Sub Lighting6(sType As String, sAddress As String, sCommand As String)
     '   sUnit = 0
     ' ENDIF
   Else
-    Main.WriteDebugLog(LogLabel & "Address has wrong format, use '<Device> <Unit>'!")
+    WriteLog("ERROR: Address has wrong format, use '<Device> <Unit>'!")
     Return
   Endif
 
   If Len(sAddress) = 6 And If Left(sAddress, 2) = "0x" Then
     sAddress = Right(sAddress, 4)
   Else If Len(sAddress) <> 4 Then
-    Main.WriteDebugLog(LogLabel & "Lighting6 device ID address length must be 4 characters, or 6 if you use 0x in front!")
+    WriteLog("ERROR: Lighting6 device ID address length must be 4 characters, or 6 if you use 0x in front!")
     Return
   Endif
 
   If sAddress = "0000" Then
-    Main.WriteDebugLog(LogLabel & "Use a Lighting6 address ID different than '0000'!")
+    WriteLog("ERROR: Use a Lighting6 address ID different than '0000'!")
     Return
   Endif
 
@@ -4995,7 +5050,7 @@ Public Sub Lighting6(sType As String, sAddress As String, sCommand As String)
     Case "ALL ON", "GROUP ON"
       bBuf[8] = 2
     Case Else
-      Main.WriteDebugLog(LogLabel & "Unknown Lighting6 command '" & sCmd & "' given!")
+      WriteLog("ERROR: Unknown Lighting6 command '" & sCmd & "' given!")
       Return
   End Select
   bBuf[9] = iLighting6CmndSeqNbr
@@ -5005,7 +5060,7 @@ Public Sub Lighting6(sType As String, sAddress As String, sCommand As String)
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Lighting6 '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -5034,7 +5089,9 @@ End
 '      sLight = 6
 '  End Enum
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Fan
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Fan(sType As String, sAddress As String, sCommand As String)
 
   Dim bBuf As New Byte[10]
@@ -5045,14 +5102,14 @@ Public Sub Fan(sType As String, sAddress As String, sCommand As String)
     Case "SF01"
       bBuf[2] = sTypeSiemensSF01
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Fan type : " & sType)
+      WriteLog("ERROR: Not a valid Fan type=" & sType)
       Return
   End Select
 
   If Len(sAddress) = 8 And If Left(sAddress, 2) = "0x" Then
     sAddress = Right(sAddress, 6)
   Else If Len(sAddress) <> 6 Then
-    Main.WriteDebugLog(LogLabel & "Fan device ID address length must be 6 characters, or 8 if you use 0x in front!")
+    WriteLog("ERROR: Fan device ID address length must be 6 characters, or 8 if you use 0x in front!")
     Return
   Endif
 
@@ -5077,18 +5134,20 @@ Public Sub Fan(sType As String, sAddress As String, sCommand As String)
     Case "LIGHT"
       bBuf[7] = 6
     Case Else
-      Main.WriteDebugLog(LogLabel & "Unknown Fan command '" & sCmd & "' given!")
+      WriteDebugLog("Unknown Fan command '" & sCmd & "' given!")
       Return
   End Select
   bBuf[8] = 0
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Fan '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Security1
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Security1(sType As String, sAddress As String, sCommand As String)
 
   Dim bBuf As New Byte[9]
@@ -5104,49 +5163,49 @@ Public Sub Security1(sType As String, sAddress As String, sCommand As String)
       bBuf[2] = 2
     Case "KD101"
       If sCmd <> "PANIC" And If sCmd <> "PAIR" Then
-        Main.WriteDebugLog(LogLabel & "KD101 only supports a Panic and Pair command!")
+        WriteLog("ERROR: KD101 only supports a Panic and Pair command!")
         Return
       Endif
       bBuf[2] = 3
     Case "SA30"
       If sCmd <> "PANIC" And If sCmd <> "PAIR" Then
-        Main.WriteDebugLog(LogLabel & "SAS30 only supports a Panic and Pair command!")
+        WriteLog("ERROR: SAS30 only supports a Panic and Pair command!")
         Return
       Endif
       bBuf[2] = 9
     Case "POWERCODEDW"
       If sCmd <> "NORMAL" And If sCmd <> "ALARM" And If sCmd <> "NORMAL+TAMPER" And If sCmd <> "ALARM+TAMPER" Then
-        Main.WriteDebugLog(LogLabel & "Visonic door sensors only support a Normal, Alarm, Normal+Tamper and Alarm+Tamper command!")
+        WriteLog("ERROR: Visonic door sensors only support a Normal, Alarm, Normal+Tamper and Alarm+Tamper command!")
         Return
       Endif
       bBuf[2] = 4
     Case "POWERCODEMOTION"
       If sCmd <> "NO MOTION" And If sCmd <> "MOTION" And If sCmd <> "NO MOTION+TAMPER" And If sCmd <> "MOTION+TAMPER" Then
-        Main.WriteDebugLog(LogLabel & "Visonic motion sensors only support a Motion, No Motion, Motion+Tamper and No Motion+Tamper command!")
+        WriteLog("ERROR: Visonic motion sensors only support a Motion, No Motion, Motion+Tamper and No Motion+Tamper command!")
         Return
       Endif
       bBuf[2] = 5
     Case "POWERCODEAUX"
       If sCmd <> "NORMAL" And If sCmd <> "ALARM" And If sCmd <> "NORMAL+TAMPER" And If sCmd <> "ALARM+TAMPER" Then
-        Main.WriteDebugLog(LogLabel & "Visonic door sensors only support a Normal, Alarm, Normal+Tamper and Alarm+Tamper command!")
+        WriteLog("ERROR: Visonic door sensors only support a Normal, Alarm, Normal+Tamper and Alarm+Tamper command!")
         Return
       Endif
       bBuf[2] = 6
     Case "MEIANTECH"
       If sCmd <> "PANIC" And If sCmd <> "ARM HOME" And If sCmd <> "ARM AWAY" And If sCmd <> "DISARM" Then
-        Main.WriteDebugLog(LogLabel & "Meiantech only supports a Panic, Disarm, Arm Away and Arm Home command!")
+        WriteLog("ERROR: Meiantech only supports a Panic, Disarm, Arm Away and Arm Home command!")
         Return
       Endif
       bBuf[2] = 8
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Security1 type : " & sType)
+      WriteLog("ERROR: Not a valid Security1 type=" & sType)
       Return
   End Select
 
   If Len(sAddress) = 8 And If Left(sAddress, 2) = "0x" Then
     sAddress = Right(sAddress, 6)
   Else If Len(sAddress) <> 6 Then
-    Main.WriteDebugLog(LogLabel & "Security1 device ID address length must be 6 characters, or 8 if you use 0x in front!")
+    WriteLog("ERROR: Security1 device ID address length must be 6 characters, or 8 if you use 0x in front!")
     Return
   Endif
 
@@ -5213,14 +5272,14 @@ Public Sub Security1(sType As String, sAddress As String, sCommand As String)
     Case "NO MOTION+TAMPER"
       bBuf[7] = &H85
     Case Else
-      Main.WriteDebugLog(LogLabel & "Unknown Security1 command '" & sCmd & "' given!")
+      WriteLog("ERROR: Unknown Security1 command '" & sCmd & "' given!")
       Return
   End Select
   bBuf[8] = 0
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Security1 '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -5238,7 +5297,9 @@ End
 '   Harrison = &H0
 ' END ENUM
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Curtain1
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Curtain1(sType As String, sAddress As String, sCommand As String)
 
   Dim bBuf As New Byte[8]
@@ -5248,12 +5309,12 @@ Public Sub Curtain1(sType As String, sAddress As String, sCommand As String)
   Select Case UCase(sType)
     Case "HARRISON"
       If Not (Left$(sAddress, 1) Like "[A-P]") Or If Not (Right$(sAddress, 1) Like "[0-9]")
-        Main.WriteDebugLog(LogLabel & "Not a valid Harrison address: " & sAddress)
+        WriteLog("ERROR: Not a valid Harrison address=" & sAddress)
         Return
       Endif
       bBuf[2] = &H0
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Curtain type : " & sType)
+      WriteLog("ERROR: Not a valid Curtain type=" & sType)
       Return
   End Select
 
@@ -5273,18 +5334,20 @@ Public Sub Curtain1(sType As String, sAddress As String, sCommand As String)
     Case "PROGRAM"
       bBuf[6] = 3
     Case Else
-      Main.WriteDebugLog(LogLabel & "Unknown Curtain command '" & UCase(sCmd) & "' given!")
+      WriteLog("ERROR: Unknown Curtain command '" & UCase(sCmd) & "' given!")
       Return
   End Select
   bBuf[7] = 0
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Curtain1 '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Chime
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Chime(sType As String, sAddress As String, sCommand As String)
 
   Dim bBuf As New Byte[8]
@@ -5297,12 +5360,12 @@ Public Sub Chime(sType As String, sAddress As String, sCommand As String)
     Case "BYRONMP"
       bBuf[2] = 1
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Chime type : " & sType)
+      WriteLog("ERROR: Not a valid Chime type=" & sType)
       Return
   End Select
 
   If (Len(sAddress) <> 2) Then
-    Main.WriteDebugLog(LogLabel & "Not a valid Chime address: " & sAddress)
+    WriteLog("ERROR: Not a valid Chime address=" & sAddress)
     Return
   Endif
 
@@ -5310,7 +5373,7 @@ Public Sub Chime(sType As String, sAddress As String, sCommand As String)
     Case sTypeByronSX
       ' check 0-F
       If Not (Left$(sAddress, 1) Like "[0-F]") Or If Not (Right$(sAddress, 1) Like "[0-F]")
-        Main.WriteDebugLog(LogLabel & "Not a valid ByronSX Chime address: " & sAddress)
+        WriteLog("ERROR: Not a valid ByronSX Chime address=" & sAddress)
         Return
       Endif
   End Select
@@ -5334,7 +5397,7 @@ Public Sub Chime(sType As String, sAddress As String, sCommand As String)
         Case "TUBULAR3"
           bBuf[6] = 1
         Case Else
-          Main.WriteDebugLog(LogLabel & "Unknown Chime command '" & sCmd & "' given!")
+          WriteLog("ERROR: Unknown Chime command '" & sCmd & "' given!")
           Return
       End Select
     Case sTypeByronMP
@@ -5347,7 +5410,7 @@ Public Sub Chime(sType As String, sAddress As String, sCommand As String)
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Chime '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -5363,7 +5426,9 @@ End
 '     size = 6
 ' END ENUM
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Thermostat2
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Thermostat2(sType As String, sAddress As String, sCommand As String)
 
   Dim bBuf As New Byte[7]
@@ -5371,11 +5436,11 @@ Public Sub Thermostat2(sType As String, sAddress As String, sCommand As String)
 
   If Len(sAddress) = 2 Then
     If Not (Left$(sAddress, 1) Like "[0-1]") Or If Not (Right$(sAddress, 1) Like "[0-F]")
-      Main.WriteDebugLog(LogLabel & "Not a valid " & sType & " address: " & sAddress)
+      WriteLog("ERROR: Not a valid " & sType & " address=" & sAddress)
       Return
     Endif
   Else
-    Main.WriteDebugLog(LogLabel & "Not a valid " & sType & " address (invalid lenght): " & sAddress)
+    WriteLog("ERRORNot a valid " & sType & " address (invalid lenght)=" & sAddress)
     Return
   Endif
 
@@ -5385,7 +5450,7 @@ Public Sub Thermostat2(sType As String, sAddress As String, sCommand As String)
     Case "RTS10"
       bBuf[2] = &H1
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Thermostat2 type : " & sType)
+      WriteLog("ERROR: Not a valid Thermostat2 type=" & sType)
       Return
   End Select
 
@@ -5402,14 +5467,14 @@ Public Sub Thermostat2(sType As String, sAddress As String, sCommand As String)
     Case "PROGRAM"
       bBuf[5] = 2
     Case Else
-      Main.WriteDebugLog(LogLabel & "Unknown Thermostat2 command '" & UCase(sCmd) & "' given!")
+      WriteLog("ERROR: Unknown Thermostat2 command '" & UCase(sCmd) & "' given!")
       Return
   End Select
   bBuf[6] = 0
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Thermostat2 '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -5455,7 +5520,10 @@ End
 '     sDisableSun = 20
 ' End Enum
 
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Somfy RTS / RFY
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub RFY(sType As String, sAddress As String, sCommand As String)
 
   Dim bBuf As New Byte[13]
@@ -5470,7 +5538,7 @@ Public Sub RFY(sType As String, sAddress As String, sCommand As String)
     Case "RFYEXT"
       bBuf[2] = sTypeRFYEXT
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Somfy RTS/RFY type : " & sType)
+      WriteLog("ERROR: Not a valid Somfy RTS/RFY type=" & sType)
       Return
   End Select
 
@@ -5479,13 +5547,13 @@ Public Sub RFY(sType As String, sAddress As String, sCommand As String)
     sAddress = aAddr[0]
     sUnit = aAddr[1]
   Else
-    Main.WriteDebugLog(LogLabel & "Somfy RTS/RFY address has wrong format, use '<Device> <Unit>'!")
+    WriteLog("ERROR: Somfy RTS/RFY address has wrong format, use '<Device> <Unit>'!")
     Return
   Endif
 
   If Len(sAddress) = 7 And If Left(sAddress, 2) = "0x" Then sAddress = Right(sAddress, 5)
   If Len(sAddress) <> 5 Then
-    Main.WriteDebugLog(LogLabel & "Somfy RTS/RFY device address length must be 5 characters, or 7 if you use 0x in front!")
+    WriteLog("ERROR: Somfy RTS/RFY device address length must be 5 characters, or 7 if you use 0x in front!")
     Return
   Endif
 
@@ -5533,14 +5601,14 @@ Public Sub RFY(sType As String, sAddress As String, sCommand As String)
     Case "DISSUNFLAG"
       bBuf[8] = 20
     Case Else
-      Main.WriteDebugLog(LogLabel & "Unknown Somfy RTS/RFY command '" & sCmd & "' given!")
+      WriteLog("ERROR: Unknown Somfy RTS/RFY command '" & sCmd & "' given!")
       Return
   End Select
   bBuf[9] = 0
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: RFY '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -5568,7 +5636,9 @@ End
 '     sNight = 1
 ' End Enum
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Radiator1
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Radiator1(sType As String, sAddress As String, sCommand As String)
 
   Dim bBuf As New Byte[13]
@@ -5578,7 +5648,7 @@ Public Sub Radiator1(sType As String, sAddress As String, sCommand As String)
   Dim iTemp, iTemp5 As Integer
 
   If $iFirmWareVersion < 233 Then
-    Main.WriteDebugLog(LogLabel & "For Radiator1 support the firmware version must be >= 233, flash your RFXtrx433e with the latest firmware!")
+    WriteLog("ERROR: For Radiator1 support the firmware version must be >= 233, flash your RFXtrx433e with the latest firmware!")
     Return
   Endif
 
@@ -5587,7 +5657,7 @@ Public Sub Radiator1(sType As String, sAddress As String, sCommand As String)
     Case "SMARTWARES"
       bBuf[2] = sTypeSmartwares
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Radiator1 type : " & sType)
+      WriteLog("ERROR: Not a valid Radiator1 type=" & sType)
       Return
   End Select
 
@@ -5596,13 +5666,13 @@ Public Sub Radiator1(sType As String, sAddress As String, sCommand As String)
     sAddress = aAddr[0]
     sUnit = aAddr[1]
   Else
-    Main.WriteDebugLog(LogLabel & "Radiator1 address has wrong format, use '<Device> <Unit>'!")
+    WriteLog("ERROR: Radiator1 address has wrong format, use '<Device> <Unit>'!")
     Return
   Endif
 
   If Len(sAddress) = 9 And If Left(sAddress, 2) = "0x" Then sAddress = Right(sAddress, 7)
   If Len(sAddress) <> 7 Then
-    Main.WriteDebugLog(LogLabel & "Radiator1 device address length must be 7 characters, or 9 if you use 0x in front!")
+    WriteLog("ERROR: Radiator1 device address length must be 7 characters, or 9 if you use 0x in front!")
     Return
   Endif
 
@@ -5632,21 +5702,22 @@ Public Sub Radiator1(sType As String, sAddress As String, sCommand As String)
           iTemp5 = 0
         Endif
         If iTemp < 5 Or If iTemp > 28 Then
-          Main.WriteDebugLog(LogLabel & "Settemp value for Radiator1 out of range '" & iTemp & "' (5-28)!")
+          WriteLog("ERROR: Settemp value for Radiator1 out of range '" & iTemp & "' (5-28)!")
           Return
         Endif
         bBuf[10] = CByte(iTemp)
         bBuf[11] = CByte(iTemp5)
       Else
-        Main.WriteDebugLog(LogLabel & "Unknown Radiator command '" & sCmd & "' given only Night, Day and SP xx.x are supported!")
+        WriteLog("ERROR: Unknown Radiator command '" & sCmd & "' given only Night, Day and SP xx.x are supported!")
         Return
       Endif
   End Select
+
   bBuf[12] = 0
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: Radiator '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -5687,7 +5758,7 @@ Public Sub GetReceiverName() As String
       Return "Receiver 868.35MHz FSK"
     Case recType86895
       Return "Receiver 868.35MHz FSK"
-    Default
+    Case Else
       Return "Unknown"
   End Select
 
@@ -5703,6 +5774,10 @@ Public Sub GetFirmwareVersion() As String
   Select $iReceiverType
     Case recType315
       Select $iFirmWareVersion
+        Case 6
+          sStr = "25-07-2014"
+        Case 5
+          sStr = "14-04-2014"
         Case 4
           sStr = "03-05-2012"
         Case 3
@@ -5714,6 +5789,44 @@ Public Sub GetFirmwareVersion() As String
       End Select
     Case recType43392, trxType43392
       Select $iFirmWareVersion
+        Case 1005
+          sStr = "23-05-2016"
+        Case 1004
+          sStr = "17-05-2016"
+        Case 1003
+          sStr = "14-05-2016"
+        Case 1002
+          sStr = "06-05-2016"
+        Case 1001
+          sStr = "18-02-2016"
+        Case 95, 195, 251
+          sStr = "06-02-2016"
+        Case 94, 194, 250
+          sStr = "24-12-2015"
+        Case 93, 193, 249
+          sStr = "23-11-2015"
+        Case 92, 192, 248
+          sStr = "17-09-2015"
+        Case 247
+          sStr = "31-08-2015"
+        Case 246
+          sStr = "06-08-2015"
+        Case 91, 191, 245
+          sStr = "24-07-2015"
+        Case 90, 190, 244
+          sStr = "23-06-2015"
+        Case 89, 189, 243
+          sStr = "01-06-2015"
+        Case 88, 188, 242
+          sStr = "05-05-2015"
+        Case 87, 187, 241
+          sStr = "02-05-2015"
+        Case 86, 186, 240
+          sStr = "19-03-2015"
+        Case 85, 185, 239
+          sStr = "18-03-2015"
+        Case 84, 184, 237
+          sStr = "05-03-2015"
         Case 83, 183, 236
           sStr = "14-01-2015"
         Case 182, 235
@@ -5924,6 +6037,7 @@ Public Sub JsonRpc_Tools_RFXCom_Get(cData As JSONCollection) As JSONCollection
         cResult.Add(GetEnabledProtocols(), "protocols")
         cResult.Add(GetFirmwareVersion(), "firmwareversion")
         cResult.Add(GetHardwareVersion(), "hardwareversion")
+        cResult.Add($sFirmwareType, "firmwaretype")
         cResult.Add($sInterface, "interface")
         cResult.Add($sTCPHost & ":" & $iTCPPort, "host")
         cResult.Add($sSerPort, "serialport")
@@ -5935,7 +6049,7 @@ Public Sub JsonRpc_Tools_RFXCom_Get(cData As JSONCollection) As JSONCollection
       Endif
       cResult.Add("rfxcomtrx", "rfxcom")
 
-    Default
+    Case Else
       Return Null
 
   End Select
@@ -6027,7 +6141,7 @@ Public Sub Blinds1(sType As String, sAddress As String, sCommand As String)
     Case "BLINDST10"
       bBuf[2] = sTypeBlindsT10
     Case Else
-      Main.WriteDebugLog(LogLabel & "Not a valid Blinds1 type : " & sType)
+      WriteLog("ERROR: Not a valid Blinds1 type=" & sType)
       Return
   End Select
 
@@ -6045,7 +6159,7 @@ Public Sub Blinds1(sType As String, sAddress As String, sCommand As String)
         If Len(aAddr[0]) = 6 Then
           sAddress = aAddr[0]
         Else
-          Main.WriteDebugLog(LogLabel & "Blinds1 address subtype 0, 1, 8 or 9 has wrong format, use '0x00a102 1'!")
+          WriteDebugLog("Blinds1 address subtype 0, 1, 8 or 9 has wrong format, use '0x00a102 1'!")
           Return
         Endif
         ' all units
@@ -6055,7 +6169,7 @@ Public Sub Blinds1(sType As String, sAddress As String, sCommand As String)
           sUnit = aAddr[1]
         Endif
       Else
-        Main.WriteDebugLog(LogLabel & "Blinds1 address subtype 0, 1, 8 or 9 has wrong format, use '0x00a102 1'!")
+        WriteDebugLog("Blinds1 address subtype 0, 1, 8 or 9 has wrong format, use '0x00a102 1'!")
         Return
       Endif
     Case "BLINDST2", "BLINDST3", "BLINDST4", "BLINDST5", "BLINDST10" ' no unit code
@@ -6064,12 +6178,12 @@ Public Sub Blinds1(sType As String, sAddress As String, sCommand As String)
         If Len(aAddr[0]) = 6 Then
           sAddress = aAddr[0]
         Else
-          Main.WriteDebugLog(LogLabel & "Blinds1 address 2-5, 10 or 11 has wrong format, use '0x00a1b2'!")
+          WriteDebugLog("Blinds1 address 2-5, 10 or 11 has wrong format, use '0x00a1b2'!")
           Return
         Endif
         sUnit = 0
       Else
-        Main.WriteDebugLog(LogLabel & "Blinds1 address 2-5, 10 or 11 has wrong format, use '0x00a1b2'!")
+        WriteDebugLog("Blinds1 address 2-5, 10 or 11 has wrong format, use '0x00a1b2'!")
         Return
       Endif
     Case "BLINDST6", "BLINDST7" ' has id4 field and unit code
@@ -6078,7 +6192,7 @@ Public Sub Blinds1(sType As String, sAddress As String, sCommand As String)
         If Len(aAddr[0]) = 7 Then
           sAddress = aAddr[0]
         Else
-          Main.WriteDebugLog(LogLabel & "Blinds1 address subtype 6 or 7 has wrong format, use '0x00a1b2c 1'!")
+          WriteDebugLog("Blinds1 address subtype 6 or 7 has wrong format, use '0x00a1b2c 1'!")
           Return
         Endif
          ' all units
@@ -6088,11 +6202,11 @@ Public Sub Blinds1(sType As String, sAddress As String, sCommand As String)
           sUnit = Lsl(CByte(Val("&H" & aAddr[1])), 4) + CByte(Val("&H" & aAddr[1]))
         Endif
       Else
-        Main.WriteDebugLog(LogLabel & "Blinds1 address subtype 6 or 7 has wrong format, use '0x00a1b2c 1'!")
+        WriteDebugLog("Blinds1 address subtype 6 or 7 has wrong format, use '0x00a1b2c 1'!")
         Return
       Endif
     Case Else
-      Main.WriteDebugLog(LogLabel & "Blinds1 address unknown subtype! (" & sType & ")")
+      WriteDebugLog("Blinds1 address unknown subtype! (" & sType & ")")
       Return
   End Select
 
@@ -6150,13 +6264,13 @@ Public Sub Blinds1(sType As String, sAddress As String, sCommand As String)
     Case "LEARNMASTER"
       bBuf[8] = 4
     Case Else
-        Main.WriteDebugLog(LogLabel & "Unknown Blinds1 command '" & sCmd & "' given!")
+        WriteDebugLog("Unknown Blinds1 command '" & sCmd & "' given!")
         Return
   End Select
   bBuf[9] = 0
   QueueCommand(bBuf)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
