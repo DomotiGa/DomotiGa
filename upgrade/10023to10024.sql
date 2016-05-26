@@ -14,7 +14,7 @@ UPDATE devicetypes SET description='4 channel relay module' WHERE id=671;
 UPDATE devicetypes SET description='8 channel pushbutton mo' WHERE id=674;
 
 --
--- Add Velbus modules
+-- Add new devicetypes
 --
 
 DELETE FROM devicetypes WHERE id=711;
@@ -27,6 +27,7 @@ DELETE FROM devicetypes WHERE id=717;
 DELETE FROM devicetypes WHERE id=718;
 DELETE FROM devicetypes WHERE id=719;
 DELETE FROM devicetypes WHERE id=720;
+DELETE FROM devicetypes WHERE id=721;
 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (711, 'VMBDMI', 'dimmer for resistive or inductive load', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (712, 'VMBPIRC', 'Ceiling PIR detector module', 'Velbus', '\'02\', \'05\' or \'12\'');
@@ -38,6 +39,7 @@ INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (718, 'VMBGPOD', 'Touch panel with Oled display', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (719, 'VMBGP1', 'one touch buttons module', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (720, 'Osram LIGHTIFY Plug','Osram LIGHTIFY Plug','PhilipsHue','\'1\', \'6\' or \'19\'');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (721, 'ProMax Switch','ProMax switch and remote','IT','\'00101c 13\', or \'0x00101c 13\'');
 
 --
 -- Redo plugin column again, it was missed out in 'domotiga.sql' of 1.0.023
