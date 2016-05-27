@@ -11,7 +11,7 @@ UPDATE devicetypes SET description='Dimmer module' WHERE id=338;
 UPDATE devicetypes SET description='4 channel relay module ' WHERE id=663;
 UPDATE devicetypes SET description='2 channel blind module' WHERE id=664;
 UPDATE devicetypes SET description='4 channel relay module' WHERE id=671;
-UPDATE devicetypes SET description='8 channel pushbutton mo' WHERE id=674;
+UPDATE devicetypes SET description='8 channel pushbutton module' WHERE id=674;
 
 --
 -- Add new devicetypes
@@ -39,7 +39,7 @@ INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (718, 'VMBGPOD', 'Touch panel with Oled display', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (719, 'VMBGP1', 'one touch buttons module', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (720, 'Osram LIGHTIFY Plug','Osram LIGHTIFY Plug','PhilipsHue','\'1\', \'6\' or \'19\'');
-INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (721, 'ProMax Switch','ProMax switch and remote','IT','\'00101c 13\', or \'0x00101c 13\'');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (721, 'ProMax 75006','ProMax 75006 switch and remote','IT','\'00101c 13\', or \'0x00101c 13\'');
 
 --
 -- Redo plugin column again, it was missed out in 'domotiga.sql' of 1.0.023
