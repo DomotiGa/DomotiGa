@@ -54,6 +54,14 @@ ALTER TABLE plugins CHANGE COLUMN `protocols` `protocols` VARCHAR(1024) CHARACTE
 UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss BlindsT0 BlindsT1 BlindsT2 BlindsT3 BlindsT4 BlindsT5 BlindsT6 BlindsT7 BlindsT8 BlindsT9 BlindsT10 Meiantech ByronSX ByronMP SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagintrx WT TRC022 AOKE EuroDomest Smartwares SelectPlus IT Avantek' WHERE id = 35;
 
 --
+-- Add TFA - Two-Factor-Authentication options
+-- feature https://www.domotiga.nl/issues/603 review password and users login
+--
+
+ALTER TABLE users ADD `tfasecret` VARCHAR(16) NULL;
+ALTER TABLE users ADD `tfaenabled` TINYINT(1) NOT NULL DEFAULT '0';
+
+--
 -- Finally update to 1.0.024
 --
 
