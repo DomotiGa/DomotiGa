@@ -61,15 +61,14 @@ Private $bRecBytes As Byte
 ' CRC-16(CCITT) tables
 Private aCRCTable1 As New Integer[256]
 Private aCRCTable2 As New Integer[256]
-Private bTableInit As Boolean
 
 Private cQueue As New Collection    ' command buffer
 Private bInterfaceBusy As Boolean   ' waiting for delay timer to finish
 
 ' Msg decode stuff
-Private bExceptionRecv As Boolean
-Private iMaxNumBytes As Integer
-Private iCurrentRegister As Integer
+Private $bExceptionRecv As Boolean
+Private $iMaxNumBytes As Integer
+Private $iCurrentRegister As Integer
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -421,6 +420,8 @@ Private Sub CheckModbus()
           ReadHoldingRegisters(rResult!address, &H1)
         Case 679, 708, 709, 710 ' Read Holding Register 32-bit
           ReadHoldingRegisters(rResult!address, &H2)
+        Case 722 ' Read Holding Register 64-bit - none-standard
+          ReadHoldingRegisters(rResult!address, &H4)
         Case Else
           WriteLog("ERROR: Unsupported devicetype for modbus found! (" & iDeviceTypeId & ")")
       End Select
@@ -504,8 +505,8 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   If Error Then
     If $bDebug Then WriteDebugLog("< " & Util.ByteToHex(RecBuf) & " (INVALID PACKET: BUFFER OVERFLOW)")
     $bRecBytes = 0 ' temp hack (overflow)
-    iMaxNumBytes = 255
-    bExceptionRecv = False
+    $iMaxNumBytes = 255
+    $bExceptionRecv = False
     Return
   Endif
 
@@ -514,29 +515,29 @@ Private Sub ProcessReceivedChar(bTemp As Byte)
   ' detect exception response
   If $bRecBytes = 2 Then
     If BTst(RecBuf[1], 7) Then
-      bExceptionRecv = True
-      iMaxNumBytes = 5
+      $bExceptionRecv = True
+      $iMaxNumBytes = 5
     Endif
   Else If $bRecBytes = 3 Then
-    If bExceptionRecv = False Then
-      iMaxNumBytes = RecBuf[2] + 5
+    If $bExceptionRecv = False Then
+      $iMaxNumBytes = RecBuf[2] + 5
     Endif
   Endif
 
-  If $bRecBytes = iMaxNumBytes Then ' all bytes of exception packet received
+  If $bRecBytes = $iMaxNumBytes Then ' all bytes of exception packet received
 
     If $bDebug Then WriteDebugLog("< " & Util.ByteToHex(RecBuf.Copy(0, $bRecBytes)))
 
-    If bExceptionRecv = False Then
+    If $bExceptionRecv = False Then
       Decode_Message()  ' decode regular message
     Else
       Decode_Exception()  ' decode exception message
     Endif
 
     $bRecBytes = 0  ' set to zero to receive next message
-    iMaxNumBytes = 255
-    bExceptionRecv = False
-    iCurrentRegister = 65535
+    $iMaxNumBytes = 255
+    $bExceptionRecv = False
+    $iCurrentRegister = 65535
   Endif
 
 End
@@ -552,23 +553,23 @@ Private Sub Decode_Message()
   Dim iCRC As New Integer[2]
   Dim sAddress As String
 
-  sAddress = Hex(RecBuf[0], 2) & ":" & Hex(iCurrentRegister)
+  sAddress = Hex(RecBuf[0], 2) & ":" & Hex($iCurrentRegister)
 
   ' calc CRC
-  iCRC = CRC(RecBuf, iMaxNumBytes - 2)
+  iCRC = CRC(RecBuf, $iMaxNumBytes - 2)
 
   If $bDebug Then
     WriteLog("Received '" & Decode_Function() & "' response:")
     WriteLog("Slave ID: " & Hex(RecBuf[0], 2))
-    WriteLog("Register: " & Hex(iCurrentRegister))
+    WriteLog("Register: " & Hex($iCurrentRegister))
     WriteLog("Function: " & Hex(iFunction, 2))
     WriteLog("Address: " & sAddress)
-    WriteLog("Checksum Recv: " & Hex(RecBuf[iMaxNumBytes - 2], 2) & Hex(RecBuf[iMaxNumBytes - 1], 2))
+    WriteLog("Checksum Recv: " & Hex(RecBuf[$iMaxNumBytes - 2], 2) & Hex(RecBuf[$iMaxNumBytes - 1], 2))
     WriteLog("Checksum Calc: " & Hex(iCRC[0], 2) & Hex(iCRC[1], 2))
   Endif
 
   ' check CRC
-  If (iCRC[0] & iCRC[1]) <> (RecBuf[iMaxNumBytes - 2] & RecBuf[iMaxNumBytes - 1]) Then
+  If (iCRC[0] & iCRC[1]) <> (RecBuf[$iMaxNumBytes - 2] & RecBuf[$iMaxNumBytes - 1]) Then
     WriteLog("ERROR: Invalid Checksum, discarding.")
     Return
   Endif
@@ -602,25 +603,50 @@ Private Sub Decode_Message()
           WriteDebugLog("ERROR: Devicetype is using 32-bit, but received data is not!")
           Return
         Endif
+
         ' calculate value
         'vValue = Lsl(CLong(RecBuf[3]), 8) + CLong(RecBuf[4]) + Lsl(CLong(RecBuf[5]), 8) + CLong(RecBuf[5])
         vValue = RecBuf[4] & RecBuf[3] & RecBuf[6] & RecBuf[5]
 
         If $bDebug Then
-          Main.WriteDebugLog(LogLabel & "Value Size: " & Hex(RecBuf[2]) & " Bytes, 32-bits integer.")
-          Main.WriteDebugLog(LogLabel & "Value RAW: " & Hex(RecBuf[4], 2) & Hex(RecBuf[3], 2) & Hex(RecBuf[6], 2) & Hex(RecBuf[5], 2))
-          Main.WriteDebugLog(LogLabel & "Value: " & vValue)
+          WriteDebugLog("Value Size: " & Hex(RecBuf[2]) & " Bytes, 32-bits integer.")
+          WriteDebugLog("Value RAW: " & Hex(RecBuf[4], 2) & Hex(RecBuf[3], 2) & Hex(RecBuf[6], 2) & Hex(RecBuf[5], 2))
+          WriteDebugLog("Value: " & vValue)
         Endif
 
         ' set device value
         If iDeviceId Then
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Updating device with id: " & iDeviceId)
+          If $bDebug Then WriteDebugLog("Updating device id '" & iDeviceId & "' with value '" & vValue & "'")
           Devices.ValueUpdate(iDeviceId, 1, vValue)
         Endif
+
+      Case 722 ' Read Holding Register 64-bit
+        If RecBuf[2] <> 8 Then
+          WriteDebugLog("ERROR: Devicetype is using 64-bit, but received data is not!")
+          Return
+        Endif
+
+        ' Currently we only support signed 64-bit
+        vValue = Val("&H" & Util.ByteToHex(RecBuf.Copy(3, 8), False))
+
+        If $bDebug Then
+          WriteDebugLog("Value Size: " & Hex(RecBuf[2]) & " Bytes, 64-bits integer.")
+          WriteDebugLog("Value RAW: " & Util.ByteToHex(RecBuf.Copy(3, 8), False))
+          WriteDebugLog("Value: " & vValue)
+        Endif
+
+        ' set device value
+        If iDeviceId Then
+          If $bDebug Then WriteDebugLog("Updating device id '" & iDeviceId & "' with value '" & vValue & "'")
+          Devices.ValueUpdate(iDeviceId, 1, vValue)
+        Endif
+
       Case Else
         WriteLog("ERROR: Unsupported devicetype for modbus found! (" & iDeviceTypeId & ")")
     End Select
 
+  Else
+    ' device not found?
   Endif
 
 Catch
@@ -696,7 +722,7 @@ Private Sub Decode_Exception()
     WriteDebugLog("Function: " & Hex(iFunction, 2))
     WriteDebugLog("Exception: " & sMsg & " (" & Hex(iCode, 2) & ")")
     WriteDebugLog("Checksum Recv: " & Hex(RecBuf[3], 2) & Hex(RecBuf[4], 2))
-    iCRC = CRC(RecBuf, iMaxNumBytes - 2)
+    iCRC = CRC(RecBuf, $iMaxNumBytes - 2)
     WriteDebugLog("Checksum Calc: " & Hex(iCRC[0], 2) & Hex(iCRC[1], 2))
   Endif
 
@@ -718,12 +744,12 @@ Public Sub WriteCommand(bBuffer As Byte[], sKey As String)
   Endif
 
   ' store register
-  iCurrentRegister = (bBuffer[2] * 256) + bBuffer[3]
+  $iCurrentRegister = (bBuffer[2] * 256) + bBuffer[3]
 
   ' remove sent command from queue
   cQueue.Remove(sKey)
 
-  tModbusBusy.Delay = 100 ' 50mS (initial test value)
+  tModbusBusy.Delay = 100 ' 100msec (initial test value)
   tModbusBusy.Start
   bInterfaceBusy = True
 
@@ -767,7 +793,6 @@ Private Sub InitCRCTable()
     aCRCTable2[iMask] = iCRC And &HFF
     aCRCTable1[iMask] = Lsr(iCRC, 8)
   Next
-  bTableInit = True
 
 End
 

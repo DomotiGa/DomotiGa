@@ -28,6 +28,7 @@ DELETE FROM devicetypes WHERE id=718;
 DELETE FROM devicetypes WHERE id=719;
 DELETE FROM devicetypes WHERE id=720;
 DELETE FROM devicetypes WHERE id=721;
+DELETE FROM devicetypes WHERE id=722;
 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (711, 'VMBDMI', 'dimmer for resistive or inductive load', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (712, 'VMBPIRC', 'Ceiling PIR detector module', 'Velbus', '\'02\', \'05\' or \'12\'');
@@ -40,6 +41,7 @@ INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (719, 'VMBGP1', 'one touch buttons module', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (720, 'Osram LIGHTIFY Plug','Osram LIGHTIFY Plug','PhilipsHue','\'1\', \'6\' or \'19\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (721, 'ProMax 75006','ProMax 75006 switch and remote','IT','\'00101c 13\', or \'0x00101c 13\'');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (722, 'Read Holding Register 64-bit', '03 64-bit', 'Modbus', '1F:5170');
 
 --
 -- Redo plugin column again, it was missed out in 'domotiga.sql' of 1.0.023
