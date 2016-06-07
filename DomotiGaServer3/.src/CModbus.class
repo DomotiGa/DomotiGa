@@ -55,7 +55,8 @@ Public hMySerial As CSerialPort
 Public tModbusPoll As Timer
 Public tModbusBusy As Timer
 
-Private RecBuf As New Byte[200]
+Private $aRecBuf As New Byte[200]
+Private $sRecBuf As String
 Private $bRecBytes As Byte
 
 ' CRC-16(CCITT) tables
@@ -159,7 +160,7 @@ Private Sub ConnectTCP() As Boolean
   ' get a new one - but also pass on our previous reconnect counter
   hMySocket = New CSocket(iReconnectRetry) As "MySocket"
 
-  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.DataType = &HFF + gb.Byte ' Byte[]
   hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' write to main logfile we are trying to connect
@@ -436,12 +437,13 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' create 'read holding register' function 03 request
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ReadHoldingRegisters(sAddress As String, iNumRegisters As Integer)
+Private Sub ReadHoldingRegisters(sAddress As String, iNumRegisters As Integer)
 
-  Dim bCmd As New Byte[8]
-  Dim iCRC As New Integer[2]
+  Dim bCmd As New Byte[]
   Dim iSlaveAddress, iAddressOffset As Integer
   Dim aAddr As String[]
+  Dim iCRC As New Integer[2]
+  Dim bLRC As Byte
 
   aAddr = Split(sAddress, ":")
   If aAddr.Count = 2 Then
@@ -472,17 +474,22 @@ Public Sub ReadHoldingRegisters(sAddress As String, iNumRegisters As Integer)
     Return
   Endif
 
-  bCmd[0] = iSlaveAddress  ' address of slave
-  bCmd[1] = &H03 ' function to read holding registers
-  bCmd[2] = iAddressOffset / 256 ' starting address hi
-  bCmd[3] = iAddressOffset % 256 ' starting address lo
-  bCmd[4] = iNumRegisters / 256 ' no of registers hi
-  bCmd[5] = iNumRegisters % 256 ' no of registers lo
+  bCmd.Add(iSlaveAddress) ' address of slave
+  bCmd.Add(&H03) ' function to read holding registers
+  bCmd.Add(iAddressOffset / 256) ' starting address hi
+  bCmd.Add(iAddressOffset % 256) ' starting address lo
+  bCmd.Add(iNumRegisters / 256) ' no of registers hi
+  bCmd.Add(iNumRegisters % 256) ' no of registers lo
 
+  If $sModbusType = "ASCII" Then
+    bLRC = CalculateLRC(Util.ByteToHex(bCmd, False))
+    bCmd.Add(bLRC) ' Add the LRC
+  Else
   ' calculate and add checksum
-  iCRC = CRC(bCmd, 6)
-  bCmd[6] = iCRC[0] ' CRC hi
-  bCmd[7] = iCRC[1] ' CRC lo
+    iCRC = CalculateCRC(bCmd, 6)
+    bCmd.Add(iCRC[0]) ' CRC hi
+    bCmd.Add(iCRC[1]) ' CRC lo
+  Endif
 
   QueueCommand(bCmd)
 
@@ -496,99 +503,190 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessReceivedChar(bTemp As Byte)
 
+  Dim iLen As Integer
+
   Main.ControlLed("Modbus", "On")
-  If $bRecBytes = 0 Then ' 1st char of a packet received
-    If bTemp = 0 Then Return ' ignore 1st char if 0
-  Endif
 
-  Try RecBuf[$bRecBytes] = bTemp ' store received char
-  If Error Then
-    If $bDebug Then WriteDebugLog("< " & Util.ByteToHex(RecBuf) & " (INVALID PACKET: BUFFER OVERFLOW)")
-    $bRecBytes = 0 ' temp hack (overflow)
-    $iMaxNumBytes = 255
-    $bExceptionRecv = False
-    Return
-  Endif
-
-  Inc $bRecBytes  ' increment char counter
-
-  ' detect exception response
-  If $bRecBytes = 2 Then
-    If BTst(RecBuf[1], 7) Then
-      $bExceptionRecv = True
-      $iMaxNumBytes = 5
-    Endif
-  Else If $bRecBytes = 3 Then
-    If $bExceptionRecv = False Then
-      $iMaxNumBytes = RecBuf[2] + 5
-    Endif
-  Endif
-
-  If $bRecBytes = $iMaxNumBytes Then ' all bytes of exception packet received
-
-    If $bDebug Then WriteDebugLog("< " & Util.ByteToHex(RecBuf.Copy(0, $bRecBytes)))
-
-    If $bExceptionRecv = False Then
-      Decode_Message()  ' decode regular message
-    Else
-      Decode_Exception()  ' decode exception message
+  If $sModbusType = "ASCII" Then
+    If Not $sRecBuf Then ' 1st char of a packet received
+      If Chr(bTemp) <> ":" Then Return ' In ASCII mode we always receive ":" as first character
     Endif
 
-    $bRecBytes = 0  ' set to zero to receive next message
-    $iMaxNumBytes = 255
-    $bExceptionRecv = False
-    $iCurrentRegister = 65535
+    $sRecBuf &= Chr(bTemp)
+
+    ' Determine exception
+    If Len($sRecBuf) = 5 Then ' :XXXX
+
+      If BTst(Val("&H" & Mid($sRecBuf, 4, 2)), 7) Then
+        $bExceptionRecv = True
+        $iMaxNumBytes = 5
+      Endif
+
+    Else If Len($sRecBuf) = 7 Then ' :XXXXXX
+      If $bExceptionRecv = False Then
+        $iMaxNumBytes = Val("&H" & Mid($sRecBuf, 6, 2)) + 5
+      Endif
+    Endif
+
+    ' We got too many characters/bytes
+    If Len($sRecBuf) > ($iMaxNumBytes * 2) + 3 Then
+      WriteDebugLog("< " & $sRecBuf & " (INVALID PACKET: BUFFER OVERFLOW)")
+      $sRecBuf = ""
+      $bExceptionRecv = False
+    Endif
+
+    ' CR/LF - 0x13 + 0x10 is end of packet
+    If InStr($sRecBuf, gb.CrLf) Then
+
+      ' Remove ":" and CR/LF
+      $sRecBuf = Mid($sRecBuf, 2, Len($sRecBuf) - 3)
+
+      ' Even number is mandatory
+      If Len($sRecBuf) Mod 2 <> 0 Then
+        WriteDebugLog("< " & $sRecBuf & " (INVALID PACKET: LENGTH UNEVEN)")
+        $sRecBuf = ""
+        $bExceptionRecv = False
+        Return
+      Endif
+
+      ' Convert ASCII to internal RTU format
+      For iLen = 1 To Len($sRecBuf) Step 2
+        Try $aRecBuf[(iLen - 1) / 2] = Val("&H" & Mid($sRecBuf, iLen, 2))
+        If Error Then
+          WriteDebugLog("< " & $sRecBuf & " (INVALID PACKET: BUFFER OVERFLOW)")
+          $sRecBuf = ""
+          $bExceptionRecv = False
+          Return
+        Endif
+      Next
+
+      If $bExceptionRecv = False Then
+        Decode_Message() ' decode regular message
+      Else
+        Decode_Exception() ' decode exception message
+      Endif
+
+      $sRecBuf = ""
+      $bExceptionRecv = False
+    Endif
+
+  Else
+    If $bRecBytes = 0 Then ' 1st char of a packet received
+      If bTemp = 0 Then Return ' ignore 1st char if 0
+    Endif
+
+    Try $aRecBuf[$bRecBytes] = bTemp ' store received char
+    If Error Then
+      If $bDebug Then WriteDebugLog("< " & Util.ByteToHex($aRecBuf) & " (INVALID PACKET: BUFFER OVERFLOW)")
+      $bRecBytes = 0 ' temp hack (overflow)
+      $iMaxNumBytes = 255
+      $bExceptionRecv = False
+      Return
+    Endif
+
+    Inc $bRecBytes ' increment char counter
+
+    ' detect exception response
+    If $bRecBytes = 2 Then
+      If BTst($aRecBuf[1], 7) Then
+        $bExceptionRecv = True
+        $iMaxNumBytes = 5
+      Endif
+    Else If $bRecBytes = 3 Then
+      If $bExceptionRecv = False Then
+        $iMaxNumBytes = $aRecBuf[2] + 5
+      Endif
+    Endif
+
+    If $bRecBytes = $iMaxNumBytes Then ' all bytes of exception packet received
+
+      If $bDebug Then WriteDebugLog("< " & Util.ByteToHex($aRecBuf.Copy(0, $bRecBytes)))
+
+      If $bExceptionRecv = False Then
+        Decode_Message() ' decode regular message
+      Else
+        Decode_Exception() ' decode exception message
+      Endif
+
+      $bRecBytes = 0  ' set to zero to receive next message
+      $iMaxNumBytes = 255
+      $bExceptionRecv = False
+      $iCurrentRegister = 65535
+    Endif
+
   Endif
+
+Catch
+  WriteLog("ERROR: ProcessReceivedChar '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' decode response message
+' Decode response message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Decode_Message()
 
   Dim iDeviceId, iDeviceTypeId As Integer
   Dim vValue As Variant
-  Dim iFunction As Integer = RecBuf[1]
+  Dim iFunction As Integer = $aRecBuf[1]
   Dim iCRC As New Integer[2]
+  Dim bLRC As Byte
   Dim sAddress As String
 
-  sAddress = Hex(RecBuf[0], 2) & ":" & Hex($iCurrentRegister)
+  sAddress = Hex($aRecBuf[0], 2) & ":" & Hex($iCurrentRegister)
 
-  ' calc CRC
-  iCRC = CRC(RecBuf, $iMaxNumBytes - 2)
+  If $sModbusType = "ASCII"
+    ' calc LRC
+    bLRC = CalculateLRC(Mid($sRecBuf, 1, Len($sRecBuf) - 1))
+  Else
+    ' calc CRC
+    iCRC = CalculateCRC($aRecBuf, $iMaxNumBytes - 2)
+  Endif
 
   If $bDebug Then
     WriteLog("Received '" & Decode_Function() & "' response:")
-    WriteLog("Slave ID: " & Hex(RecBuf[0], 2))
+    WriteLog("Slave ID: " & Hex($aRecBuf[0], 2))
     WriteLog("Register: " & Hex($iCurrentRegister))
     WriteLog("Function: " & Hex(iFunction, 2))
     WriteLog("Address: " & sAddress)
-    WriteLog("Checksum Recv: " & Hex(RecBuf[$iMaxNumBytes - 2], 2) & Hex(RecBuf[$iMaxNumBytes - 1], 2))
-    WriteLog("Checksum Calc: " & Hex(iCRC[0], 2) & Hex(iCRC[1], 2))
+    If $sModbusType = "ASCII" Then
+      WriteLog("Checksum Recv: " & Hex($aRecBuf[$iMaxNumBytes - 1], 2))
+      WriteLog("Checksum Calc: " & Hex(bLRC, 2))
+    Else
+      WriteLog("Checksum Recv: " & Hex($aRecBuf[$iMaxNumBytes - 2], 2) & Hex($aRecBuf[$iMaxNumBytes - 1], 2))
+      WriteLog("Checksum Calc: " & Hex(iCRC[0], 2) & Hex(iCRC[1], 2))
+    Endif
   Endif
 
-  ' check CRC
-  If (iCRC[0] & iCRC[1]) <> (RecBuf[$iMaxNumBytes - 2] & RecBuf[$iMaxNumBytes - 1]) Then
-    WriteLog("ERROR: Invalid Checksum, discarding.")
-    Return
+  If $sModbusType = "ASCII" Then
+    ' check LRC
+    If (bLRC <> $aRecBuf[$iMaxNumBytes - 1]) Then
+      WriteLog("ERROR: Invalid Checksum, discarding.")
+      Return
+    Endif
+  Else
+    ' check CRC
+    If (iCRC[0] & iCRC[1]) <> ($aRecBuf[$iMaxNumBytes - 2] & $aRecBuf[$iMaxNumBytes - 1]) Then
+      WriteLog("ERROR: Invalid Checksum, discarding.")
+      Return
+    Endif
   Endif
 
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId)
   If iDeviceId Then
     iDeviceTypeId = Devices.FindDeviceTypeForDevice(iDeviceId)
-    Select Case iDeviceTypeId
+    Select iDeviceTypeId
       Case 675, 676, 677, 678 ' Read Holding Register 16-bit
-        If RecBuf[2] <> 2 Then
+        If $aRecBuf[2] <> 2 Then
           WriteLog("ERROR: Devicetype is using 16-bit, but received data is not!")
           Return
         Endif
 
         ' calculate value
-        vValue = (RecBuf[3] * 256) + RecBuf[4]
+        vValue = ($aRecBuf[3] * 256) + $aRecBuf[4]
 
         If $bDebug Then
-          WriteDebugLog("Value Size: " & Hex(RecBuf[2]) & " Bytes, 16 - bits integer.")
+          WriteDebugLog("Value Size: " & $aRecBuf[2] & " Bytes, 16-bits integer.")
           WriteDebugLog("Value: " & vValue)
         Endif
 
@@ -599,18 +697,18 @@ Private Sub Decode_Message()
         Endif
 
       Case 679, 708, 709, 710 ' Read Holding Register 32-bit
-        If RecBuf[2] <> 4 Then
+        If $aRecBuf[2] <> 4 Then
           WriteDebugLog("ERROR: Devicetype is using 32-bit, but received data is not!")
           Return
         Endif
 
         ' calculate value
         'vValue = Lsl(CLong(RecBuf[3]), 8) + CLong(RecBuf[4]) + Lsl(CLong(RecBuf[5]), 8) + CLong(RecBuf[5])
-        vValue = RecBuf[4] & RecBuf[3] & RecBuf[6] & RecBuf[5]
+        vValue = $aRecBuf[4] & $aRecBuf[3] & $aRecBuf[6] & $aRecBuf[5]
 
         If $bDebug Then
-          WriteDebugLog("Value Size: " & Hex(RecBuf[2]) & " Bytes, 32-bits integer.")
-          WriteDebugLog("Value RAW: " & Hex(RecBuf[4], 2) & Hex(RecBuf[3], 2) & Hex(RecBuf[6], 2) & Hex(RecBuf[5], 2))
+          WriteDebugLog("Value Size: " & $aRecBuf[2] & " Bytes, 32-bits integer.")
+          WriteDebugLog("Value RAW: " & Hex($aRecBuf[4], 2) & Hex($aRecBuf[3], 2) & Hex($aRecBuf[6], 2) & Hex($aRecBuf[5], 2))
           WriteDebugLog("Value: " & vValue)
         Endif
 
@@ -620,18 +718,23 @@ Private Sub Decode_Message()
           Devices.ValueUpdate(iDeviceId, 1, vValue)
         Endif
 
-      Case 722 ' Read Holding Register 64-bit
-        If RecBuf[2] <> 8 Then
+      Case 722, 723, 724, 725 ' Read Holding Register 64-bit
+        If $aRecBuf[2] <> 8 Then
           WriteDebugLog("ERROR: Devicetype is using 64-bit, but received data is not!")
           Return
         Endif
 
         ' Currently we only support signed 64-bit
-        vValue = Val("&H" & Util.ByteToHex(RecBuf.Copy(3, 8), False))
+        vValue = CLong(Val("&H" & Util.ByteToHex($aRecBuf.Copy(3, 8), False)))
+
+        ' 723 has correction *0.1, 724 has correction *0.01 and 725 has correction *0.001
+        If iDeviceTypeId = 723 Then vValue = Format(vValue * 0.1, "0.0")
+        If iDeviceTypeId = 724 Then vValue = Format(vValue * 0.01, "0.00")
+        If iDeviceTypeId = 725 Then vValue = Format(vValue * 0.001, "0.000")
 
         If $bDebug Then
-          WriteDebugLog("Value Size: " & Hex(RecBuf[2]) & " Bytes, 64-bits integer.")
-          WriteDebugLog("Value RAW: " & Util.ByteToHex(RecBuf.Copy(3, 8), False))
+          WriteDebugLog("Value Size: " & $aRecBuf[2] & " Bytes, 64-bits integer.")
+          WriteDebugLog("Value RAW: " & Util.ByteToHex($aRecBuf.Copy(3, 8), False))
           WriteDebugLog("Value: " & vValue)
         Endif
 
@@ -654,11 +757,14 @@ Catch
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Decode_Function() As String
 
   Dim sMsg As String
 
-  Select Case RecBuf[1]
+  Select $aRecBuf[1]
     Case 1, 129
       sMsg = "Read Coil Status"
     Case 2, 130
@@ -678,6 +784,7 @@ Private Sub Decode_Function() As String
     Case Else
       sMsg = "Unknown"
   End Select
+
   Return sMsg
 
 End
@@ -688,11 +795,12 @@ End
 Private Sub Decode_Exception()
 
   Dim sMsg As String
-  Dim iFunction As Integer = BClr(RecBuf[1], 7)
-  Dim iCode As Integer = RecBuf[2]
+  Dim iFunction As Integer = BClr($aRecBuf[1], 7)
+  Dim iCode As Integer = $aRecBuf[2]
   Dim iCRC As New Integer[2]
+  Dim bLRC As Byte
 
-  Select Case iCode
+  Select iCode
     Case 1
       sMsg = "Illegal Function"
     Case 2
@@ -716,14 +824,22 @@ Private Sub Decode_Exception()
     Case Else
       sMsg = "Unknown"
   End Select
+
   If $bDebug Then
     WriteDebugLog("Received Response:")
-    WriteDebugLog("Slave ID: " & Hex(RecBuf[0], 2))
+    WriteDebugLog("Slave ID: " & Hex($aRecBuf[0], 2))
     WriteDebugLog("Function: " & Hex(iFunction, 2))
     WriteDebugLog("Exception: " & sMsg & " (" & Hex(iCode, 2) & ")")
-    WriteDebugLog("Checksum Recv: " & Hex(RecBuf[3], 2) & Hex(RecBuf[4], 2))
-    iCRC = CRC(RecBuf, $iMaxNumBytes - 2)
-    WriteDebugLog("Checksum Calc: " & Hex(iCRC[0], 2) & Hex(iCRC[1], 2))
+
+    If $sModbusType = "ASCII" Then
+      bLRC = CalculateLRC(Mid($sRecBuf, 1, Len($sRecBuf) - 1))
+      WriteDebugLog("Checksum Recv: " & Hex($aRecBuf[3], 2))
+      WriteDebugLog("Checksum Calc: " & Hex(bLRC, 2))
+    Else
+      iCRC = CalculateCRC($aRecBuf, $iMaxNumBytes - 2)
+      WriteDebugLog("Checksum Recv: " & Hex($aRecBuf[3], 2) & Hex($aRecBuf[4], 2))
+      WriteDebugLog("Checksum Calc: " & Hex(iCRC[0], 2) & Hex(iCRC[1], 2))
+    Endif
   Endif
 
 End
@@ -735,12 +851,22 @@ Public Sub WriteCommand(bBuffer As Byte[], sKey As String)
 
   If $bDebug Then WriteLog("> " & Util.ByteToHex(bBuffer))
 
-  If $sInterface = "tcp" Then
-    ' send the message to the tcp stream
-    hMySocket.Write(bBuffer)
+  If $sModbusType = "ASCII" Then
+    If $sInterface = "tcp" Then
+      ' send the message to the tcp stream
+      hMySocket.Write(":" & Util.ByteToHexbBuffer(bBuffer, False) & gb.CrLf)
+    Else
+      ' send the message to the serial port
+      hMySerial.Write(":" & Util.ByteToHexbBuffer(bBuffer, False) & gb.CrLf)
+    Endif
   Else
-    ' send the message to the serial port
-    hMySerial.Write(bBuffer)
+    If $sInterface = "tcp" Then
+      ' send the message to the tcp stream
+      hMySocket.Write(bBuffer)
+    Else
+      ' send the message to the serial port
+      hMySerial.Write(bBuffer)
+    Endif
   Endif
 
   ' store register
@@ -759,9 +885,29 @@ Catch
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Return the LRC
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CalculateLRC(sBuf As String) As Byte
+
+  Dim iLen As Integer
+  Dim bLRC As Byte = 0
+
+  ' Convert all ascii to bytes and add them together
+  For iLen = 1 To Len(sBuf) Step 2
+    bLRC += Val("&H" & Mid(sBuf, iLen, 2))
+  Next
+
+  ' Substract 256 - our value to get final value
+  bLRC = 256 - bLRC
+
+  Return bLRC
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' returns the CRC of the iLen no. of bytes in bBuf
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function CRC(bBuf As Byte[], iLen As Integer) As Integer[]
+Private Function CalculateCRC(bBuf As Byte[], iLen As Integer) As Integer[]
 
   Dim iCnt, iCar As Integer
   Dim iCRC As Byte[] = [CByte(&HFF), CByte(&HFF)]
@@ -772,6 +918,7 @@ Public Function CRC(bBuf As Byte[], iLen As Integer) As Integer[]
     iCRC[0] = iCRC[1] Xor aCRCTable2[iCar]
     iCRC[1] = aCRCTable1[iCar]
   Next
+
   Return iCRC
 
 End
@@ -850,6 +997,8 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
 
   Dim iDeviceId As Integer
   Dim sType As String
+
+  sCmd = sCmd
 
   iDeviceId = Devices.Find(Instance, sAddress, InterfaceId)
   If iDeviceId Then
