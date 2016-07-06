@@ -70,6 +70,24 @@ ALTER TABLE users ADD `tfasecret` VARCHAR(16) NULL;
 ALTER TABLE users ADD `tfaenabled` TINYINT(1) NOT NULL DEFAULT '0';
 
 --
+-- Add TCP support for the jeelabs module
+--
+
+ALTER TABLE settings_jeelabs ADD COLUMN tcphost VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+ALTER TABLE settings_jeelabs ADD COLUMN tcpport int(11) DEFAULT NULL;
+ALTER TABLE settings_jeelabs ADD COLUMN type VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+
+--
+-- Add TCP support for the visonic module
+--
+
+ALTER TABLE settings_visonic ADD COLUMN tcphost VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+ALTER TABLE settings_visonic ADD COLUMN tcpport int(11) DEFAULT NULL;
+ALTER TABLE settings_visonic ADD COLUMN type VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL;
+
+
+
+--
 -- Finally update to 1.0.024
 --
 
