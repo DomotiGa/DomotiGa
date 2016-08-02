@@ -2391,6 +2391,9 @@ CREATE TABLE `settings_jeelabs` (
   `serialport` varchar(128) DEFAULT NULL,
   `baudrate` varchar(32) DEFAULT NULL,
   `debug` tinyint(1) NOT NULL DEFAULT '0',
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `type` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2401,7 +2404,7 @@ CREATE TABLE `settings_jeelabs` (
 
 LOCK TABLES `settings_jeelabs` WRITE;
 /*!40000 ALTER TABLE `settings_jeelabs` DISABLE KEYS */;
-INSERT INTO `settings_jeelabs` VALUES (0,0,'/dev/ttyUSB8','57600',0),(1,0,'/dev/ttyUSB8','57600',0);
+INSERT INTO `settings_jeelabs` VALUES (0,0,'/dev/ttyUSB8','57600',0,'192.168.1.1',5000,'serial'),(1,0,'/dev/ttyUSB8','57600',0,'192.168.1.1',5000,'serial');
 /*!40000 ALTER TABLE `settings_jeelabs` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -2762,7 +2765,7 @@ CREATE TABLE `settings_modbus` (
 
 LOCK TABLES `settings_modbus` WRITE;
 /*!40000 ALTER TABLE `settings_modbus` DISABLE KEYS */;
-INSERT INTO `settings_modbus` VALUES (0,'rtu',0,'192.168.100.7',502,'serial','/dev/ttyUSB0','9600',1,8,0,0,300),(1,'rtu',0,'192.168.100.7',502,'serial','/dev/ttyUSB0','9600',1,8,0,0,300);
+INSERT INTO `settings_modbus` VALUES (0,'RTU',0,'192.168.100.7',502,'serial','/dev/ttyUSB0','9600',1,8,0,0,300),(1,'RTU',0,'192.168.100.7',502,'serial','/dev/ttyUSB0','9600',1,8,0,0,300);
 /*!40000 ALTER TABLE `settings_modbus` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -4261,7 +4264,6 @@ CREATE TABLE `settings_visonic` (
   `id` int(11) NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT '0',
   `serialport` varchar(128) DEFAULT NULL,
-  `type` int(11) DEFAULT '0',
   `mastercode` varchar(16) DEFAULT '1234',
   `downloadcode` varchar(16) DEFAULT '5650',
   `autosynctime` tinyint(1) NOT NULL DEFAULT '-1',
@@ -4269,6 +4271,9 @@ CREATE TABLE `settings_visonic` (
   `motiontimeout` int(11) DEFAULT '30',
   `sensorarmstatus` int(11) DEFAULT '0',
   `debug` tinyint(1) NOT NULL DEFAULT '0',
+  `tcphost` varchar(32) DEFAULT NULL,
+  `tcpport` int(11) DEFAULT NULL,
+  `type` varchar(32) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -4279,7 +4284,7 @@ CREATE TABLE `settings_visonic` (
 
 LOCK TABLES `settings_visonic` WRITE;
 /*!40000 ALTER TABLE `settings_visonic` DISABLE KEYS */;
-INSERT INTO `settings_visonic` VALUES (0,0,'/dev/ttyUSB0',0,'1234','5650',-1,0,30,0,0),(1,0,'/dev/ttyUSB0',0,'1234','5650',-1,0,30,0,0);
+INSERT INTO `settings_visonic` VALUES (0,0,'/dev/ttyUSB0','1234','5650',-1,0,30,0,0,'192.168.1.1',5000,'serial'),(1,0,'/dev/ttyUSB0','1234','5650',-1,0,30,0,0,'192.168.1.1',5000,'serial');
 /*!40000 ALTER TABLE `settings_visonic` ENABLE KEYS */;
 UNLOCK TABLES;
 

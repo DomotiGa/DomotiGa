@@ -78,6 +78,18 @@ ALTER TABLE settings_jeelabs ADD COLUMN tcpport int(11) DEFAULT NULL;
 ALTER TABLE settings_jeelabs ADD COLUMN type VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL;
 
 --
+-- Insert the new default values into settings_jeelabs
+--
+
+UPDATE `settings_jeelabs` SET `type`='serial', `tcphost`='192.168.1.1, `port`=5000;
+
+--
+-- Drop 'type' from visonic settings
+--
+
+ALTER TABLE settings_visonic DROP type;
+
+--
 -- Add TCP support for the visonic module
 --
 
@@ -85,7 +97,17 @@ ALTER TABLE settings_visonic ADD COLUMN tcphost VARCHAR(32) CHARACTER SET 'utf8'
 ALTER TABLE settings_visonic ADD COLUMN tcpport int(11) DEFAULT NULL;
 ALTER TABLE settings_visonic ADD COLUMN type VARCHAR(32) CHARACTER SET 'utf8' NULL DEFAULT NULL;
 
+--
+-- Insert the new default values into settings_visonic
+--
 
+UPDATE `settings_visonic` SET `type`='serial', `tcphost`='192.168.1.1, `port`=5000;
+
+--
+-- Update rtu to RTU for modbus RTU/ASCII support
+--
+
+UPDATE `settings_modbus` SET `modbustype`='RTU' WHERE `modbustype`='rtu';
 
 --
 -- Finally update to 1.0.024
