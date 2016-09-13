@@ -1,4 +1,10 @@
 --
+-- Extend devicetypes description field length
+--
+
+ALTER TABLE devicetypes CHANGE COLUMN `description` `description` VARCHAR(64) NULL DEFAULT NULL;
+
+--
 -- Set new Buienradar url
 --
 
@@ -39,15 +45,15 @@ DELETE FROM devicetypes WHERE id=723;
 DELETE FROM devicetypes WHERE id=724;
 DELETE FROM devicetypes WHERE id=725;
 
-INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (711, 'VMBDMI', 'dimmer for resistive or inductive load', 'Velbus', '\'02\', \'05\' or \'12\'');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (711, 'VMBDMI', 'Dimmer for resistive or inductive load', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (712, 'VMBPIRC', 'Ceiling PIR detector module', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (713, 'VMBPIRO', 'Outdoor motion, twilight and temperature sensor', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (714, 'VMB8PBU', '8-channel push-button module', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (715, 'VMB6PBN', 'Push-button interface for 6-/4-fold niko push-buttons', 'Velbus', '\'02\', \'05\' or \'12\'');
-INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (716, 'VMBGP2', 'two touch buttons module', 'Velbus', '\'02\', \'05\' or \'12\'');
-INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (717, 'VMBGP4', 'four touch buttons module', 'Velbus', '\'02\', \'05\' or \'12\'');
-INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (718, 'VMBGPOD', 'Touch panel with Oled display', 'Velbus', '\'02\', \'05\' or \'12\'');
-INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (719, 'VMBGP1', 'one touch buttons module', 'Velbus', '\'02\', \'05\' or \'12\'');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (716, 'VMBGP2', 'Two touch buttons module', 'Velbus', '\'02\', \'05\' or \'12\'');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (717, 'VMBGP4', 'Four touch buttons module', 'Velbus', '\'02\', \'05\' or \'12\'');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (718, 'VMBGPOD', 'Touch panel with OLED display', 'Velbus', '\'02\', \'05\' or \'12\'');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (719, 'VMBGP1', 'One touch buttons module', 'Velbus', '\'02\', \'05\' or \'12\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (720, 'Osram LIGHTIFY Plug','Osram LIGHTIFY Plug','PhilipsHue','\'1\', \'6\' or \'19\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (721, 'ProMax 75006','ProMax 75006 switch and remote','IT','\'00101c 13\', or \'0x00101c 13\'');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (722, 'Read Holding Register 64-bit Unsigned', '03 64-bit', 'Modbus', '1F:5170');

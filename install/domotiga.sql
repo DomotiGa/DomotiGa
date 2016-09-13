@@ -604,7 +604,7 @@ DROP TABLE IF EXISTS `devicetypes`;
 CREATE TABLE `devicetypes` (
   `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
   `name` varchar(64) DEFAULT NULL,
-  `description` varchar(32) DEFAULT NULL,
+  `description` varchar(64) DEFAULT NULL,
   `protocol` varchar(32) DEFAULT NULL,
   `addressformat` varchar(128) DEFAULT NULL,
   PRIMARY KEY (`id`)
