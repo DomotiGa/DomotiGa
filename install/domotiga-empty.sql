@@ -1603,7 +1603,7 @@ CREATE TABLE `settings_buienradar` (
 
 LOCK TABLES `settings_buienradar` WRITE;
 /*!40000 ALTER TABLE `settings_buienradar` DISABLE KEYS */;
-INSERT INTO `settings_buienradar` VALUES (0,0,'http://gps.buienradar.nl/getrr.php','51.2194475','4.4024643','Antwerpen',300,0,3,'integer 0-255',4,4),(1,0,'http://gps.buienradar.nl/getrr.php','51.2194475','4.4024643','Antwerpen',300,0,3,'integer 0-255',4,4);
+INSERT INTO `settings_buienradar` VALUES (0,0,'http://gadgets.buienradar.nl/data/raintext','51.2194475','4.4024643','Antwerpen',300,0,3,'integer 0-255',4,4),(1,0,'http://gadgets.buienradar.nl/data/raintext','51.2194475','4.4024643','Antwerpen',300,0,3,'integer 0-255',4,4);
 /*!40000 ALTER TABLE `settings_buienradar` ENABLE KEYS */;
 UNLOCK TABLES;
 
