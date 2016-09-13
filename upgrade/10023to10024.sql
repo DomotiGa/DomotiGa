@@ -2,7 +2,7 @@
 -- Extend devicetypes description field length
 --
 
-ALTER TABLE devicetypes CHANGE COLUMN 'description' 'description' VARCHAR(64) NULL DEFAULT NULL;
+ALTER TABLE devicetypes CHANGE COLUMN `description` `description` VARCHAR(64) NULL DEFAULT NULL;
 
 --
 -- Set new Buienradar url
@@ -65,7 +65,7 @@ INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES 
 -- Redo plugin column again, it was missed out in 'domotiga.sql' of 1.0.023
 --
 
-ALTER TABLE plugins CHANGE COLUMN 'protocols' 'protocols' VARCHAR(1024) CHARACTER SET 'utf8' NOT NULL;
+ALTER TABLE plugins CHANGE COLUMN `protocols` `protocols` VARCHAR(1024) CHARACTER SET 'utf8' NOT NULL;
 
 --
 -- Set the RFXComTRX protocols, to fix the 512/1024 issue and add new protocols
@@ -78,8 +78,8 @@ UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI D
 -- feature https://www.domotiga.nl/issues/603 review password and users login
 --
 
-ALTER TABLE users ADD 'tfasecret' VARCHAR(16) NULL;
-ALTER TABLE users ADD 'tfaenabled' TINYINT(1) NOT NULL DEFAULT '0';
+ALTER TABLE users ADD `tfasecret` VARCHAR(16) NULL;
+ALTER TABLE users ADD `tfaenabled` TINYINT(1) NOT NULL DEFAULT '0';
 
 --
 -- Add TCP support for the jeelabs module
@@ -93,7 +93,7 @@ ALTER TABLE settings_jeelabs ADD COLUMN type VARCHAR(32) CHARACTER SET 'utf8' NU
 -- Insert the new default values into settings_jeelabs
 --
 
-UPDATE 'settings_jeelabs' SET type='serial', tcphost='192.168.1.1', port=5000;
+UPDATE `settings_jeelabs` SET type='serial', tcphost='192.168.1.1', tcpport=5000;
 
 --
 -- Drop 'type' from visonic settings
@@ -113,13 +113,13 @@ ALTER TABLE settings_visonic ADD COLUMN type VARCHAR(32) CHARACTER SET 'utf8' NU
 -- Insert the new default values into settings_visonic
 --
 
-UPDATE 'settings_visonic' SET type='serial', tcphost='192.168.1.1', port=5000;
+UPDATE `settings_visonic` SET type='serial', tcphost='192.168.1.1', port=5000;
 
 --
 -- Update rtu to RTU for modbus RTU/ASCII support
 --
 
-UPDATE 'settings_modbus' SET modbustype='RTU' WHERE modbustype='rtu';
+UPDATE `settings_modbus` SET modbustype='RTU' WHERE modbustype='rtu';
 
 --
 -- Finally update to 1.0.024
