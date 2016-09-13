@@ -1,3 +1,9 @@
+--
+-- Set new Buienradar url
+--
+
+UPDATE settings_buienradar SET urlbuienradar = 'http://gadgets.buienradar.nl/data/raintext' WHERE id = 0;
+UPDATE settings_buienradar SET urlbuienradar = 'http://gadgets.buienradar.nl/data/raintext' WHERE id = 1;
 
 --
 -- Modify existing Velbus modules description
