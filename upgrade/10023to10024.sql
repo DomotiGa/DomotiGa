@@ -113,7 +113,7 @@ ALTER TABLE settings_visonic ADD COLUMN type VARCHAR(32) CHARACTER SET 'utf8' NU
 -- Insert the new default values into settings_visonic
 --
 
-UPDATE `settings_visonic` SET type='serial', tcphost='192.168.1.1', port=5000;
+UPDATE `settings_visonic` SET type='serial', tcphost='192.168.1.1', tcpport=5000;
 
 --
 -- Update rtu to RTU for modbus RTU/ASCII support
