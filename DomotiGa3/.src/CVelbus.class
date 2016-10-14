@@ -49,7 +49,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Velbus"
 Public PluginFriendlyName As String = "Velleman Velbus"
-Public PluginVersion As String = "1.03"
+Public PluginVersion As String = "1.04"
 Public PluginAuthor As String = "BreFra"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -2319,6 +2319,8 @@ Private Sub VMBGPO_Receive(bAddress As Byte, aData As Byte[])
   Dim sTemp As String
   Dim iDeviceId As Integer
   Dim iSubAddress As Integer
+  Dim iTemp As Integer
+  Dim sMode As String
 
   Select aData[0]
     Case VB_MODULE_TYPE
@@ -2348,6 +2350,52 @@ Private Sub VMBGPO_Receive(bAddress As Byte, aData As Byte[])
       Next
     Case VB_DAYLIGHT_SAVING
       WriteDebugLog("  Daylight Saving: " & IIf(aData[1], "Enabled", "Disabled"))
+    Case VB_TEMP_STATUS
+      ' Report operating mode, but not stored in the device YET
+      WriteDebugLog("  Local control " & IIf(BTst(aData[1], 0), "locked", "unlocked"))
+
+      Select (aData[1] And &H06)
+        Case &H00 ' 00x
+          sMode = "Run mode"
+        Case &H02 ' 01x
+          sMode = "Manual mode"
+        Case &H04 ' 10x
+          sMode = "Sleep timer mode"
+        Case &H06 ' 11x
+          sMode = "Disable mode"
+      End Select
+      WriteDebugLog("  " & sMode)
+
+      WriteDebugLog("  Auto send sensor temperature " & IIf(BTst(aData[1], 3), "enabled", "disabled"))
+
+      Select (aData[1] And &H70)
+        Case &H00 ' 000xxxx
+          sMode = "Safe temp mode (anti frost)"
+        Case &H10 ' 001xxxx
+          sMode = "Night mode"
+        Case &H20 ' 010xxxx
+          sMode = "Day mode"
+        Case &H40 ' 100xxxx
+          sMode = "Comfort mode"
+        Case Else
+          sMode = "Unknown mode"
+      End Select
+      WriteDebugLog("  " & sMode)
+
+      WriteDebugLog("  " & IIf(BTst(aData[1], 7), "Cooler mode", "Heater mode"))
+
+      ' Current temperature measured. Add the FF00 to make it a negative number
+      iTemp = aData[4]
+      If aData[4] >= &H80 Then iTemp += &HFF00
+      sTemp = Format(CSingle(CSingle(iTemp) / 2), "-#0.0")
+      WriteDebugLog("  Temperature Measured: " & sTemp)
+
+      ' Current temperature set
+      iTemp = aData[5]
+      If aData[5] >= &H80 Then iTemp += &HFF00
+      sTemp = Format(CSingle(CSingle(iTemp) / 2), "-#0.0")
+      WriteDebugLog("  Temperature Set: " & sTemp)
+
 
     Case Else
       WriteDebugLog("  *** Unsupported Command ***")
@@ -2361,13 +2409,13 @@ Private Sub VMBGPO_Send(bAddress As Byte, sAction As String)
   Dim aData As New Byte[]
   Dim bPrio As Byte
   Dim sCommand As String
-  Dim sSetPoint As String
+  Dim sCommand2 As String
   Dim fSetPoint As Float
   Dim bSetPoint As Byte
 
   If InStr(sAction, " ") Then
     sCommand = UCase(Left(sAction, InStr(sAction, " ") - 1))
-    sSetPoint = Right(sAction, Len(sAction) - InStr(sAction, " "))
+    sCommand2 = Right(sAction, Len(sAction) - InStr(sAction, " "))
   Else
     sCommand = UCase(sAction)
   Endif
@@ -2384,14 +2432,14 @@ Private Sub VMBGPO_Send(bAddress As Byte, sAction As String)
       bPrio = VB_LPRIO
       aData.Add(VB_ERROR_COUNT_REQUEST)
     Case "SP"
-      Try fSetPoint = Val(Replace(sSetPoint, ".", ","))
+      Try fSetPoint = Val(Replace(sCommand2, ".", ","))
       If Error Then
-        WriteLog("ERROR: Invalid SetPoint '" & sSetPoint & "' , it has to be e.g. '20.5'")
+        WriteLog("ERROR: Invalid SetPoint '" & sCommand2 & "' , it has to be e.g. '20.5'")
         Return
       Endif
 
       If fSetPoint < -55 Or If fSetPoint > 63.5 Then
-        WriteLog("ERROR: Invalid SetPoint '" & sSetPoint & "', it has to be between '-55' and '63.5'")
+        WriteLog("ERROR: Invalid SetPoint '" & sCommand2 & "', it has to be between '-55' and '63.5'")
         Return
       Endif
 
@@ -2402,8 +2450,29 @@ Private Sub VMBGPO_Send(bAddress As Byte, sAction As String)
       ' Multiple with 2 and round - Gambas converts it automatically in the right byte format
       bSetPoint = Round(fSetPoint * 2)
       aData.Add(bSetPoint)
+    Case "MODE"
+
+      bPrio = VB_LPRIO
+      Select UCase(sCommand2)
+        Case "COMFORT"
+          aData.Add(VB_TEMP_COMFORT)
+        Case "DAY"
+          aData.Add(VB_TEMP_DAY)
+        Case "NIGHT"
+          aData.Add(VB_TEMP_NIGHT)
+        Case "SAFE"
+          aData.Add(VB_TEMP_SAFE)
+        Case Else
+          WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+          Return
+      End Select
+
+      aData.Add(&HFF)
+      aData.Add(&H00)
+
     Case Else
       WriteDebugLog("Unsupported action '" & sAction & "' for '" & $sModuleType & "' module!")
+      Return
   End Select
 
   If aData.Count Then QueueCommand(CreateVelbusPackage(bPrio, bAddress, aData, False))
