@@ -2652,8 +2652,14 @@ void cURL_Post_JSON(uint32 QueueId, uint32 HomeId, char* Method, char* PostData 
 			// Define variable for find
 			size_t pos;
 
-			// Try to find jsonrpc 2.0 in the received data
+			// Try to find "jsonrpc": "2.0" in the received data
 			pos = readBuffer.find("{\"jsonrpc\": \"2.0\"");
+
+			// Try to find it also as "jsonrpc":"2.0"
+			if ( pos == string::npos )
+			{
+				pos = readBuffer.find("{\"jsonrpc\":\"2.0\"");
+			}
 
 			if ( pos == string::npos )
 			{
@@ -2662,6 +2668,12 @@ void cURL_Post_JSON(uint32 QueueId, uint32 HomeId, char* Method, char* PostData 
 			}
 
 			pos = readBuffer.find("{\"jsonrpc\": \"2.0\", \"result\": true, \"id\":");
+
+			// Try to find also the string without spaces
+			if ( pos == string::npos )
+			{
+				pos = readBuffer.find("{\"jsonrpc\":\"2.0\",\"result\":true,\"id\":");
+			}
 
 			if ( pos == string::npos )
 			{
@@ -3016,7 +3028,14 @@ const char* DomoZWave_OZWVersion( )
 	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d (%s)", ozw_vers_major, ozw_vers_minor, ozw_vers_revision, ozw_version_string );
 
 	ozw_vers = ozw_vers2;
-	return ozw_vers.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	// return ozw_vers.c_str();
+
+	char *retStr=new char[ozw_vers.size()+1];
+	retStr[ozw_vers.size()]=0;
+	memcpy(retStr,ozw_vers.c_str(),ozw_vers.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3045,7 +3064,14 @@ const char* DomoZWave_GetLibraryVersion( uint32 home )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetLibraryVersion: HomeId=0x%x", home );
 	try { LibraryVersion =  Manager::Get()->GetLibraryVersion( home ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "LibraryVersion=%s", LibraryVersion.c_str() );
-	return LibraryVersion.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return LibraryVersion.c_str();
+
+	char *retStr=new char[LibraryVersion.size()+1];
+	retStr[LibraryVersion.size()]=0;
+	memcpy(retStr,LibraryVersion.c_str(),LibraryVersion.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3061,7 +3087,14 @@ const char* DomoZWave_GetLibraryTypeName( uint32 home )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetLibraryTypeName: HomeId=0x%x", home );
 	try { LibraryTypeName = Manager::Get()->GetLibraryTypeName( home ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "LibraryTypeName=%s", LibraryTypeName.c_str() );
-	return LibraryTypeName.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return LibraryTypeName.c_str();
+
+	char *retStr=new char[LibraryTypeName.size()+1];
+	retStr[LibraryTypeName.size()]=0;
+	memcpy(retStr,LibraryTypeName.c_str(),LibraryTypeName.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3102,7 +3135,14 @@ const char* DomoZWave_ControllerType( uint32 home )
 	}
 
 	WriteLog( LogLevel_Debug, false, "ControllerType=%s", ctype.c_str() );
-	return ctype.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return ctype.c_str();
+
+	char *retStr=new char[ctype.size()+1];
+	retStr[ctype.size()]=0;
+	memcpy(retStr,ctype.c_str(),ctype.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3248,8 +3288,14 @@ const char* DomoZWave_GetNodeQueryStage( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeQueryStage: HomeId=0x%x Node=%d", home, node );
 	try { QueryStage = Manager::Get()->GetNodeQueryStage( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "QueryStage=%s", QueryStage.c_str() );
-	return QueryStage.c_str();
 
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return QueryStage.c_str();
+
+	char *retStr=new char[QueryStage.size()+1];
+	retStr[QueryStage.size()]=0;
+	memcpy(retStr,QueryStage.c_str(),QueryStage.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3265,8 +3311,14 @@ const char* DomoZWave_GetNodeManufacturerName( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeManufacturerName: HomeId=0x%x Node=%d", home, node );
 	try { ManufacturerName = Manager::Get()->GetNodeManufacturerName( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ManufacturerName=%s", ManufacturerName.c_str() );
-	return ManufacturerName.c_str();
 
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return ManufacturerName.c_str();
+
+	char *retStr=new char[ManufacturerName.size()+1];
+	retStr[ManufacturerName.size()]=0;
+	memcpy(retStr,ManufacturerName.c_str(),ManufacturerName.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3282,7 +3334,14 @@ const char* DomoZWave_GetNodeProductName( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductName: HomeId=0x%x Node=%d", home, node );
 	try { ProductName = Manager::Get()->GetNodeProductName( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ProductName=%s", ProductName.c_str() );
-	return ProductName.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return ProductName.c_str();
+
+	char *retStr=new char[ProductName.size()+1];
+        retStr[ProductName.size()]=0;
+        memcpy(retStr,ProductName.c_str(),ProductName.size());
+        return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3299,7 +3358,14 @@ const char* DomoZWave_GetNodeName( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeName: HomeId=0x%x Node=%d", home, node );
 	try { NodeName = Manager::Get()->GetNodeName( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "NodeName=%s", NodeName.c_str() );
-	return NodeName.c_str();
+
+        // Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	// return NodeName.c_str();
+
+        char *retStr=new char[NodeName.size()+1];
+        retStr[NodeName.size()]=0;
+        memcpy(retStr,NodeName.c_str(),NodeName.size());
+        return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3316,7 +3382,14 @@ const char* DomoZWave_GetNodeLocation( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeLocation: HomeId=0x%x Node=%d", home, node );
 	try { NodeLocation = Manager::Get()->GetNodeLocation( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "NodeLocation=%s", NodeLocation.c_str() );
-	return NodeLocation.c_str();
+
+        // Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	// return NodeLocation.c_str();
+
+        char *retStr=new char[NodeLocation.size()+1];
+        retStr[NodeLocation.size()]=0;
+        memcpy(retStr,NodeLocation.c_str(),NodeLocation.size());
+        return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3332,7 +3405,14 @@ const char* DomoZWave_GetNodeManufacturerId( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeManufacturerId: HomeId=0x%x Node=%d", home, node );
 	try { ManufacturerId = Manager::Get()->GetNodeManufacturerId( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ManufacturerId=%s", ManufacturerId.c_str() );
-	return ManufacturerId.c_str();
+
+        // Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	// return ManufacturerId.c_str();
+
+        char *retStr=new char[ManufacturerId.size()+1];
+        retStr[ManufacturerId.size()]=0;
+        memcpy(retStr,ManufacturerId.c_str(),ManufacturerId.size());
+        return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3348,7 +3428,14 @@ const char* DomoZWave_GetNodeProductType( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductType: HomeId=0x%x Node=%d", home, node );
 	try { ProductType = Manager::Get()->GetNodeProductType( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ProductType=%s", ProductType.c_str() );
-	return ProductType.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return ProductType.c_str();
+
+	char *retStr=new char[ProductType.size()+1];
+	retStr[ProductType.size()]=0;
+	memcpy(retStr,ProductType.c_str(),ProductType.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3364,7 +3451,14 @@ const char* DomoZWave_GetNodeProductId( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductId: HomeId=0x%x Node=%d", home, node );
 	try { ProductId = Manager::Get()->GetNodeProductId( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ProductId=%s",ProductId.c_str() );
-	return ProductId.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return ProductId.c_str();
+
+	char *retStr=new char[ProductId.size()+1];
+	retStr[ProductId.size()]=0;
+	memcpy(retStr,ProductId.c_str(),ProductId.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3451,7 +3545,13 @@ const char* DomoZWave_GetNodeLibraryVersion( uint32 home, int32 node )
 				{
 					string string_value;
 					Manager::Get()->GetValueAsString( v, &string_value );
-					return string_value.c_str();
+
+					//return string_value.c_str();
+
+					char *retStr=new char[string_value.size()+1];
+					retStr[string_value.size()]=0;
+					memcpy(retStr,string_value.c_str(),string_value.size());
+					return retStr;
 				}
 			}
 		}
@@ -3487,7 +3587,13 @@ const char* DomoZWave_GetNodeProtocolVersion( uint32 home, int32 node )
 				{
 					string string_value;
 					Manager::Get()->GetValueAsString( v, &string_value );
-					return string_value.c_str();
+
+					//return string_value.c_str();
+
+					char *retStr=new char[string_value.size()+1];
+					retStr[string_value.size()]=0;
+					memcpy(retStr,string_value.c_str(),string_value.size());
+					return retStr;
 				}
 			}
 		}
@@ -3523,7 +3629,13 @@ const char* DomoZWave_GetNodeApplicationVersion( uint32 home, int32 node )
 				{
 					string string_value;
 					Manager::Get()->GetValueAsString( v, &string_value );
-					return string_value.c_str();
+
+					//return string_value.c_str();
+
+					char *retStr=new char[string_value.size()+1];
+					retStr[string_value.size()]=0;
+					memcpy(retStr,string_value.c_str(),string_value.size());
+					return retStr;
 				}
 			}
 		}
@@ -3613,7 +3725,13 @@ const char* DomoZWave_GetNodeStatus( uint32 home, int32 node )
 		}
 
 		WriteLog( LogLevel_Debug, false, "Status=%s", status.c_str() );
-		return status.c_str();
+
+		//return status.c_str();
+
+		char *retStr=new char[status.size()+1];
+		retStr[status.size()]=0;
+		memcpy(retStr,status.c_str(),status.size());
+		return retStr;
 	}
 
 	return "";
@@ -5813,7 +5931,13 @@ const char* DomoZWave_CommandClassIdName(int class_value)
 			// We need to report unknown commandclass, the value is in decimal
 			string str = SSTR( "Unknown (" << class_value << ")" );
 			WriteLog( LogLevel_Debug, true, "DomoZWave_CommandClassIdName: %s", str.c_str() );
-			return str.c_str();
+
+			//return str.c_str();
+
+			char *retStr=new char[str.size()+1];
+			retStr[str.size()]=0;
+			memcpy(retStr,str.c_str(),str.size());
+			return retStr;
 		}
 	}
 }
@@ -5871,7 +5995,13 @@ const char* DomoZWave_BasicTypeName( int32 basictype )
 			// We need to report unknown basic types, the value is in decimal
 			string str = SSTR( "Unknown (" << basictype << ")" );
 			WriteLog( LogLevel_Debug, true, "DomoZWave_BasicTypeName: %s", str.c_str() );
-			return str.c_str();
+
+			//return str.c_str();
+
+			char *retStr=new char[str.size()+1];
+			retStr[str.size()]=0;
+			memcpy(retStr,str.c_str(),str.size());
+			return retStr;
 		}
 	}
 }
@@ -6096,7 +6226,13 @@ const char* DomoZWave_SpecificTypeName( int32 generictype, int32 specifictype )
 			// We need to report unknown generic types, the value is in decimal
 			string str = SSTR( "Unknown (" << generictype << ")" );
 			WriteLog( LogLevel_Debug, true, "DomoZWave_Generic/SpecificTypeName: %s", str.c_str() );
-			return str.c_str();
+
+			//return str.c_str();
+
+			char *retStr=new char[str.size()+1];
+			retStr[str.size()]=0;
+			memcpy(retStr,str.c_str(),str.size());
+			return retStr;
 		}
 	}
 }
