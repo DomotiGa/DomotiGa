@@ -276,6 +276,7 @@ void InitVars()
 	MapCommandClassBasic["0x40|0x01"] = 0x62;
 	MapCommandClassBasic["0x40|0x02"] = 0x62;
 	MapCommandClassBasic["0x40|0x03"] = 0x62;
+	MapCommandClassBasic["0x40|0x04"] = 0x76;
 	MapCommandClassBasic["0xa1"] = 0x71;
 
 }
@@ -1807,24 +1808,33 @@ void RPC_NodeEvent( uint32 HomeId, int NodeId, ValueID valueID, int value )
 
 	WriteLog( LogLevel_Debug, false, "Value%d=%s", valueid, dev_result );
 
-	pthread_mutex_lock( &g_JsonRpcThread );
+	// Only send it to DomotiGa if it isn'the COMMAND_CLASS_NO_OPERATION type
+	if ( id > 0 )
+	{
+		pthread_mutex_lock( &g_JsonRpcThread );
 
-	StructJsonRpcInfo JsonRpcInfo;
+		StructJsonRpcInfo JsonRpcInfo;
 
-	if ( QueueId > 0xFFFF ) QueueId = 0;
-	QueueId++;
-	JsonRpcInfo.QueueId = QueueId;
-	JsonRpcInfo.HomeId = HomeId;
-	strcpy( JsonRpcInfo.Method, "openzwave.setvalue" );
-	snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"instanceid\": %d, \"valueid\": %d, \"value\": \"%s\"}", HomeId, NodeId, instanceID, valueid, &dev_result );
+		if ( QueueId > 0xFFFF ) QueueId = 0;
+		QueueId++;
+		JsonRpcInfo.QueueId = QueueId;
+		JsonRpcInfo.HomeId = HomeId;
+		strcpy( JsonRpcInfo.Method, "openzwave.setvalue" );
+		snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"instanceid\": %d, \"valueid\": %d, \"value\": \"%s\"}", HomeId, NodeId, instanceID, valueid, &dev_result );
 
-	m_JsonRpcInfo.push_back(JsonRpcInfo);
+		m_JsonRpcInfo.push_back(JsonRpcInfo);
 
-	// Done, unlock again
-	pthread_mutex_unlock( &g_JsonRpcThread );
+		// Done, unlock again
+		pthread_mutex_unlock( &g_JsonRpcThread );
 
-	// Signal the thread to process data
-	sem_post( &s_JsonRpcThread );
+		// Signal the thread to process data
+		sem_post( &s_JsonRpcThread );
+	}
+	else
+	{
+		WriteLog( LogLevel_Debug, false, "Note=Value not send, CommandClassId=COMMAND_CLASS_NO_OPERATION" );
+	}
+
 }
 
 //-----------------------------------------------------------------------------
@@ -3950,7 +3960,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 	float float_value;
 	bool response;
 	bool cmdfound = false;
-	uint8 usecc;
+	uint8 usecc = 0;
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetValue" ) == false ) return false;
 
@@ -3962,30 +3972,53 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 		// First check if the instance is known in our CommandClass list, else it is a problem
 		if ( nodeInfo->instancecommandclass.find(instance) != nodeInfo->instancecommandclass.end() )
 		{
-			// First try to detect the MULTILEVEL, then SWITCH_BINARY, then DOOR_LOCK and last THERMOSTAT_SETPOINT
-			// This should solve problems for device like Qubino, they advertise too many CommandClasses
-			if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_MULTILEVEL") != string::npos )
+
+			// Latest open-zwave library gives a good/proper mapping for the basic, so use that one first
+			// This will fix the "issue" with Fibaro FGS-213
+			if ( nodeInfo->basicmapping > 0 )
 			{
-				usecc = COMMAND_CLASS_SWITCH_MULTILEVEL;
+				// Only allow it, when we can find this CommandClass in the device list, otherwise we try to map the old way
+				if ( nodeInfo->instancecommandclass[instance].find(DomoZWave_CommandClassIdName( nodeInfo->basicmapping ) ) != string::npos )
+				{
+					usecc = nodeInfo->basicmapping;
+					WriteLog( LogLevel_Debug, false, "BasicMapping=Yes" );
+				}
 			}
-			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_BINARY") != string::npos )
+
+			// No proper basic class mapping found, now try it the old way
+			if ( usecc == 0 )
 			{
-				usecc = COMMAND_CLASS_SWITCH_BINARY;
+				WriteLog( LogLevel_Debug, false, "BasicMapping=No" );
+
+				// First try to detect the MULTILEVEL, then SWITCH_BINARY, then DOOR_LOCK and last THERMOSTAT_SETPOINT
+				// This should solve problems for device like Qubino, they advertise too many CommandClasses
+				if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_MULTILEVEL") != string::npos )
+				{
+					usecc = COMMAND_CLASS_SWITCH_MULTILEVEL;
+				}
+				else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_BINARY") != string::npos )
+				{
+					usecc = COMMAND_CLASS_SWITCH_BINARY;
+				}
+				else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_DOOR_LOCK") != string::npos )
+				{
+					usecc = COMMAND_CLASS_DOOR_LOCK;
+				}
+				else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_MODE") != string::npos )
+				{
+					usecc = COMMAND_CLASS_THERMOSTAT_MODE;
+				}
+				else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_SETPOINT") != string::npos )
+				{
+					usecc = COMMAND_CLASS_THERMOSTAT_SETPOINT;
+				}
 			}
-			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_DOOR_LOCK") != string::npos )
+
+			// Nothing found, don't continue
+			if ( usecc == 0 )
 			{
-				usecc = COMMAND_CLASS_DOOR_LOCK;
-			}
-			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_MODE") != string::npos )
-			{
-				usecc = COMMAND_CLASS_THERMOSTAT_MODE;
-			}
-			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_SETPOINT") != string::npos )
-			{
-				usecc = COMMAND_CLASS_THERMOSTAT_SETPOINT;
-			} else {
 				// Set to-use CommandClass to zero, because we didn't find anything :-(
-				WriteLog( LogLevel_Debug, false, "Return=false (instance doesn't have a CommandClass MULTILEVEL, SWITCH_BINARY or THERMOSTAT_SETPOINT)" );
+				WriteLog( LogLevel_Debug, false, "Return=false (instance doesn't have a CommandClass MULTILEVEL, SWITCH_BINARY, DOOR_LOCK, THERMOSTAT_MODE or THERMOSTAT_SETPOINT)" );
 				return false;
 				usecc = 0;
 			}
