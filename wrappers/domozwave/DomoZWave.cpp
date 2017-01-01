@@ -2183,6 +2183,19 @@ void OnNotification
 		}
 		case Notification::Type_DriverReady:
 		{
+
+			// Clear any possible nodes in our list, because we got the DriverReady notification
+			uint32 ncount = 0;
+			for ( list<NodeInfo*>::iterator it = g_nodes.begin(); it != g_nodes.end(); ++it )
+			{
+				NodeInfo* nodeInfo = *it;
+				if ( nodeInfo->m_homeId == data->GetHomeId() )
+				{
+					it = g_nodes.erase( it );
+					ncount++;
+				}
+			}
+
 			RPC_DriverReady( data->GetHomeId(), (int)data->GetNodeId() );
 			break;
 		}
@@ -2276,7 +2289,19 @@ void OnNotification
 		}
 		case Notification::Type_DriverRemoved:
 		{
-			WriteLog( LogLevel_Debug, true, "DriverRemoved" );
+			// Clear any possible nodes in our list, because we got the DriverRemoved notification
+			uint32 ncount = 0;
+			for ( list<NodeInfo*>::iterator it = g_nodes.begin(); it != g_nodes.end(); ++it )
+			{
+				NodeInfo* nodeInfo = *it;
+				if ( nodeInfo->m_homeId == data->GetHomeId() )
+				{
+					it = g_nodes.erase( it );
+					ncount++;
+				}
+			}
+
+			WriteLog( LogLevel_Debug, true, "DriverRemoved (%d nodes removed)", ncount );
 			break;
 		}
 		case Notification::Type_EssentialNodeQueriesComplete:
@@ -4035,6 +4060,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 		{
 			uint8 id = (*it).GetCommandClassId();
 			uint8 inst = (*it).GetInstance();
+			uint8 index = (*it).GetIndex();
 			string label;
 
 			try { label = Manager::Get()->GetValueLabel( (*it) ); } catch(...) {}
@@ -4154,6 +4180,8 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 
 					WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(id), id );
 					WriteLog( LogLevel_Debug, false, "Instance=%d", instance );
+					WriteLog( LogLevel_Debug, false, "Index=%d", index );
+					WriteLog( LogLevel_Debug, false, "Label=%s", label.c_str() );
 					if ( ValueID::ValueType_Decimal == (*it).GetType() ) {
 						WriteLog( LogLevel_Debug, false, "Value=%f (decimal)", float_value );
 					}
