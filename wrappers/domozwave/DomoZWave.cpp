@@ -25,7 +25,6 @@
 // Define and get version numbers of DomoZWave and the open-zwave
 //-----------------------------------------------------------------------------
 char domozwave_vers[] = "DomoZWave version 2.10";
-#include <vers.cpp> // OpenZWave 1.0.r706 and later
 
 //-----------------------------------------------------------------------------
 
@@ -1676,10 +1675,12 @@ void RPC_NodeProtocolInfo( uint32 HomeId, int NodeId )
 	bool beaming;
 	bool routing;
 	bool security;
+	bool zwaveplus;
 	int32 maxbaudrate;
 	const char* nodetype;
 	const char* name;
 	const char* location;
+	const char* zwaveplustype;
 	uint8 version;
 	uint8 basicmapping = 0;
 	char buffer[50];
@@ -1697,6 +1698,8 @@ void RPC_NodeProtocolInfo( uint32 HomeId, int NodeId )
         try { name = Manager::Get()->GetNodeName( HomeId, NodeId ).c_str(); } catch(...) {}
         try { location = Manager::Get()->GetNodeLocation( HomeId, NodeId ).c_str(); } catch(...) {}
         try { version = Manager::Get()->GetNodeVersion( HomeId, NodeId ); } catch(...) {}
+        try { zwaveplus = Manager::Get()->IsNodeZWavePlus( HomeId, NodeId ); } catch(...) {}
+        try { zwaveplustype = Manager::Get()->GetNodePlusTypeString( HomeId, NodeId ).c_str(); } catch(...) {}
 
 	// Get NodeInfo information
 	if ( NodeInfo* nodeInfo = GetNodeInfo( HomeId, NodeId ) )
@@ -1744,6 +1747,11 @@ void RPC_NodeProtocolInfo( uint32 HomeId, int NodeId )
 	WriteLog( LogLevel_Debug, false, "Security=%s", (security)?"true":"false" );
 	WriteLog( LogLevel_Debug, false, "Name=%s", name );
 	WriteLog( LogLevel_Debug, false, "Location=%s", location );
+	WriteLog( LogLevel_Debug, false, "ZWavePlus=%s", (zwaveplus)?"true":"false" );
+	if ( zwaveplus )
+	{
+		WriteLog( LogLevel_Debug, false, "ZWavePlusType=%s", zwaveplustype );
+	}
 
 	pthread_mutex_lock( &g_JsonRpcThread );
 
@@ -1754,7 +1762,7 @@ void RPC_NodeProtocolInfo( uint32 HomeId, int NodeId )
 	JsonRpcInfo.QueueId = QueueId;
 	JsonRpcInfo.HomeId = HomeId;
 	strcpy( JsonRpcInfo.Method, "openzwave.addnode" );
-snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"basic\": %d, \"generic\": %d, \"specific\": %d, \"listening\": %s, \"frequentlistening\": %s, \"beaming\": %s, \"routing\": %s, \"security\": %s, \"maxbaudrate\": %d, \"version\": %d}", HomeId, NodeId, basic, generic, specific, (listening)?"true":"false", (frequentlistening)?"true":"false", (beaming)?"true":"false", (routing)?"true":"false", (security)?"true":"false", maxbaudrate, version ); 
+snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"basic\": %d, \"generic\": %d, \"specific\": %d, \"listening\": %s, \"frequentlistening\": %s, \"beaming\": %s, \"routing\": %s, \"security\": %s, \"maxbaudrate\": %d, \"version\": %d, \"zwaveplus\": %s}", HomeId, NodeId, basic, generic, specific, (listening)?"true":"false", (frequentlistening)?"true":"false", (beaming)?"true":"false", (routing)?"true":"false", (security)?"true":"false", maxbaudrate, version , (zwaveplus)?"true":"false" ); 
 
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
 
@@ -2833,10 +2841,7 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 	WriteLog( LogLevel_Debug, true, "DomoZWave_Init: Initializing Open-ZWave Wrapper" );
 
 	// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
-	// There is also a string value: ozw_version_string
-	char ozw_vers2[100];
-	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d (%s)", ozw_vers_major, ozw_vers_minor, ozw_vers_revision, ozw_version_string );
-	WriteLog( LogLevel_Debug, false, "%s", ozw_vers2 );
+	WriteLog( LogLevel_Debug, false, "OpenZWave version %s", Manager::Get()->getVersionLongAsString().c_str() );
 
 	// Initialize global libcurl
 	curl_global_init( CURL_GLOBAL_ALL );
@@ -3059,13 +3064,8 @@ const char* DomoZWave_OZWVersion( )
 	string ozw_vers;
 
 	// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
-	char ozw_vers2[100];
-	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d (%s)", ozw_vers_major, ozw_vers_minor, ozw_vers_revision, ozw_version_string );
-
-	ozw_vers = ozw_vers2;
-
-	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
-	// return ozw_vers.c_str();
+        ozw_vers = "OpenZWave version ";
+	ozw_vers.append(Manager::Get()->getVersionLongAsString());
 
 	char *retStr=new char[ozw_vers.size()+1];
 	retStr[ozw_vers.size()]=0;
