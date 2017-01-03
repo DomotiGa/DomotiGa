@@ -8,9 +8,15 @@ UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI D
 --
 DELETE FROM devicetypes WHERE id=321;
 DELETE FROM devicetypes WHERE id=322;
+DELETE FROM devicetypes WHERE id=726;
+DELETE FROM devicetypes WHERE id=727;
+DELETE FROM devicetypes WHERE id=728;
 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (321, 'PIR Sensor', 'PIR', 'PT2262', '1F5170');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (322, 'Door Window Sensor', 'Door Window Sensor', 'PT2262', '1F5170');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (726, 'VMB1BL', 'Single channel blind control module', 'Velbus', '\'02\', \'05\' or \'12\'');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (727, 'VMB2BL', '2-channel blind control module', 'Velbus', '\'02|1\', \'02|2\' or \'12|2\' <device address|channel>');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (728, 'VMB4PD', 'Lcd command module with 8 functions', 'Velbus', '\'02|1\', \'02|2\' or \'12|2\' <device address|channel>');
 
 --
 -- Finally update to 1.0.025
