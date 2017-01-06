@@ -17,7 +17,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Buienradar"
 Public PluginFriendlyName As String = "Buienradar"
-Public PluginVersion As String = "1.01"
+Public PluginVersion As String = "1.02"
 Public PluginAuthor As String = "Johan Van Dyck"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -48,6 +48,8 @@ Private $iDevTimeValue As Integer
 Public hBuienradar As New HttpClient
 Public tBuienradar As New Timer
 Public $sBuffer As String
+
+Private $sURLRedirect As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -137,10 +139,15 @@ Public Sub GetWeather()
 
   $sBuffer = ""
 
-  ' Build up the GET Url, we retrieve current conditions only
-  ' e.g. http://gps.buienradar.nl/getrr.php?lat=52&lon=4
-  sURL = $sURLBuienradar & "?lat=" & $sLatitude & "&lon=" & $sLongitude
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching data for Country/City '" & $sCity & "' with request '" & sURL & "'")
+  If $sURLRedirect Then
+    ' It is possible we received a 302/Redirect with a previous HTTP GET, now go try to fetch this one
+    sURL = $sURLRedirect
+  Else
+    ' Build up the GET Url, we retrieve current conditions only
+    ' e.g. http://gps.buienradar.nl/getrr.php?lat=52&lon=4
+    sURL = $sURLBuienradar & "?lat=" & $sLatitude & "&lon=" & $sLongitude
+    If $bDebug Then Main.WriteDebugLog(LogLabel & "Fetching data for Country/City '" & $sCity & "' with request '" & sURL & "'")
+  Endif
 
   hBuienradar = New HttpClient As "hBuienradar"
   hBuienradar.URL = sURL
@@ -179,11 +186,53 @@ Public Sub hBuienradar_Finished()
 
   Dim sMsg As String
   Dim cData As Collection
+  Dim sHeader As String
+  Dim iCode As Integer
+  Dim iPos As Integer
 
-  Select Last.Code
+  ' There is a bug in Gambas 3.9.2 and earlier when Content-Length=0 the "Last.Code" is always zero
+  ' Even with a 302 redirect
+
+  iCode = Last.Code
+  
+  If iCode = 0 Then
+    '  With a possible redirect we received header
+    If Last.Headers.Count Then
+      For Each sHeader In Last.Headers
+        If InStr(sHeader, "Location:", gb.IgnoreCase) = 1 Then
+          iCode = 302
+          $sURLRedirect = LTrim(Mid(sHeader, InStr(sHeader, ":") + 1))
+          ' Check if the URL is redirect like "/" or "http://", otherwise we need to add it
+          If InStr($sURLRedirect, "/") = 1 Then
+            iPos = InStr($sURLBuienradar, "://")
+            If iPos Then
+              iPos = InStr($sURLBuienradar, "/", iPos + 3)
+              If iPos Then
+                $sURLRedirect = Mid($sURLBuienradar, 1, iPos - 1) & $sURLRedirect
+              Else
+                $sURLRedirect = $sURLBuienradar & $sURLRedirect
+              Endif
+            Else
+              ' Invalid URL? We expect "://" otherwise the HTTPClient can't do much with it
+              Main.WriteLog(LogLabel & "ERROR: Buienradar URL '" & $sURLBuienradar & "' seems to be invalid, it should contain at least '://'. Can't redirect the URL")
+              $sURLRedirect = ""
+              iCode = 500
+            Endif
+          Endif
+        Endif
+      Next
+    Endif
+  Endif
+
+  Select iCode
     Case 200
       If $bDebug Then Main.WriteDebugLog(LogLabel & "Received '" & $sBuffer & "'")
       DecodeBuienradar($sBuffer)
+    Case 302 ' Redirect
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received a HTTP URL Redirect to '" & $sURLRedirect & "'")
+      ' Now redo the HTTP GET of the data with the new URL
+      GetWeather()
+      If $bDebug Then Main.WriteDebugLog(LogLabel & "Updating data.")
     Default
       IsRunning = False
       ErrorText = "Unknown HTTP Code=" & Last.Code
