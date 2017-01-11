@@ -17,7 +17,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Onkyo"
 Public PluginFriendlyName As String = "Onkyo/Integra Receiver"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "1.91"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -40,10 +40,12 @@ Private $sInterface As String
 Private $sSerPort As String
 Private $sBaud As String
 
-Public hOnkyo As New Socket
-Public hOnkyoSer As New SerialPort
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 
-Public sBuffer As String
+Private $sBuffer As String
+
+Public hBroadcastUDP As UdpSocket
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -85,28 +87,83 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the tcp host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP() As Boolean
+Private Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
+  Dim sIP As String
+  Dim sMsg As String
 
   ' try to close the connection
-  Try hOnkyo.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' get a new one
-  hOnkyo = New Socket As "Onkyo"
-  hOnkyo.Connect($sTCPHost, $iTCPPort)
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
+
+  ' try to close the connection
+  Try hBroadcastUDP.Close
+
+  ' In debug mode: Broadcast Device Search Message for auto discovery
+  ' Should work for newer 2011 AV receivers models
+  If $bDebug Then
+    ' get a new one
+    hBroadcastUDP = New UdpSocket As "BroadcastUDP"
+
+  ' Set own port to 0, and destination port to fixed port 60128
+    hBroadcastUDP.Port = 0
+    hBroadcastUDP.TargetPort = 60128
+
+    ' Now try to bind to the port
+    hBroadcastUDP.Bind()
+
+    ' sMsg is a specific ISCP message - "!xECNQSTN" is discovery, still need to add the packet info
+    sMsg = "ISCP\x00\x00\x00\x10\x00\x00\x00" & Chr(Len("!xECNQSTN") + 3) & "\x01\x00\x00\x00!1" & "!xECNQSTN" & gb.Cr
+
+    ' Now broadcast it to add addresses in our network
+    ' Maybe it can be handier to use '239.255.255.250'?
+    For Each sIP In Main.aBroadcastAddr
+      WriteDebugLog("Sending UDP discovery to AV devices (model 2011 and newer) to broadcast address '" & sIP & "' on port 60128")
+      hBroadcastUDP.TargetHost = sIP
+      Try Write #hBroadcastUDP, sMsg, Len(sMsg)
+    Next
+
+  Endif
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -116,16 +173,21 @@ Catch ' some errors
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' connect to the serial port
+' open serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectSerial() As Boolean
+Private Sub ConnectSerial() As Boolean
 
-  ' try to close the connection
-  Try hOnkyoSer.Close
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
   ' get a new one
-  hOnkyoSer = New Serialport As "OnkyoSer"
-  With hOnkyoSer
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = &HFF + gb.Byte
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = 0
@@ -133,18 +195,18 @@ Public Function ConnectSerial() As Boolean
     .StopBits = 1
     .FlowControl = 0
     .Open()
-  End With
+ End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+  WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -154,38 +216,21 @@ Catch ' some errors
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is connected
+' close port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Onkyo_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is closed
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Onkyo_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' disconnect from the tcp host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect() As Boolean
 
   ' try to close the connection
-  Try hOnkyo.Close
-  Try hOnkyoSer.Close
+  Try hMySocket.Close
+  Try hMySerial.Close
 
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
+  ' close a possible broadcast server
+  Try hBroadcastUDP.Close
+
+  ' try stop running timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
 
   ' all ok
   Return True
@@ -196,20 +241,40 @@ Finally
   ErrorWhere = ""
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Return False
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to host
+'
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Onkyo_Error()
+Private Sub StopTimers()
 
-  Dim sMsg As String
+  $sBuffer = ""
 
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
 
   IsRunning = False
   ErrorText = sMsg
@@ -217,22 +282,110 @@ Public Sub Onkyo_Error()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read data char for char
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send command via serial port or tcp socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub SendCmd(sCmd As String)
 
-  Dim sStr As String = "ISCP\x00\x00\x00\x10\x00\x00\x00" & Chr(Len(sCmd)) & "\x01\x00\x00\x00!1" & sCmd & "\n"
+  Dim sOut As String
+
+  ' The output format for serial and tcp are different
+  If $sInterface = "tcp" Then
+    ' the length is !1 + sCmd + gb.Cr
+    sOut = "ISCP\x00\x00\x00\x10\x00\x00\x00" & Chr(Len(sCmd) + 3) & "\x01\x00\x00\x00!1" & sCmd & gb.Cr
+    If $bDebug Then WriteDebugLog("> " & StringToHex(sOut))
+  Else
+    sOut = "!1" & sCmd & gb.Cr
+    If $bDebug Then WriteDebugLog("> " & StringToHex(sOut))
+  Endif
 
   ' IF $bDebug THEN Main.WriteDebugLog(LogLabel & "Sending '") & sCmd & ("' to Receiver."))
 
+  ' Write to serial, but we read as byte[] and write as string
   If $sInterface = "tcp" Then
-    Try Print #hOnkyo, sStr
-    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & Error.Text)
+    hMySocket.Write(sOut, gb.String)
   Else
-    Try Print #hOnkyoSer, sStr
-    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! -> " & Error.Text)
+    hMySerial.Write(sOut, gb.String)
   Endif
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
+
+  If $bDebug Then WriteDebugLog("> " & sCmd)
 
 End
 
@@ -254,7 +407,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
       If aCmd.Count = 2 Then
         SetCommand(aCmd[0], aCmd[1], sAddress)
       Else
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
+        If $bDebug Then WriteDebugLog("Unsupported command received: " & sValue)
       Endif
       SetCommand(sValue, sAddress)
   End Select
@@ -271,12 +424,12 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
   ' commands here are for Integra DTR-40.1
   ' ignore sAddress, only fixed unit 1
   sAddress = sAddress
-  Select Case LCase(sCmd)
+  Select LCase(sCmd)
     Case "power"
       ' 00 - Off, 01 - On
       SendCmd(IIf(sValue == "on", "PWR01", "PWR00"))
     Case "volume"
-      Select Case LCase(sValue)
+      Select LCase(sValue)
         Case "up"
           SendCmd("MVLUP")
         Case "down"
@@ -291,7 +444,7 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
       End Select
     Case "mute"
       ' 00 - Off, 01 - On, TG - Toggle
-      Select Case LCase(sValue)
+      Select LCase(sValue)
         Case "on"
           SendCmd("AMT01")
         Case "off"
@@ -301,7 +454,7 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
       End Select
     Case "input", "z2input"
       sTmp = IIf(sCmd == "input", "SLI", "SLZ")
-      Select Case LCase(sValue)
+      Select LCase(sValue)
         Case "vcr", "dvr", "video1"
           SendCmd(sTmp & "00")
         Case "cbl/sat", "video2"
@@ -356,7 +509,7 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
       SendCmd(IIf(sValue == "on", "ZPW01", "ZPW00"))
     Case "z2mute"
       ' 00 - Off, 01 - On, TG - Toggle
-      Select Case LCase(sValue)
+      Select LCase(sValue)
         Case "on"
           SendCmd("ZMT01")
         Case "off"
@@ -379,7 +532,7 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
           SendCmd("ZVL" & Hex(Val(sValue)))
       End Select
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported set command received: " & sCmd & " " & sValue)
+      If $bDebug Then WriteDebugLog("Unsupported set command received: " & sCmd & " " & sValue)
   End Select
 
 End
@@ -392,57 +545,27 @@ Public Sub GetCommand(sCmd As String, sAddress As String)
     Case "power"
       SendCmd("QSTN")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported get value received: " & sCmd)
+      If $bDebug Then WriteDebugLog("Unsupported get value received: " & sCmd)
   End Select
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' host ip address found
+'
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Onkyo_Found()
+Private Sub ProcessReceivedChar(bTemp As Byte)
 
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' data received on tcp socket
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Onkyo_Read()
-
-  Dim sData As String
-
-  Try sData = Read #hOnkyo, 1
-  If Error Then
-    Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
+  If bTemp = 26 Then ' buffer until linefeed then parse
+    If Len($sBuffer) > 1 Then ProcessReceivedPacket($sBuffer)
+    $sBuffer = ""
   Else
-    If sData = Chr$(26) Then ' buffer until linefeed then parse
-      If Len(sBuffer) > 1 Then ParseLine(sBuffer)
-      sBuffer = Null
+    ' Append only if the string is not empty, and not gb.Cr or gb.Lf
+    If Len($sBuffer) Then
+      $sBuffer &= Chr(bTemp)
     Else
-      sBuffer &= sData
-    Endif
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' data received on serial port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub OnkyoSer_Read()
-
-  Dim sData As String
-
-  Try sData = Read #hOnkyoSer, 1
-  If Error Then
-    Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! -> " & Error.Text)
-  Else
-    If sData = Chr$(26) Then ' buffer until linefeed then parse
-      If Len(sBuffer) > 1 Then ParseLine(sBuffer)
-      sBuffer = Null
-    Else
-      sBuffer &= sData
+      If bTemp <> &H0D And If bTemp <> &H0A Then
+        $sBuffer &= Chr(bTemp)
+      Endif
     Endif
   Endif
 
@@ -451,24 +574,76 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' parse received data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseLine(sBuf As String)
+Private Sub ProcessReceivedPacket(sBuf As String)
 
-  Dim sStr, sCat, sItem, sValue As String
+  Dim sStr As String
+  Dim iHdrSize As Integer
+  Dim iDataSize As Integer
 
-  If InStr(sBuf, "ISCP", 1) Then
-    sStr = Mid(sBuf, InStr(sBuf, "!") + 2, 5)
-    sCat = Left(sStr, 3)
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sStr)
+  If $bDebug Then WriteDebugLog("< " & StringToHex(sBuf))
 
-    Select Case sCat
-      Case "PWR"
-        ' main power
-        sItem = "Power"
-        If sStr = "PWR01" Then sValue = "On"
-        If sStr = "PWR00" Then sValue = "Off"
-        OnkyoSetValue(sItem, sValue)
-    End Select
+  ' Data received on serial and tcp is different
+  If $sInterface = "tcp" Then
+    If Len(sBuf) < 22 Then
+      If $bDebug Then WriteDebugLog("ERROR: Invalid packet received, minimal length is 22 bytes")
+      Return
+    Endif
+
+    If InStr(sBuf, "ISCP") <> 1 Then
+      If $bDebug Then WriteDebugLog("ERROR: Invalid packet received, doesn't start with 'ISCP'")
+      Return
+    Endif
+    
+    If InStr(sBuf, "!1") = 0 Then
+      If $bDebug Then WriteDebugLog("ERROR: Invalid packet received, doesn't contain '!1'")
+      Return
+    Endif
+
+    ' All looks good, lets extract the command
+
+    iHdrSize = Val("&H" & Hex$(Asc(sBuf, 5), 2) & Hex$(Asc(sBuf, 6), 2) & Hex$(Asc(sBuf, 7), 2) & Hex$(Asc(sBuf, 8), 2))
+    iDataSize = Val("&H" & Hex$(Asc(sBuf, 9), 2) & Hex$(Asc(sBuf, 10), 2) & Hex$(Asc(sBuf, 11), 2) & Hex$(Asc(sBuf, 12), 2))
+
+    If $bDebug Then
+      WriteDebugLog("  Header Size=" & iHdrSize)
+      WriteDebugLog("  Data Size=" & iDataSize)
+      WriteDebugLog("  Version=" & CInt(Asc(sBuf, 13)))
+      WriteDebugLog("  eISCP 1-5=" & Mid(sBuf, iHdrSize + 1, 5))
+      WriteDebugLog("  iSCP Msg=" & Mid(sBuf, iHdrSize + 6))
+    Endif
+
+    sStr = Mid(sBuf, InStr(sBuf, "!1") + 2, 5)
+
+  Else
+
+    If Len(sBuf) < 5 Then
+      If $bDebug Then WriteDebugLog("ERROR: Invalid packet received, minimal length is 5 bytes")
+      Return
+    Endif
+
+    If InStr(sBuf, "!1") <> 1 Then
+      If $bDebug Then WriteDebugLog("ERROR: Invalid packet received, doesn't contain '!1'")
+      Return
+    Endif
+
+    If $bDebug Then
+      WriteDebugLog("  eISCP 1-5=" & Mid(sBuf, 1, 5))
+      WriteDebugLog("  iSCP Msg=" & Mid(sBuf, 6))
+    Endif
+
+    sStr = Mid(sBuf, InStr(sBuf, "!1") + 2, 5)
+
   Endif
+
+  If $bDebug Then WriteDebugLog("< " & sStr)
+
+  ' Currently we do exact matching for power on/off
+  Select sStr
+    Case "PWR00"
+      OnkyoSetValue("Power", "Off")
+    Case "PWR01"
+      OnkyoSetValue("Power", "On")
+  End Select
 
 End
 
@@ -478,7 +653,41 @@ End
 Private Sub OnkyoSetValue(sItem As String, vValue As Variant)
 
   Main.SetGlobalVar("Onkyo_" & sItem, vValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received Item: " & sItem & " Value: " & vValue)
+  If $bDebug Then WriteDebugLog("Received Item: " & sItem & " Value: " & vValue)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the udp port on our previous discovery
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub BroadcastUDP_Read()
+
+  Dim sStr As String
+
+  sStr = Read #Last, Lof(Last)
+
+  If $bDebug Then
+    WriteDebugLog("< UDP Discovery: " & StringToHex(sStr) & "(" & sStr & ")")
+  Endif
+
+End
+
+Public Sub StringToHex(sStr As String, Optional bSpace As Boolean = True) As String
+
+  Dim sOut As String
+  Dim iLen As Integer
+
+  If bSpace Then
+    ' Add a space between hex values
+    For iLen = 1 To Len(sStr)
+      sOut &= IIf(sOut, " ", "") & Hex$(Asc(sStr, iLen), 2)
+    Next
+  Else
+    For iLen = 1 To Len(sStr)
+      sOut &= Hex$(Asc(sStr, iLen), 2)
+    Next
+  Endif
+
+  Return sOut
+
+End
