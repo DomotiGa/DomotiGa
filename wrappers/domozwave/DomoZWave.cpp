@@ -1586,7 +1586,20 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 void RPC_NodeAdded( uint32 HomeId, int nodeID )
 {
-	WriteLog( LogLevel_Debug, true, "NodeAdd: HomeId=0x%x Node=%d", HomeId, nodeID );
+
+
+	// Do a count of nodes added now and before
+	uint32 ncount = 0;
+	for ( list<NodeInfo*>::iterator it = g_nodes.begin(); it != g_nodes.end(); ++it )
+	{
+		NodeInfo* nodeInfo = *it;
+		if ( nodeInfo->m_homeId == HomeId )
+		{
+			ncount++;
+		}
+	}
+
+	WriteLog( LogLevel_Debug, true, "NodeAdd: HomeId=0x%x Node=%d (%d nodes added)", HomeId, nodeID, ncount );
 }
 
 //-----------------------------------------------------------------------------
@@ -2838,7 +2851,7 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 		cout << OZW_datetime << " [DomoZwave] " << "***FATAL*** Unable to write to \"" << logfile_name << "\"" << endl;
 	}
 
-	WriteLog( LogLevel_Debug, true, "DomoZWave_Init: Initializing Open-ZWave Wrapper" );
+	WriteLog( LogLevel_Debug, true, "DomoZWave_Init: Initializing Open-ZWave Wrapper - %s", domozwave_vers );
 
 	// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
 	WriteLog( LogLevel_Debug, false, "OpenZWave version %s", Manager::Get()->getVersionLongAsString().c_str() );
