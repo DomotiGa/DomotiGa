@@ -40,6 +40,11 @@ Private $sInterface As String
 Private $sSerPort As String
 Private $sBaud As String
 
+' Command buffer
+Private $tQueueDelay As New Timer As "QueueDelay"
+Private $cQueue As New Collection
+
+' Interface objects
 Public hMySocket As CSocket
 Public hMySerial As CSerialPort
 
@@ -146,13 +151,17 @@ Private Sub ConnectTCP() As Boolean
     hBroadcastUDP.Bind()
 
     ' sMsg is a specific ISCP message - "!xECNQSTN" is discovery, still need to add the packet info
-    sMsg = "ISCP\x00\x00\x00\x10\x00\x00\x00" & Chr(Len("!xECNQSTN") + 3) & "\x01\x00\x00\x00!1" & "!xECNQSTN" & gb.Cr
+    sMsg = "ISCP\x00\x00\x00\x10\x00\x00\x00" & Chr(Len("!xECNQSTN") + 1) & "\x01\x00\x00\x00" & "!xECNQSTN" & gb.Cr
 
     ' Now broadcast it to add addresses in our network
     ' Maybe it can be handier to use '239.255.255.250'?
     For Each sIP In Main.aBroadcastAddr
       WriteDebugLog("Sending UDP discovery to AV devices (model 2011 and newer) to broadcast address '" & sIP & "' on port 60128")
       hBroadcastUDP.TargetHost = sIP
+
+      ' try 3 times, lets see what happens
+      Try Write #hBroadcastUDP, sMsg, Len(sMsg)
+      Try Write #hBroadcastUDP, sMsg, Len(sMsg)
       Try Write #hBroadcastUDP, sMsg, Len(sMsg)
     Next
 
@@ -200,6 +209,9 @@ Private Sub ConnectSerial() As Boolean
   ' Write to main logfile we connected successfully
   WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
+
+  ' Initialize variables
+  Run()
 
   ' All went ok
   Return True
@@ -251,10 +263,25 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub StopTimers()
 
-  $sBuffer = ""
+  Try $tQueueDelay.Stop
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' Empty internal buffer
+  $sBuffer = ""
+
+  ' Stop timer for Interface delay/busy
+  $tQueueDelay.Stop
+
+  ' Kick off the queue, this can be needed after a reconnect
+  DoQueue()
+
+End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' peer closed tcp socket
@@ -297,6 +324,8 @@ Public Sub MySocket_Ready()
 
   WriteLog("TCP interface connected.")
   IsRunning = True
+
+  Run()
 
 End
 
@@ -362,9 +391,15 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send command via serial port or tcp socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub SendCmd(sCmd As String)
+Private Sub WriteCommand(sCmd As String, sKey As String)
 
   Dim sOut As String
+
+  ' Don't try to do something if we are in error state
+  If Not IsRunning Then
+    WriteLog("ERROR: Can't send command, because plugin is in error state!")
+    Return
+  Endif
 
   ' The output format for serial and tcp are different
   If $sInterface = "tcp" Then
@@ -385,7 +420,17 @@ Private Sub SendCmd(sCmd As String)
     hMySerial.Write(sOut, gb.String)
   Endif
 
-  If $bDebug Then WriteDebugLog("> " & sCmd)
+  If $bDebug Then
+    WriteDebugLog("> " & sCmd)
+    WriteDebugLog("  Queue Count: " & ($cQueue.Count - 1))
+  Endif
+
+  ' remove sent command from queue
+  $cQueue.Remove(sKey)
+
+  ' start timer to wait before sending next command
+  $tQueueDelay.Delay = 50 ' 50msec based on Onkyo documentation
+  $tQueueDelay.Start
 
 End
 
@@ -427,109 +472,109 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
   Select LCase(sCmd)
     Case "power"
       ' 00 - Off, 01 - On
-      SendCmd(IIf(sValue == "on", "PWR01", "PWR00"))
+      QueueCommand(IIf(sValue == "on", "PWR01", "PWR00"))
     Case "volume"
       Select LCase(sValue)
         Case "up"
-          SendCmd("MVLUP")
+          QueueCommand("MVLUP")
         Case "down"
-          SendCmd("MVLDOWN")
+          QueueCommand("MVLDOWN")
         Case "up1"
-          SendCmd("MVLUP1")
+          QueueCommand("MVLUP1")
         Case "down1"
-          SendCmd("MVLDOWN1")
+          QueueCommand("MVLDOWN1")
         Case Else
           ' 0-100 (0-64 Hex)
-          SendCmd("MVL" & Hex(Val(sValue), 2))
+          QueueCommand("MVL" & Hex(Val(sValue), 2))
       End Select
     Case "mute"
       ' 00 - Off, 01 - On, TG - Toggle
       Select LCase(sValue)
         Case "on"
-          SendCmd("AMT01")
+          QueueCommand("AMT01")
         Case "off"
-          SendCmd("AMT00")
+          QueueCommand("AMT00")
         Case "toggle"
-          SendCmd("AMTTG")
+          QueueCommand("AMTTG")
       End Select
     Case "input", "z2input"
       sTmp = IIf(sCmd == "input", "SLI", "SLZ")
       Select LCase(sValue)
         Case "vcr", "dvr", "video1"
-          SendCmd(sTmp & "00")
+          QueueCommand(sTmp & "00")
         Case "cbl/sat", "video2"
-          SendCmd(sTmp & "01")
+          QueueCommand(sTmp & "01")
         Case "game/tv", "game", "video3"
-          SendCmd(sTmp & "02")
+          QueueCommand(sTmp & "02")
         Case "aux1", "aux", "video4"
-          SendCmd(sTmp & "03")
+          QueueCommand(sTmp & "03")
         Case "aux2", "video5"
-          SendCmd(sTmp & "04")
+          QueueCommand(sTmp & "04")
         Case "video6"
-          SendCmd(sTmp & "05")
+          QueueCommand(sTmp & "05")
         Case "video7"
-          SendCmd(sTmp & "06")
+          QueueCommand(sTmp & "06")
         Case "dvd"
-          SendCmd(sTmp & "10")
+          QueueCommand(sTmp & "10")
         Case "tv/tape", "tape", "tape1"
-          SendCmd(sTmp & "20")
+          QueueCommand(sTmp & "20")
         Case "tape2"
-          SendCmd(sTmp & "21")
+          QueueCommand(sTmp & "21")
         Case "phono"
-          SendCmd(sTmp & "22")
+          QueueCommand(sTmp & "22")
         Case "cd"
-          SendCmd(sTmp & "23")
+          QueueCommand(sTmp & "23")
         Case "fm"
-          SendCmd(sTmp & "24")
+          QueueCommand(sTmp & "24")
         Case "am"
-          SendCmd(sTmp & "25")
+          QueueCommand(sTmp & "25")
         Case "tuner"
-          SendCmd(sTmp & "26")
+          QueueCommand(sTmp & "26")
         Case "net", "server"
-          SendCmd(sTmp & "27")
+          QueueCommand(sTmp & "27")
         Case "inet radio"
-          SendCmd(sTmp & "28")
+          QueueCommand(sTmp & "28")
         Case "usb front"
-          SendCmd(sTmp & "29")
+          QueueCommand(sTmp & "29")
         Case "usb rear"
-          SendCmd(sTmp & "2A")
+          QueueCommand(sTmp & "2A")
         Case "port"
-          SendCmd(sTmp & "40")
+          QueueCommand(sTmp & "40")
         Case "up"
-          SendCmd(sTmp & "UP")
+          QueueCommand(sTmp & "UP")
         Case "down"
-          SendCmd(sTmp & "DOWN")
+          QueueCommand(sTmp & "DOWN")
         Case "off"
-          SendCmd(sTmp & "7F")
+          QueueCommand(sTmp & "7F")
       End Select
     Case "cli"
-      SendCmd(sValue)
+      QueueCommand(sValue)
     Case "z2power"
       ' 00 - Off, 01 - On
-      SendCmd(IIf(sValue == "on", "ZPW01", "ZPW00"))
+      QueueCommand(IIf(sValue == "on", "ZPW01", "ZPW00"))
     Case "z2mute"
       ' 00 - Off, 01 - On, TG - Toggle
       Select LCase(sValue)
         Case "on"
-          SendCmd("ZMT01")
+          QueueCommand("ZMT01")
         Case "off"
-          SendCmd("ZMT00")
+          QueueCommand("ZMT00")
         Case "toggle"
-          SendCmd("ZMTTG")
+          QueueCommand("ZMTTG")
       End Select
     Case "z2volume"
       Select Case LCase(sValue)
         Case "up"
-          SendCmd("ZVLUP")
+          QueueCommand("ZVLUP")
         Case "down"
-          SendCmd("ZVLDOWN")
+          QueueCommand("ZVLDOWN")
         Case "up1"
-          SendCmd("ZVLUP1")
+          QueueCommand("ZVLUP1")
         Case "down1"
-          SendCmd("ZVLDOWN1")
+          QueueCommand("ZVLDOWN1")
         Case Else
           ' 0-100 (0-64 Hex)
-          SendCmd("ZVL" & Hex(Val(sValue), 2))
+          QueueCommand("ZVL" & Hex(Val(sValue), 2))
       End Select
     Case Else
       If $bDebug Then WriteDebugLog("Unsupported set command received: " & sCmd & " " & sValue)
@@ -543,7 +588,7 @@ Public Sub GetCommand(sCmd As String, sAddress As String)
   sAddress = sAddress
   Select Case LCase(sCmd)
     Case "power"
-      SendCmd("QSTN")
+      QueueCommand("PWRQSTN")
     Case Else
       If $bDebug Then WriteDebugLog("Unsupported get value received: " & sCmd)
   End Select
@@ -628,7 +673,7 @@ Private Sub ProcessReceivedPacket(sBuf As String)
 
     If $bDebug Then
       WriteDebugLog("  eISCP 1-5=" & Mid(sBuf, 1, 5))
-      WriteDebugLog("  iSCP Msg=" & Mid(sBuf, 6))
+      WriteDebugLog("  SCP Msg=" & Mid(sBuf, 6))
     Endif
 
     sStr = Mid(sBuf, InStr(sBuf, "!1") + 2, 5)
@@ -654,6 +699,47 @@ Private Sub OnkyoSetValue(sItem As String, vValue As Variant)
 
   Main.SetGlobalVar("Onkyo_" & sItem, vValue)
   If $bDebug Then WriteDebugLog("Received Item: " & sItem & " Value: " & vValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Add command to queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub QueueCommand(sCmd As String)
+
+  ' add command to queue
+  $cQueue.Add(sCmd, Rnd)
+
+  ' if bus is Not busy process it
+  If Not $tQueueDelay.Enabled Then DoQueue()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Process next item in queue
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DoQueue()
+
+  Dim sCmd As String
+
+  For Each sCmd In $cQueue
+    WriteCommand(sCmd, $cQueue.Key)
+    Break ' only do first one
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Interface busy timer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub QueueDelay_Timer()
+
+  $tQueueDelay.Stop
+
+  If $cQueue.Count Then ' if there are more commands left in queue, send next one
+    If $bDebug Then WriteDebugLog("Sending command from Queue (count = " & $cQueue.Count & ")")
+    DoQueue()
+  Endif
 
 End
 
