@@ -19,7 +19,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "GenericIO"
 Public PluginFriendlyName As String = "GenericIO Receiver"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "thecad"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 9
@@ -31,12 +31,6 @@ Public Instance As Integer
 Public IsRunning As Boolean
 Public ErrorText As String
 Public ErrorWhere As String
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Public variables
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public hGenericIOSer As New SerialPort
-Public hGenericIOTCP As New Socket
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Private Variables
@@ -51,11 +45,11 @@ Private $bDebug As Boolean
 Private $sGenericIORegex As String
 Private $sGenericIODelimiter As String
 
-Private sBuffer As String
+' Interface objects
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+Private $sMsgData As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -83,22 +77,16 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   InterfaceId = Devices.FindInterface("GenericIO Interface")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
-    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    WriteLog("ERROR: " & ErrorText)
     IsRunning = False
     Return
   Endif
 
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
-    ' Define timer for TCP reconnect
-    tReConnect = New Timer As "tReConnect"
-    tReConnect.Delay = iReConnectRetry
-    tReConnect.Stop
-
     ConnectTCP()
-
   Else
-    Connect()
+    ConnectSerial()
   Endif
 
 End
@@ -112,24 +100,48 @@ Public Sub StopPlugin()
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.XWriteLog(LogLabel & sLog)
+  If $bDebug Then Main.XWriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.XWriteDebugLog(LogLabel & sLog)
+
+End
+
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'                                        TCP HANDLING
+'                                        TCP and SERIAL HANDLING
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP() As Boolean
+Private Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the connection
-  Try hGenericIOTCP.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' get a new one
-  hGenericIOTCP = New Socket As "GenericIOTCP"
-  hGenericIOTCP.Connect($sTCPHost, $iTCPPort)
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect - if first start
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready 
   IsRunning = False
@@ -138,8 +150,8 @@ Public Function ConnectTCP() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -149,108 +161,21 @@ Catch ' some errors
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' host ip address found
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GenericIOTCP_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' tcp socket ready
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GenericIOTCP_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' peer closed tcp socket
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub GenericIOTCP_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
-
-End
-
-Public Sub GenericIOTCP_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  ConnectTCP()
-
-End
-
-Public Sub GenericIOTCP_Read()
-
-  Dim sData As String
-
-  If Last.Status <> Net.Connected Then Return
-  sData = Read #Last, 1
-  If sData = Chr(10) Or sData = Chr(13) Then ' buffer until carriage return or linefeed
-    If Len(sBuffer) > 1 Then ParseLine(sBuffer) ' Parse the text
-    sBuffer = Null
-  Else
-    sBuffer &= sData
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'                                       SERIAL PORT HANDLING
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Private Sub ConnectSerial() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the port
-  Try hGenericIOSer.Close
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
   ' get a new one
-  hGenericIOSer = New Serialport As "GenericIOSer"
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
 
-  With hGenericIOSer
+  With hMySerial
+    .DataType = &HFF + gb.Byte
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = 0
@@ -260,18 +185,21 @@ Public Function Connect() As Boolean
     .Open()
   End With
 
-  Flush #hGenericIOSer  ' Start with a clean buffer
+  Flush #hMySerial ' Start with a clean buffer
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+  WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
+
+  ' Initialize variables
+  Run()
 
   ' All went ok
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -283,18 +211,16 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' close port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect() As Boolean
 
   ' try to close the connection
-  Try tReConnect.Stop
-  Try hGenericIOSer.Close
-  Try hGenericIOTCP.Close
+  Try hMySocket.Close
+  Try hMySerial.Close
 
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
+  ' try stop running timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
 
   ' all ok
   Return True
@@ -305,37 +231,155 @@ Finally
   ErrorWhere = ""
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Return False
 
 End
 
-Public Sub GenericIOSer_Read()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
 
-  Dim sData As String
+End
 
-  Try sData = Read #hGenericIOSer, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from serial port! -> " & Error.Text)
-  If sData = Chr(10) Or sData = Chr(13) Then ' buffer until carriage return or linefeed
-    If Len(sBuffer) > 1 Then ParseLine(sBuffer) ' parse the text
-    sBuffer = Null
-  Else
-    sBuffer &= sData
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' Empty internal buffer
+  $sMsgData = ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
   Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read data char for char
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 '                                                PARSE/HANDLE INPUT DATA RECEIVED FROM SERIAL/TCP
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseLine(sData As String)
+Private Sub ProcessReceivedChar(bTemp As Byte)
+
+  If bTemp = 10 Or bTemp = 13 Then ' buffer until carriage return or linefeed
+    If Len($sMsgData) > 1 Then ProcessReceivedPacket($sMsgData) ' Parse the text
+    $sMsgData = ""
+  Else
+    $sMsgData &= Chr(bTemp)
+  Endif
+
+
+End
+
+Private Sub ProcessReceivedPacket(sData As String)
 
   Dim aScan, aValueToUpdate As String[]
   Dim sLine, sAddress, sRegexExpression, sAddressToChange, sValueFields As String
   Dim iDeviceId, iValueToUpdate, iAddressPosition As Integer
   Dim rRegex As Regexp
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Raw Data read '" & sData & "'")
+  If $bDebug Then WriteDebugLog("Raw Data read '" & sData & "'")
   'If sData = "." Then Return ' A single "." is a heartbeat message sent every few seconds and does not have any action at the moment.
   For Each sLine In Split(sData, "\n")
     sRegexExpression = Replace$($sGenericIORegex, "\\", "\\")  ' Gambas needs the " \ " character in a regex to be doubled to be recognised"
@@ -343,12 +387,12 @@ Private Sub ParseLine(sData As String)
     ' parse sensor data using the regex for the interface to get the Address field to change
     rRegex = New Regexp(sLine, sRegexExpression)
     sAddressToChange = rRegex.text
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Data read ('" & sLine & "') with regex ('" & sRegexExpression & "') applied gives AddressToChange of : '" & sAddressToChange & "'")
+    If $bDebug Then WriteDebugLog("Data read ('" & sLine & "') with regex ('" & sRegexExpression & "') applied gives AddressToChange of : '" & sAddressToChange & "'")
 
     ' try to find device with the address from the parsed input data as part of it's address field, and correct interface type.
     iDeviceId = Devices.FindRegExp("|" & sAddressToChange & "|", InterfaceId, Instance, "GenericIO", "\"", "\"")
 
-    If Error Then Main.WriteDebugLog(LogLabel & "Could not find a matching device for incomming address :  Looking for '" & sAddressToChange & "' in DeviceId '" & iDeviceId & "'")
+    If Error Then WriteDebugLog("Could not find a matching device for incomming address :  Looking for '" & sAddressToChange & "' in DeviceId '" & iDeviceId & "'")
     If iDeviceId Then
       ' if we have found the device, then retrieve the full address field and then work out the index number of the match
       ' this is the value field we need to update. ie. if address we are looking for is "temp" and address field in device is |R1|R2|temp|litres|, the we are updating value field 3 in this device.
@@ -357,7 +401,7 @@ Private Sub ParseLine(sData As String)
       iValueToUpdate = aScan.Find(sAddressToChange)
       iAddressPosition = String.InStr(sLine, sAddressToChange)
       sValueFields = Mid(sLine, iAddressPosition + Len(sAddressToChange))
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Updating iDeviceId '" & iDeviceId & "' Address '" & sAddressToChange & "' to '" & sValueFields & "'")
+      If $bDebug Then WriteDebugLog("Updating iDeviceId '" & iDeviceId & "' Address '" & sAddressToChange & "' to '" & sValueFields & "'")
 
       aValueToUpdate = Split(sValueFields, $sGenericIODelimiter)
 
@@ -366,52 +410,51 @@ Private Sub ParseLine(sData As String)
           Select iValueToUpdate
             Case 1
               Devices.ValueUpdate(iDeviceId, 1, Trim(aValueToUpdate[0]))
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Update Value" & iValueToUpdate & " to '" & Trim(aValueToUpdate[0]) & "'")
+              If $bDebug Then WriteDebugLog("Update Value" & iValueToUpdate & " to '" & Trim(aValueToUpdate[0]) & "'")
             Case 2
               Devices.ValueUpdate(iDeviceId, 2, Trim(aValueToUpdate[0]))
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Update Value" & iValueToUpdate & " to '" & Trim(aValueToUpdate[0]) & "'")
+              If $bDebug Then WriteDebugLog("Update Value" & iValueToUpdate & " to '" & Trim(aValueToUpdate[0]) & "'")
             Case 3
               Devices.ValueUpdate(iDeviceId, 3, Trim(aValueToUpdate[0]))
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Update Value" & iValueToUpdate & " to '" & Trim(aValueToUpdate[0]) & "'")
+              If $bDebug Then WriteDebugLog("Update Value" & iValueToUpdate & " to '" & Trim(aValueToUpdate[0]) & "'")
             Case 4
               Devices.ValueUpdate(iDeviceId, 4, Trim(aValueToUpdate[0]))
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Update Value" & iValueToUpdate & " to '" & Trim(aValueToUpdate[0]) & "'")
+              If $bDebug Then WriteDebugLog("Update Value" & iValueToUpdate & " to '" & Trim(aValueToUpdate[0]) & "'")
             Default
-              Main.WriteDebugLog(LogLabel & "Unknown value to update :" & iValueToUpdate)
+              WriteDebugLog("Unknown value to update :" & iValueToUpdate)
         End Select
         Case 2
           Devices.ValueUpdate(iDeviceId, 1, Trim(aValueToUpdate[0]))
           Devices.ValueUpdate(iDeviceId, 2, Trim(aValueToUpdate[1]))
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Update Value1:'" & Trim(aValueToUpdate[0]) & "' Value2:'" & Trim(aValueToUpdate[1]) & "'")
+          If $bDebug Then WriteDebugLog("Update Value1:'" & Trim(aValueToUpdate[0]) & "' Value2:'" & Trim(aValueToUpdate[1]) & "'")
         Case 3
           Devices.ValueUpdate(iDeviceId, 1, Trim(aValueToUpdate[0]))
           Devices.ValueUpdate(iDeviceId, 2, Trim(aValueToUpdate[1]))
           Devices.ValueUpdate(iDeviceId, 3, Trim(aValueToUpdate[2]))
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Update Value1:'" & Trim(aValueToUpdate[0]) & "' Value2:" & Trim(aValueToUpdate[1]) & "' Value3:'" & Trim(aValueToUpdate[2]) & "'")
+          If $bDebug Then WriteDebugLog("Update Value1:'" & Trim(aValueToUpdate[0]) & "' Value2:" & Trim(aValueToUpdate[1]) & "' Value3:'" & Trim(aValueToUpdate[2]) & "'")
         Case 4
           Devices.ValueUpdate(iDeviceId, 1, Trim(aValueToUpdate[0]))
           Devices.ValueUpdate(iDeviceId, 2, Trim(aValueToUpdate[1]))
           Devices.ValueUpdate(iDeviceId, 3, Trim(aValueToUpdate[2]))
           Devices.ValueUpdate(iDeviceId, 4, Trim(aValueToUpdate[3]))
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Update Value1:'" & Trim(aValueToUpdate[1]) & "' Value2:'" & Trim(aValueToUpdate[1]) & "' Value3:'" & Trim(aValueToUpdate[2]) & "' Value4:'" & Trim(aValueToUpdate[3]) & "'")
+          If $bDebug Then WriteDebugLog("Update Value1:'" & Trim(aValueToUpdate[1]) & "' Value2:'" & Trim(aValueToUpdate[1]) & "' Value3:'" & Trim(aValueToUpdate[2]) & "' Value4:'" & Trim(aValueToUpdate[3]) & "'")
         Case 5
           Devices.ValueUpdate(iDeviceId, 1, Trim(aValueToUpdate[0]))
           Devices.ValueUpdate(iDeviceId, 2, Trim(aValueToUpdate[1]))
           Devices.ValueUpdate(iDeviceId, 3, Trim(aValueToUpdate[2]))
           Devices.ValueUpdate(iDeviceId, 4, Trim(aValueToUpdate[3]))
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Update Value1:'" & Trim(aValueToUpdate[1]) & "' Value2:'" & Trim(aValueToUpdate[1]) & "' Value3:'" & Trim(aValueToUpdate[2]) & "' Value4:'" & Trim(aValueToUpdate[3]) & "'")
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Update Battery:'" & Trim(aValueToUpdate[4]) & "'")
+          If $bDebug Then WriteDebugLog("Update Value1:'" & Trim(aValueToUpdate[1]) & "' Value2:'" & Trim(aValueToUpdate[1]) & "' Value3:'" & Trim(aValueToUpdate[2]) & "' Value4:'" & Trim(aValueToUpdate[3]) & "'")
+          If $bDebug Then WriteDebugLog("Update Battery:'" & Trim(aValueToUpdate[4]) & "'")
           Devices.Battery(iDeviceId, Trim(aValueToUpdate[4]))
         Default
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown value to update :" & aValueToUpdate.Count)
+          If $bDebug Then WriteDebugLog("Unknown value to update :" & aValueToUpdate.Count)
           Return
       End Select
-   Endif
+    Endif
+  Next
 
 Catch
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "ERROR: Parsing data packet: '" & sLine & "' '" & Error.Text & "' at '" & Error.Where & "'")
-  
-Next
+  If $bDebug Then WriteDebugLog("ERROR: Parsing data packet: '" & sLine & "' '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -430,16 +473,14 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
   sRawCmd = Replace$(sRawCmd, "\\n", Chr$(10))
   sRawCmd = sRawCmd & "\r\n"
 
-  If $sInterface = "tcp" Then
-    ' send the message to the tcp stream
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "SendCommand '" & sCmd & "' to " & $sTCPHost & ":" & $iTCPPort & " as '" & sRawCmd & "'")
-    Try Write #hGenericIOTCP, sRawCmd, Len(sRawCmd)
-    If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to TCP port! -> " & Error.Text)
+  ' Write the complete string - not byte-for-byte
+  If InStr($sInterface, "tcp") Then
+    If $bDebug Then WriteDebugLog("SendCommand '" & sCmd & "' to " & $sTCPHost & ":" & $iTCPPort & " as '" & sRawCmd & "'")
+    hMySocket.Write(sRawCmd, gb.String)
   Else
-    ' send the message to the serial port
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "SendCommand '" & sCmd & "' to " & $sSerPort & " as '" & sRawCmd & "'")
-    Try Write #hGenericIOSer, sRawCmd, Len(sRawCmd)
-    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! -> " & Error.Text)
+    If $bDebug Then WriteDebugLog("SendCommand '" & sCmd & "' to " & $sSerPort & " as '" & sRawCmd & "'")
+    hMySerial.Write(sRawCmd, gb.String)
   Endif
 
 End
+

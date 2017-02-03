@@ -23,7 +23,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "SmartMeter"
 Public PluginFriendlyName As String = "SmartMeter"
-Public PluginVersion As String = "1.02"
+Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "Ron Klinkien, Jesse Kerkhoven"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -50,13 +50,11 @@ Private $iStopbits As Integer
 Private $iParity As Integer
 Private $bDebug As Boolean
 
-Public hSmartMeter As New Socket
-Public hSmartMeterSer As New SerialPort
-Private sBuffer As String
+' Interface objects
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+Private $sMsgData As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -90,12 +88,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     Return
   Endif
 
-  ' Define timer for reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
-
-
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
     ConnectTCP()
@@ -105,7 +97,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 
   ' load test data if found
   If $bDebug Then
-    Try ProcessData(File.Load(Main.sBaseDir & "/debug/smartmeter.log"))
+    Try ProcessReceivedPacket(File.Load(Main.sBaseDir & "/debug/smartmeter.log"))
   Endif
 
 End
@@ -141,14 +133,19 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP() As Boolean
+Private Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the connection
-  Try hSmartMeter.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' get a new one
-  hSmartMeter = New Socket As "SmartMeter"
-  hSmartMeter.Connect($sTCPHost, $iTCPPort)
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
   WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
@@ -172,14 +169,19 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectSerial() As Boolean
+Private Sub ConnectSerial() As Boolean
 
-  ' try to close the connection
-  Try hSmartMeterSer.Close
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
   ' get a new one
-  hSmartMeterSer = New Serialport As "SmartMeterSer"
-  With hSmartMeterSer
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = &HFF + gb.Byte
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = $iParity
@@ -193,9 +195,8 @@ Public Function ConnectSerial() As Boolean
   WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
+  ' Initialize variables
+  Run()
 
   ' All went ok
   Return True
@@ -211,58 +212,20 @@ Catch ' some errors
 
 End
 
-Public Sub SmartMeter_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SmartMeter_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  WriteLog("ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is connected
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SmartMeter_Ready()
-
-  WriteLog("TCP interface connected.")
-  IsRunning = True
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
-
-End
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect() As Boolean
 
   ' try to close the connection
-  Try hSmartMeter.Close
-  Try hSmartMeterSer.Close
-  Try tReConnect.Stop
-  
-  If InStr($sInterface, "tcp") Then
-    WriteLog(PluginFriendlyName & " TCP connection closed.")
-  Else
-    WriteLog(PluginFriendlyName & " Port closed.")
-  Endif
+  Try hMySocket.Close
+  Try hMySerial.Close
 
+  ' try stop running timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
+  
   ' all ok
   Return True
 
@@ -272,90 +235,150 @@ Finally
   ErrorWhere = ""
 
 Catch
-  WriteLog("ERROR: " & Error.Text)
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
   Return False
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
+'
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
+Private Sub StopTimers()
 
-  ' Connect/Initialize connection
-  If InStr($sInterface, "tcp") Then
-    ConnectTCP()
-  Else
-    ConnectSerial()
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' Empty internal buffer
+  $sMsgData = ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
   Endif
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
 
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    WriteLog("Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    WriteLog("ERROR: Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
+  WriteLog("ERROR: " & sMsg)
 
 End
 
-' got data on serial port
-Public Sub SmartMeterSer_Read()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read data char for char
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
 
-  Dim sData As String
+  Dim bData As Byte
 
-  Try sData = Read #hSmartMeterSer, 1
-  If Error Then
-    WriteDebugLog("Error reading data from serial port! -> " & Error.Text)
-    sBuffer = Null
-    IsRunning = False
-    ReConnect()
-    Return
-  Endif
-
-  If sData = "!" Then ' buffer until end of record
-    sBuffer &= sData
-    ProcessData(sBuffer)
-    sBuffer = Null
-  Else
-    sBuffer &= sData
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
   Endif
 
 End
 
-' got data on tcp port
-Public Sub SmartMeter_Read()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
 
-  Dim sData As String
+  ' ReConnect/Initialize connection
+  ConnectSerial()
 
-  Try sData = Read #hSmartMeter, 1
-  If Error Then 
-    WriteDebugLog("Error reading data from tcp port! -> " & Error.Text)
-    sBuffer = Null
-    IsRunning = False
-    ReConnect()
-    Return
-  Endif
+End
 
-  If sData = "!" Then ' buffer until end of record
-    sBuffer &= sData
-    ProcessData(sBuffer)
-    sBuffer = Null
-  Else
-    sBuffer &= sData
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedChar(bTemp As Byte)
+
+  $sMsgData &= Chr(bTemp)
+
+  If bTemp = 33 Then ' Buffer until end of record, which is a '!' character
+    ProcessReceivedPacket($sMsgData)
+    $sMsgData = ""
   Endif
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' parse P1 telegram
-Private Sub ProcessData(sTelegram As String)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedPacket(sTelegram As String)
 
   Dim aTelegram, aRecord, aReading, aGasRecord As String[]
   Dim aMBusId, aMBusType, aMBusReading, aMBusUnit, aMBusValve, aMBusTime As New String[4]

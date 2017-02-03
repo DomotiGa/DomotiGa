@@ -23,7 +23,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "KNX"
 Public PluginFriendlyName As String = "KNX"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "Timo Sariwating, Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -44,15 +44,16 @@ Private $sTCPHost As String
 Private $iTCPPort As Integer
 Private $bDebug As Boolean
 
-Public hKNX As New Socket
+' Interface objects
+Public hMySocket As CSocket
+
 Public tKNX As Timer
+
+Private $aBuffer As New Byte[512]
+Private $iRead As Integer = 0
 
 Private Const CmdOn As Byte = &H81
 Private Const CmdOff As Byte = &H80
-
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -72,21 +73,16 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iTCPPort = cPl.Settings["tcpport"]
   $bDebug = cPl.Settings["debug"]
 
-  ' Define timer for TCP reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
-
   InterfaceId = Devices.FindInterface("KNX Interface")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
-    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    WriteLog("ERROR: " & ErrorText)
     IsRunning = False
     Return
   Endif
 
   ' Connect/Initialize connection
-  Connect()
+  ConnectTCP()
 
 End
 
@@ -100,16 +96,40 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Connect to the IP interface/eibd daemon
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Private Sub ConnectTCP() As Boolean
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the connection
-  Try hKNX.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' get a new one
-  hKNX = New Socket As "KNX"
-  hKNX.Connect($sTCPHost, $iTCPPort)
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' start timer for KNX status LED
   tKNX = New Timer As "tKNXLED"
@@ -117,7 +137,7 @@ Public Function Connect() As Boolean
   tKNX.Stop
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & "TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
   ' Don't set IsRunning=True, this has to be done in _Ready
 
@@ -125,8 +145,8 @@ Public Function Connect() As Boolean
   Return True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -136,85 +156,131 @@ Catch ' some errors
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' tcp socket ready
+' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub KNX_Ready()
+Private Sub Disconnect() As Boolean
 
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
+  ' try to close the connection
+  Try hMySocket.Close
 
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
+  ' try stop running timers
+  StopTimers()
 
+  WriteLog("TCP connection closed.")
+
+  ' all ok
+  Return True
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
+
+  Try tKNX.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' Empty internal buffer
+  $iRead = 0
   OpenGroupSocket()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' host ip address found
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub KNX_Found()
+Public Sub MySocket_Found()
 
   Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' open a group socket for group communication
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub OpenGroupSocket()
+Private Sub OpenGroupSocket()
 
-  Dim bCommand As Byte[] = [CByte(&H00), CByte(&H26), CByte(&H00), CByte(&H00), CByte(&H00)]
+  Dim bCommand As Byte[] = [&H00, &H26, &H00, &H00, &H00]
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending the command to open a Group Socket.")
+  If $bDebug Then WriteDebugLog("Sending the command to open a Group Socket.")
   TransmitData(bCommand)
-
-End
-
-Public Sub KNX_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  Connect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' remote end closed socket
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub KNX_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
-
-End
-
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
 
 End
 
@@ -229,11 +295,11 @@ Public Sub GroupRead()
   rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
   If rResult And If rResult.Available Then
     For Each rResult
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending Group Read request to device '" & rResult!name & "' with address '" & rResult!address & "'.")
+      If $bDebug Then WriteDebugLog("Sending Group Read request to device '" & rResult!name & "' with address '" & rResult!address & "'.")
       SendGroup(rResult!address)
     Next
   Else
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "No devices found to send Group Read request to.")
+    If $bDebug Then WriteDebugLog("No devices found to send Group Read request to.")
   Endif
 
 End
@@ -256,130 +322,115 @@ Private Sub TransmitData(bCommand As Byte[])
   Dim bData As Byte
   Dim iLen As Integer = bCommand.Count
 
-  If hKNX.Status <> Net.Connected Then
-    Main.WriteDebugLog(LogLabel & "ERROR: " & PluginFriendlyName & " Not connected to gateway: '" & Error.Text & "' at '" & Error.Where & "'!")
+  If hMySocket.Status <> Net.Connected Then
+    WriteDebugLog("ERROR: " & PluginFriendlyName & " Not connected to gateway: '" & Error.Text & "' at '" & Error.Where & "'!")
     Return
   Endif
 
   bCommand.Add(&H00, 0)
   bCommand.Add(Hex(iLen), 1)
-  bCommand.Write(hKNX, 0, bCommand.Length)
 
-  If Not $bDebug Then Return
-  Main.WriteDebugLog(LogLabel & ">", True)
-  For Each bData In bCommand
-    Main.WriteDebugLogChars(" " & Hex(bData, 2), True)
-  Next
-  Main.WriteDebugLogChars("\n", True)
+  ' Write to socket
+  hMySocket.Write(bCommand)
+
+  If $bDebug Then WriteDebugLog("> " & Util.ByteToHex(bCommand))
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' disconnect from the host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
-
-  ' try to stop timer and close the connection
-  Try tReConnect.Stop
-  Try hKNX.Close
-
-  Main.WriteLog(LogLabel & "TCP connection closed.")
-
-  ' all ok
-  Return True
-
-Finally
-  IsRunning = False
-  ErrorText = ""
-  ErrorWhere = ""
-
-Catch
-  Main.WriteLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
-  Return False
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' read KNX socket data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub KNX_Read()
+Private Sub ProcessReceivedChar(bTemp As Byte)
 
-  Dim aBuffer As New Byte[512]
   Dim iCnt As Integer
   Dim sDevice, sAddress As String
   Dim aReceived As New String[0]
 
-  If hKNX.Status <> Net.Connected Then
-    Main.WriteDebugLog(LogLabel & "Not connected to " & PluginFriendlyName & " gateway: '" & Error.Text & "' at '" & Error.Where & "'")
+  If hMySocket.Status <> Net.Connected Then
+    WriteDebugLog("Not connected to " & PluginFriendlyName & " gateway: '" & Error.Text & "' at '" & Error.Where & "'")
     Return
   Endif
 
-  aBuffer[0] = Read #hKNX As Byte ' read the first byte
-  Main.ControlLed("KNX", "On")
-  If Main.bServer Then tKNX.Start
+  ' Increment read byte counter
+  Inc $iRead
 
-  Select aBuffer[0]
-    Case 0
-      aBuffer[1] = Read #hKNX As Byte ' read the length byte
-      For iCnt = 0 To aBuffer[1] - 1 ' read the rest of the frame
-        aBuffer[2 + iCnt] = Read #hKNX As Byte
-      Next
-  End Select
+  ' First byte should always be '00'
+  If $iRead = 1 Then
 
-  ' display raw data first
-  If $bDebug Then
-    Main.WriteDebugLog(LogLabel & "<", True)
-    For iCnt = 0 To aBuffer[1] + 2
-      Main.WriteDebugLogChars(" " & Hex(aBuffer[iCnt], 2), True)
-    Next
-    Main.WriteDebugLogChars("\n", True)
+    If bTemp <> 0 Then
+      WriteDebugLog("ERROR: First byte is '" & Hex(bTemp, 2) & "', it is expected to be '00'")
+      $iRead = 0
+      Return
+    Endif
+
+    $aBuffer[0] = bTemp
+
+    Main.ControlLed("KNX", "On")
+    If Main.bServer Then tKNX.Start
+    Return
   Endif
 
-  Select Hex$(aBuffer[3])
+  ' Second byte is the length of the data
+  If $iRead = 2 Then
+    $aBuffer[1] = bTemp
+    Return
+  Endif
+
+  ' Now read data until we have all the data
+  $aBuffer[$iRead - 1] = bTemp
+  If ($iRead - 2) < $aBuffer[1] Then Return
+
+  ' display raw data first
+  If $bDebug Then WriteDebugLog("< " & Util.ByteToHex($aBuffer.Copy(0, $iRead)))
+
+  ' We have read all the data, reset read counter to zero for next packet
+  $iRead = 0
+
+  Select Hex$($aBuffer[3])
     Case 26 ' open group socket reply
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received a Group Socket reply packet.")
+      If $bDebug Then WriteDebugLog("Received a Group Socket reply packet.")
 
       ' request status of all known devices
       GroupRead()
 
     Case 27 ' group packet
-      sDevice = Addr2Str((Hex$(aBuffer[4], 2)) & (Hex(aBuffer[5], 2)), False)
-      sAddress = Addr2Str((Hex$(aBuffer[6], 2)) & (Hex$(aBuffer[7], 2)), True)
+      sDevice = Addr2Str((Hex$($aBuffer[4], 2)) & (Hex($aBuffer[5], 2)), False)
+      sAddress = Addr2Str((Hex$($aBuffer[6], 2)) & (Hex$($aBuffer[7], 2)), True)
 
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received packet from physical device with address '" & sDevice & "' to '" & sAddress & "'")
-      For iCnt = 9 To aBuffer.Length - 1
-        aReceived.Add(Hex(aBuffer[iCnt], 2))
+      If $bDebug Then WriteDebugLog("Received packet from physical device with address '" & sDevice & "' to '" & sAddress & "'")
+      For iCnt = 9 To $aBuffer.Length - 1
+        aReceived.Add(Hex($aBuffer[iCnt], 2))
       Next
 
       ' FIXME: not parsing packets from 0.0.0 also blocks scripts sending data to bus
       ' parse data for target addresses (group)
       ' don't parse messages we have sent
       If sDevice <> "0.0.0" Then
-        ProcessData(sAddress, aReceived, aBuffer)
+        ProcessReceivedPacket(sAddress, aReceived, $aBuffer)
       Endif
 
       ' parse data for source devices (physical)
       ' don't parse messages we have sent
       If sDevice <> "0.0.0" Then
-        ProcessData(sDevice, aReceived, aBuffer)
+        ProcessReceivedPacket(sDevice, aReceived, $aBuffer)
       Endif
 
       Case Else
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received unknown packet type '" & Hex$(aBuffer[3]) & "'")
+        If $bDebug Then WriteDebugLog("Received unknown packet type '" & Hex$($aBuffer[3]) & "'")
   End Select
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' lookup the KNX devicetype and process received data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ProcessData(sAddress As String, aReceived As String[], aBuffer As String[])
+Private Sub ProcessReceivedPacket(sAddress As String, aReceived As String[], aBuffer As String[])
 
   Dim iDeviceId As Integer = Devices.FindRegExp(sAddress, InterfaceId, Instance)
   Dim sDeviceTypeDesc As String
@@ -454,8 +505,8 @@ Private Sub ProcessData(sAddress As String, aReceived As String[], aBuffer As St
           ProcessDPT232(iDeviceId, aReceived, aDeviceTypeDesc[0] & "." & aDeviceTypeDesc[1])
 
         Case Else
-          Main.WriteDebugLog(LogLabel & "The KNX devicetype used for device with address '" & sAddress & "' is not yet supported, please report.")
-          Main.WriteDebugLog(LogLabel & "Data received: '", True)
+          WriteDebugLog("The KNX devicetype used for device with address '" & sAddress & "' is not yet supported, please report.")
+          WriteDebugLog("Data received: '", True)
           For iCnt = 0 To aBuffer[1] + 2
             Main.WriteDebugLogChars(" " & Hex(aBuffer[iCnt], 2), True)
           Next
@@ -545,8 +596,8 @@ Public Sub ProcessDPTs(aReceived As String[], sDPT As String) As String
         Return ConvertDPT232(aReceived, sDPT)
 
       Case Else
-        Main.WriteDebugLog(LogLabel & "The DPT " & sDPT & " is not yet supported, please report.")
-        Main.WriteDebugLog(LogLabel & "Data received: '", True)
+        WriteDebugLog("The DPT " & sDPT & " is not yet supported, please report.")
+        WriteDebugLog("Data received: '", True)
         For iCnt = 0 To aReceived[1] + 2
           Main.WriteDebugLogChars(" " & Hex(aReceived[iCnt], 2), True)
         Next
@@ -629,7 +680,7 @@ Public Sub EncodeDPTs(fValue As Variant, sDPT As String) As Byte[]
       '   Return ConvertDPT232(aReceived, sDPT)
 
       Case Else
-        Main.WriteDebugLog(LogLabel & "Encoding DPT " & sDPT & " is not yet supported, please report.")
+        WriteDebugLog("Encoding DPT " & sDPT & " is not yet supported, please report.")
     End Select
   Endif
 
@@ -682,13 +733,13 @@ Private Sub ProcessDPT1(iDeviceId As Integer, aReceived As String[], sDPT As Str
     Case "40", "80", "41", "81" ' receive/parse
       sValue = ConvertDPT1(aReceived, sDPT)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
   ' update device
   Devices.ValueUpdate(iDeviceId, 1, sValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+  If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
 
 End
 
@@ -749,13 +800,13 @@ Private Sub ConvertDPT1(aReceived As String[], sDPT As String) As String
     Case "1.100"
       sValue = IIf(bValue, "Heating", "Cooling")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 1.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 1.* packet!")
       sValue = "?"
   End Select
   Return sValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -770,13 +821,13 @@ Private Sub ProcessDPT2(iDeviceId As Integer, aReceived As String[], sDPT As Str
     Case "40", "80", "41", "81" ' receive/parse
       sValue = ConvertDPT2(aReceived, sDPT)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
   ' update device
   Devices.ValueUpdate(iDeviceId, 1, sValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+  If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
 
 End
 
@@ -819,13 +870,13 @@ Private Sub ConvertDPT2(aReceived As String[], sDPT As String) As String
     Case "2.012"
       sValue = IIf(bValue, "Inverted", "Not Inverted")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 2.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 2.* packet!")
       sValue = "?"
   End Select
   Return sValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -840,13 +891,13 @@ Private Sub ProcessDPT3(iDeviceId As Integer, aReceived As String[], sDPT As Str
     Case "40", "80", "41", "81" ' receive/parse
       sValue = ConvertDPT3(aReceived, sDPT)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
   ' update device
   Devices.ValueUpdate(iDeviceId, 1, sValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+  If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
 
 End
 
@@ -883,13 +934,13 @@ Private Sub ConvertDPT3(aReceived As String[], sDPT As String) As String
         sValue &= " " & iSteps & " steps"
       Endif
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 3.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 3.* packet!")
       sValue = "?"
   End Select
   Return sValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -904,9 +955,9 @@ Private Sub ProcessDPT4(iDeviceId As Integer, aReceived As String[], sDPT As Str
     Case "80", "40" ' receive/parse
       iValue = ConvertDPT5(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, iValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
@@ -926,13 +977,13 @@ Private Sub ConvertDPT4(aReceived As String[], sDPT As String) As String
     Case "4.002" ' character ISO 8859-1
       sValue = String.Chr(Val("&H" & aReceived[1]))
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 4.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 4.* packet!")
       sValue = ""
   End Select
   Return sValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -947,9 +998,9 @@ Private Sub ProcessDPT5(iDeviceId As Integer, aReceived As String[], sDPT As Str
     Case "80", "40" ' receive/parse
       iValue = ConvertDPT5(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, iValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
@@ -973,13 +1024,13 @@ Private Sub ConvertDPT5(aReceived As String[], sDPT As String) As Integer
     Case "5.005", "5.006", "5.010" ' Decimal (0..255)
       iValue = Val("&H" & aReceived[1])
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 5.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 5.* packet!")
       iValue = 0
   End Select
   Return iValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -994,9 +1045,9 @@ Private Sub ProcessDPT6(iDeviceId As Integer, aReceived As String[], sDPT As Str
     Case "80", "40" ' receive/parse
       iValue = ConvertDPT6(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, iValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
@@ -1016,14 +1067,14 @@ Private Sub ConvertDPT6(aReceived As String[], sDPT As String) As Integer
     Case "6.020" ' status with mode FIXME: unsure if correct
       iValue = Val("&H" & aReceived[1])
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 6.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 6.* packet!")
       iValue = 0
   End Select
   If iValue > 128 Then iValue -= 256
   Return iValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1038,9 +1089,9 @@ Private Sub ProcessDPT7(iDeviceId As Integer, aReceived As String[], sDPT As Str
     Case "80", "40" ' receive/parse
       iValue = ConvertDPT7(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, iValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
@@ -1062,13 +1113,13 @@ Private Sub ConvertDPT7(aReceived As String[], sDPT As String) As Integer
     Case "7.004" ' 100 mS signed (0..6553500)
       iValue = 100 * (Lsl(Val("&H" & aReceived[1]), 8) Or Val("&H" & aReceived[2]))
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 7.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 7.* packet!")
       iValue = 0
   End Select
   Return iValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1083,9 +1134,9 @@ Private Sub ProcessDPT8(iDeviceId As Integer, aReceived As String[], sDPT As Str
     Case "80", "40" ' receive/parse
       iValue = ConvertDPT8(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, iValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
@@ -1110,14 +1161,14 @@ Private Sub ConvertDPT8(aReceived As String[], sDPT As String) As Integer
     Case "8.010" ' %
       iValue = 100 * (Lsl(Val(aReceived[1]), 8) Or Val(aReceived[2])) / 100
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 8.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 8.* packet!")
       iValue = 0
   End Select
   If iValue > 32768 Then iValue -= 65535
   Return iValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1132,9 +1183,9 @@ Private Sub ProcessDPT9(iDeviceId As Integer, aReceived As String[], sDPT As Str
     Case "80", "40" ' receive/parse
       fValue = ConvertDPT9(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, Format(fValue, "0.00"))
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & fValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & fValue & "'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
@@ -1162,11 +1213,11 @@ Private Sub ConvertDPT9(aReceived As String[], sDPT As String) As Float
       If (iVal And &H08000&) Then iMant = - iMant
       Return (iMant * Lsl(1, iExp) / 100)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 9.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 9.* packet!")
   End Select
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1183,7 +1234,7 @@ Private Sub ProcessDPT10(iDeviceId As Integer, aReceived As String[], sDPT As St
     Case "80" ' receive/parse
       sValue = ConvertDPT10(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, sValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
     Case "00" ' requested response
       aAddress = Split(Devices.FindAddressForDevice(iDeviceId), "/")
       bCommand[0] = &H00
@@ -1196,7 +1247,7 @@ Private Sub ProcessDPT10(iDeviceId As Integer, aReceived As String[], sDPT As St
       bCommand[7] = Hex$(Minute(Now))
       bCommand[8] = Hex$(Second(Now))
       TransmitData(bCommand)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & " DPT 10.001 time '" & Time(Now) & "' send to the bus.")
+      If $bDebug Then WriteDebugLog(" DPT 10.001 time '" & Time(Now) & "' send to the bus.")
   End Select
 
 End
@@ -1223,12 +1274,12 @@ Private Sub ConvertDPT10(aReceived As String[], sDPT As String) As String
       If Len(aWeekdays[iWeekday]) Then sValue = aWeekdays[iWeekday] & " "
       Return sValue & Format(iHour, "00") & ":" & Format(iMin, "00") & ":" & Format(iSec, "00")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 10.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 10.* packet!")
       Return ""
   End Select
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1245,7 +1296,7 @@ Private Sub ProcessDPT11(iDeviceId As Integer, aReceived As String[], sDPT As St
     Case "80" ' receive/parse
       sValue = ConvertDPT11(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, sValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
     Case "00" ' requested response
       aAddress = Split(Devices.FindAddressForDevice(iDeviceId), "/")
       bCommand[0] = &H00
@@ -1258,7 +1309,7 @@ Private Sub ProcessDPT11(iDeviceId As Integer, aReceived As String[], sDPT As St
       bCommand[7] = Hex$(Month(Now))
       bCommand[8] = Hex$(Right$(CStr(Year(Now)), 2))
       TransmitData(bCommand)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & " DPT 11.001 date '" & Day(Now) & "/" & Month(Now) & "/" & Year(Now) & "' send to the bus.")
+      If $bDebug Then WriteDebugLog(" DPT 11.001 date '" & Day(Now) & "/" & Month(Now) & "/" & Year(Now) & "' send to the bus.")
   End Select
 
 End
@@ -1282,12 +1333,12 @@ Private Sub ConvertDPT11(aReceived As String[], sDPT As String) As String
       If iYear < 90 Then iYear += 2000
       Return Format(iYear, "####") & "-" & Format(iMonth, "00") & "-" & Format(iDay, "00")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 11.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 11.* packet!")
       Return ""
   End Select
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1302,9 +1353,9 @@ Private Sub ProcessDPT12(iDeviceId As Integer, aReceived As String[], sDPT As St
     Case "80", "40" ' receive/parse
       iValue = ConvertDPT12(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, iValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
@@ -1323,12 +1374,12 @@ Private Sub ConvertDPT12(aReceived As String[], sDPT As String) As Long
       lValue = Val("&H" & aReceived[1] & aReceived[2] & aReceived[3] & aReceived[4] & "&")
       Return lValue
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 12.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 12.* packet!")
       Return 0
   End Select
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1343,9 +1394,9 @@ Private Sub ProcessDPT13(iDeviceId As Integer, aReceived As String[], sDPT As St
     Case "80", "40" ' receive/parse
       iValue = ConvertDPT13(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, iValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
@@ -1363,14 +1414,14 @@ Private Sub ConvertDPT13(aReceived As String[], sDPT As String) As Long
     Case "13.001", "13.002", "13.010", "13.011", "13.012", "13.013", "13.014", "13.015", "13.100" ' signed (-2147483648..2147483647)
       lValue = Val("&H" & aReceived[1] & aReceived[2] & aReceived[3] & aReceived[4])
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 13.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 13.* packet!")
       lValue = 0
   End Select
   If lValue > 2147483647 Then lValue -= 2147483648
   Return lValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1385,9 +1436,9 @@ Private Sub ProcessDPT14(iDeviceId As Integer, aReceived As String[], sDPT As St
     Case "80", "40" ' receive/parse
       sValue = Format(ConvertDPT14(aReceived, sDPT), "#.###")
       Devices.ValueUpdate(iDeviceId, 1, sValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
@@ -1428,12 +1479,12 @@ Private Sub ConvertDPT14(aReceived As String[], sDPT As String) As Float
 
       Return iSign * fMant * 2 ^ fExponent
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 14.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 14.* packet!")
       Return 0
   End Select
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1448,9 +1499,9 @@ Private Sub ProcessDPT16(iDeviceId As Integer, aReceived As String[], sDPT As St
     Case "80", "40" ' receive/parse
       iValue = ConvertDPT16(aReceived, sDPT)
       Devices.ValueUpdate(iDeviceId, 1, iValue)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
+      If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & iValue & "'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
@@ -1481,13 +1532,13 @@ Private Sub ConvertDPT16(aReceived As String[], sDPT As String) As String
         sValue &= String.Chr(iValue)
       Next
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 16.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 16.* packet!")
       sValue = ""
   End Select
   Return sValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1502,13 +1553,13 @@ Private Sub ProcessDPT17(iDeviceId As Integer, aReceived As String[], sDPT As St
     Case "40", "80", "41", "81" ' receive/parse
       sValue = ConvertDPT17(aReceived, sDPT)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
   ' update device
   Devices.ValueUpdate(iDeviceId, 1, sValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+  If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
 
 End
 
@@ -1524,13 +1575,13 @@ Private Sub ConvertDPT17(aReceived As String[], sDPT As String) As String
     Case "17.001" ' scene
       iScene = Val("&H" & aReceived[1]) And &H3F
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 17.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 17.* packet!")
       iScene = 0
   End Select
   Return iScene
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1545,13 +1596,13 @@ Private Sub ProcessDPT18(iDeviceId As Integer, aReceived As String[], sDPT As St
     Case "40", "80", "41", "81" ' receive/parse
       sValue = ConvertDPT18(aReceived, sDPT)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
   ' update device
   Devices.ValueUpdate(iDeviceId, 1, sValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+  If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
 
 End
 
@@ -1574,13 +1625,13 @@ Private Sub ConvertDPT18(aReceived As String[], sDPT As String) As String
       Endif
       sValue &= " " & iScene
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 18.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 18.* packet!")
       sValue = "?"
   End Select
   Return sValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1595,13 +1646,13 @@ Private Sub ProcessDPT19(iDeviceId As Integer, aReceived As String[], sDPT As St
     Case "40", "80", "41", "81" ' receive/parse
       sValue = ConvertDPT19(aReceived, sDPT)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
   ' update device
   Devices.ValueUpdate(iDeviceId, 1, sValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+  If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
 
 End
 
@@ -1663,13 +1714,13 @@ Private Sub ConvertDPT19(aReceived As String[], sDPT As String) As String
         sValue &= ", " & IIf(Val("&H" & aReceived[8]) And QUALITY, "in sync", "no sync")
       Endif
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 19.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 19.* packet!")
       sValue = "?"
   End Select
   Return sValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1684,13 +1735,13 @@ Private Sub ProcessDPT232(iDeviceId As Integer, aReceived As String[], sDPT As S
     Case "40", "80", "41", "81" ' receive/parse
       sValue = ConvertDPT232(aReceived, sDPT)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
+      If $bDebug Then WriteDebugLog("Unknown data '" & aReceived[0] & "' received for DPT " & sDPT & " packet!")
       Return
   End Select
 
   ' update device
   Devices.ValueUpdate(iDeviceId, 1, sValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
+  If $bDebug Then WriteDebugLog("Processed received DPT " & sDPT & " data for device '" & Devices.FindNameForDevice(iDeviceId) & "' value = '" & sValue & "'")
 
 End
 
@@ -1709,13 +1760,13 @@ Private Sub ConvertDPT232(aReceived As String[], sDPT As String) As String
     Case "232.600" ' rgb
       sValue = "r:" & iRed & " g:" & iGreen & " b:" & iBlue
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown DPT '" & sDPT & "' received for DPT 232.* packet!")
+      If $bDebug Then WriteDebugLog("Unknown DPT '" & sDPT & "' received for DPT 232.* packet!")
       sValue = "?"
   End Select
   Return sValue
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
@@ -1740,11 +1791,11 @@ Private Sub ProcessEIS2(iDeviceId As Integer, sReceived As String[])
         Devices.ValueUpdate(iDeviceId, 1, "Dim " & CStr(iPercentage))
       Endif
     Case "41"
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'On'")
+      If $bDebug Then WriteDebugLog("EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'On'")
         Devices.ValueUpdate(iDeviceId, 1, "On")
         iPercentage = Val("&H" & sReceived[1]) / 255 * 100
         If iPercentage <> "0" And iPercentage <> "100" Then
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim " & CStr(iPercentage) & "%'")
+          If $bDebug Then WriteDebugLog("EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim " & CStr(iPercentage) & "%'")
           Devices.ValueUpdate(iDeviceId, 1, "Dim " & CStr(iPercentage))
       Endif
     Case "80"
@@ -1757,18 +1808,18 @@ Private Sub ProcessEIS2(iDeviceId As Integer, sReceived As String[])
         Else
           Devices.ValueUpdate(iDeviceId, 1, "Dim " & CStr(iPercentage))
         Endif
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim " & CStr(iPercentage) & "%'")
+        If $bDebug Then WriteDebugLog("EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim " & CStr(iPercentage) & "%'")
       Else
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Off'")
+        If $bDebug Then WriteDebugLog("EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Off'")
         Devices.ValueUpdate(iDeviceId, 1, "Off")
       Endif
     Case "81"
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'On'")
+      If $bDebug Then WriteDebugLog("EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'On'")
       Devices.ValueUpdate(iDeviceId, 1, "On")
     Case "89"
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim'")
+      If $bDebug Then WriteDebugLog("EIS2 packet for device '" & Devices.FindNameForDevice(iDeviceId) & "' Value = 'Dim'")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown value '" & sReceived[0] & "' received for EIS2 type data packet!")
+      If $bDebug Then WriteDebugLog("Unknown value '" & sReceived[0] & "' received for EIS2 type data packet!")
       Return
   End Select
 
@@ -1783,7 +1834,7 @@ Private Sub SendGroup(sAddress As String)
   Dim sAddr As String
   Dim bCommand As New Byte[5]
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Requesting status packet for device with address '" & sAddress & "'")
+  If $bDebug Then WriteDebugLog("Requesting status packet for device with address '" & sAddress & "'")
   sAddressSplit = Split(sAddress, "/")
   If sAddressSplit.Count = 3 Then
     sAddr = Str2Addr(sAddressSplit[0], sAddressSplit[1], sAddressSplit[2])
@@ -1828,10 +1879,10 @@ Private Sub CreateControlAddress(sAddress As String, Optional iPos As Integer = 
       Case 3
         Return Str2Addr(aAddress[6], aAddress[7], aAddress[8])
       Case Else
-        Main.WriteDebugLog(LogLabel & "Invalid address format used for '" & sAddress & "', should be in format '0/1/2' or '0/1/2|0/1/3' or '0/1/2|0/1/3|0/1/4'")
+        WriteDebugLog("Invalid address format used for '" & sAddress & "', should be in format '0/1/2' or '0/1/2|0/1/3' or '0/1/2|0/1/3|0/1/4'")
     End Select
   Else
-    Main.WriteDebugLog(LogLabel & "Invalid address format used for '" & sAddress & "', should be in format '0/1/2' or '0/1/2|0/1/3' or '0/1/2|0/1/3|0/1/4'")
+    WriteDebugLog("Invalid address format used for '" & sAddress & "', should be in format '0/1/2' or '0/1/2|0/1/3' or '0/1/2|0/1/3|0/1/4'")
   Endif
 
 End
@@ -1894,7 +1945,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
         bCommand.Add(bData[1])
         TransmitData(bCommand)
       Case Else
-        Main.WriteDebugLog(LogLabel & "Control of " & sDeviceTypeDesc & " type not implemented yet, please report.")
+        WriteDebugLog("Control of " & sDeviceTypeDesc & " type not implemented yet, please report.")
     End Select
   Else If UCase(sDeviceTypeDesc) = "KNX DEVICE DIMMER"
 
@@ -1927,7 +1978,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
         TransmitData(bCommand)
       Case "STOP"
         If InStr(sAddress, "-/-/-") Then
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Dimmer dummy '-/-/-' startstop address specified, skipping command.")
+          If $bDebug Then WriteDebugLog("Dimmer dummy '-/-/-' startstop address specified, skipping command.")
           Return
         Endif
 
@@ -1985,7 +2036,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
         TransmitData(bCommand)
       Case "STOP"
         If InStr(sAddress, "-/-/-") Then
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Shutter dummy '-/-/-' startstop address specified, skipping command.")
+          If $bDebug Then WriteDebugLog("Shutter dummy '-/-/-' startstop address specified, skipping command.")
           Return
         Endif
 
@@ -2014,13 +2065,13 @@ Public Sub SendCommand(sAddress As String, sValue As String)
     End Select
   Else If UCase(sDeviceTypeDesc) = "KNX DEVICE BLINDS"
     ' TODO: add blinds control
-    Main.WriteDebugLog(LogLabel & "Not yet supported devicetype '" & sDeviceTypeDesc & "'!")
+    WriteDebugLog("Not yet supported devicetype '" & sDeviceTypeDesc & "'!")
   Else
-    Main.WriteDebugLog(LogLabel & "Unknown KNX devicetype '" & sDeviceTypeDesc & "'!")
+    WriteDebugLog("Unknown KNX devicetype '" & sDeviceTypeDesc & "'!")
   Endif
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'!")
 
 End
 
