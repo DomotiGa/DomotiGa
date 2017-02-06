@@ -19,11 +19,26 @@
 ' Read file called COPYING for license details.
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Protocol
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+' The data for DSMR 2.x/3.x is sent as follows:
+' /XXXZ<Ident><CRLF><CRLF><Data><CRLF>!<CRLF>
+'
+' The data for DSMR 4.x is sent as follows:
+' /XXXZ<Ident><CRLF><CRLF><Data><CRLF>!<Checksum><CRLF>
+' Note: Checksum is based on CRC16 using polynomial 'x16+x15+x2+1' and is a 2 byte value
+'
+' The data is in the following format:
+' X-X:Y.Y.Y(*)<CRLF>
+' Note: It is possible to have 1 or more '(*)' fields on 1 line
+' 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "SmartMeter"
 Public PluginFriendlyName As String = "SmartMeter"
-Public PluginVersion As String = "2.00"
+Public PluginVersion As String = "2.01"
 Public PluginAuthor As String = "Ron Klinkien, Jesse Kerkhoven"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -55,6 +70,14 @@ Public hMySocket As CSocket
 Public hMySerial As CSerialPort
 
 Private $sMsgData As String
+Private $bEndData As Boolean
+Private $sCrc16 As String
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Constants
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Const STX As Byte = &H2F ' Start of telegram, always a "/"
+Const ETX As Byte = &H21 ' End of telegram, always a "!"
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -97,7 +120,14 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 
   ' load test data if found
   If $bDebug Then
-    Try ProcessReceivedPacket(File.Load(Main.sBaseDir & "/debug/smartmeter.log"))
+    Try $sMsgData = File.Load(Main.sBaseDir & "/debug/smartmeter.log")
+    If Not Error Then
+      If $sMsgData And If InStr($sMsgData, Chr(STX)) Then
+        ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, Chr(STX))))
+      Else
+        WriteDebugLog("ERROR: Manually supplied file seems to have an invalid format")
+      Endif
+    Endif
   Endif
 
 End
@@ -254,6 +284,7 @@ Private Sub Run()
 
   ' Empty internal buffer
   $sMsgData = ""
+  $bEndData = False
 
 End
 
@@ -366,11 +397,41 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessReceivedChar(bTemp As Byte)
 
-  $sMsgData &= Chr(bTemp)
+  ' Wait until we receive the start telegram character, otherwise discard it
+  If $sMsgData Then
+    $sMsgData &= Chr(bTemp)
+  Else
+    If bTemp = STX Then
+      $sMsgData &= Chr(bTemp)
+    Endif
+  Endif
 
-  If bTemp = 33 Then ' Buffer until end of record, which is a '!' character
-    ProcessReceivedPacket($sMsgData)
-    $sMsgData = ""
+  ' Check if we found a end of telegram character, that one is always followed by <CrLf>, optionally a Crc16
+  If InStr($sMsgData, Chr(ETX)) Then
+  Endif
+
+  If $bEndData Then
+    ' Check for <CrLf> at the end of the line
+    If RInStr($sMsgData, gb.CrLf) = (Len($sMsgData) + 2) Then
+      ' End of telegram, lets process the data - but check for a possible Crc16 first
+      $sCrc16 = Mid($sMsgData, RInStr($sMsgData, Chr(STX)) + 1)
+      $sCrc16 = Mid($sCrc16, 1, RInStr($sCrc16, gb.CrLf))
+
+      ProcessReceivedPacket(Mid($sMsgData, 1, RInStr($sMsgData, Chr(STX))))
+
+      $sMsgData = ""
+      $bEndData = False
+    Else
+      ' Check we didn go way past the <CrLf>
+      If (Len($sMsgData) + 6) > RInStr($sMsgData, Chr(STX)) Then
+        If $bDebug Then WriteDebugLog("ERROR: Invalid telegram received, more then 6 characters after the '!' character. Telegram=" & $sMsgData)
+        $sMsgData = ""
+        $bEndData = False
+      Endif
+    Endif
+  Else
+    ' Buffer until end of record, which is a '!' character
+    If bTemp = STX Then $bEndData = True
   Endif
 
 End
@@ -387,8 +448,21 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
   Dim fReadingPowerNormal, fReadingPowerLow, fReadingPowerGenNormal, fReadingPowerGenLow, fCurrentPowerUsage, fCurrentPowerGen, fPowerThreshold As Float
   Dim iCurrentTariff, iSwitchPos, iChannel, iType, iDeviceId As Integer
 
+  ' If we have received a Crc16 value, calculate it too
+  If $sCrc16 Then
+    If Hex(CalcCRC(sTelegram), 4) <> $sCrc16 Then
+      If $bDebug Then WriteDebugLog("INVALID CRC: EXPECTED '" & Hex(CalcCRC(sTelegram), 4) & "', RECEIVED '" & $sCrc16 & "'")
+    Endif
+  Endif
+
   ' Dump whole telegram message for debugging purpose
-  If $bDebug Then WriteDebugLog("< " & sTelegram)
+  If $bDebug Then
+    If Hex(CalcCRC(sTelegram), 4) <> $sCrc16 Then
+      WriteDebugLog("< " & sTelegram)
+    Else
+      WriteDebugLog("< " & sTelegram & " (INVALID CRC: EXPECTED '" & Hex(CalcCRC(sTelegram), 4) & "', RECEIVED '" & $sCrc16 & "')")
+    Endif
+  Endif
 
   aTelegram = Split(sTelegram, "\r\n")
   For Each sLine In aTelegram
@@ -410,6 +484,7 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
           Case Else
             sSupplier = "Unknown (" & Mid(sLine, 2, 3) & ")"
         End Select
+
         If $bDebug Then
           WriteDebugLog("Meter supplier is '" & sSupplier & "'")
           WriteDebugLog("Meter information '" & sLine & "'")
@@ -570,6 +645,7 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
         Endif
     End Select
   Next
+
   ' walk through mbus channelsIF $bDebug THEN
   If $bDebug Then WriteDebugLog("Listing MBus Meters found:")
   For iChannel = 1 To 4
@@ -634,3 +710,26 @@ Private Sub DecodeSerial(sData As String) As String
 
 End
 
+Private Sub CalcCRC(vData As String) As Short
+
+  Dim iCrc As Short
+  Dim iLen As Integer
+  Dim iCnt As Integer
+
+  iCrc = 0
+
+  For iLen = 1 To Len(vData)
+    iCrc = iCrc Xor Asc(Mid(vData, iLen, 1))
+    For iCnt = 1 To 8
+      If iCrc And &H0001 Then
+        iCrc = Lsr(iCrc, 1)
+        iCrc = iCrc Xor &HA001
+      Else
+        iCrc = Lsr(iCrc, 1)
+      Endif
+    Next
+  Next
+
+  Return iCrc
+
+End

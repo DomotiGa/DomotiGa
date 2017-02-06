@@ -1079,11 +1079,11 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 				if ( strcmp( dev_value, "0" ) == 0 )
 				{
-					strcpy( dev_result, "Secure" );
+					strcpy( dev_result, "Off" );
 				}
 				else
 				{
-					strcpy( dev_result, "Tamper" );
+					strcpy( dev_result, "On" );
 				}
 			} else if ( label == "Alarm Type" )
 			{
