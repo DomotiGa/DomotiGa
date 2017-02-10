@@ -42,7 +42,11 @@ Private $iTCPPort As Integer
 Private $bDebug As Boolean
 Private $sHMLANid As String
 
-Public hHM As New Socket
+' Interface objects
+Public hMySocket As CSocket
+
+Private $sMsgData As String
+
 Public tHMBusy As Timer
 Public bHMPairEnabled As Boolean
 Public iStackCount As Integer               ' Use in Main form statusbar?
@@ -88,10 +92,6 @@ Private iDelta As Long
 ' data collection
 Private sConf5Dump As String
 
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
 ' - The cPlugin[x].Settings are copied into local variables
@@ -114,26 +114,12 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   InterfaceId = Devices.FindInterface("HomeMatic LAN Adapter")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
-    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    WriteLog("ERROR: " & ErrorText)
     IsRunning = False
     Return
   Endif
 
-  ' Define timer for TCP reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
-
   ' Connect/Initialize connection
-  ConnectTCP()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
   ConnectTCP()
 
 End
@@ -148,44 +134,40 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub HM_Ready()
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
 
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
-
-  Init()
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
 
 End
 
-Public Sub HM_Closed()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
 
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
-
-End
-
-Public Sub HM_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
+Private Sub ConnectTCP()
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the connection
-  Try hHM.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' get a new one
-  hHM = New Socket As "HM"
-  Try hHM.Connect($sTCPHost, $iTCPPort)
-  If Error Then Print ERROR.Text
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' start keeping the HMLAN Adapter alive
   SendHMLAN("K")
@@ -193,39 +175,29 @@ Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
   tKeepAlive.Delay = 20000
   tKeepAlive.Start
 
-  ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
-
-  ' Don't set IsRunning=True, this has to be done in _Ready 
-
-  ' All went ok
-  Return True
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-  Return False
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect()
 
   ' try to close the connection
-  Try tHMBusy.Stop
-  Try tReConnect.Stop
-  Try hHM.Close
+  Try hMySocket.Close
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
+  ' try stop running timers
+  StopTimers()
 
-  ' all ok
-  Return True
+  WriteLog(PluginFriendlyName & " TCP connection closed.")
 
 Finally
   IsRunning = False
@@ -233,8 +205,136 @@ Finally
   ErrorWhere = ""
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
+  WriteLog("ERROR: " & Error.Text)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
+
+  Try tHMBusy.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' initialize interface
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  Dim rResult As Result
+
+  $sMsgData = ""
+
+  ' start keeping the HMLAN Adapter alive
+  SendHMLAN("K")
+  tKeepAlive = New Timer As "tKeepAlive"
+  tKeepAlive.Delay = 20000
+  tKeepAlive.Start
+
+  ' define timer for interface busy
+  tHMBusy = New Timer As "tHMBusy"
+  tHMBusy.Stop
+
+  ' define Timer for Ack/Nack timeouts
+  tAckTimer = New Timer As "tAcktimer"
+  tAckTimer.Delay = 4500                '10 x tHMBusy.Delay
+  tAckTimer.Stop
+
+  ' get offset from UTC for time calculations
+  iUTCoffset = UTCoffset()
+
+  ' set HMLAN address and time
+  SendHMLAN("A" & $sHMLANid)
+  SendHMLAN("C")
+  SendHMLAN("Y01,01,")
+  SendHMLAN("Y02,01,")
+  SendHMLAN("Y03,01,")
+  SendHMLAN("Y03,01,")
+  SendHMLAN("T" & systemtime() & ",04,00,00000000")
+  SendHMLAN("A" & $sHMLANid)
+
+  ' setup ACK's for paired units
+  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
+  If rResult And If rResult.Available Then
+    For Each rResult
+    SendHMLAN("+" & rResult!address & ",00,00")
+    Next
+  Endif
+
+  iCommandRetry = 0
+  PushStack() ' kickstart
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  $sMsgData &= vVar
+
+  ' Check for special character and process data - but remove CrLf
+  While InStr($sMsgData, Chr(&HA))
+    ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, gb.Lf) - 3))
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.Lf) + 1)
+  Wend
 
 End
 
@@ -247,43 +347,6 @@ Public Sub tKeepAlive_Timer()
   tKeepAlive.Stop
   tKeepAlive.Start
   StackStats()
-
-End
-
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
-
-End
-
-Public Sub HM_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
-
-End
-
-Public Sub HM_Read()
-
-  Dim bData As Byte
-
-  Try bData = Read #hHM As Byte
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
-  ProcessReceivedChar(bData)
 
 End
 
@@ -362,7 +425,7 @@ Private Sub HM_CC_TC_Temperature(sAddress As String, sValue As String)
   sCmd = sStatusbits & sMsgtype & sSrc & sDst & sData
   StackCommand(sCmd)
   PushStack()
-  If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr(9) & sAddress & " Sending new SET Temperature " & (iValue / 2) & " Degrees C")
+  If bHMInfoLogEnabled Then WriteDebugLog("[INFO]" & Chr(9) & sAddress & " Sending new SET Temperature " & (iValue / 2) & " Degrees C")
 
 End
 
@@ -373,7 +436,7 @@ Private Sub HM_CC_TC_Status(sAddress As String)
 
   Dim sStatusbits, sMsgtype, sSrc, sDst, sData, sCmd As String
 
-  If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr(9) & sAddress & " Requested current SET Temperature")
+  If bHMInfoLogEnabled Then WriteDebugLog("[INFO]" & Chr(9) & sAddress & " Requested current SET Temperature")
   sStatusbits = "A1"  ' bidi, rpten
   sMsgtype = "01"
   sSrc = $sHMLANid     ' address
@@ -389,7 +452,7 @@ Private Sub Pair1(sAddress As String)
 
   Dim sStatusbits, sMsgtype, sSrc, sDst, sData, sCmd As String
 
-  If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & sAddress & " Writing Register 5")
+  If bHMInfoLogEnabled Then WriteDebugLog(sAddress & " Writing Register 5")
   sStatusbits = "A0"  ' bidi, rpten
   sMsgtype = "01"
   sSrc = $sHMLANid     ' address
@@ -407,7 +470,7 @@ Private Sub Pair2(sAddress As String)
 
   Dim sStatusbits, sMsgtype, sSrc, sDst, sData, sCmd As String
   
-  If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & sAddress & " Writing controller address ")
+  If bHMInfoLogEnabled Then WriteDebugLog(sAddress & " Writing controller address ")
   sStatusbits = "A0"  ' bidi, rpten
   sMsgtype = "01"
   sSrc = $sHMLANid     ' address
@@ -423,7 +486,7 @@ Private Sub Pair3(sAddress As String)
 
   Dim sStatusbits, sMsgtype, sSrc, sDst, sData, sCmd As String
 
-  If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & sAddress & " Verifying controller address")
+  If bHMInfoLogEnabled Then WriteDebugLog(sAddress & " Verifying controller address")
   sStatusbits = "A0"  ' bidi, rpten
   sMsgtype = "01"
   sSrc = $sHMLANid     ' address
@@ -455,7 +518,7 @@ Private Sub HM_CC_TC_GetconfigParam5(sAddress As String) 'experimental
   sCmd = sStatusbits & sMsgtype & sSrc & sDst & sData
   StackCommand(sCmd)
   PushStack()
-  If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & sAddress & " Requesting parameter list 5")
+  If bHMInfoLogEnabled Then WriteDebugLog(sAddress & " Requesting parameter list 5")
 
 End
 
@@ -479,7 +542,7 @@ Private Sub HM_CC_TC_GetconfigParam6(sAddress As String) 'experimental
   sCmd = sStatusbits & sMsgtype & sSrc & sDst & sData
   StackCommand(sCmd)
   PushStack()
-  If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & sAddress & " Requesting parameter list 6")
+  If bHMInfoLogEnabled Then WriteDebugLog(sAddress & " Requesting parameter list 6")
 
 End
 
@@ -570,59 +633,16 @@ Private Sub DoQueue()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' initialize interface
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Init()
-
-  Dim rResult As Result
-
-  ' define timer for interface busy
-  tHMBusy = New Timer As "tHMBusy"
-  tHMBusy.Stop
-
-  ' define Timer for Ack/Nack timeouts
-  tAckTimer = New Timer As "tAcktimer"
-  tAckTimer.Delay = 4500                '10 x tHMBusy.Delay
-  tAckTimer.Stop
-
-  ' get offset from UTC for time calculations
-  iUTCoffset = UTCoffset()
-
-  ' set HMLAN address and time
-  SendHMLAN("A" & $sHMLANid)
-  SendHMLAN("C")
-  SendHMLAN("Y01,01,")
-  SendHMLAN("Y02,01,")
-  SendHMLAN("Y03,01,")
-  SendHMLAN("Y03,01,")
-  SendHMLAN("T" & systemtime() & ",04,00,00000000")
-  SendHMLAN("A" & $sHMLANid)
-
-  ' setup ACK's for paired units
-  rResult = Devices.FindDevicesForInterface(InterfaceId, Instance)
-  If rResult And If rResult.Available Then
-    For Each rResult
-    SendHMLAN("+" & rResult!address & ",00,00")
-    Next
-  Endif
-
-  iCommandRetry = 0
-  PushStack() ' kickstart
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send string to HMLAN interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub WriteCommand(sBuffer As String, sKey As String)
 
   ' return if not connected yet
-  If hHM.Status <> Net.Connected Then Return
+  If hMySocket.Status <> Net.Connected Then Return
   ' send the message to the tcp stream
-  If bHMRawLogEnabled Then Main.WriteDebugLog(LogLabel & "[RAW] " & Chr(9) & "TX " & sBuffer)
+  If bHMRawLogEnabled Then WriteDebugLog("[RAW] " & Chr(9) & "TX " & sBuffer)
 
-  Try Write #hHM, sBuffer, Len(sBuffer)
-  If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to TCP port! -> " & Error.Text)
+  hMySocket.Write(sBuffer, gb.String)
 
   ' remove sent command from queue
   cQueue.Remove(sKey)
@@ -647,29 +667,6 @@ Public Sub tHMBusy_Timer()
 
 End
 
-Private Sub ProcessReceivedChar(bTemp As Byte)
-
-  If bFirstByte = True Then
-    bFirstByte = False
-    iByteCount = 0
-  Endif
-
-  Main.ControlLed("HM", "On")
-
-  Try RecBuf[iByteCount] = bTemp
-  If Error Then Return
-
-  If bTemp = &HA Then
-    iByteCount -= 2 ' do not count \r\n
-    bMessage = True
-  Else
-    Inc iByteCount
-  Endif
-
-  If bMessage Then Process_Raw_Message
-
-End
-
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' process the message received from the HM-LAN interface
 ' all messages are , separated text strings, closed with CR/LF
@@ -683,39 +680,35 @@ End
 ' monitor (and store for transmission) received signal strength (later)
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Private Sub Process_Raw_Message()
+Private Sub ProcessReceivedPacket(sData As String)
 
-  Dim iCnt, iMaxSegments, iHMLANUptimecounter As Integer
-  Dim sReceivedData As String
+  Dim iMaxSegments, iHMLANUptimecounter As Integer
   Dim sMsgSegments As String[]
 
   bMessage = False
   bFirstByte = True
 
-  For iCnt = 0 To iByteCount
-    sReceivedData &= Chr(RecBuf[iCnt])
-  Next
-  sMsgSegments = Split(sReceivedData)
+  sMsgSegments = Split(sData)
   iMaxSegments = sMsgSegments.Count
-  If bHMRawLogEnabled Then Main.WriteDebugLog(LogLabel & "[RAW] " & Chr(9) & "RX " & sReceivedData)
+  If bHMRawLogEnabled Then WriteDebugLog("[RAW] " & Chr(9) & "RX " & sData)
 
   Select iMaxSegments
-    Case 1       ' Main.WriteDebugLog(LogLabel & "Dx " & (sMsgSegments[0]))
-    Case 3       ' Main.WriteDebugLog(LogLabel & "D " & (sMsgSegments[0]) & " Seg1 " & (sMsgSegments[1]) & " T " & (sMsgSegments[2]))
-    Case 4       ' Main.WriteDebugLog(LogLabel & "Y " & (sMsgSegments[0]) & " Seg1 " & (sMsgSegments[1]) & " T " & (sMsgSegments[2]) & " Seg3 " & (sMsgSegments[3]))
+    Case 1       ' WriteDebugLog("Dx " & (sMsgSegments[0]))
+    Case 3       ' WriteDebugLog("D " & (sMsgSegments[0]) & " Seg1 " & (sMsgSegments[1]) & " T " & (sMsgSegments[2]))
+    Case 4       ' WriteDebugLog("Y " & (sMsgSegments[0]) & " Seg1 " & (sMsgSegments[1]) & " T " & (sMsgSegments[2]) & " Seg3 " & (sMsgSegments[3]))
     Case 6
       StackManager(sMsgSegments)
-      If bHMRadioLogEnabled And If Left$(sMsgSegments[0]) = "E" Then Main.WriteDebugLog(LogLabel & "[RADIO]" & Chr(9) & "RX " & Right$(sMsgSegments[0], 6) & " RSSI: " & Val("&H" & sMsgSegments[4]))
+      If bHMRadioLogEnabled And If Left$(sMsgSegments[0]) = "E" Then WriteDebugLog("[RADIO]" & Chr(9) & "RX " & Right$(sMsgSegments[0], 6) & " RSSI: " & Val("&H" & sMsgSegments[4]))
       ProcessRadioMessage(sMsgSegments)
     Case 7
-       If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr(9) & (sMsgSegments[0]) & ", Uptime " & (Val("&H" & sMsgSegments[5]) Div 1000) & " Seconds, UNTRANSMITTED COMMANDS: " & iStackCountUntransmitted & ", OPEN COMMANDS: " & iStackCount & " for " & (Val("&H" & sMsgSegments[6] & "&")) & " DEVICE(S)")
+       If bHMInfoLogEnabled Then WriteDebugLog("[INFO]" & Chr(9) & (sMsgSegments[0]) & ", Uptime " & (Val("&H" & sMsgSegments[5]) Div 1000) & " Seconds, UNTRANSMITTED COMMANDS: " & iStackCountUntransmitted & ", OPEN COMMANDS: " & iStackCount & " for " & (Val("&H" & sMsgSegments[6] & "&")) & " DEVICE(S)")
        sHMLANReportedFW = sMsgSegments[1]
        sHMLANReportedSerial = sMsgSegments[2]
        sHMLANReportedAddress = sMsgSegments[4]
        iHMLANUptimecounter = Val("&H" & sMsgSegments[5])
        iDelta = UNIXtime() - iHMLANUptimecounter
     Case Else
-       If bHMErrorLogEnabled Then Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "' Parsing HM data packet: ")
+       If bHMErrorLogEnabled Then WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "' Parsing HM data packet: ")
        DisplayPacket(RecBuf)
   End Select
 
@@ -755,9 +748,9 @@ Private Sub ProcessRadioMessage(sSegments As String[])
   ' &70 weather info
   ' &58 status from radiator valve
   '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  If bHMRadioLogEnabled Then Main.WriteDebugLog(LogLabel & "[RADIO]" & Chr(9) & "RX " & sSegments[5] & IIf(bAckRequested, "    ACKREQ", "") & IIf(bWakeUp, " WAKEUP", "") & IIf(bBroadcast, " BROADCAST", "") & IIf(bAsleep, " SLEEPING", ""))
+  If bHMRadioLogEnabled Then WriteDebugLog("[RADIO]" & Chr(9) & "RX " & sSegments[5] & IIf(bAckRequested, "    ACKREQ", "") & IIf(bWakeUp, " WAKEUP", "") & IIf(bBroadcast, " BROADCAST", "") & IIf(bAsleep, " SLEEPING", ""))
   If sMsgtype = "02" Then
-    If bHMRadioLogEnabled And sSrc <> $sHMLANid Then Main.WriteDebugLog(LogLabel & "[RADIO]" & Chr(9) & "TX " & sSrc & CalcRSSI(Val("&H" & Right$(sPayload, 2) & "&")))
+    If bHMRadioLogEnabled And sSrc <> $sHMLANid Then WriteDebugLog("[RADIO]" & Chr(9) & "TX " & sSrc & CalcRSSI(Val("&H" & Right$(sPayload, 2) & "&")))
   Endif
   If Sdst = $sHMLANid And bAckRequested = True And sMsgtype = "3F" Then
     sCmd = "+" & sSrc & ",02,00,"
@@ -795,17 +788,17 @@ Private Sub Pair_me(sMsgnr As String, sNewDevice_address As String, sPayload As 
     sNewDevice[6] = Mid(sPayload, 26, 6)    ' device additional information (not used yet)
     sNewDevice_serH = Mid(sPayload, 9, 20)  ' device serial in hex char
 
-    If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "Device serial in HEX '" & sNewDevice_serH & "'")
+    If bHMInfoLogEnabled Then WriteDebugLog("Device serial in HEX '" & sNewDevice_serH & "'")
     For iCnt = 1 To 17 Step 2
       sNewDevice_serA &= Chr(Val("&" & (Mid(sNewDevice_serH, iCnt, 2))))
     Next
     sNewDevice[1] = sNewDevice_serA
-    If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "Device serial in ASC '" & sNewDevice_serA & "'")
+    If bHMInfoLogEnabled Then WriteDebugLog("Device serial in ASC '" & sNewDevice_serA & "'")
 
-    If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr(9) & "Pairing Request from '" & sNewDevice[0] & "' of the type '" & sNewDevice[3] & "' and subtype '" & sNewDevice[4] & "'")
+    If bHMInfoLogEnabled Then WriteDebugLog("[INFO]" & Chr(9) & "Pairing Request from '" & sNewDevice[0] & "' of the type '" & sNewDevice[3] & "' and subtype '" & sNewDevice[4] & "'")
     rDeviceInfo = Main.hDB.Exec("SELECT * FROM devicetypes_homematic WHERE type_code = &1", sNewDevice[3])
     If rDeviceInfo!commands = "none supported"
-      If bHMErrorLogEnabled Then Main.WriteDebugLog(LogLabel & "[ERROR]" & Chr(9) & "This device is not (yet) supported " & sNewDevice[0] & ", " & sNewDevice[1] & ", " & sNewDevice[2] & ", " & sNewDevice[3] & ", " & sNewDevice[4] & ", " & sNewDevice[5])
+      If bHMErrorLogEnabled Then WriteDebugLog("[ERROR]" & Chr(9) & "This device is not (yet) supported " & sNewDevice[0] & ", " & sNewDevice[1] & ", " & sNewDevice[2] & ", " & sNewDevice[3] & ", " & sNewDevice[4] & ", " & sNewDevice[5])
     Else 'supported
       ' just clear any open commands for this device
       For Each sDummy In cDestDevice_id
@@ -837,7 +830,7 @@ Private Sub Pair_me(sMsgnr As String, sNewDevice_address As String, sPayload As 
         '     Main.hDB.Exec(sQuery) ' create external log file
         '   Next
         ' Else ' it already exists
-        '   If bHMErrorLogEnabled Then Main.WriteDebugLog(LogLabel & "Device with address " & sNewDevice_address & " already exists. Not creating any new tables. Delete the device and logtables first to clear old device data")
+        '   If bHMErrorLogEnabled Then WriteDebugLog( "Device with address " & sNewDevice_address & " already exists. Not creating any new tables. Delete the device and logtables first to clear old device data")
         ' Endif ' autocreate
       Endif ' pairing
     Endif ' supported
@@ -881,50 +874,50 @@ Private Sub Display_Message(sSegments As String[])
               Devices.ValueUpdate(iDeviceId, 2, fTemperature, Devices.ValueType_Temperature)
               Devices.ValueUpdate(iDeviceId, 3, iHumidity, Devices.ValueType_Humidity)
             Endif
-            If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr$(9) & sSrc & " Temperature " & fTemperature & " Humidity " & iHumidity)
+            If bHMInfoLogEnabled Then WriteDebugLog("[INFO]" & Chr$(9) & sSrc & " Temperature " & fTemperature & " Humidity " & iHumidity)
           Case "58"
             iValvestate = (ascii2hex(Mid(sSegments[5], 21, 2))) / 2.55
             iDeviceId = Devices.Find(Instance, sSrc, InterfaceId, "HM_CC_TC")
-            If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr$(9) & sSrc & " Requesting Valve " & sDst & " for " & iValvestate & " % open")
+            If bHMInfoLogEnabled Then WriteDebugLog("[INFO]" & Chr$(9) & sSrc & " Requesting Valve " & sDst & " for " & iValvestate & " % open")
             If iDeviceId Then Devices.ValueUpdate(iDeviceId, 4, iValvestate)
           Case "02"
             If bAsleep = False And bAckRequested = False And Mid$(sSegments[5], 19, 4) = "0102" Then
              fTemperature = (ascii2hex(Mid(sSegments[5], 23, 2))) / 2
-             If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr$(9) & sSrc & " Set Temperature " & fTemperature)
+             If bHMInfoLogEnabled Then WriteDebugLog("[INFO]" & Chr$(9) & sSrc & " Set Temperature " & fTemperature)
              iDeviceId = Devices.Find(Instance, sSrc, InterfaceId, "HM_CC_TC")
              If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, fTemperature, Devices.ValueType_Temperature)
             Else If bAsleep = False And bAckRequested = False And Mid$(sSegments[5], 19, 2) = "00" Then
-              If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr$(9) & sSrc & " Awake ")
+              If bHMInfoLogEnabled Then WriteDebugLog("[INFO]" & Chr$(9) & sSrc & " Awake ")
              Else
-              If bHMErrorLogEnabled Then Main.WriteDebugLog(LogLabel & "[ERROR]" & Chr$(9) & sSrc & " Message type " & sMsgtype & " with unsupported content " & Left$(sSegments[5], -2))
+              If bHMErrorLogEnabled Then WriteDebugLog("[ERROR]" & Chr$(9) & sSrc & " Message type " & sMsgtype & " with unsupported content " & Left$(sSegments[5], -2))
             Endif
           Case "10"
             If (bAsleep = False) And If (bAckRequested = True) And If (Mid$(sSegments[5], 19, 4) = "0602") Then
               fTemperature = (ascii2hex(Mid(sSegments[5], 23, 2))) / 2
-              If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr$(9) & sSrc & " Manual Override Temperature " & fTemperature)
+              If bHMInfoLogEnabled Then WriteDebugLog("[INFO]" & Chr$(9) & sSrc & " Manual Override Temperature " & fTemperature)
               iDeviceId = Devices.Find(Instance, sSrc, InterfaceId, "HM_CC_TC")
               If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, fTemperature, Devices.ValueType_Temperature)
              Else If Left(sSegments[0]) = "E" And (bAsleep = False) And If (bAckRequested = True) And If (Mid$(sSegments[5], 19, 2) = "03") Then
               sConf5Dump &= Left(Right(sPayload, -4), -2) ' experimental, only through quickset after db modification (add the commands)
              Else
-              If bHMErrorLogEnabled Then Main.WriteDebugLog(LogLabel & "[ERROR]" & Chr$(9) & sSrc & "Message type " & sMsgtype & " with unsupported content " & Left$(sSegments[5], -2))
+              If bHMErrorLogEnabled Then WriteDebugLog("[ERROR]" & Chr$(9) & sSrc & "Message type " & sMsgtype & " with unsupported content " & Left$(sSegments[5], -2))
             Endif
           Case "3F"
-            If bHMInfoLogEnabled Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr(9) & sSrc & " Timesync ") ' done in Ack message"
+            If bHMInfoLogEnabled Then WriteDebugLog("[INFO]" & Chr(9) & sSrc & " Timesync ") ' done in Ack message"
           Case "00"
-            If bHMErrorLogEnabled And bHMPairEnabled = False Then Main.WriteDebugLog(LogLabel & "[INFO]" & Chr(9) & "Received Pairing request from " & sSrc & " while not in Pairing mode")
+            If bHMErrorLogEnabled And bHMPairEnabled = False Then WriteDebugLog("[INFO]" & Chr(9) & "Received Pairing request from " & sSrc & " while not in Pairing mode")
           Case Else
-            If bHMErrorLogEnabled Then Main.WriteDebugLog(LogLabel & "[ERROR] Unknown message " & Left$(sSegments[5], -2) & " from address " & sSrc)
+            If bHMErrorLogEnabled Then WriteDebugLog("[ERROR] Unknown message " & Left$(sSegments[5], -2) & " from address " & sSrc)
         End Select ' HM-CC-TC
       Case Else
-        If bHMErrorLogEnabled Then Main.WriteDebugLog(LogLabel & "[ERROR]" & Chr(9) & "Unknown Devicetype (Check Database)")
+        If bHMErrorLogEnabled Then WriteDebugLog("[ERROR]" & Chr(9) & "Unknown Devicetype (Check Database)")
     End Select ' devices
   Else
     If bHMErrorLogEnabled Then
       If sSrc = $sHMLANid Then
-         'Main.WriteDebugLog(LogLabel & "[RADIO]" & Chr(9) & "ECHO TX " & sSegments[5])
+         'WriteDebugLog( "[RADIO]" & Chr(9) & "ECHO TX " & sSegments[5])
       Else
-        Main.WriteDebugLog(LogLabel & "[ERROR]" & Chr(9) & "Received message " & sSegments[5] & " from unknown device with address " & sSrc)
+        WriteDebugLog("[ERROR]" & Chr(9) & "Received message " & sSegments[5] & " from unknown device with address " & sSrc)
       Endif
     Endif
   Endif
@@ -943,10 +936,10 @@ Public Sub tAckTimer_Timer()
   Restack()
   If iCommandRetry < 25
     Inc iCommandRetry
-    If iCommandRetry Mod 5 = 0 And bHMErrorLogEnabled Then Main.WriteDebugLog(LogLabel & "retries left: " & (25 - iCommandRetry))
+    If iCommandRetry Mod 5 = 0 And bHMErrorLogEnabled Then WriteDebugLog("retries left: " & (25 - iCommandRetry))
     PushStack() ' retry and continue
    Else
-    If bHMErrorLogEnabled Then Main.WriteDebugLog(LogLabel & "Exceeded 25 retry attempts, retry mechanism disabled until HMLAN Adapter is reachable again")
+    If bHMErrorLogEnabled Then WriteDebugLog("Exceeded 25 retry attempts, retry mechanism disabled until HMLAN Adapter is reachable again")
   Endif
 
 End
@@ -983,7 +976,7 @@ Public Sub Timestamp() As String ' mS since 00:00
 End
 
 ' seconds since 01/01/2000
-Public Sub Systemtime() As String
+Private Sub Systemtime() As String
 
   Dim fTimestamp As Float
   Dim iTimestamp As Integer
@@ -998,7 +991,7 @@ Public Sub Systemtime() As String
 End
 
 ' offset in seconds from UTC
-Public Function UTCoffset() As Integer
+Private Sub UTCoffset() As Integer
 
   Dim sUTCtime As String
   Dim iLOCALtime As Integer
@@ -1010,7 +1003,7 @@ Public Function UTCoffset() As Integer
 End
 
 ' unix time in mS since epoch
-Public Function UNIXtime() As Long
+Public Sub UNIXtime() As Long
 
   Dim iReturnValue As Long
   Dim sReturnValue As String
@@ -1020,7 +1013,7 @@ Public Function UNIXtime() As Long
   Return iReturnValue
 
 Catch
-   Main.WriteDebugLog(LogLabel & "Error when trying to run 'date': " & Error.Text & ".")
+  WriteDebugLog("Error when trying to run 'date': " & Error.Text & ".")
 
 End
 
@@ -1036,7 +1029,7 @@ Private Sub DisplayPacket(bBuf As Byte[]) As String
 
 End
 
-Private Function MessageCounter() As String
+Private Sub MessageCounter() As String
 
   If iMessageCounter < 255 Then
     Inc iMessageCounter

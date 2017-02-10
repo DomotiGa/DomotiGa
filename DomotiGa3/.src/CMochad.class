@@ -23,7 +23,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Mochad"
 Public PluginFriendlyName As String = "Mochad X10"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "Roland van Hulzen"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -45,14 +45,10 @@ Private $iTCPPort As String
 Private $bDebug As Boolean
 Private $bGlobalX10 As Boolean
 
-Public hMochad As New Socket
-
-Public sBuffer As String
-Public sLastCommand As String
-
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+' Interface objects
+Public hMySocket As CSocket
+Private $sMsgData As String
+Private $sLastCommand As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -76,27 +72,13 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   InterfaceId = Devices.FindInterface("Mochad Interface")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
-    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    WriteLog("ERROR: " & ErrorText)
     IsRunning = False
     Return
   Endif
 
-  ' Define timer for TCP reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
-
   ' Connect/Initialize connection
-  Connect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  Connect()
+  ConnectTCP()
 
 End
 
@@ -110,90 +92,64 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect(Optional bFirstStart As Boolean = True) As Boolean
+Private Sub ConnectTCP()
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the connection
-  Try hMochad.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' get a new one
-  hMochad = New Socket As "Mochad"
-  hMochad.Connect($sTCPHost, $iTCPPort)
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
 
-  ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
-  ' Don't set IsRunning=True, this has to be done in _Ready 
-
-  ' All went ok
-  Return True
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is connected
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Mochad_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
-
-  ' initialise the ASCII communication
-  Try Write #hMochad, "ASCI" & Chr(10), 5
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is closed
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Mochad_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
-
-End
-
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect()
 
   ' try to close the connection
-  Try tReConnect.Stop
-  Try hMochad.Close
+  Try hMySocket.Close
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
+  ' try stop running timers
+  StopTimers()
 
-  ' all ok
-  Return True
+  WriteLog(PluginFriendlyName & " TCP connection closed.")
 
 Finally
   IsRunning = False
@@ -201,30 +157,96 @@ Finally
   ErrorWhere = ""
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
+  WriteLog("ERROR: " & Error.Text)
 
 End
 
-Public Sub Mochad_Found()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' Empty internal buffer
+  $sMsgData = ""
+
+  hMySocket.Write("ASCI" & gb.Lf)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
 
   Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to host
+' tcp socket is connected
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Mochad_Error()
+Public Sub MySocket_Ready()
 
-  Dim sMsg As String
+  WriteLog("TCP interface connected.")
+  IsRunning = True
 
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+  Run()
 
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  $sMsgData &= vVar
+
+  ' Check for linefeed and process data
+  While InStr($sMsgData, gb.Lf)
+    ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, gb.Lf) - 1), $sLastCommand)
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.Lf) + 1)
+  Wend
 
 End
 
@@ -265,40 +287,29 @@ Public Sub SendCommand(sAddress As String, sValue As String)
     sCmd &= sValue
   Endif
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Send command: " & sCmd)
-  Try Write #hMochad, sCmd & Chr$(10), Len(sCmd) + 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & Error.Text)
+  If $bDebug Then WriteDebugLog("Send command: " & sCmd)
+
+  ' Send command
+  hMySocket.Write(sCmd & gb.Lf)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' data received on tcp socket
+'
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Mochad_Read()
-
-  Dim sData As String
-
-  Try Read #hMochad, sData, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
-  If sData = Chr(10) Then ' buffer until linefeed then parse
-    ParseData(sBuffer, sLastCommand)
-  Else
-    sBuffer &= sData
-  Endif
-
-End
-
-Private Sub ParseData(sStr As String, sLast As String)
+Private Sub ProcessReceivedPacket(sStr As String, sLast As String)
 
   Dim sAddress, sType, sValue, sTamper, sBatt As String
   Dim aData, aType, aCmd As String[]
   Dim iDeviceId As Integer
 
-  sBuffer = Null
-  sLastCommand = Null
+  ' Don't continue if the string/packet is empty
+  If Not sStr Then Return
+
+  $sLastCommand = Null
 
   If InStr(sStr, "Raw data received:") = 0 Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sStr)
+    If $bDebug Then WriteDebugLog("< " & sStr)
     Select Mid(sStr, 19, 2)
       Case "PL"
 
@@ -306,21 +317,21 @@ Private Sub ParseData(sStr As String, sLast As String)
         If InStr(sStr, " HouseUnit: ") Then
           aData = Scan(sStr, "* HouseUnit: *")
           If aData.Count = 2 Then
-            sLastCommand = aData[1]
-            aData = Scan(sLastCommand, "* Func: Ext code 1, data, control Data: * Command: 31")
+            $sLastCommand = aData[1]
+            aData = Scan($sLastCommand, "* Func: Ext code 1, data, control Data: * Command: 31")
             If aData.Count = 2 Then
               sAddress = Left(aData[0], 1) & Format$(Mid$(aData[0], 2), "00")
               sValue = "Dim " & Round(Val("&H" & Mid(aData[1], 1, 2)) / 0.63)
               If $bDebug Then
-                Main.WriteDebugLog(LogLabel & "Address = " & sAddress)
-                Main.WriteDebugLog(LogLabel & "Command = " & sValue)
-                Main.WriteDebugLog(LogLabel & "Type = X10")
+                WriteDebugLog("Address = " & sAddress)
+                WriteDebugLog("Command = " & sValue)
+                WriteDebugLog("Type = X10")
               Endif
               UpdateX10(sAddress, sValue)
               Return
             Endif
           Else
-            If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid data: " & sStr)
+            If $bDebug Then WriteDebugLog("Invalid data: " & sStr)
             Return
           Endif
         Endif
@@ -344,21 +355,21 @@ Private Sub ParseData(sStr As String, sLast As String)
               Select sValue
                 Case "On", "Off"
                   If $bDebug Then
-                    Main.WriteDebugLog(LogLabel & "Address = " & sAddress)
-                    Main.WriteDebugLog(LogLabel & "Command = " & sValue)
-                    Main.WriteDebugLog(LogLabel & "Type = X10")
+                    WriteDebugLog("Address = " & sAddress)
+                    WriteDebugLog("Command = " & sValue)
+                    WriteDebugLog("Type = X10")
                   Endif
                   UpdateX10(sAddress, sValue)
                 Case Else
-                  If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command: " & aData[2])
+                  If $bDebug Then WriteDebugLog("Unsupported command: " & aData[2])
                   Return
               End Select
             Else
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid data: " & sStr)
+              If $bDebug Then WriteDebugLog("Invalid data: " & sStr)
               Return
             Endif
           Else
-            If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid data: " & sStr)
+            If $bDebug Then WriteDebugLog("Invalid data: " & sStr)
             Return
           Endif
         Endif
@@ -443,24 +454,24 @@ Private Sub ParseData(sStr As String, sLast As String)
                 sValue = "Lights " & aCmd[0]
               Endif
             Case Else
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown device type: " & aData[1])
+              If $bDebug Then WriteDebugLog("Unknown device type: " & aData[1])
           End Select
         Else
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid command data: " & aData[2])
+          If $bDebug Then WriteDebugLog("Invalid command data: " & aData[2])
         Endif
       Else
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid data: " & sStr)
+        If $bDebug Then WriteDebugLog("Invalid data: " & sStr)
       Endif
       If $bDebug Then
-        Main.WriteDebugLog(LogLabel & "Address = " & sAddress)
-        Main.WriteDebugLog(LogLabel & "Command = " & sValue)
-        Main.WriteDebugLog(LogLabel & "Type = " & sType)
-        Main.WriteDebugLog(LogLabel & "Battery level = " & sBatt)
-        Main.WriteDebugLog(LogLabel & "Tamper = " & sTamper)
+        WriteDebugLog("Address = " & sAddress)
+        WriteDebugLog("Command = " & sValue)
+        WriteDebugLog("Type = " & sType)
+        WriteDebugLog("Battery level = " & sBatt)
+        WriteDebugLog("Tamper = " & sTamper)
       Endif
 
       If Not sAddress Then 
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid address")
+        If $bDebug Then WriteDebugLog("Invalid address")
         Return
       Endif
 
@@ -475,7 +486,7 @@ Private Sub ParseData(sStr As String, sLast As String)
   Endif
 
 Catch
-   Main.WriteDebugLog(LogLabel & "Error while Parsing: '" & Error.Text & "' at '" & Error.Where & "'")
+   WriteDebugLog("Error while Parsing: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -483,7 +494,7 @@ Private Sub UpdateX10(sCode As String, sCommand As String)
 
   Dim iDeviceId As Integer
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received command '" & sCommand & "' for device '" & sCode & "'")
+  If $bDebug Then WriteDebugLog("Received command '" & sCommand & "' for device '" & sCode & "'")
 
   If $bGlobalX10 Then
     iDeviceId = Devices.FindAll(Instance, sCode, 9999, "X10")

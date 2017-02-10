@@ -20,7 +20,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "MQTT"
 Public PluginFriendlyName As String = "MQTT Client"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -51,7 +51,9 @@ Private $bDebug As Boolean
 Private $bEnablePublish As Boolean
 Private $bEnableSubscribe As Boolean
 
-Public hMQTT As New Socket
+' Interface objects
+Public hMySocket As CSocket
+
 Public tMQTTPing As Timer
 Public tMQTTBusy As Timer
 Private bRxBuf As New Byte[]     ' the received data
@@ -76,10 +78,6 @@ Const MQTT_PUBLISH As Integer = 3
 Const MQTT_PUBACK As Integer = 4
 Const MQTT_SUBACK As Integer = 9
 Const MQTT_PINGRESP As Integer = 13
-
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -109,11 +107,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnablePublish = cPl.Settings["enablepublish"]
   $bEnableSubscribe = cPl.Settings["enablesubscribe"]
 
-  ' Define timer for reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
-
   InterfaceId = Devices.FindInterface("MQTT Interface")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
@@ -123,7 +116,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   Endif
 
   ' Connect/Initialize connection
-  Connect()
+  ConnectTCP()
 
 End
 
@@ -137,60 +130,68 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Private Sub ConnectTCP()
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the connection
-  Try hMQTT.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' Init
-  bRxBuf.Clear
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
 
-  ' get a new one
-  hMQTT = New Socket As "MQTT"
-  hMQTT.Connect($sTCPHost, $iTCPPort)
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
   Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to broker " & $sTCPHost & ":" & $iTCPPort)
 
-  ' Don't set IsRunning=True, this has to be done in _Ready
-
-  ' All went ok
-  Return True
-
 Catch ' some errors
-  ' Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to broker " & $sTCPHost & ":" & $iTCPPort)
+  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to broker " & $sTCPHost & ":" & $iTCPPort)
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Main.WriteDebugLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-  Return False
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect()
 
   ' tell MQTT broker that we want to disconnect
   ClientDisconnect()
 
-  ' try stop running timers
-  Try tReConnect.Stop
-  Try tMQTTPing.Stop
-  Try tMQTTBusy.Stop
-
   ' try to close the connection
-  Try hMQTT.Close
+  Try hMySocket.Close
+
+  ' try stop running timers
+  StopTimers()
 
   Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-
-  ' all ok
-  Return True
 
 Finally
   IsRunning = False
@@ -199,108 +200,118 @@ Finally
 
 Catch
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
-
-End
-
-Public Sub MQTT_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
+'
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
+Private Sub StopTimers()
 
-  Connect()
+  Try tMQTTPing.Stop
+  Try tMQTTBusy.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  bRxBuf.Clear
+
+  ' start ping timer
+  tMQTTPing = New Timer As "tMQTTPing"
+  tMQTTPing.Delay = $iHeartBeat * 500 ' take maximum idle time half of the heartbeat time in seconds
+  tMQTTPing.Start
+
+  ' define timer for busy
+  tMQTTBusy = New Timer As "tMQTTBusy"
+  tMQTTBusy.Stop
+
+  ClientConnect($sClientname)
+  If $bEnableSubscribe Then SubscribeTopic($sSubTopic)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' peer closed tcp socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub MQTT_Closed()
+Public Sub MySocket_Closed()
 
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-
-  ' try stop running timers
-  Try tMQTTPing.Stop
-  Try tMQTTBusy.Stop
+  WriteLog("ERROR: TCP socket closed by peer.")
+  StopTimers()
 
   IsRunning = False
-
-  ReConnect()
-
-End
-
-Public Sub MQTT_Read()
-
-  Dim bByte As Byte
-
-  Try bByte = Read #hMQTT As Byte
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from network socket! -> '" & Error.Text & "' at '" & Error.Where & "'")
-  ParseMessage(bByte)
+  ErrorText = "TCP socket closed by peer"
 
 End
 
-Public Sub MQTT_Ready()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
 
-  If IsRunning Then
-    Main.WriteLog(LogLabel & "WARNING: TCP interface was already connected")
-  Else
-    Main.WriteLog(LogLabel & "TCP interface connected.")
-    IsRunning = True
+  WriteLog("ERROR: " & sMsg)
 
-    ' start ping timer
-    tMQTTPing = New Timer As "tMQTTPing"
-    tMQTTPing.Delay = $iHeartBeat * 500 ' take maximum idle time half of the heartbeat time in seconds
-    tMQTTPing.Start
+  IsRunning = False
+  ErrorText = sMsg
 
-    ' define timer for busy
-    tMQTTBusy = New Timer As "tMQTTBusy"
-    tMQTTBusy.Stop
+End
 
-    ' connected so reset retry counter
-    tReConnect.Stop
-    'iReConnectRetry = 0 ' do this in DecodeConnAck()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
 
-    ClientConnect($sClientname)
-    If $bEnableSubscribe Then SubscribeTopic($sSubTopic)
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
   Endif
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
+'
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
-
-End
-
 Public Sub tMQTTPing_Timer()
 
   If DateDiff(Now(), dRxStarted, gb.Second) > 3 Then
     DumpMessage("<", bRxBuf)
-    Main.WriteDebugLog(LogLabel & "ERROR: Timeout while receiving data, data flushed")
+    WriteDebugLog("ERROR: Timeout while receiving data, data flushed")
     bRxBuf.Clear()
   Endif
 
@@ -321,7 +332,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
     If aDim.Count = 2 Then
       PublishMsg(sAddress, sValue, True)
     Else
-      Main.WriteDebugLog(LogLabel & "Invalid dim/setpoint command '" & sValue & "'!")
+      WriteDebugLog("Invalid dim/setpoint command '" & sValue & "'!")
       Return
     Endif
   ' switch
@@ -329,7 +340,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
     PublishMsg(sAddress, sValue, True)
   ' invalid
   Else
-    Main.WriteDebugLog(LogLabel & "Invalid command '" & sValue & "'!")
+    WriteDebugLog("Invalid command '" & sValue & "'!")
     Return
   Endif
 
@@ -362,7 +373,7 @@ Private Sub ClientConnect(sId As String)
   bBuf[11] = &H2  ' clean session only
   If $sUsername Then bBuf[11] = BSet(bBuf[11], 7)
   If $sPassword And If Not $sUsername Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "You cannot supply a password without a username!")
+    If $bDebug Then WriteDebugLog("You cannot supply a password without a username!")
     Return
   Else
     bBuf[11] = BSet(bBuf[11], 6)
@@ -401,7 +412,7 @@ Private Sub ClientConnect(sId As String)
     Next
   Endif
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Connecting to broker.")
+  If $bDebug Then WriteDebugLog("Connecting to broker.")
   bBuf.Resize(2 + bBuf[1])
   QueueCommand(bBuf)
 
@@ -417,7 +428,7 @@ Private Sub ClientDisconnect()
   bBuf[0] = -&H7F + &5F ' disconnect
   bBuf[1] = &H0
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Disconnecting from broker.")
+  If $bDebug Then WriteDebugLog("Disconnecting from broker.")
   QueueCommand(bBuf)
 
 End
@@ -432,7 +443,7 @@ Private Sub ClientHeartBeat()
   bBuf[0] = &HC0
   bBuf[1] = &H0
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending heartbeat to broker.")
+  If $bDebug Then WriteDebugLog("Sending heartbeat to broker.")
   QueueCommand(bBuf)
 
 End
@@ -460,7 +471,7 @@ Private Sub SubscribeTopic(sTopic As String)
   Next
   bBuf.Add(&H0, 5 + Len(sTopic) + iCnt + 1)
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Subscribing to Topic '" & sTopic & "'")
+  If $bDebug Then WriteDebugLog("Subscribing to Topic '" & sTopic & "'")
   bBuf.Resize(&H7 + Len(sTopic))
   QueueCommand(bBuf)
 
@@ -502,7 +513,7 @@ Public Sub PublishMsg(sTopic As String, sMsg As String, Optional bRawTopic As Bo
     Case 2
       bBuf[0] = BSet(bBuf[0], 2)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid QoS value '" & $iQoS & "' set!")
+      If $bDebug Then WriteDebugLog("Invalid QoS value '" & $iQoS & "' set!")
       Return
   End Select
 
@@ -516,7 +527,7 @@ Public Sub PublishMsg(sTopic As String, sMsg As String, Optional bRawTopic As Bo
     bBuf.Add(Asc(sMsg, iCnt), 3 + iTopicLen + iCnt)
   Next
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Publishing Message '" & sMsg & "' to Topic '" & sTopic & "'")
+  If $bDebug Then WriteDebugLog("Publishing Message '" & sMsg & "' to Topic '" & sTopic & "'")
   bBuf.Resize(&H4 + Len(sTopic) + Len(sMsg))
   QueueCommand(bBuf)
 
@@ -558,7 +569,7 @@ Public Sub tMQTTBusy_Timer()
   tMQTTBusy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending next command from Queue (count = " & cQueue.Count & ")")
+    If $bDebug Then WriteDebugLog("Sending next command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
 
@@ -569,7 +580,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub WriteCommand(bBuffer As Byte[], sKey As String)
 
-  bBuffer.Write(hMQTT, 0, bBuffer.Length)
+  hMySocket.Write(bBuffer)
   If $bDebug Then DumpMessage(">", bBuffer)
 
   ' remove sent command from queue
@@ -583,7 +594,7 @@ Private Sub WriteCommand(bBuffer As Byte[], sKey As String)
   If bBusy = False Then bBusy = True
 
 Catch
-   Main.WriteDebugLog(LogLabel & "Not connected to MQTT Broker, cannot Publish!")
+  WriteLog("ERROR: Not connected to MQTT Broker, cannot Publish!")
 
 End
 
@@ -602,11 +613,11 @@ Private Sub DumpMessage(sTxRx As String, bBuffer As Byte[])
   If iLen < bBuffer.Length - 1 Then
     sStr &= " ..."
   Endif
-  Main.WriteDebugLog(LogLabel & sStr)
+  WriteDebugLog(sStr)
 
 End
 
-Private Sub ParseMessage(bByte As Byte)
+Private Sub ProcessReceivedChar(bByte As Byte)
 
   Dim iType As Integer
   Dim iLength, iIndex As Integer
@@ -640,7 +651,7 @@ Private Sub ParseMessage(bByte As Byte)
     If (bShift > 3 * 7) Then
       If $bDebug Then
         DumpMessage("<", bRxBuf)
-        Main.WriteDebugLog(LogLabel & "ERROR: Ignoring packet with invalid length")
+        WriteDebugLog("ERROR: Ignoring packet with invalid length")
         bRxBuf.Clear()
         Return
       Endif
@@ -671,15 +682,15 @@ Private Sub ParseMessage(bByte As Byte)
       DecodePubAck(bRxBuf)
     ' pingresp
     Case MQTT_PINGRESP
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Broker replied with alive packet.")
+      If $bDebug Then WriteDebugLog("Broker replied with alive packet.")
     Case MQTT_SUBACK
       'DecodeSubAck(bRxBuf)
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Subscription ack packet.")
+      If $bDebug Then WriteDebugLog("Subscription ack packet.")
     Case MQTT_PUBLISH
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received published data.")
+      If $bDebug Then WriteDebugLog("Received published data.")
       DecodePublish(bRxBuf)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received unsupported packet type " & iType)
+      If $bDebug Then WriteDebugLog("Received unsupported packet type " & iType)
   End Select
 
   bRxBuf.Clear()
@@ -695,11 +706,11 @@ Private Sub DecodePublish(bBuffer As Byte[])
   ' extract topic. Length: MSB @ offset 0, LSB @ offset 1
   iTopicLen = Lsl(CInt(bBuffer[0]), 8) + bBuffer[1]
   sTopic = bBuffer.ToString(2, iTopicLen)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received topic : '" & sTopic & "'")
+  If $bDebug Then WriteDebugLog("Received topic : '" & sTopic & "'")
 
   ' extract payload
   sPayload = bBuffer.ToString(2 + iTopicLen)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received payload : '" & sPayload & "'")
+  If $bDebug Then WriteDebugLog("Received payload : '" & sPayload & "'")
 
   ' try to determine type of payload
   Try cTest = JSON.Decode(sPayload)
@@ -722,11 +733,11 @@ Private Sub DecodePublish(bBuffer As Byte[])
       Case "MQTT JSON Generic"
         DecodeJSON(iDeviceId, sPayload)
       Case Else
-        Main.WriteDebugLog(LogLabel & "ERROR: Unsupported devicetype '" & sDeviceTypeDescr & "'")
+        WriteDebugLog("ERROR: Unsupported devicetype '" & sDeviceTypeDescr & "'")
     End Select
 
   Else
-    Main.WriteDebugLog(LogLabel & "ERROR: No device found with address '" & sTopic & "'")
+    WriteDebugLog("ERROR: No device found with address '" & sTopic & "'")
   Endif
 
 End
@@ -737,14 +748,14 @@ Private Sub DecodeJSON(iDeviceId As Integer, sPayload As String)
   Dim cPayload As Collection
   Dim sValue As String
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received JSON formatted data:")
+  If $bDebug Then WriteDebugLog("Received JSON formatted data:")
   cPayload = JSON.Decode(sPayload)
   If cPayload.Count Then
     For Each sValue In cPayload
       If $bDebug Then
-        Main.WriteDebugLog(LogLabel & "Value#: " & iValueNum)
-        Main.WriteDebugLog(LogLabel & "Field: '" & cPayload.Key & "'")
-        Main.WriteDebugLog(LogLabel & "Value: '" & sValue & "'")
+        WriteDebugLog("Value#: " & iValueNum)
+        WriteDebugLog("Field: '" & cPayload.Key & "'")
+        WriteDebugLog("Value: '" & sValue & "'")
       Endif
       Devices.ValueUpdate(iDeviceId, iValueNum, sValue)
       Inc iValueNum
@@ -752,8 +763,8 @@ Private Sub DecodeJSON(iDeviceId As Integer, sPayload As String)
   Endif
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
-  Main.WriteDebugLog(LogLabel & "Received payload is probably not in correct JSON format, payload = '" & sPayload & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteDebugLog("Received payload is probably not in correct JSON format, payload = '" & sPayload & "'!")
 
 End
 
@@ -777,18 +788,18 @@ Private Sub DecodeOwntracks(iDeviceId As Integer, sPayload As String)
     sVel = IIf(cPayload["vel"] <> Null, cPayload["vel"], sEmpty) ' speed in km/hr
     sDesc = IIf(cPayload["desc"] <> Null, cPayload["desc"], sEmpty)
     If $bDebug Then
-      Main.WriteDebugLog(LogLabel & "Received Owntracks client data:")
-      Main.WriteDebugLog(LogLabel & "Type: " & sType)
-      Main.WriteDebugLog(LogLabel & "Latitude: " & sLat)
-      Main.WriteDebugLog(LogLabel & "Longitude: " & sLon)
-      Main.WriteDebugLog(LogLabel & "Accuracy: " & sAcc)
-      Main.WriteDebugLog(LogLabel & "Battery: " & sBatt & "%")
-      Main.WriteDebugLog(LogLabel & "Event: " & sEvent)
-      Main.WriteDebugLog(LogLabel & "Timestamp: " & sTst)
-      If sAlt <> sEmpty Then Main.WriteDebugLog(LogLabel & "Altitude: " & sAlt)
-      If sCog <> sEmpty Then Main.WriteDebugLog(LogLabel & "Heading: " & sCog)
-      If sVel <> sEmpty Then Main.WriteDebugLog(LogLabel & "Speed: " & sVel)
-      If sDesc <> sEmpty Then Main.WriteDebugLog(LogLabel & "Description: " & sDesc)
+      WriteDebugLog("Received Owntracks client data:")
+      WriteDebugLog("Type: " & sType)
+      WriteDebugLog("Latitude: " & sLat)
+      WriteDebugLog("Longitude: " & sLon)
+      WriteDebugLog("Accuracy: " & sAcc)
+      WriteDebugLog("Battery: " & sBatt & "%")
+      WriteDebugLog("Event: " & sEvent)
+      WriteDebugLog("Timestamp: " & sTst)
+      If sAlt <> sEmpty Then WriteDebugLog("Altitude: " & sAlt)
+      If sCog <> sEmpty Then WriteDebugLog("Heading: " & sCog)
+      If sVel <> sEmpty Then WriteDebugLog("Speed: " & sVel)
+      If sDesc <> sEmpty Then WriteDebugLog("Description: " & sDesc)
     Endif
     Devices.ValueUpdate(iDeviceId, 1, sLat)
     Devices.ValueUpdate(iDeviceId, 2, sLon)
@@ -813,18 +824,18 @@ Private Sub DecodeOwntracks(iDeviceId As Integer, sPayload As String)
     sCog = IIf(cPayload["cog"] <> Null, cPayload["cog"], sEmpty)
     sVel = IIf(cPayload["vel"] <> Null, cPayload["vel"], sEmpty) ' speed in km/hr
     If $bDebug Then
-      Main.WriteDebugLog(LogLabel & "Received Owntracks client data:")
-      Main.WriteDebugLog(LogLabel & "Type: " & sType)
-      Main.WriteDebugLog(LogLabel & "Latitude: " & sLat)
-      Main.WriteDebugLog(LogLabel & "Longitude: " & sLon)
-      Main.WriteDebugLog(LogLabel & "Description: " & sDesc)
-      Main.WriteDebugLog(LogLabel & "Vertical accuracy: " & sVac)
-      Main.WriteDebugLog(LogLabel & "Timestamp: " & sTst)
-      If sAlt <> sEmpty Then Main.WriteDebugLog(LogLabel & "Altitude: " & sAlt)
-      If sCog <> sEmpty Then Main.WriteDebugLog(LogLabel & "Heading: " & sCog)
-      If sVel <> sEmpty Then Main.WriteDebugLog(LogLabel & "Speed: " & sVel)
-      Main.WriteDebugLog(LogLabel & "Radius: " & sRad)
-      If sTid <> sEmpty Then Main.WriteDebugLog(LogLabel & "Tracker-ID: " & sTid)
+      WriteDebugLog("Received Owntracks client data:")
+      WriteDebugLog("Type: " & sType)
+      WriteDebugLog("Latitude: " & sLat)
+      WriteDebugLog("Longitude: " & sLon)
+      WriteDebugLog("Description: " & sDesc)
+      WriteDebugLog("Vertical accuracy: " & sVac)
+      WriteDebugLog("Timestamp: " & sTst)
+      If sAlt <> sEmpty Then WriteDebugLog("Altitude: " & sAlt)
+      If sCog <> sEmpty Then WriteDebugLog("Heading: " & sCog)
+      If sVel <> sEmpty Then WriteDebugLog("Speed: " & sVel)
+      WriteDebugLog("Radius: " & sRad)
+      If sTid <> sEmpty Then WriteDebugLog("Tracker-ID: " & sTid)
     Endif
     Devices.ValueUpdate(iDeviceId, 1, sLat)
     Devices.ValueUpdate(iDeviceId, 2, sLon)
@@ -837,12 +848,12 @@ Private Sub DecodeOwntracks(iDeviceId As Integer, sPayload As String)
     Devices.ValueUpdate(iDeviceId, 9, sRad)
     Devices.ValueUpdate(iDeviceId, 10, sTid)
   Else
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Owntracks payload type '" & cPayload["_type"] & "' not supported.")
+    If $bDebug Then WriteDebugLog("Owntracks payload type '" & cPayload["_type"] & "' not supported.")
   Endif
 
 Catch
-  Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
-  Main.WriteDebugLog(LogLabel & "Received payload is not using Owntracks location format '" & sPayload & "'!")
+  WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteDebugLog("Received payload is not using Owntracks location format '" & sPayload & "'!")
 
 End
 
@@ -851,28 +862,26 @@ Private Sub DecodeConnAck(bBuffer As Byte[])
   ' Connect Return code
   Select Case bBuffer[1]
     Case 0
-      Main.WriteDebugLog(LogLabel & "Connection accepted by broker.")
-      tReConnect.Stop
-      iReConnectRetry = 0
+      WriteDebugLog("Connection accepted by broker.")
     Case 1
-      Main.WriteDebugLog(LogLabel & "Connection refused by broker, wrong protocol version.")
+      WriteDebugLog("Connection refused by broker, wrong protocol version.")
     Case 2
-      Main.WriteDebugLog(LogLabel & "Connection refused by broker, identifier refused.")
+      WriteDebugLog("Connection refused by broker, identifier refused.")
     Case 3
-      Main.WriteDebugLog(LogLabel & "Connection refused by broker, MQTT service unavailable.")
+      WriteDebugLog("Connection refused by broker, MQTT service unavailable.")
     Case 4
-      Main.WriteDebugLog(LogLabel & "Connection refused by broker, bad username or password.")
+      WriteDebugLog("Connection refused by broker, bad username or password.")
     Case 5
-      Main.WriteDebugLog(LogLabel & "Connection refused by broker, client is not authorized.")
+      WriteDebugLog("Connection refused by broker, client is not authorized.")
     Case Else
-      Main.WriteDebugLog(LogLabel & "Received unknown CONNACK status code!")
+      WriteDebugLog("Received unknown CONNACK status code!")
   End Select
 
 End
 
 Private Sub DecodePubAck(bBuffer As Byte[])
 
-  Main.WriteDebugLog(LogLabel & "Subscription accepted by broker.")
+  WriteDebugLog("Subscription accepted by broker.")
   ' TODO: implement decode message id and QoS granted
 
 End
