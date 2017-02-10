@@ -12,6 +12,7 @@ DELETE FROM devicetypes WHERE id=726;
 DELETE FROM devicetypes WHERE id=727;
 DELETE FROM devicetypes WHERE id=728;
 DELETE FROM devicetypes WHERE id=729;
+DELETE FROM devicetypes WHERE id=730;
 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (321, 'PIR Sensor', 'PIR', 'PT2262', '1F5170');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (322, 'Door Window Sensor', 'Door Window Sensor', 'PT2262', '1F5170');
@@ -19,6 +20,7 @@ INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (727, 'VMB2BL', '2-channel blind control module', 'Velbus', '\'02|1\', \'02|2\' or \'12|2\' <device address|channel>');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (728, 'VMB4PD', 'Lcd command module with 8 functions', 'Velbus', '\'02|1\', \'02|2\' or \'12|2\' <device address|channel>');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (729, 'VMB6IN', '6 channel input', 'Velbus', '\'02|1\', \'02|2\' or \'12|2\' <device address|channel>');
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES ,(730, 'VMBGP4PIR','Glass control module with 4 touch buttons module and motion detection', 'Velbus', '\'02\', \'05\' or \'12\'') 
 
 --
 -- Finally update to 1.0.025
