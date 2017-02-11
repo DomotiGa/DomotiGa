@@ -17,7 +17,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "LGTV"
 Public PluginFriendlyName As String = "LG TV Receiver"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -40,10 +40,11 @@ Private $sInterface As String
 Private $sSerPort As String
 Private $sBaud As String
 
-Public hLGTV As New Socket
-Public hLGTVSer As New SerialPort
+' Interface objects
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 
-Public sBuffer As String
+Private $sMsgData As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -85,23 +86,47 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the tcp host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ConnectTCP()
 
-  ' try to close the connection
-  Try hLGTV.Close
+  Dim iReconnectRetry As Integer = 0
 
-  ' get a new one
-  hLGTV = New Socket As "LGTV"
-  hLGTV.Connect($sTCPHost, $iTCPPort)
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
@@ -113,12 +138,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ConnectSerial()
 
-  ' try to close the connection
-  Try hLGTVSer.Close
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
   ' get a new one
-  hLGTVSer = New Serialport As "LGTVSer"
-  With hLGTVSer
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = gb.String
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = 0
@@ -129,34 +159,15 @@ Private Sub ConnectSerial()
   End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+  WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is connected
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub LGTV_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is closed
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub LGTV_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
 
 End
 
@@ -166,14 +177,13 @@ End
 Private Sub Disconnect()
 
   ' try to close the connection
-  Try hLGTV.Close
-  Try hLGTVSer.Close
+  Try hMySocket.Close
+  Try hMySerial.Close
 
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
+  ' try stop running timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
 
 Finally
   IsRunning = False
@@ -181,24 +191,134 @@ Finally
   ErrorWhere = ""
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to host
+'
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub LGTV_Error()
+Private Sub StopTimers()
 
-  Dim sMsg As String
+End
 
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' Empty internal buffer
+  $sMsgData = ""
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
 
   IsRunning = False
   ErrorText = sMsg
 
+  StopTimers()
+
 End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  $sMsgData &= vVar
+
+  ' Check for linefeed and process data
+  While InStr($sMsgData, gb.Lf)
+    ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, gb.Lf) - 1))
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.Lf) + 1)
+  Wend
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read data char for char
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  $sMsgData &= vVar
+
+  ' Check for linefeed and process data
+  While InStr($sMsgData, gb.Lf)
+    ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, gb.Lf) - 1))
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.Lf) + 1)
+  Wend
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send command via serial port or tcp socket
@@ -208,13 +328,12 @@ Private Sub SendCmd(sCmd As String)
   Dim sStr As String = sCmd & "\r"
 
   If $sInterface = "tcp" Then
-    Try Print #hLGTV, sStr
-    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & Error.Text)
+    hMySocket.Write(sStr)
   Else
-    Try Print #hLGTVSer, sStr
-    If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the serial port! -> " & Error.Text)
+    hMySerial.Write(sStr)
   Endif
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sCmd)
+
+  If $bDebug Then WriteDebugLog("> " & sCmd)
 
 End
 
@@ -231,7 +350,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
     Case "off"
       SendCmd("ka 01 00")
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sValue)
+      If $bDebug Then WriteDebugLog("Unsupported command received: " & sValue)
   End Select
 
 End
@@ -292,7 +411,7 @@ Public Sub SetCommand(sCmd As String, sValue As String, sAddress As String)
     Case "cli"
       SendCmd(sValue)
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Unsupported command received: " & sCmd & " " & sValue)
+      If $bDebug Then WriteDebugLog("Unsupported command received: " & sCmd & " " & sValue)
   End Select
 
 End
@@ -312,55 +431,15 @@ Public Sub GetCommand(sCmd As String, sAddress As String) As String
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' data received on tcp socket
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub LGTV_Read()
-
-  Dim sData As String
-
-  Try sData = Read #hLGTV, 1
-  If Error Then
-    Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
-  Else
-    If sData = Chr$(10) Then ' buffer until linefeed then parse
-      If Len(sBuffer) > 1 Then ParseLine(sBuffer)
-      sBuffer = Null
-    Else
-      sBuffer &= sData
-    Endif
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' data received on serial port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub LGTVSer_Read()
-
-  Dim sData As String
-
-  Try sData = Read #hLGTVSer, 1
-  If Error Then
-    Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! -> " & Error.Text)
-  Else
-    If sData = Chr$(10) Then ' buffer until linefeed then parse
-      If Len(sBuffer) > 1 Then ParseLine(sBuffer)
-      sBuffer = Null
-    Else
-      sBuffer &= sData
-    Endif
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' parse received data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseLine(sBuf As String)
+Private Sub ProcessReceivedPacket(sBuf As String)
 
   Dim sStr, sCat, sItem, sValue As String
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sBuf)
+  If Not sBuf Then Return
+
+  If $bDebug Then WriteDebugLog("< " & sBuf)
 
   ' a 00 OK01x
   ' a 00 NG01x
@@ -384,7 +463,7 @@ End
 Private Sub LGTVSetValue(sItem As String, vValue As Variant)
 
   Main.SetGlobalVar("LGTV_" & sItem, vValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received Item: " & sItem & " Value: " & vValue)
+  If $bDebug Then WriteDebugLog("Received Item: " & sItem & " Value: " & vValue)
 
 End
 

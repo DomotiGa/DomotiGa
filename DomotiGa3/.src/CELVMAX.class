@@ -41,8 +41,10 @@ Private $sTCPHost As String
 Private $iTCPPort As Integer
 Private $bDebug As Boolean
 
-Public hELVMAX As New Socket
-Public sBuffer As String
+' Interface objects
+Public hMySocket As CSocket
+
+Private $sMsgData As String
 
 Public iDeviceCount As Integer
 ' variable for timer
@@ -77,9 +79,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   ' Connect/Initialize connection
   ConnectTCP()
 
-  ' Initialize
-  Run()
-
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -88,6 +87,87 @@ End
 Public Sub StopPlugin()
 
   Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' connect to the tcp host:port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectTCP()
+
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  ' Write to main logfile we are trying to connect
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Disconnect()
+
+  ' try to close the connection
+  Try hMySocket.Close
+
+  ' try stop running timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & " TCP connection closed.")
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
+
+  ' try to stop the timer
+  Try tELVMax.Stop
 
 End
 
@@ -115,83 +195,75 @@ Public Sub tELVMax_Timer()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' connect to the tcp host:port
+' peer closed tcp socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ConnectTCP()
+Public Sub MySocket_Closed()
 
-  ' try to close the connection
-  Try hELVMAX.Close
+  WriteLog("ERROR: TCP socket closed by peer.")
 
-  ' get a new one
-  hELVMAX = New Socket As "ELVMAX"
-  hELVMAX.Connect($sTCPHost, $iTCPPort)
-
-  ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
-
-Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
   IsRunning = False
-  ErrorText = Error.Text
-  ErrorWhere = Error.Where
+  ErrorText = "TCP socket closed by peer"
+
+  StopTimers()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is connected
+' error while connected/connecting to tcp host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ELVMAX_Ready()
+Public Sub MySocket_Error(sMsg As String)
 
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is closed
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ELVMAX_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' disconnect from the tcp host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub Disconnect()
-
-  ' try to stop the timer
-  Try tELVMax.Stop
-  
-  ' try to close the connection
-  Try hELVMAX.Close
-
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-
-Finally
-  IsRunning = False
-  ErrorText = ""
-  ErrorWhere = ""
-
-Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ELVMAX_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+  WriteLog("ERROR: " & sMsg)
 
   IsRunning = False
   ErrorText = sMsg
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  $sMsgData &= vVar
+
+  ' Check for linefeed and process data
+  While InStr($sMsgData, gb.CrLf)
+    ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, gb.CrLf) - 1))
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.CrLf) + 2)
+  Wend
 
 End
 
@@ -200,9 +272,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCmd(sCmd As String)
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending '" & sCmd & "'")
-  Try Write #hELVMAX, sCmd & Chr$(13) & Chr$(10)
-  If Error Then Main.WriteDebugLog(LogLabel & "Error writing data to the TCP port! -> " & ERROR.Text)
+  If $bDebug Then WriteDebugLog("Sending '" & sCmd & "'")
+  hMySocket.Write(sCmd & gb.CrLf)
 
 End
 
@@ -215,7 +286,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
   Dim i As Integer
   Dim f As Float
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "SendCommand called for '" & sAddress & "' with value '" & sValue & "'")
+  If $bDebug Then WriteDebugLog("SendCommand called for '" & sAddress & "' with value '" & sValue & "'")
 
   ' temperature setpoint byte. bits 0-5 are temperature, bit 6&7 are type
   ' 00 = Auto weekprog (no temp is needed, just make the whole byte 0
@@ -237,7 +308,7 @@ Public Sub SendCommand(sAddress As String, sValue As String)
     sBaseCommand &= Hex$(Asc(Mid$(sCommand, i, 1)), 2)
   Next
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "SendCommand: '" & sBaseCommand & "'")
+  If $bDebug Then WriteDebugLog("SendCommand: '" & sBaseCommand & "'")
 
   sBaseCommand = "s:" & Base64$(sCommand)
 
@@ -246,33 +317,9 @@ Public Sub SendCommand(sAddress As String, sValue As String)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' data received on tcp socket
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ELVMax_Read()
-
-  Dim sData As String
-
-  Try sData = Read #hELVMAX, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
-  If sData = Chr$(13) Then ' buffer until linefeed then parse
-    If Len(sBuffer) > 1 Then ParseLine(sBuffer)
-    sBuffer = Null
-  Else
-    sBuffer &= sData
-  Endif
-
-End
-
-Public Sub ELVMAX_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' parse received data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseLine(sStr As String)
+Private Sub ProcessReceivedPacket(sStr As String)
 
   Dim sMaincat, sDecoded, sMessage, sDeviceSerial, sComfortTemp, sRoomName, sRoomAddress, sDeviceType, sDeviceAddress, sSerialNumber, sDeviceName, sCubeURL, sOpen, sBattery, sLinkStatus, sMode As String
   Dim aArray As String[]
@@ -281,6 +328,8 @@ Private Sub ParseLine(sStr As String)
   Dim iBoostDuration, iBoostValue, iDecalc, iDecalcDay, iDecalcTime, iMaximumValveSetting, iValveOffset, iData1, iData2, iValvePosition, iTimeUntil As Integer
   Dim iSetTemp, iActualTemp As Float
 
+  If Not sStr Then Return
+
   sMaincat = sStr
 
   ' Remove all CR and LF
@@ -288,7 +337,7 @@ Private Sub ParseLine(sStr As String)
   If Left(sMaincat, 1) = Chr$(13) Then sMaincat = Right(sMaincat, -1)
   If Left(sMaincat, 1) = Chr$(108) Then sMaincat = Right(sMaincat, -1)
   sMessage = Left(sMaincat, 2)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received: " & sMaincat)
+  If $bDebug Then WriteDebugLog("Received: " & sMaincat)
 
   Select Case sMessage
 
@@ -296,7 +345,7 @@ Private Sub ParseLine(sStr As String)
       ' Hello
       aArray = Split(Right$(sMaincat, -2))
 
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "SerialNumber: '" & aArray[0] & "'")
+      If $bDebug Then WriteDebugLog("SerialNumber: '" & aArray[0] & "'")
       '     $data["sys"]["Date"] = hexdec(Mid$(aArray[7],4,2)).".".hexdec(Mid$(aArray[7],2,2)).".".hexdec(Mid$(aArray[7],0,2));
       '     $data["sys"]["Time"] = hexdec(substr($arr2[8],0,2)).":".hexdec(substr($arr2[8],2,2));
       '     $data["sys"]["Timestamp"] = mktime(hexdec(substr($arr2[8],0,2)),hexdec(substr($arr2[8],2,2)),0,hexdec(substr($arr2[7],2,2)),hexdec(substr($arr2[7],4,2));
@@ -319,18 +368,18 @@ Private Sub ParseLine(sStr As String)
       For i = 1 To Len(sDecoded)
         sDeviceType &= Hex$(Asc(Mid$(sDecoded, i, 1)), 2)
       Next
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "M: " & sDeviceType)
+      If $bDebug Then WriteDebugLog("M: " & sDeviceType)
       sDeviceType = ""
 
       For Mi = 1 To Len(sDecoded)
         sRoomName &= Hex$(Asc(Mid$(sDecoded, Mi, 1)), 2)
       Next
-      If $bDebug Then Main.WriteDebugLog(LogLabel & sRoomName)
+      If $bDebug Then WriteDebugLog(sRoomName)
 
       iPos += 2 ' first 2 bytes are unknown still.
       iRooms = Asc(Mid(sDecoded, iPos, 1))
       iPos += 1
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Found '" & iRooms & "' rooms.")
+      If $bDebug Then WriteDebugLog("Found '" & iRooms & "' rooms.")
 
       For Mi = 1 To iRooms
         iRoomNumber = Asc(Mid(sDecoded, iPos, 2))
@@ -344,13 +393,13 @@ Private Sub ParseLine(sStr As String)
           sRoomAddress &= Hex$(Asc(Mid(sDecoded, i, 1)), 2)
         Next
         iPos += 3
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "M: #rooms: '" & CStr(iRooms) & "' RoomNumber: '" & CStr(iRoomNumber) & "' RoomName: '" & sRoomName & "' 1stAddressInRoom: '" & sRoomAddress & "'")
+        If $bDebug Then WriteDebugLog("M: #rooms: '" & CStr(iRooms) & "' RoomNumber: '" & CStr(iRoomNumber) & "' RoomName: '" & sRoomName & "' 1stAddressInRoom: '" & sRoomAddress & "'")
       Next
 
       iDeviceCount = Asc(Mid(sDecoded, iPos, 1))
       iPos += 1
 
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Found " & iDeviceCount & " devices.")
+      If $bDebug Then WriteDebugLog("Found " & iDeviceCount & " devices.")
 
       For Mi = 1 To iDeviceCount
         sDeviceType = Asc(Mid(sDecoded, iPos, 1))
@@ -371,7 +420,7 @@ Private Sub ParseLine(sStr As String)
         iPos += iNameLength
         iRoomID = Asc(Mid(sDecoded, iPos, 1))
         iPos += 1
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "M: DeviceType: '" & sDeviceType & "' DeviceAddress: '" & sDeviceAddress & "' DeviceName: '" & sDeviceName & "'")
+        If $bDebug Then WriteDebugLog("M: DeviceType: '" & sDeviceType & "' DeviceAddress: '" & sDeviceAddress & "' DeviceName: '" & sDeviceName & "'")
 
         ' Update this device info in DomotiGa
         Select Case sDeviceType
@@ -392,7 +441,7 @@ Private Sub ParseLine(sStr As String)
             sDeviceType = "ELVBUTTON"
           Case Else
             sDeviceType = "Unknown"
-            If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown device type '" & sDeviceType & "' Please report this to support.")
+            If $bDebug Then WriteDebugLog("Unknown device type '" & sDeviceType & "' Please report this to support.")
         End Select
         ' try to find device with address, and correct interface type.
         iDeviceId = Devices.Find(Instance, sDeviceAddress, InterfaceId, sDeviceType, sDeviceName)
@@ -403,7 +452,7 @@ Private Sub ParseLine(sStr As String)
       Next
 
     Case "C:"
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "C: " & sMaincat)
+      If $bDebug Then WriteDebugLog("C: " & sMaincat)
 
       aArray = Split(Right$(sMaincat, -2))
 
@@ -424,7 +473,7 @@ Private Sub ParseLine(sStr As String)
         sDeviceSerial = sDeviceSerial & Mid(sDecoded, i, 1)
       Next
       iPos += 10
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "C:Header Len: '" & iDataLength & "' Address: '" & sRoomAddress & "' Serial: '" & sDeviceSerial & "'")
+      If $bDebug Then WriteDebugLog("C:Header Len: '" & iDataLength & "' Address: '" & sRoomAddress & "' Serial: '" & sDeviceSerial & "'")
 
       Select Case sDeviceType
         Case "0" ' Cube
@@ -434,7 +483,7 @@ Private Sub ParseLine(sStr As String)
           For i = iPos To iPos + 36             ' read 10 bytes, URL for portal
             sCubeURL &= Mid(sDecoded, i, 1)
           Next
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "CubeURL: '" & sCubeURL & "'")
+          If $bDebug Then WriteDebugLog("CubeURL: '" & sCubeURL & "'")
 
         Case "1" ' Radiator Thermostat
           sComfortTemp = Asc(Mid(sDecoded, iPos, 1)) / 2
@@ -474,17 +523,17 @@ Private Sub ParseLine(sStr As String)
           iValveOffset = Asc(Mid(sDecoded, iPos, 1)) * (100 / 255)
           iPos += 1
 
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Radioator thermostat, comfort temp: '" & sComfortTemp & "' ecotemp: '" & iEcoTemp & "' temp offset: '" & itempOffset & "'")
+          If $bDebug Then WriteDebugLog("Radioator thermostat, comfort temp: '" & sComfortTemp & "' ecotemp: '" & iEcoTemp & "' temp offset: '" & itempOffset & "'")
 
         Case "3" ' Wall Thermostat
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Found C: for Wall Thermostat. No further data.")
+          If $bDebug Then WriteDebugLog("Found C: for Wall Thermostat. No further data.")
 
         Case "4" ' Door / window sensor
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Found C: for Door / Window sensor. No further data.")
+          If $bDebug Then WriteDebugLog("Found C: for Door / Window sensor. No further data.")
 	Case "5" ' EcoButton
-	  If $bDebug Then Main.WriteDebugLog(LogLabel & "Found C: for Eco Button. No Further data.")
+	  If $bDebug Then WriteDebugLog("Found C: for Eco Button. No Further data.")
         Case Else
-          If $bDebug Then Main.WriteDebugLog(LogLabel & "Unknown device type '" & sDeviceType & "', please report this to support.")
+          If $bDebug Then WriteDebugLog("Unknown device type '" & sDeviceType & "', please report this to support.")
       End Select
 
     Case "L:"
@@ -494,7 +543,7 @@ Private Sub ParseLine(sStr As String)
       For i = 1 To Len(sDecoded)
         sDeviceType &= Hex$(Asc(Mid$(sDecoded, i, 1)), 2)
       Next
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "L: (decoded) " & sDeviceType)
+      If $bDebug Then WriteDebugLog("L: (decoded) " & sDeviceType)
 
       iPos = 1
 
@@ -505,7 +554,7 @@ Private Sub ParseLine(sStr As String)
           sDeviceAddress &= Hex$(Asc(Mid(sDecoded, i, 1)), 2)
         Next
 	If $bDebug Then 
-	  Main.WriteDebugLog(LogLabel & "L: Found Device with address " & sDeviceAddress & " And datalength " & iDataLength & ", data: " & Mid$(sDeviceType, iPos * 2 - 1, iDataLength * 2))
+	  WriteDebugLog("L: Found Device with address " & sDeviceAddress & " And datalength " & iDataLength & ", data: " & Mid$(sDeviceType, iPos * 2 - 1, iDataLength * 2))
 	Endif
 
         iPos += 3
@@ -513,57 +562,57 @@ Private Sub ParseLine(sStr As String)
         iData1 = Asc(Mid(sDecoded, iPos, 1))
         iPos += 1
         iData2 = Asc(Mid(sDecoded, iPos, 1))
-	If $bDebug Then Main.WriteDebugLog(LogLabel & "L: Found Data1: " & Bin$(iData1, 8) & " And Data2: " & Bin$(iData2, 8))
+	If $bDebug Then WriteDebugLog("L: Found Data1: " & Bin$(iData1, 8) & " And Data2: " & Bin$(iData2, 8))
 	If BTst(iData2, 7) Then
-	  Main.WriteDebugLog(LogLabel & "Battery low! Device : " & sDeviceAddress)
+	  WriteDebugLog("Battery low! Device : " & sDeviceAddress)
 	  sBattery = "Low!"
 	Else
 	  sBattery = "OK"
 	Endif
 	If BTst(iData2, 6) Then
-	  If $bDebug Then Main.WriteDebugLog(LogLabel & " Link status error! Device : " & sDeviceAddress)
+	  If $bDebug Then WriteDebugLog(" Link status error! Device : " & sDeviceAddress)
 	  sLinkStatus = "Error!"
 	Else
 	  sLinkStatus = "OK"
 	Endif
-	If Not BTst(iData2, 4) And If $bDebug Then Main.WriteDebugLog(LogLabel & "Gateway Unknown! Device : " & sDeviceAddress)
-	If BTst(iData2, 4) And If $bDebug Then Main.WriteDebugLog(LogLabel & "DST active! Device : " & sDeviceAddress)
+	If Not BTst(iData2, 4) And If $bDebug Then WriteDebugLog("Gateway Unknown! Device : " & sDeviceAddress)
+	If BTst(iData2, 4) And If $bDebug Then WriteDebugLog("DST active! Device : " & sDeviceAddress)
 	If Not BTst(iData2, 1) And If Not BTst(iData2, 0) Then 
-	  If $bDebug Then Main.WriteDebugLog(LogLabel & "Auto mode active. : " & sDeviceAddress)
+	  If $bDebug Then WriteDebugLog("Auto mode active. : " & sDeviceAddress)
 	  sMode = "Auto"
 	Endif
 	If Not BTst(iData2, 1) And If BTst(iData2, 0) Then
-	  If $bDebug Then Main.WriteDebugLog(LogLabel & "Manual mode active. : " & sDeviceAddress)
+	  If $bDebug Then WriteDebugLog("Manual mode active. : " & sDeviceAddress)
 	  sMode = "Manual"
 	Endif
 	If BTst(iData2, 1) And If Not BTst(iData2, 0) Then 
-	  If $bDebug Then Main.WriteDebugLog(LogLabel & "Vacation mode active. : " & sDeviceAddress)
+	  If $bDebug Then WriteDebugLog("Vacation mode active. : " & sDeviceAddress)
 	  sMode = "Vacation"
 	Endif
 	If BTst(iData2, 1) And If BTst(iData2, 0) Then
-	  If $bDebug Then Main.WriteDebugLog(LogLabel & "Boost active! : " & sDeviceAddress)
+	  If $bDebug Then WriteDebugLog("Boost active! : " & sDeviceAddress)
 	  sMode = "Boost"
 	Endif
 
 	If BTst(iData2, 5) Then
-	  If $bDebug Then Main.WriteDebugLog(LogLabel & "Panel Locked! Device : " & sDeviceAddress)
+	  If $bDebug Then WriteDebugLog("Panel Locked! Device : " & sDeviceAddress)
 	  sMode &= ", Locked"
 	Endif
 
-        If iDataLength = 6 Then ' Door/window sensor
+    If iDataLength = 6 Then ' Door/window sensor
 	  sOpen = IIf(BTst(iData2, 1), "Open", "Closed")
-          ' Update this device info in DomotiGa
-          ' try to find device with address, and correct interface type.
-          iDeviceId = Devices.Find(Instance, sDeviceAddress, InterfaceId)
-          ' if found then update it's value
+    ' Update this device info in DomotiGa
+    ' try to find device with address, and correct interface type.
+    iDeviceId = Devices.Find(Instance, sDeviceAddress, InterfaceId)
+    ' if found then update it's value
 	  If iDeviceId Then
-	    If $bDebug Then Main.WriteDebugLog(LogLabel & "Updating device " & iDeviceId)
-            Devices.ValueUpdate(iDeviceId, 1, sOpen)
+	    If $bDebug Then WriteDebugLog("Updating device " & iDeviceId)
+      Devices.ValueUpdate(iDeviceId, 1, sOpen)
 	    Devices.ValueUpdate(iDeviceId, 3, sMode)
 	    Devices.Battery(iDeviceId, sBattery)
 	  Else
-	    If $bDebug Then Main.WriteDebugLog(LogLabel & "Device not found with address: " & sDeviceAddress & " and Interface :" & InterfaceId)
-          Endif
+	    If $bDebug Then WriteDebugLog("Device not found with address: " & sDeviceAddress & " and Interface :" & InterfaceId)
+    Endif
 	Endif
         If iDataLength = 11 Then 'Radiator thermostat
           iPos += 1
@@ -579,13 +628,13 @@ Private Sub ParseLine(sStr As String)
           iDeviceId = Devices.Find(Instance, sDeviceAddress, InterfaceId)
           ' if found then update it's value
 	  If iDeviceId Then
-	    If $bDebug Then Main.WriteDebugLog(LogLabel & "Updating device " & iDeviceId)
+	    If $bDebug Then WriteDebugLog("Updating device " & iDeviceId)
             Devices.ValueUpdate(iDeviceId, 1, iSetTemp)
 	    Devices.ValueUpdate(iDeviceId, 2, iValvePosition)
 	    Devices.ValueUpdate(iDeviceId, 3, sMode)
 	    Devices.Battery(iDeviceId, sBattery)
 	  Else
-	    If $bDebug Then Main.WriteDebugLog(LogLabel & "Device not found with address: " & sDeviceAddress & " and Interface :" & InterfaceId)
+	    If $bDebug Then WriteDebugLog("Device not found with address: " & sDeviceAddress & " and Interface :" & InterfaceId)
           Endif
         Endif
         If iDataLength = 12 Then ' Wall Thermostat
@@ -606,7 +655,7 @@ Private Sub ParseLine(sStr As String)
           iDeviceId = Devices.Find(Instance, sDeviceAddress, InterfaceId)
           ' if found then update it's value
           If iDeviceId Then
-	    If $bDebug Then Main.WriteDebugLog(LogLabel & "Updating device " & iDeviceId)
+	    If $bDebug Then WriteDebugLog("Updating device " & iDeviceId)
             Devices.ValueUpdate(iDeviceId, 1, iSetTemp)
             Devices.ValueUpdate(iDeviceId, 2, iActualTemp)
 	    Devices.ValueUpdate(iDeviceId, 3, sMode)
@@ -614,12 +663,12 @@ Private Sub ParseLine(sStr As String)
           Endif
         Endif
         iPos += 1
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "len: " & iDataLength & " Deviceadd: " & sDeviceAddress)
+        If $bDebug Then WriteDebugLog("len: " & iDataLength & " Deviceadd: " & sDeviceAddress)
         sDeviceAddress = ""
       Next
       
     Case "S:"
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Working on implementing S:")
+      If $bDebug Then WriteDebugLog("Working on implementing S:")
       ' The first byte is indeed the duty cycle.
       ' The second byte indicates whether the command has been discarded (0 = ok, 1 is discarded)
       ' The third byte is the free memory slots.
@@ -627,7 +676,7 @@ Private Sub ParseLine(sStr As String)
       ' example: S:63,1,00
 
     Case Else
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Not implemented yet!")
+      If $bDebug Then WriteDebugLog("Not implemented yet!")
   End Select
 
 End
@@ -638,6 +687,6 @@ End
 Private Sub ELVMaxSetValue(sItem As String, vValue As Variant)
 
   Main.SetGlobalVar("ELVMax_" & sItem, vValue)
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Received Item: " & sItem & " Value: " & vValue)
+  If $bDebug Then WriteDebugLog("Received Item: " & sItem & " Value: " & vValue)
 
 End
