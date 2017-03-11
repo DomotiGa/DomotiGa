@@ -3753,7 +3753,7 @@ CREATE TABLE `settings_smartmeter` (
 
 LOCK TABLES `settings_smartmeter` WRITE;
 /*!40000 ALTER TABLE `settings_smartmeter` DISABLE KEYS */;
-INSERT INTO `settings_smartmeter` VALUES (0,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','9600',7,1,1,'',0),(1,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','9600',7,1,1,'',0);
+INSERT INTO `settings_smartmeter` VALUES (0,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','115200',8,1,0,'',0),(1,0,'192.168.100.7',10002,'serial','/dev/ttyUSB5','115200',8,1,0,'',0);
 /*!40000 ALTER TABLE `settings_smartmeter` ENABLE KEYS */;
 UNLOCK TABLES;
 

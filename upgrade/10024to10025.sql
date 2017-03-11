@@ -23,6 +23,12 @@ INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES ,(730, 'VMBGP4PIR','Glass control module with 4 touch buttons module and motion detection', 'Velbus', '\'02\', \'05\' or \'12\''); 
 
 --
+-- Update smart meter default settings to DSMR4 and higher
+--
+UPDATE settings_smartmeter SET baudrate = '115200', databits = 8, stopbits = 1, parity = 0 WHERE id = 0;
+
+
+--
 -- Finally update to 1.0.025
 --
 
