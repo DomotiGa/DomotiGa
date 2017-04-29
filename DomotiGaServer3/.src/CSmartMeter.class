@@ -12,6 +12,9 @@
 ' DSMR 4.2.X stable
 ' DSMR 5.0.X stable
 
+' DSMR 4 and older report it every 10 seconds.
+' DSMR 5 and newer report it every 1 second.
+
 ' Links:
 ' http://www.domoticaforum.eu/viewtopic.php?f=16&t=6104
 
@@ -435,27 +438,35 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
   Dim aTelegram, aRecord, aReading, aGasRecord As String[]
   Dim aMBusId, aMBusType, aMBusReading, aMBusUnit, aMBusValve, aMBusTime As New String[4]
   Dim sLine, sSupplier, sEquipmentIdPower, sReadingPowerNormalUnit, sReadingPowerLowUnit, sReadingPowerGenNormalUnit, sReadingPowerGenLowUnit, sCurrentPowerUsageUnit, sCurrentPowerGenUnit, sPowerThresholdUnit As String
-  Dim sMsgCode, sMsgText, sCurrentTariff, sValve As String
+  Dim sMsgCode, sMsgText, sCurrentTariff, sValve, sDSMRVersion As String
   Dim fReadingPowerNormal, fReadingPowerLow, fReadingPowerGenNormal, fReadingPowerGenLow, fCurrentPowerUsage, fCurrentPowerGen, fPowerThreshold As Float
   Dim iCurrentTariff, iSwitchPos, iChannel, iType, iDeviceId As Integer
+  Dim bStartTelegram As Boolean
 
   ' If we have received a Crc16 value, calculate it too and dump message if needed
   If $bDebug Then
     WriteDebugLog("< " & sTelegram)
     If Len($sCrc16) = 0 Then
-      WriteDebugLog("Warning: no crc found (note: DSMR 2.2 does not include a checksum)")
-    Else If Hex(CalcCRC(sTelegram), 4) <> $sCrc16 Then
-      WriteDebugLog("ERROR: INVALID CRC: EXPECTED '" & Hex(CalcCRC(sTelegram), 4) & "', RECEIVED '" & $sCrc16 & "'")
+      WriteDebugLog("WARNING: no crc found (note: DSMR 2.2 does not include a checksum)")
+    Else
+      If Hex(CalcCRC(sTelegram), 4) <> $sCrc16 Then
+        WriteDebugLog("ERROR: INVALID CRC: EXPECTED '" & Hex(CalcCRC(sTelegram), 4) & "', RECEIVED '" & $sCrc16 & "'")
+        ' Don't proceed if the crc fails, the parsing of the packet will fail
+        Return
+      Else
+        WriteDebugLog("CRC16=" & $sCrc16 & "(CRC OK)")
+      Endif
     Endif
   Endif
 
   aTelegram = Split(sTelegram, "\r\n")
   For Each sLine In aTelegram
     If sLine = "" Then Continue
-    If $bDebug Then WriteDebugLog("< " & sLine)
+    If $bDebug Then WriteDebugLog("<< " & sLine)
     Select Case Left(sLine, 1)
       Case "/" ' header
-        If $bDebug Then WriteDebugLog("Received start of P1 data telegram.")
+        bStartTelegram = True
+        If $bDebug Then WriteDebugLog("  Received start of P1 data telegram.")
         ' decode meter supplier
         Select Case Mid(sLine, 2, 3)
           Case "KMP"
@@ -471,80 +482,88 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
         End Select
 
         If $bDebug Then
-          WriteDebugLog("Meter supplier is '" & sSupplier & "'")
-          WriteDebugLog("Meter information '" & sLine & "'")
+          WriteDebugLog("  Meter supplier is '" & sSupplier & "'")
+          WriteDebugLog("  Meter information '" & sLine & "'")
         Endif
       Case "!" ' end of datagram
-        If $bDebug Then WriteDebugLog("Received end of P1 data telegram.")
+        If $bDebug Then WriteDebugLog("  Received end of P1 data telegram.")
       Case Else ' data
         aRecord = Scan(sLine, "*:*(*)*")
         If aRecord.Count = 4 Then
           Select Case aRecord[1]
             Case "96.1.1" ' identifier
               sEquipmentIdPower = DecodeSerial(aRecord[2])
-              If $bDebug Then WriteDebugLog("Equipment identifier (Power) is '" & sEquipmentIdPower & "'")
+              If $bDebug Then WriteDebugLog("  Equipment identifier (Power) is '" & sEquipmentIdPower & "'")
+            Case "0.2.8" ' DSMR version reported as "40" = 4.0, 50 = "5.0"
+              If Len(aRecord[2]) = 2 Then
+                sDSMRVersion = Mid(aRecord[2], 1, 1) & "." & Mid(aRecord[2], 2, 1)
+              Else
+                ' Can't determine a proper versioning
+                sDSMRVersion = aRecord[2]
+              Endif
+              If $bDebug Then WriteDebugLog("  DSMR Version: " & sDSMRVersion)
             Case "1.8.2" ' meter reading normal tariff
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fReadingPowerNormal = CFloat(aReading[0])
                 sReadingPowerNormalUnit = aReading[1]
               Endif
-              If $bDebug Then WriteDebugLog("Meter reading power usage (T2/Normal tariff) is " & fReadingPowerNormal & " " & sReadingPowerNormalUnit)
+              If $bDebug Then WriteDebugLog("  Meter reading power usage (T2/Normal tariff) is " & fReadingPowerNormal & " " & sReadingPowerNormalUnit)
             Case "1.8.1" ' meter reading low tariff
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fReadingPowerLow = CFloat(aReading[0])
                 sReadingPowerLowUnit = aReading[1]
               Endif
-              If $bDebug Then WriteDebugLog("Meter reading power usage (T1/Low tariff) is " & fReadingPowerLow & " " & sReadingPowerLowUnit)
+              If $bDebug Then WriteDebugLog("  Meter reading power usage (T1/Low tariff) is " & fReadingPowerLow & " " & sReadingPowerLowUnit)
             Case "2.8.2" ' meter reading delivered to net normal tariff
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fReadingPowerGenNormal = CFloat(aReading[0])
                 sReadingPowerGenNormalUnit = aReading[1]
               Endif
-              If $bDebug Then WriteDebugLog("Meter reading power generated (T2/Normal tariff) is " & fReadingPowerGenNormal & " " & sReadingPowerGenNormalUnit)
+              If $bDebug Then WriteDebugLog("  Meter reading power generated (T2/Normal tariff) is " & fReadingPowerGenNormal & " " & sReadingPowerGenNormalUnit)
             Case "2.8.1" ' meter reading delivered to net low tariff
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fReadingPowerGenLow = CFloat(aReading[0])
                 sReadingPowerGenLowUnit = aReading[1]
               Endif
-              If $bDebug Then WriteDebugLog("Meter reading power generated (T1/Low tariff) is " & fReadingPowerGenLow & " " & sReadingPowerGenLowUnit)
+              If $bDebug Then WriteDebugLog("  Meter reading power generated (T1/Low tariff) is " & fReadingPowerGenLow & " " & sReadingPowerGenLowUnit)
             Case "96.14.0"
               iCurrentTariff = CInt(aRecord[2])
               sCurrentTariff = IIf(iCurrentTariff = 1, "Low", "Normal")
-              If $bDebug Then WriteDebugLog("Current tariff is T" & iCurrentTariff & " " & sCurrentTariff)
+              If $bDebug Then WriteDebugLog("  Current tariff is T" & iCurrentTariff & " " & sCurrentTariff)
             Case "1.7.0" ' current power usage
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fCurrentPowerUsage = CFloat(aReading[0])
                 sCurrentPowerUsageUnit = aReading[1]
               Endif
-              If $bDebug Then WriteDebugLog("Current power usage (+P) is " & fCurrentPowerUsage & " " & sCurrentPowerUsageUnit)
+              If $bDebug Then WriteDebugLog("  Current power usage (+P) is " & fCurrentPowerUsage & " " & sCurrentPowerUsageUnit)
             Case "2.7.0" ' current power generated
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fCurrentPowerGen = CFloat(aReading[0])
                 sCurrentPowerGenUnit = aReading[1]
               Endif
-              If $bDebug Then WriteDebugLog("Current power generated (-P) is " & fCurrentPowerGen & " " & sCurrentPowerGenUnit)
+              If $bDebug Then WriteDebugLog("  Current power generated (-P) is " & fCurrentPowerGen & " " & sCurrentPowerGenUnit)
             Case "17.0.0" ' power threshold
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fPowerThreshold = CFloat(aReading[0])
                 sPowerThresholdUnit = aReading[1]
               Endif
-              If $bDebug Then WriteDebugLog("Electricity threshold is " & fPowerThreshold & " " & sPowerThresholdUnit)
+              If $bDebug Then WriteDebugLog("  Electricity threshold is " & fPowerThreshold & " " & sPowerThresholdUnit)
             Case "96.3.10" ' in/out/enabled
               iSwitchPos = CInt(aRecord[2])
-              If $bDebug Then WriteDebugLog("Electricity switch position is " & iSwitchPos)
+              If $bDebug Then WriteDebugLog("  Electricity switch position is " & iSwitchPos)
             Case "96.13.1" ' message
               sMsgCode = aRecord[2]
-              If $bDebug Then WriteDebugLog("Message Code is '" & sMsgCode & "'")
+              If $bDebug Then WriteDebugLog("  Message Code is '" & sMsgCode & "'")
             Case "96.13.0" ' message text
               sMsgText = aRecord[2]
-              If $bDebug Then WriteDebugLog("Message Text is '" & sMsgText & "'")
+              If $bDebug Then WriteDebugLog("  Message Text is '" & sMsgText & "'")
             ' optional MBus connected meters (channel 1-4)
             Case "96.1.0" ' channel identifiers
               If aRecord[0] <> "0-0" Then
@@ -575,10 +594,10 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
                 aMBusReading[iChannel - 1] = CFloat(aGasRecord[0])
                 aMBusUnit[iChannel - 1] = aGasRecord[1]
                 If $bDebug Then
-                  WriteDebugLog("Companion 4 record layout found.")
-                  WriteDebugLog("MBus Meter on Channel #" & iChannel & ":")
-                  WriteDebugLog("Reading : " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
-                  WriteDebugLog("Timestamp : " & aMBusTime[iChannel - 1])
+                  WriteDebugLog("  Companion 4 record layout found.")
+                  WriteDebugLog("  MBus Meter on Channel #" & iChannel & ":")
+                  WriteDebugLog("    Reading: " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
+                  WriteDebugLog("    Timestamp: " & aMBusTime[iChannel - 1])
                 Endif
               Endif
             Case "24.3.0" ' gas for dsmr 2.2 and 3
@@ -589,10 +608,10 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
                 aMBusReading[iChannel - 1] = CFloat(aGasRecord[5])
                 aMBusUnit[iChannel - 1] = aGasRecord[4]
                 If $bDebug Then
-                  WriteDebugLog("Companion 2.2 or 3 record layout found.")
-                  WriteDebugLog("MBus Meter on Channel #" & iChannel & ":")
-                  WriteDebugLog("Reading : " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
-                  WriteDebugLog("Timestamp : " & aMBusTime[iChannel - 1])
+                  WriteDebugLog("  Companion 2.2 or 3 record layout found.")
+                  WriteDebugLog("  MBus Meter on Channel #" & iChannel & ":")
+                  WriteDebugLog("    Reading: " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
+                  WriteDebugLog("    Timestamp: " & aMBusTime[iChannel - 1])
                 Endif
               Else ' Kamstrup/Iskraemeco layout
                 aGasRecord = Scan(aRecord[3], "*(*)(*)(*)(*)(*)")
@@ -600,10 +619,10 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
                   aMBusUnit[iChannel - 1] = aGasRecord[5]
                 Endif
                 If $bDebug Then
-                  WriteDebugLog("Kamstrup/Iskraemeco 2.2 or 3 record layout found.")
-                  WriteDebugLog("MBus Meter on Channel #" & iChannel & ":")
-                  WriteDebugLog("Reading available on separate line.")
-                  WriteDebugLog("Timestamp : " & aMBusTime[iChannel - 1])
+                  WriteDebugLog("  Kamstrup/Iskraemeco 2.2 or 3 record layout found.")
+                  WriteDebugLog("  MBus Meter on Channel #" & iChannel & ":")
+                  WriteDebugLog("    Reading available on separate line.")
+                  WriteDebugLog("    Timestamp: " & aMBusTime[iChannel - 1])
                 Endif
                 ' data is on next line parse it later
               Endif
@@ -621,7 +640,7 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
               End Select
               aMBusValve[iChannel - 1] = sValve
             Case Else
-              If $bDebug Then WriteDebugLog("to decode : " & aRecord[1])
+              If $bDebug Then WriteDebugLog("  To decode: " & aRecord[1])
           End Select
         Endif
         aRecord = Scan(sLine, "(*)") ' possible mbus meter value on seperate line
@@ -631,8 +650,15 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
     End Select
   Next
 
-  ' walk through mbus channelsIF $bDebug THEN
+  ' If we didn't find a valid start, don't continue with storing of (invalid) data
+  If Not bStartTelegram Then
+    WriteDebugLog("ERROR: Invalid Telegram Received, no start of P1 data telegram found")
+    Return
+  Endif 
+
+  ' walk through mbus channels
   If $bDebug Then WriteDebugLog("Listing MBus Meters found:")
+
   For iChannel = 1 To 4
     If Len(aMBusReading[iChannel - 1]) Then
       If $bDebug Then
@@ -654,14 +680,19 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
       Endif
     Endif
   Next
+
   ' power usage
   iDeviceId = Devices.Find(Instance, "P1-PowerUsed", InterfaceId, "P1-POWERUSAGE")
   If iDeviceId Then
+    ' Watt
+    ' kWh
+    ' kW
     Devices.ValueUpdate(iDeviceId, 1, CStr(fCurrentPowerUsage))
     Devices.ValueUpdate(iDeviceId, 2, CStr(fReadingPowerLow))
     Devices.ValueUpdate(iDeviceId, 3, CStr(fReadingPowerNormal))
     Devices.ValueUpdate(iDeviceId, 4, sCurrentTariff)
   Endif
+
   ' power generated
   iDeviceId = Devices.Find(Instance, "P1-PowerDelivered", InterfaceId, "P1-POWERDELIVER")
   If iDeviceId Then
