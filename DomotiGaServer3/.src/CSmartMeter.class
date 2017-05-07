@@ -14,6 +14,7 @@
 
 ' DSMR 4 and older report it every 10 seconds.
 ' DSMR 5 and newer report it every 1 second.
+' The "updatinterval" dictates the interval to write to the DB, with 1 second it is a high load.
 
 ' Links:
 ' http://www.domoticaforum.eu/viewtopic.php?f=16&t=6104
@@ -69,6 +70,7 @@ Private $iDatabits As Integer
 Private $iStopbits As Integer
 Private $iParity As Integer
 Private $bDebug As Boolean
+Private $iUpdateInterval As Integer
 
 ' Interface objects
 Public hMySocket As CSocket
@@ -77,6 +79,7 @@ Public hMySerial As CSerialPort
 Private $sMsgData As String
 Private $bEndData As Boolean
 Private $sCrc16 As String
+Private $dLastUpdate As Date
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Constants
@@ -110,6 +113,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iStopbits = cPl.Settings["stopbits"]
   $iParity = cPl.Settings["parity"]
   $bDebug = cPl.Settings["debug"]
+  Try $iUpdateInterval = cPl.Settings["updateinterval"]
 
   InterfaceId = Devices.FindInterface("SmartMeter Interface")
   If InterfaceId = 0 Then
@@ -447,6 +451,16 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
   Dim bStartTelegram As Boolean
   Dim cMBusList As New Collection
   Dim cMBusDevice As New Collection
+  Dim iDelta As Integer
+
+  Try iDelta = DateDiff($dLastUpdate, Now(), gb.Second)
+  If Error Then
+    ' Set iDelta to max, to trigger an update on first interval
+    iDelta = &7FFFFFFF
+  Endif
+
+  ' Update the last interval to now
+  $dLastUpdate = Now()
 
   ' If we have received a Crc16 value, calculate it too and dump message if needed
   If $bDebug Then
@@ -462,6 +476,9 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
         If $bDebug Then WriteDebugLog("CRC16=" & $sCrc16 & " (CRC OK)")
       Endif
     Endif
+  Else
+    ' If not in debug mode and didn't reach our update interval, don't parse packet
+    If iDelta < $iUpdateInterval Then Return
   Endif
 
   aTelegram = Split(sTelegram, "\r\n")
@@ -773,11 +790,15 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
       ' optional mbus meters
       iDeviceId = Devices.Find(Instance, "P1-MBus" & iChannel, InterfaceId, "P1-GASUSAGE")
       ' update value
-      If iDeviceId Then 
-        Devices.ValueUpdate(iDeviceId, 1, aMBusReading[iChannel - 1])
-        Devices.ValueUpdate(iDeviceId, 2, aMBusValve[iChannel - 1])
-        Devices.ValueUpdate(iDeviceId, 3, aMBusType[iChannel - 1])
-        Devices.ValueUpdate(iDeviceId, 4, aMBusTime[iChannel - 1])
+      If iDeviceId Then
+        If iDelta >= $iUpdateInterval Then
+          Devices.ValueUpdate(iDeviceId, 1, aMBusReading[iChannel - 1])
+          Devices.ValueUpdate(iDeviceId, 2, aMBusValve[iChannel - 1])
+          Devices.ValueUpdate(iDeviceId, 3, aMBusType[iChannel - 1])
+          Devices.ValueUpdate(iDeviceId, 4, aMBusTime[iChannel - 1])
+        Else
+          WriteDebugLog("No device update (Update interval not reached)")
+        Endif
       Endif
     Endif
   Next
@@ -785,22 +806,28 @@ Private Sub ProcessReceivedPacket(sTelegram As String)
   ' power usage
   iDeviceId = Devices.Find(Instance, "P1-PowerUsed", InterfaceId, "P1-POWERUSAGE")
   If iDeviceId Then
-    ' Watt
-    ' kWh
-    ' kW
-    Devices.ValueUpdate(iDeviceId, 1, CStr(fCurrentPowerUsage))
-    Devices.ValueUpdate(iDeviceId, 2, CStr(fReadingPowerLow))
-    Devices.ValueUpdate(iDeviceId, 3, CStr(fReadingPowerNormal))
-    Devices.ValueUpdate(iDeviceId, 4, sCurrentTariff)
+
+    If iDelta >= $iUpdateInterval Then
+      Devices.ValueUpdate(iDeviceId, 1, CStr(fCurrentPowerUsage), ConvertUnitToType(sCurrentPowerUsageUnit))
+      Devices.ValueUpdate(iDeviceId, 2, CStr(fReadingPowerLow), ConvertUnitToType(sReadingPowerLowUnit))
+      Devices.ValueUpdate(iDeviceId, 3, CStr(fReadingPowerNormal), ConvertUnitToType(sReadingPowerNormalUnit))
+      Devices.ValueUpdate(iDeviceId, 4, sCurrentTariff)
+    Else
+      WriteDebugLog("No device update (Update interval not reached)")
+    Endif
   Endif
 
   ' power generated
   iDeviceId = Devices.Find(Instance, "P1-PowerDelivered", InterfaceId, "P1-POWERDELIVER")
   If iDeviceId Then
-    Devices.ValueUpdate(iDeviceId, 1, CStr(fCurrentPowerGen))
-    Devices.ValueUpdate(iDeviceId, 2, CStr(fReadingPowerGenLow))
-    Devices.ValueUpdate(iDeviceId, 3, CStr(fReadingPowerGenNormal))
-    Devices.ValueUpdate(iDeviceId, 4, sCurrentTariff)
+    If iDelta >= $iUpdateInterval Then
+      Devices.ValueUpdate(iDeviceId, 1, CStr(fCurrentPowerGen), ConvertUnitToType(sCurrentPowerGenUnit))
+      Devices.ValueUpdate(iDeviceId, 2, CStr(fReadingPowerGenLow), ConvertUnitToType(sReadingPowerGenLowUnit))
+      Devices.ValueUpdate(iDeviceId, 3, CStr(fReadingPowerGenNormal), ConvertUnitToType(sReadingPowerGenNormalUnit))
+      Devices.ValueUpdate(iDeviceId, 4, sCurrentTariff)
+    Else
+      WriteDebugLog("No device update (Update interval not reached)")
+    Endif
   Endif
 
 Catch ' some errors
@@ -815,6 +842,9 @@ Private Sub ParseReading(sReading As String) As String[]
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Calculate the CRC16 of the P1 telegram
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub CalcCRC(vData As String) As Short
 
   Dim iCrc As Short
@@ -836,5 +866,23 @@ Private Sub CalcCRC(vData As String) As Short
   Next
 
   Return iCrc
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Convert the Unit in String to the Devices ValueType integer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertUnitToType(sUnit As String) As Integer
+
+  Select sUnit
+    Case "W"
+      Return Devices.ValueType_Power_Watt
+    Case "kW"
+      Return Devices.ValueType_Power_kW
+    Case "kWh"
+      Return Devices.ValueType_Energy_kWh
+    Default
+      Return Devices.ValueType_Undefined
+  End Select
 
 End
