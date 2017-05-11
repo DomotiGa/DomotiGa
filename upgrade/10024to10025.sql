@@ -58,6 +58,12 @@ CALL Upgrade_DropColumnIfExist("settings_smartmeter", "updateinterval");
 ALTER TABLE settings_smartmeter ADD COLUMN `updateinterval` INT(11) NULL DEFAULT '0'  AFTER `debug`;
 
 --
+-- Add sslenabled column to settings_mqtt
+--
+CALL Upgrade_DropColumnIfExist("settings_mqtt", "sslenabled");
+ALTER TABLE settings_mqtt ADD COLUMN `sslenabled` TINYINT(1) NOT NULL DEFAULT '0'  AFTER `enablesubscribe`;
+
+--
 -- Finally update to 1.0.025
 --
 

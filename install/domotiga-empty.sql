@@ -2779,6 +2779,7 @@ CREATE TABLE `settings_mqtt` (
   `clientname` varchar(23) DEFAULT 'domotiga',
   `enablepublish` tinyint(1) NOT NULL DEFAULT '0',
   `enablesubscribe` tinyint(1) NOT NULL DEFAULT '0',
+  `sslenabled` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -2789,7 +2790,7 @@ CREATE TABLE `settings_mqtt` (
 
 LOCK TABLES `settings_mqtt` WRITE;
 /*!40000 ALTER TABLE `settings_mqtt` DISABLE KEYS */;
-INSERT INTO `settings_mqtt` VALUES (0,0,'localhost',1883,'domotiga','broker','domotiga','raw/#',30,0,0,0,'domotiga',0,0),(1,0,'localhost',1883,'domotiga','broker','domotiga','raw/#',30,0,0,0,'domotiga',0,0);
+INSERT INTO `settings_mqtt` VALUES (0,0,'localhost',1883,'domotiga','broker','domotiga','raw/#',30,0,0,0,'domotiga',0,0,0),(1,0,'localhost',1883,'domotiga','broker','domotiga','raw/#',30,0,0,0,'domotiga',0,0,0);
 /*!40000 ALTER TABLE `settings_mqtt` ENABLE KEYS */;
 UNLOCK TABLES;
 
