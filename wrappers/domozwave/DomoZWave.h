@@ -198,10 +198,12 @@ bool DomoZWave_RefreshNodeInfo( uint32 home, int32 node );
 bool DomoZWave_RequestNodeVersion( uint32 home, int32 node );
 bool DomoZWave_RequestNodeMeter( uint32 home, int32 node );
 bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value );
+bool DomoZWave_SetButton( uint32 home, int32 node, int32 commandClass, int32 instance, int32 index );
 
 // Request or update node configuration
 bool DomoZWave_SetConfigParam( uint32 home, int32 node, int32 param, int32 value, int32 size );
 bool DomoZWave_SetConfigParamList( uint32 home, int32 node, int32 param, const char* value );
+bool DomoZWave_SetConfigParamButton( uint32 home, int32 node, int32 index );
 void DomoZWave_RequestConfigParam( uint32 home, int32 node, int32 param );
 void DomoZWave_RequestAllConfigParams( uint32 home, int32 node );
 const char* DomoZWave_GetNodeConfig( uint32 home, int32 node );

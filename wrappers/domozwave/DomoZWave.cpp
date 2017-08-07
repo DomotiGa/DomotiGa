@@ -24,7 +24,7 @@
 //-----------------------------------------------------------------------------
 // Define and get version numbers of DomoZWave and the open-zwave
 //-----------------------------------------------------------------------------
-char domozwave_vers[] = "DomoZWave version 2.10";
+char domozwave_vers[] = "DomoZWave version 2.20";
 
 //-----------------------------------------------------------------------------
 
@@ -4227,6 +4227,60 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 }
 
 //-----------------------------------------------------------------------------
+// <DomoZWave_SetButton>
+// Presses the button type in Open-ZWave, normally used to reset certain parameters
+// instance=0 -> press ALL buttons of the commandclass
+// index=0 -> press ALL buttons of the commandclass and the instance
+//-----------------------------------------------------------------------------
+bool DomoZWave_SetButton( uint32 home, int32 node, int32 commandClass, int32 instance, int32 index )
+{
+	bool response = false;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetButton" ) == false ) return false;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetButton: HomeId=0x%x Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(commandClass), commandClass );
+	WriteLog( LogLevel_Debug, false, "Instance=%d%s", instance, (instance == 0)?" (All)":"" );
+	WriteLog( LogLevel_Debug, false, "Index=%d%s", index, (instance == 0 || index == 0)?" (All)":"" );
+
+	// Store value in cache list, used to resolve returning "old" config values
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Go through the list and check on commandclass and if this is a button
+			if (( v.GetCommandClassId() == commandClass ) && ( v.GetType() == ValueID::ValueType_Button ))
+			{
+				if ( instance >= 1 )
+				{
+
+					if ( v.GetInstance() == instance )
+					{
+						if ( index >= 1 )
+						{
+							if ( v.GetIndex() == index )
+							{
+								response = Manager::Get()->PressButton(v);
+							}
+						} else {
+							response = Manager::Get()->PressButton(v);
+						}
+					} 
+
+				} else {
+					response = Manager::Get()->PressButton(v);
+				}
+			}
+		}
+	}
+
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
 // <DomoZWave_SetConfigParam>
 // Set the configuration item to a certain numeric value
 //-----------------------------------------------------------------------------
@@ -4382,6 +4436,25 @@ bool DomoZWave_SetConfigParamList( uint32 home, int32 node, int32 param, const c
 		return false;
 	}
 	return false;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetConfigParamButton>
+// Presses the button of a configuration item, wrapper around SetButton
+//-----------------------------------------------------------------------------
+bool DomoZWave_SetConfigParamButton( uint32 home, int32 node, int32 index )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetConfigParamButton" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetConfigParamButton: HomeId=0x%x Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "index=%d", index );
+
+	// The commandclass and instance are fixed
+	response = DomoZWave_SetButton( home, node, COMMAND_CLASS_CONFIGURATION, 1, index );
+
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
 }
 
 //-----------------------------------------------------------------------------
