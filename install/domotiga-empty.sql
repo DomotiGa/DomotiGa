@@ -205,7 +205,7 @@ DROP TABLE IF EXISTS `cdr`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `cdr` (
-  `calldate` datetime NOT NULL DEFAULT '0000-00-00 00:00:00',
+  `calldate` datetime DEFAULT NULL,
   `clid` varchar(80) DEFAULT NULL,
   `src` varchar(80) DEFAULT NULL,
   `dst` varchar(80) DEFAULT NULL,
