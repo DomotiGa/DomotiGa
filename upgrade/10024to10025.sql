@@ -64,6 +64,11 @@ CALL Upgrade_DropColumnIfExist("settings_mqtt", "sslenabled");
 ALTER TABLE settings_mqtt ADD COLUMN `sslenabled` TINYINT(1) NOT NULL DEFAULT '0'  AFTER `enablesubscribe`;
 
 --
+-- Fix the '0000-00-00 00:00:00' default value, not allowed by MySQL 5.7
+--
+ALTER TABLE cdr CHANGE COLUMN `calldate` `calldate` datetime DEFAULT NULL;
+
+--
 -- Finally update to 1.0.025
 --
 
