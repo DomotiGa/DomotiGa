@@ -58,7 +58,7 @@ ALTER TABLE settings_networkdetect ADD COLUMN interface varchar(16) CHARACTER SE
 -- Add missing GPS plugin
 --
 
-INSERT INTO plugins (`id`, `interface`, `name`, `type`) VALUES (94, 'GPS', 'GPS', 'class');
+INSERT INTO plugins (`id`, `interface`, `name`, `type`, `protocols`) VALUES (94, 'GPS', 'GPS', 'class', '');
 
 --
 -- Add column to settings-main
