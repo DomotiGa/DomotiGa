@@ -20,7 +20,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "MQTT"
 Public PluginFriendlyName As String = "MQTT Client"
-Public PluginVersion As String = "2.00"
+Public PluginVersion As String = "2.01"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -51,18 +51,21 @@ Private $bDebug As Boolean
 Private $bEnablePublish As Boolean
 Private $bEnableSubscribe As Boolean
 Private $bSSL As Boolean
+Private $iSSLCertificate As Integer
+Private $bBirthLastWill As Boolean ' Publish Birth and Last Will message. Last will will be set during connect too
 
 ' Interface objects
 Public hMySocket As CSocket
 
 Public tMQTTPing As Timer
 Public tMQTTBusy As Timer
-Private bRxBuf As New Byte[]     ' the received data
-Private dRxStarted As Date       ' start of the (last) receive
+Private bRxBuf As New Byte[]      ' the received data
+Private dRxStarted As Date        ' start of the (last) receive
 
 ' queue and command buffer stuff
 Private cQueue As New Collection  ' command buffer
 Private bBusy As Boolean          ' waiting for delay timer to finish
+Private $bDisconnect As Boolean   ' Signal to disconnect client, prevent a disconnect error from server
 
 ' message types
 Const MQTTCONNECT As Byte = &H10
@@ -73,12 +76,21 @@ Const MQTTSUBSCRIBE As Byte = &H80
 Const MQTTPUBACK As Byte = &H90
 
 ' message types
-Const MQTT_CONNECT As Integer = 1
-Const MQTT_CONNACK As Integer = 2
-Const MQTT_PUBLISH As Integer = 3
-Const MQTT_PUBACK As Integer = 4
-Const MQTT_SUBACK As Integer = 9
-Const MQTT_PINGRESP As Integer = 13
+Const MQTT_CONNECT As Integer = &H01
+Const MQTT_CONNACK As Integer = &H02
+Const MQTT_PUBLISH As Integer = &H03
+Const MQTT_PUBACK As Integer = &H04
+'Const MQTT_PUBREC As Integer = &H05
+'Const MQTT_PUBREL As Integer = &H06
+'Const MQTT_PUBCOMP As Integer = &H07
+Const MQTT_SUBSCRIBE As Integer = &H08
+Const MQTT_SUBACK As Integer = &H09
+'Const MQTT_UNSUBSCRIBE As Integer = &H0A ' 10
+'Const MQTT_UNSUBACK As Integer = &H0B ' 11
+Const MQTT_PINGREQ As Integer = &H0C ' 12
+Const MQTT_PINGRESP As Integer = &H0D ' 13
+Const MQTT_DISCONNECT As Integer = &H0E ' 14
+'Const MQTT_RESERVED As Integer = &H0F ' 15
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -108,6 +120,8 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bEnablePublish = cPl.Settings["enablepublish"]
   $bEnableSubscribe = cPl.Settings["enablesubscribe"]
   $bSSL = cPl.Settings["sslenabled"]
+  $iSSLCertificate = cPl.Settings["sslcertificate_id"]
+  $bBirthLastWill = cPl.Settings["birthlastwill"]
 
   InterfaceId = Devices.FindInterface("MQTT Interface")
   If InterfaceId = 0 Then
@@ -116,6 +130,9 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     IsRunning = False
     Return
   Endif
+
+'$iTCPPort = 8883
+'$bSSL = True
 
   ' Connect/Initialize connection
   ConnectTCP()
@@ -156,6 +173,7 @@ End
 Private Sub ConnectTCP()
 
   Dim iReconnectRetry As Integer = 0
+  Dim rResult As Result
 
   ' try to close the connection
   Try hMySocket.Close
@@ -164,9 +182,27 @@ Private Sub ConnectTCP()
   ' get a new one - but also pass on our previous reconnect counter
   hMySocket = New CSocket(iReconnectRetry) As "MySocket"
 
+  ' Data is received in array of bytes
   hMySocket.DataType = &HFF + gb.Byte
+
   ' We support also SSL if required
-  If $bSSL Then hMySocket.Encrypt = Net.SSL
+  If $bSSL Then
+    hMySocket.Encrypt = Net.SSL
+
+    ' No Certificate is needed, this is optional
+    If $iSSLCertificate >= 1 Then
+
+      rResult = Main.hDB.Exec("SELECT * FROM sslcertificates WHERE id = " & $iSSLCertificate)
+
+      If rResult And If rResult.Available And If rResult.Count = 1 Then
+        hMySocket.SSLCertificate = IIf(rResult!certificate, Main.sBaseDir &/ "certificate" &/ rResult!certificate, "")
+      Else
+        Error.Raise("SSL enabled, but no SSL certificate found in the database")
+      Endif
+    Endif
+
+  Endif
+
   hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
@@ -243,10 +279,15 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub MySocket_Closed()
 
-  WriteLog("ERROR: TCP socket closed by peer.")
+  ' Only report an error, when we didn't send a disconnect ourselves
+  If $bDisconnect Then
+    ErrorText = ""
+  Else
+    WriteLog("ERROR: TCP socket closed by peer.")
+    ErrorText = "TCP socket closed by peer"
+  Endif
 
   IsRunning = False
-  ErrorText = "TCP socket closed by peer"
 
   StopTimers()
 
@@ -361,6 +402,8 @@ Private Sub ClientConnect(sId As String)
   Dim bBuf As New Byte[255]
   Dim iCnt As Integer
 
+  $bDisconnect = False
+
   ' fixed header
   bBuf[0] = MQTTCONNECT ' connect
   ' bBuf[1] = 12 + Len(sId) + 2 ' remaining length
@@ -389,6 +432,12 @@ Private Sub ClientConnect(sId As String)
   bBuf[13] = $iHeartBeat And 255   ' LSB
   bBuf[14] = &H0  ' ID string length MSB
   bBuf[15] = Len(sId)  ' ID string length LSB
+
+  ' If Birth and Last Will is enabled, we publish a "domotiga/status" with "online" or "offline"
+  If $bBirthLastWill Then
+    ' At this moment not all code is there
+    'bBuf[11] = BSet(bBuf[11], 2)
+  Endif
 
   ' id
   For iCnt = 1 To Len(sId)
@@ -432,7 +481,9 @@ Private Sub ClientDisconnect()
 
   Dim bBuf As New Byte[2]
 
-  bBuf[0] = -&H7F + &5F ' disconnect
+  $bDisconnect = True
+
+  bBuf[0] = Shl(MQTT_DISCONNECT, 4) ' MSB
   bBuf[1] = &H0
 
   If $bDebug Then WriteDebugLog("Disconnecting from broker.")
@@ -447,7 +498,7 @@ Private Sub ClientHeartBeat()
 
   Dim bBuf As New Byte[2]
 
-  bBuf[0] = &HC0
+  bBuf[0] = Shl(MQTT_PINGREQ, 4) ' MSB
   bBuf[1] = &H0
 
   If $bDebug Then WriteDebugLog("Sending heartbeat to broker.")

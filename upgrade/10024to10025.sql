@@ -23,6 +23,11 @@ END ;;
 DELIMITER ;
 
 --
+-- Increase description field, it is too short for MySQL 5.7
+--
+ALTER TABLE devicetypes CHANGE COLUMN `description` `description` VARCHAR(128) NULL DEFAULT NULL;
+
+--
 -- Add Lighting4 PT2262 protocol
 --
 UPDATE plugins SET protocols = 'X10 X10Security Oregon KAKU RFXCom AC HEUK ATI Digimax Mertik Ninja Flamingo Waveman HEEU ARC HE105 Koppla RTS10 Harrison Anslut Impuls AB400 EMW200 LightwaveRF TFA LaCrosse UPM Cresta Viking Rubicson RisingSun PhilipsSBC EMW100 BBSB Blyss BlindsT0 BlindsT1 BlindsT2 BlindsT3 BlindsT4 BlindsT5 BlindsT6 BlindsT7 BlindsT8 BlindsT9 BlindsT10 Meiantech ByronSX ByronMP SA30 X10SecDW X10SecMotion X10SecRemote PowerCodeDW PowerCodeMotion PowerCodeAux CodeSecure Energenie Livolo RSL TRC02 MDRemote SF01 RFY RFYEXT Imagintrx WT TRC022 AOKE EuroDomest Smartwares SelectPlus IT Avantek PT2262' WHERE id = 35;
@@ -62,6 +67,10 @@ ALTER TABLE settings_smartmeter ADD COLUMN `updateinterval` INT(11) NULL DEFAULT
 --
 CALL Upgrade_DropColumnIfExist("settings_mqtt", "sslenabled");
 ALTER TABLE settings_mqtt ADD COLUMN `sslenabled` TINYINT(1) NOT NULL DEFAULT '0'  AFTER `enablesubscribe`;
+CALL Upgrade_DropColumnIfExist("settings_mqtt", "sslcertificate_id");
+ALTER TABLE settings_mqtt ADD COLUMN `sslcertificate_id` INT(11) NOT NULL DEFAULT '0' AFTER `sslenabled`;
+CALL Upgrade_DropColumnIfExist("settings_mqtt", "birthlastwill");
+ALTER TABLE settings_mqtt ADD COLUMN `birthlastwill` TINYINT(1) NOT NULL DEFAULT '0'  AFTER `sslcertificate_id`;
 
 --
 -- Fix the '0000-00-00 00:00:00' default value, not allowed by MySQL 5.7
