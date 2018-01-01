@@ -53,6 +53,9 @@ Private $bEnableSubscribe As Boolean
 Private $bSSL As Boolean
 Private $iSSLCertificate As Integer
 Private $bBirthLastWill As Boolean ' Publish Birth and Last Will message. Last will will be set during connect too
+Private $sBirthLastWillTopic As String = "domotiga/status"
+Private $sBirthMessage As String = "online"
+Private $sLastWillMessage As String = "offline"
 
 ' Interface objects
 Public hMySocket As CSocket
@@ -66,14 +69,6 @@ Private dRxStarted As Date        ' start of the (last) receive
 Private cQueue As New Collection  ' command buffer
 Private bBusy As Boolean          ' waiting for delay timer to finish
 Private $bDisconnect As Boolean   ' Signal to disconnect client, prevent a disconnect error from server
-
-' message types
-Const MQTTCONNECT As Byte = &H10
-Const MQTTCONNACK As Byte = &H20
-Const MQTTPUBLISH As Byte = &H30
-Const MQTTPINGRESP As Byte = &D0
-Const MQTTSUBSCRIBE As Byte = &H80
-Const MQTTPUBACK As Byte = &H90
 
 ' message types
 Const MQTT_CONNECT As Integer = &H01
@@ -221,6 +216,11 @@ End
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Disconnect()
+
+  ' Possible publish the offline topic for DomotiGa
+  If $bBirthLastWill Then
+    PublishMsg($sBirthLastWillTopic, $sLastWillMessage, True)
+  Endif
 
   ' tell MQTT broker that we want to disconnect
   ClientDisconnect()
@@ -399,15 +399,30 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ClientConnect(sId As String)
 
-  Dim bBuf As New Byte[255]
+  Dim bBuf As New Byte[512]
   Dim iCnt As Integer
+  Dim iOffset As Integer
 
   $bDisconnect = False
 
   ' fixed header
-  bBuf[0] = MQTTCONNECT ' connect
+  bBuf[0] = Shl(MQTT_CONNECT, 4) ' MSB
+
   ' bBuf[1] = 12 + Len(sId) + 2 ' remaining length
-  bBuf[1] = 12 + Len(sId) + 2 + Len($sUsername) + Len($sPassword) + 4 ' remaining length
+  ' Required order: Id, Will Topic, Will Message, UserName, Password
+
+  bBuf[1] = 12 + 2 + Len(sId) ' id is mandatory
+
+  If $bBirthLastWill Then
+    bBuf[1] = bBuf[1] + 2 + Len($sBirthLastWillTopic)
+    bBuf[1] = bBuf[1] + 2 + Len($sLastWillMessage)
+  Endif
+
+  If Len($sUsername) Then
+    bBuf[1] = bBuf[1] + 2 + Len($sUsername)
+    bBuf[1] = bBuf[1] + 2 + Len($sPassword)
+  Endif
+
   ' var header
   bBuf[2] = &H0   ' 0
   bBuf[3] = &H6   ' 6
@@ -421,54 +436,97 @@ Private Sub ClientConnect(sId As String)
 
   ' connect flag
   bBuf[11] = &H2  ' clean session only
+
   If $sUsername Then bBuf[11] = BSet(bBuf[11], 7)
   If $sPassword And If Not $sUsername Then
-    If $bDebug Then WriteDebugLog("You cannot supply a password without a username!")
+    If $bDebug Then WriteDebugLog("ERROR: You cannot supply a password without a username!")
     Return
   Else
     bBuf[11] = BSet(bBuf[11], 6)
   Endif
+
   bBuf[12] = Shr($iHeartBeat, 8)   ' MSB keepalive
   bBuf[13] = $iHeartBeat And 255   ' LSB
-  bBuf[14] = &H0  ' ID string length MSB
-  bBuf[15] = Len(sId)  ' ID string length LSB
 
   ' If Birth and Last Will is enabled, we publish a "domotiga/status" with "online" or "offline"
   If $bBirthLastWill Then
-    ' At this moment not all code is there
-    'bBuf[11] = BSet(bBuf[11], 2)
+    bBuf[11] = BSet(bBuf[11], 2)
+
+    ' Set retain if required
+    If $bRetain Then BSet(bBuf[11], 5)
+
+    ' Set Quality of Service if required
+    Select $iQoS
+      Case 0
+        ' default
+     Case 1
+        bBuf[11] = BSet(bBuf[11], 3)
+      Case 2
+        bBuf[11] = BSet(bBuf[11], 4)
+    End Select
+
   Endif
 
   ' id
+  iOffset = 13 ' 13 (header+var)
+  bBuf.Add(&H00, iOffset + 1) ' ID string length MSB
+  bBuf.Add(Len(sId), iOffset + 2) ' ID string length LSB
+
   For iCnt = 1 To Len(sId)
-    bBuf.Add(Asc(Mid(sId, iCnt, 1)), 15 + iCnt)
+    bBuf.Add(Asc(Mid(sId, iCnt, 1)), iOffset + 2 + iCnt)
   Next
 
-  ' username length MSB (0 since 255 chars is enough)
-  bBuf.Add(&H0, 16 + Len(sId))
-  ' length LSB
-  bBuf.Add(Len($sUsername), 17 + Len(sId))
+  iOffset = iOffset + 2 + Len(sId)
 
-  ' username
-  If $sUsername Then
-    For iCnt = 1 To Len($sUsername)
-      bBuf.Add(Asc(Mid($sUsername, iCnt, 1)), 17 + iCnt + Len(sId))
+  ' Topic + Last Will message
+  If $bBirthLastWill Then
+    ' Topic
+    bBuf.Add(&H00, iOffset + 1)
+    bBuf.Add(Len($sBirthLastWillTopic), iOffset + 2)
+
+    For iCnt = 1 To Len($sBirthLastWillTopic)
+      bBuf.Add(Asc(Mid($sBirthLastWillTopic, iCnt, 1)), iOffset + 2 + iCnt)
     Next
+
+    iOffset = iOffset + 2 + Len($sBirthLastWillTopic)
+
+    ' Last Will message
+    bBuf.Add(&H00, iOffset + 1)
+    bBuf.Add(Len($sLastWillMessage), iOffset + 2)
+
+    For iCnt = 1 To Len($sLastWillMessage)
+      bBuf.Add(Asc(Mid($sLastWillMessage, iCnt, 1)), iOffset + 2 + iCnt)
+    Next
+
+    iOffset = iOffset + 2 + Len($sLastWillMessage)
+
   Endif
 
-  ' password length MSB (0 since 255 chars is enough)
-  bBuf.Add(&H0, 18 + Len(sId) + Len($sUsername))
-  ' length LSB
-  bBuf.Add(Len($sPassword), 19 + Len(sId) + Len($sUsername))
+  ' username + password
+  If $sUsername Then
+    ' username length MSB (0 since 255 chars is enough)
+    bBuf.Add(&H00, iOffset + 1)
+    bBuf.Add(Len($sUsername), iOffset + 2)
 
-  ' password
-  If $sPassword Then
-    For iCnt = 1 To Len($sPassword)
-      bBuf.Add(Asc(Mid($sPassword, iCnt, 1)), 19 + iCnt + Len(sId) + Len($sUsername))
+    For iCnt = 1 To Len($sUsername)
+      bBuf.Add(Asc(Mid($sUsername, iCnt, 1)), iOffset + 2 + iCnt)
     Next
+
+    iOffset = iOffset + 2 + Len($sUsername)
+ 
+    ' password length MSB (0 since 255 chars is enough)
+    bBuf.Add(&H00, iOffset + 1)
+    bBuf.Add(Len($sPassword), iOffset + 2)
+
+    For iCnt = 1 To Len($sPassword)
+      bBuf.Add(Asc(Mid($sPassword, iCnt, 1)), iOffset + 2 + iCnt)
+    Next
+
+    iOffset = iOffset + 2 + Len($sPassword)
   Endif
 
   If $bDebug Then WriteDebugLog("Connecting to broker.")
+
   bBuf.Resize(2 + bBuf[1])
   QueueCommand(bBuf)
 
@@ -517,7 +575,7 @@ Private Sub SubscribeTopic(sTopic As String)
   iTopicLen = Len(sTopic)
 
   ' fixed header
-  bBuf[0] = MQTTSUBSCRIBE     ' subscribe
+  bBuf[0] = Shl(MQTT_SUBSCRIBE, 4) ' subscribe
   bBuf[1] = &H5 + Len(sTopic) ' remaining length
   bBuf[2] = &H0   ' MSB
   bBuf[3] = &HA   ' message id
@@ -555,22 +613,20 @@ Public Sub PublishMsg(sTopic As String, sMsg As String, Optional bRawTopic As Bo
   sTopic = Replace(sTopic, "#", " ")
   sTopic = Replace(sTopic, "+", " ")
 
+  bBuf[0] = Shl(MQTT_PUBLISH, 4)
+
   ' publish with retain enabled if set
-  If $bRetain Then
-    bBuf[0] = BSet(MQTTPUBLISH, 0)
-  Else
-    bBuf[0] = MQTTPUBLISH
-  Endif
+  If $bRetain Then bBuf[0] = BSet(bBuf[0], 0)
 
   ' set chosen QoS
-  Select Case $iQoS
+  Select $iQoS
     Case 0
       ' default
     Case 1
       bBuf[0] = BSet(bBuf[0], 1)
     Case 2
       bBuf[0] = BSet(bBuf[0], 2)
-    Case Else
+    Default
       If $bDebug Then WriteDebugLog("Invalid QoS value '" & $iQoS & "' set!")
       Return
   End Select
@@ -699,6 +755,7 @@ Private Sub ProcessReceivedChar(bByte As Byte)
   iLength = 0
   bShift = 0
   iIndex = 1
+
   While bRxBuf.Length > iIndex
     iLength += Lsl(CInt(bRxBuf[iIndex] And 127), bShift)
 
@@ -737,7 +794,7 @@ Private Sub ProcessReceivedChar(bByte As Byte)
   ' Remove the (variable lenght) fixed header
   bRxBuf.Remove(0, iIndex + 1)
 
-  Select Case iType
+  Select iType
     ' connack
     Case MQTT_CONNACK
        DecodeConnAck(bRxBuf)
@@ -753,7 +810,7 @@ Private Sub ProcessReceivedChar(bByte As Byte)
     Case MQTT_PUBLISH
       If $bDebug Then WriteDebugLog("Received published data.")
       DecodePublish(bRxBuf)
-    Case Else
+    Default
       If $bDebug Then WriteDebugLog("Received unsupported packet type " & iType)
   End Select
 
@@ -792,14 +849,14 @@ Private Sub DecodePublish(bBuffer As Byte[])
   If iDeviceId Then
     ' what kind of mqtt devicetype is this device set to?
     sDeviceTypeDescr = Devices.FindDeviceTypeDescriptionForDeviceId(iDeviceId)
-    Select Case sDeviceTypeDescr
+    Select sDeviceTypeDescr
       Case "MQTT Owntracks Client"
         DecodeOwntracks(iDeviceId, sPayload)
       Case "MQTT Generic"
         Devices.ValueUpdate(iDeviceId, 1, sPayload)
       Case "MQTT JSON Generic"
         DecodeJSON(iDeviceId, sPayload)
-      Case Else
+      Default
         WriteDebugLog("ERROR: Unsupported devicetype '" & sDeviceTypeDescr & "'")
     End Select
 
@@ -936,9 +993,14 @@ End
 Private Sub DecodeConnAck(bBuffer As Byte[])
 
   ' Connect Return code
-  Select Case bBuffer[1]
+  Select bBuffer[1]
     Case 0
       WriteDebugLog("Connection accepted by broker.")
+
+      ' We should send a birth message is we connected succesfully
+      If $bBirthLastWill Then
+        PublishMsg($sBirthLastWillTopic, $sBirthMessage, True)
+      Endif
     Case 1
       WriteDebugLog("Connection refused by broker, wrong protocol version.")
     Case 2
@@ -949,8 +1011,8 @@ Private Sub DecodeConnAck(bBuffer As Byte[])
       WriteDebugLog("Connection refused by broker, bad username or password.")
     Case 5
       WriteDebugLog("Connection refused by broker, client is not authorized.")
-    Case Else
-      WriteDebugLog("Received unknown CONNACK status code!")
+    Default
+      WriteDebugLog("ERROR: Received unknown CONNACK status code (" & bBuffer[1] & ") !")
   End Select
 
 End
