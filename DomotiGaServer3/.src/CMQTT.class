@@ -75,9 +75,9 @@ Const MQTT_CONNECT As Integer = &H01
 Const MQTT_CONNACK As Integer = &H02
 Const MQTT_PUBLISH As Integer = &H03
 Const MQTT_PUBACK As Integer = &H04
-'Const MQTT_PUBREC As Integer = &H05
-'Const MQTT_PUBREL As Integer = &H06
-'Const MQTT_PUBCOMP As Integer = &H07
+Const MQTT_PUBREC As Integer = &H05
+Const MQTT_PUBREL As Integer = &H06
+Const MQTT_PUBCOMP As Integer = &H07
 Const MQTT_SUBSCRIBE As Integer = &H08
 Const MQTT_SUBACK As Integer = &H09
 'Const MQTT_UNSUBSCRIBE As Integer = &H0A ' 10
@@ -201,10 +201,10 @@ Private Sub ConnectTCP()
   hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  WriteLog(PluginFriendlyName & " TCP interface connecting to broker " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog(PluginFriendlyName & " TCP interface connecting to broker " & $sTCPHost & ":" & $iTCPPort & IIf($bSSL, " (SSL)", ""))
 
 Catch ' some errors
-  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to broker " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to broker " & $sTCPHost & ":" & $iTCPPort & IIf($bSSL, " (SSL)", ""))
   WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
@@ -250,6 +250,9 @@ Private Sub StopTimers()
 
   Try tMQTTPing.Stop
   Try tMQTTBusy.Stop
+
+  ' Set busy to false, otherwise with a reconnect nothing is send
+  bBusy = False
 
 End
 
@@ -600,6 +603,8 @@ Public Sub PublishMsg(sTopic As String, sMsg As String, Optional bRawTopic As Bo
 
   Dim bBuf As New Byte[255]
   Dim iCnt, iTopicLen, iMsgLen As Integer
+  Dim iRnd As Integer
+  Dim iQoSLen As Integer
 
   If Not $bEnablePublish Then Return
 
@@ -622,27 +627,42 @@ Public Sub PublishMsg(sTopic As String, sMsg As String, Optional bRawTopic As Bo
   Select $iQoS
     Case 0
       ' default
+      iQoSLen = 0
     Case 1
       bBuf[0] = BSet(bBuf[0], 1)
+      iQoSLen = 2
     Case 2
       bBuf[0] = BSet(bBuf[0], 2)
+      iQoSLen = 2
     Default
       If $bDebug Then WriteDebugLog("Invalid QoS value '" & $iQoS & "' set!")
       Return
   End Select
 
-  bBuf[1] = iTopicLen + iMsgLen + 2 ' remaining length
+  ' Add 2 bytes if QoS 1 or 2 is enabled for packet id
+  bBuf[1] = iTopicLen + iMsgLen + 2 + iQoSLen ' remaining length
+
   bBuf[2] = iTopicLen / 128         ' MSB topic length
   bBuf[3] = iTopicLen Mod 128       ' LSB
+
   For iCnt = 1 To Len(sTopic)
     bBuf.Add(Asc(sTopic, iCnt), 3 + iCnt)
   Next
+
+  ' Add 2 bytes for packet id when QoS is 1 or 2
+  If iQoSLen > 0 Then
+    iRnd = Int(Rnd(1, 65535))
+
+    bBuf.Add(iRnd / 256, 3 + iTopicLen + 1)
+    bBuf.Add(iRnd Mod 256, 3 + iTopicLen + 2)
+  Endif
+
   For iCnt = 1 To Len(sMsg)
-    bBuf.Add(Asc(sMsg, iCnt), 3 + iTopicLen + iCnt)
+    bBuf.Add(Asc(sMsg, iCnt), 3 + iTopicLen + iQoSLen + iCnt)
   Next
 
-  If $bDebug Then WriteDebugLog("Publishing Message '" & sMsg & "' to Topic '" & sTopic & "'")
-  bBuf.Resize(&H4 + Len(sTopic) + Len(sMsg))
+  If $bDebug Then WriteDebugLog("Publishing Message '" & sMsg & "' to Topic '" & sTopic & "'" & IIf(iQoSLen > 0, ", with Packet id " & iRnd & ".", ""))
+  bBuf.Resize(&H04 + Len(sTopic) + iQoSLen + Len(sMsg))
   QueueCommand(bBuf)
 
 End
@@ -791,7 +811,7 @@ Private Sub ProcessReceivedChar(bByte As Byte)
 
   iType = Lsr(bRxBuf[0], 4)
 
-  ' Remove the (variable lenght) fixed header
+  ' Remove the (variable length) fixed header
   bRxBuf.Remove(0, iIndex + 1)
 
   Select iType
@@ -806,10 +826,13 @@ Private Sub ProcessReceivedChar(bByte As Byte)
       If $bDebug Then WriteDebugLog("Broker replied with alive packet.")
     Case MQTT_SUBACK
       'DecodeSubAck(bRxBuf)
-      If $bDebug Then WriteDebugLog("Subscription ack packet.")
+      If $bDebug Then WriteDebugLog("Subscribe acknowledgement packet.")
     Case MQTT_PUBLISH
-      If $bDebug Then WriteDebugLog("Received published data.")
       DecodePublish(bRxBuf)
+    Case MQTT_PUBREC
+      DecodePubRec(bRxBuf)
+    Case MQTT_PUBCOMP
+      DecodePubComp(bRxBuf)
     Default
       If $bDebug Then WriteDebugLog("Received unsupported packet type " & iType)
   End Select
@@ -826,6 +849,8 @@ Private Sub DecodePublish(bBuffer As Byte[])
   Dim iTopicLen, iDeviceId As Integer
   Dim sTopic, sPayload, sDeviceTypeDescr, sDevice As String
   Dim cTest As Collection
+
+  If $bDebug Then WriteDebugLog("Received published data.")
 
   ' extract topic. Length: MSB @ offset 0, LSB @ offset 1
   iTopicLen = Lsl(CInt(bBuffer[0]), 8) + bBuffer[1]
@@ -988,7 +1013,7 @@ Catch
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Decode MQTT CONNACK message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub DecodeConnAck(bBuffer As Byte[])
 
@@ -1018,11 +1043,61 @@ Private Sub DecodeConnAck(bBuffer As Byte[])
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Decode MQTT PUBACK message
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub DecodePubAck(bBuffer As Byte[])
 
-  WriteDebugLog("Subscription accepted by broker.")
-  ' TODO: implement decode message id and QoS granted
+  Dim iPacketId As Integer
+
+  If bBuffer.Length = 2 Then
+    iPacketId = CInt(bBuffer[0]) * &H100 + bBuffer[1]
+    WriteDebugLog("Publish acknowledgement by broker, with Packet id=" & iPacketId & ".")
+  Else
+    WriteDebugLog("Publish acknowledgement by broker, but invalid length.")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Decode MQTT PUBREC message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DecodePubRec(bBuffer As Byte[])
+
+  Dim iPacketId As Integer
+  Dim bBuf As New Byte[4]
+
+  If bBuffer.Length = 2 Then
+    iPacketId = CInt(bBuffer[0]) * &H100 + bBuffer[1]
+    WriteDebugLog("Publish received by broker, with Packet id=" & iPacketId & ".")
+
+    ' Send Public Release back
+    WriteDebugLog("Publish released send to broker, with Packet id=" & iPacketId & ".")
+
+    bBuf[0] = Shl(MQTT_PUBREL, 4) ' MSB
+    bBuf[0] = BSet(bBuf[0], 1)
+    bBuf[1] = &H02 ' 2 bytes send back as packet id
+    bBuf[2] = bBuffer[0]
+    bBuf[3] = bBuffer[1]
+ 
+    QueueCommand(bBuf)
+  Else
+    WriteDebugLog("Publish received by broker, but invalid length.")
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Decode MQTT PUBCOMP message
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DecodePubComp(bBuffer As Byte[])
+
+  Dim iPacketId As Integer
+
+  If bBuffer.Length = 2 Then
+    iPacketId = CInt(bBuffer[0]) * &H100 + bBuffer[1]
+    WriteDebugLog("Publish complete by broker, with Packet id=" & iPacketId & ".")
+  Else
+    WriteDebugLog("Publish complete by broker, but invalid length.")
+  Endif
 
 End
