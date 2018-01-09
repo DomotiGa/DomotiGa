@@ -20,7 +20,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "MQTT"
 Public PluginFriendlyName As String = "MQTT Client"
-Public PluginVersion As String = "2.01"
+Public PluginVersion As String = "2.02"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -763,6 +763,7 @@ Private Sub ProcessReceivedChar(bByte As Byte)
   Dim iLength, iIndex As Integer
   Dim bShift As Byte
   Dim bLengthKnown As Boolean = False
+  Dim iQos As Integer
 
   If bRxBuf.Length = 0 Then
     ' Check if the receive does not take too long because of junk data (checked in tMQTTPing_Timer)
@@ -811,6 +812,11 @@ Private Sub ProcessReceivedChar(bByte As Byte)
 
   iType = Lsr(bRxBuf[0], 4)
 
+  ' Determine QoS before removing the first byte
+  iQoS = 0
+  If BSet(bRxBuf, 1) Then iQoS = 1
+  If BSet(bRxBuf, 2) Then iQoS = 2
+
   ' Remove the (variable length) fixed header
   bRxBuf.Remove(0, iIndex + 1)
 
@@ -828,7 +834,7 @@ Private Sub ProcessReceivedChar(bByte As Byte)
       'DecodeSubAck(bRxBuf)
       If $bDebug Then WriteDebugLog("Subscribe acknowledgement packet.")
     Case MQTT_PUBLISH
-      DecodePublish(bRxBuf)
+      DecodePublish(bRxBuf, iQoS)
     Case MQTT_PUBREC
       DecodePubRec(bRxBuf)
     Case MQTT_PUBCOMP
@@ -842,24 +848,50 @@ Private Sub ProcessReceivedChar(bByte As Byte)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Decode any MQTT PUBLISH
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub DecodePublish(bBuffer As Byte[])
+Private Sub DecodePublish(bBuffer As Byte[], iQoS As Integer)
 
   Dim iTopicLen, iDeviceId As Integer
   Dim sTopic, sPayload, sDeviceTypeDescr, sDevice As String
   Dim cTest As Collection
+  Dim bBuf As New Byte[4]
+  Dim iPacketId As Integer
 
   If $bDebug Then WriteDebugLog("Received published data.")
+
+  If iQoS >= 1 And $bDebug Then WriteDebugLog("QoS : " & iQoS)
 
   ' extract topic. Length: MSB @ offset 0, LSB @ offset 1
   iTopicLen = Lsl(CInt(bBuffer[0]), 8) + bBuffer[1]
   sTopic = bBuffer.ToString(2, iTopicLen)
   If $bDebug Then WriteDebugLog("Received topic : '" & sTopic & "'")
 
-  ' extract payload
-  sPayload = bBuffer.ToString(2 + iTopicLen)
+  ' extract payload - if QoS is enabled, it adds 2 bytes as Packet id
+  If iQoS >= 1 Then
+    sPayload = bBuffer.ToString(4 + iTopicLen)
+  Else
+    sPayload = bBuffer.ToString(2 + iTopicLen)
+  Endif
+
   If $bDebug Then WriteDebugLog("Received payload : '" & sPayload & "'")
+
+  ' If QoS is 1, send a PUBLISH acknowledgement back
+  If iQoS = 1 Then
+    iPacketId = CInt(bBuffer[2 + iTopicLen]) * &H100 + bBuffer[3 + iTopicLen]
+    WriteDebugLog("Sending Publish acknowledgement to broker, with Packet id=" & iPacketId & ".")
+
+    bBuf[0] = Shl(MQTT_PUBACK, 4) ' MSB
+    bBuf[1] = &H02 ' 2 bytes send back as packet id
+    bBuf[2] = bBuffer[2 + iTopicLen]
+    bBuf[3] = bBuffer[3 + iTopicLen]
+ 
+    QueueCommand(bBuf)
+  Endif
+
+  If iQoS = 2 Then
+    ' TODO
+  Endif
 
   ' try to determine type of payload
   Try cTest = JSON.Decode(sPayload)
@@ -888,6 +920,9 @@ Private Sub DecodePublish(bBuffer As Byte[])
   Else
     WriteDebugLog("ERROR: No device found with address '" & sTopic & "'")
   Endif
+
+Catch
+  WriteLog("ERROR: Decode Publish failed. '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
