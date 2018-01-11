@@ -2789,7 +2789,7 @@ CREATE TABLE `settings_mqtt` (
   `username` varchar(64) DEFAULT NULL,
   `password` varchar(64) DEFAULT NULL,
   `pubtopic` varchar(256) DEFAULT NULL,
-  `subtopic` varchar(256) DEFAULT NULL,
+  `subtopic` text,
   `heartbeat` int(11) DEFAULT NULL,
   `retain` tinyint(1) NOT NULL DEFAULT '0',
   `qos` int(11) DEFAULT NULL,
@@ -2800,6 +2800,7 @@ CREATE TABLE `settings_mqtt` (
   `sslenabled` tinyint(1) NOT NULL DEFAULT '0',
   `sslcertificate_id` INT(11) NOT NULL DEFAULT '0',
   `birthlastwill` TINYINT(1) NOT NULL DEFAULT '0',
+  `sendallvalues` TINYINT(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`)
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;

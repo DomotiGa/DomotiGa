@@ -71,6 +71,13 @@ CALL Upgrade_DropColumnIfExist("settings_mqtt", "sslcertificate_id");
 ALTER TABLE settings_mqtt ADD COLUMN `sslcertificate_id` INT(11) NOT NULL DEFAULT '0' AFTER `sslenabled`;
 CALL Upgrade_DropColumnIfExist("settings_mqtt", "birthlastwill");
 ALTER TABLE settings_mqtt ADD COLUMN `birthlastwill` TINYINT(1) NOT NULL DEFAULT '0'  AFTER `sslcertificate_id`;
+CALL Upgrade_DropColumnIfExist("settings_mqtt", "sendallvalues");
+ALTER TABLE settings_mqtt ADD COLUMN `sendallvalues` TINYINT(1) NOT NULL DEFAULT '0'  AFTER `birthlastwill`;
+
+--
+-- Add more space to subscribed topics, enough space for multiple topics if needed
+--
+ALTER TABLE settings_mqtt CHANGE COLUMN `subtopic` `subtopic` TEXT NULL DEFAULT NULL;
 
 --
 -- Fix the '0000-00-00 00:00:00' default value, not allowed by MySQL 5.7
