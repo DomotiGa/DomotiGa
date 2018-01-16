@@ -57,6 +57,7 @@ Private $sBirthLastWillTopic As String = "domotiga/status"
 Private $sBirthMessage As String = "online"
 Private $sLastWillMessage As String = "offline"
 Private $bSendAllValues As Boolean ' Send all values to MQTT broker on start-up
+Private $sPublishSeparator As String ' Separator to subscribe to multiple topics
 
 ' Interface objects
 Public hMySocket As CSocket
@@ -120,6 +121,9 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bBirthLastWill = cPl.Settings["birthlastwill"]
   $bSendAllValues = cPl.Settings["sendallvalues"]
 
+  ' Hardcoded to "|" at this moment
+  $sPublishSeparator = "|"
+
   InterfaceId = Devices.FindInterface("MQTT Interface")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
@@ -127,9 +131,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     IsRunning = False
     Return
   Endif
-
-'$iTCPPort = 8883
-'$bSSL = True
 
   ' Connect/Initialize connection
   ConnectTCP()
@@ -765,7 +766,8 @@ Private Sub ProcessReceivedChar(bByte As Byte)
   Dim iLength, iIndex As Integer
   Dim bShift As Byte
   Dim bLengthKnown As Boolean = False
-  Dim iQos As Integer
+  Dim iRetain As Integer
+  Dim iQoS As Integer
 
   If bRxBuf.Length = 0 Then
     ' Check if the receive does not take too long because of junk data (checked in tMQTTPing_Timer)
@@ -814,10 +816,14 @@ Private Sub ProcessReceivedChar(bByte As Byte)
 
   iType = Lsr(bRxBuf[0], 4)
 
-  ' Determine QoS before removing the first byte
+  ' Determine retain status of published message
+  iRetain = 0
+  If BTst(bRxBuf[0], 0) Then iRetain = 1
+
+  ' Determine Quality of Service of published message
   iQoS = 0
-  If BSet(bRxBuf[0], 1) Then iQoS = 1
-  If BSet(bRxBuf[0], 2) Then iQoS = 2
+  If BTst(bRxBuf[0], 1) Then iQoS = 1
+  If BTst(bRxBuf[0], 2) Then iQoS = 2
 
   ' Remove the (variable length) fixed header
   bRxBuf.Remove(0, iIndex + 1)
@@ -836,7 +842,7 @@ Private Sub ProcessReceivedChar(bByte As Byte)
       'DecodeSubAck(bRxBuf)
       If $bDebug Then WriteDebugLog("Subscribe acknowledgement packet.")
     Case MQTT_PUBLISH
-      DecodePublish(bRxBuf, iQoS)
+      DecodePublish(bRxBuf, iRetain, iQoS)
     Case MQTT_PUBREC
       DecodePubRec(bRxBuf)
     Case MQTT_PUBCOMP
@@ -852,7 +858,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Decode any MQTT PUBLISH
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub DecodePublish(bBuffer As Byte[], iQoS As Integer)
+Private Sub DecodePublish(bBuffer As Byte[], iRetain As Integer, iQoS As Integer)
 
   Dim iTopicLen, iDeviceId As Integer
   Dim sTopic, sPayload, sDeviceTypeDescr, sDevice As String
@@ -862,6 +868,7 @@ Private Sub DecodePublish(bBuffer As Byte[], iQoS As Integer)
 
   If $bDebug Then WriteDebugLog("Received published data.")
 
+  If iRetain >= 1 And $bDebug Then WriteDebugLog("Retain : True")
   If iQoS >= 1 And $bDebug Then WriteDebugLog("QoS : " & iQoS)
 
   ' extract topic. Length: MSB @ offset 0, LSB @ offset 1
@@ -1055,6 +1062,8 @@ End
 Private Sub DecodeConnAck(bBuffer As Byte[])
 
   Dim rResult As Result
+  Dim eTopic As String[]
+  Dim sTopic As String
 
   ' Connect Return code
   Select bBuffer[1]
@@ -1067,8 +1076,17 @@ Private Sub DecodeConnAck(bBuffer As Byte[])
       Endif
 
       ' Only subscribe if we are successfully connect
+      If $bEnableSubscribe Then
 
-      If $bEnableSubscribe Then SubscribeTopic($sSubTopic)
+        ' We check if we are subscribing to multiple topics, because "#" is too much,
+        ' because we get anything in and we do an autocreate for all MQTT messages received
+        eTopic = Split($sSubTopic, $sPublishSeparator)
+
+        ' Now subscribe to each topic, but we ignore possible empty topics
+        For Each sTopic In eTopic
+          If sTopic Then SubscribeTopic(sTopic)
+        Next
+      Endif
 
       ' Publish the values of all enabled/not hidden devices if required at connect
       ' Can be handy for MQTT clients who don't keep their states after restart
