@@ -766,17 +766,6 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 			break;
 		}
-		case COMMAND_CLASS_COLOR:
-		{
-			if ( ( label == "Color" ) && ( type == ValueID::ValueType_String ) )
-			{
-				dev_index = 5;
-				dev_label = label;
-				strcpy( dev_result, dev_value );
-			}
-
-			break;
-		}
 		case COMMAND_CLASS_METER:
 		{
 			if ( type == ValueID::ValueType_Decimal )
@@ -1340,6 +1329,17 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 			break;
 		}
+		case COMMAND_CLASS_COLOR:
+		{
+			if ( ( label == "Color" ) && ( type == ValueID::ValueType_String ) )
+			{
+				dev_index = 160;
+				dev_label = label;
+				strcpy( dev_result, dev_value );
+			}
+
+			break;
+		}
 	}
 
 	//////////////////////////////////////////////////////////////////////////////////////////
@@ -1830,8 +1830,9 @@ void RPC_NodeEvent( uint32 HomeId, int NodeId, ValueID valueID, int value )
 	WriteLog( LogLevel_Debug, false, "Value%d=%s", valueid, dev_result );
 
 	// Only send it to DomotiGa if it isn'the COMMAND_CLASS_NO_OPERATION type
-	if ( id > 0 )
-	{
+	// Change: Always send a NodeEvent, recent Open-ZWave library doesn't send a commandclass
+	// if ( id > 0 )
+	// {
 		pthread_mutex_lock( &g_JsonRpcThread );
 
 		StructJsonRpcInfo JsonRpcInfo;
@@ -1850,11 +1851,11 @@ void RPC_NodeEvent( uint32 HomeId, int NodeId, ValueID valueID, int value )
 
 		// Signal the thread to process data
 		sem_post( &s_JsonRpcThread );
-	}
-	else
-	{
-		WriteLog( LogLevel_Debug, false, "Note=Value not send, CommandClassId=COMMAND_CLASS_NO_OPERATION" );
-	}
+	// }
+	// else
+	// {
+	//	WriteLog( LogLevel_Debug, false, "Note=Value not send, CommandClassId=COMMAND_CLASS_NO_OPERATION" );
+	// }
 
 }
 
