@@ -64,33 +64,35 @@ function get_device_list($view) {
   $index=0;
   foreach($response AS $item) {
 
-    $retarr[$index]['id'] = $item['device_id'];
-    $retarr[$index]['deviceicon'] = $item['icon'];
-    $retarr[$index]['devicename'] = $item['name'];
-    $retarr[$index]['devicelocation'] = $item['locationname'];
-    //$retarr[$index]['devicevalue1']
-    //$retarr[$index]['devicelabel1']
-    //$retarr[$index]['devicevalue2']
-    //$retarr[$index]['devicelabel2']
-    //$retarr[$index]['devicevalue3']
-    //$retarr[$index]['devicelabel3']
-    //$retarr[$index]['devicevalue4']
-    //$retarr[$index]['devicelabel4']
-    $retarr[$index]['devicelastseen'] = $item['lastseen'];
-    $retarr[$index]['dimmable'] = $item['dimable'];
-    $retarr[$index]['switchable'] = $item['switchable'];
+    if ($item['hide'] == 0) {
+      $retarr[$index]['id'] = $item['device_id'];
+      $retarr[$index]['deviceicon'] = $item['icon'];
+      $retarr[$index]['devicename'] = $item['name'];
+      $retarr[$index]['devicelocation'] = $item['locationname'];
+      //$retarr[$index]['devicevalue1']
+      //$retarr[$index]['devicelabel1']
+      //$retarr[$index]['devicevalue2']
+      //$retarr[$index]['devicelabel2']
+      //$retarr[$index]['devicevalue3']
+      //$retarr[$index]['devicelabel3']
+      //$retarr[$index]['devicevalue4']
+      //$retarr[$index]['devicelabel4']
+      $retarr[$index]['devicelastseen'] = $item['lastseen'];
+      $retarr[$index]['dimmable'] = $item['dimable'];
+      $retarr[$index]['switchable'] = $item['switchable'];
 
-    foreach($item['values'] AS $value) {
-      $retarr[$index]['devicevalue' . $value['valuenum']] = $value['value'];
-      $retarr[$index]['devicelabel' . $value['valuenum']] = $value['units'];
+      foreach($item['values'] AS $value) {
+        $retarr[$index]['devicevalue' . $value['valuenum']] = $value['value'];
+        $retarr[$index]['devicelabel' . $value['valuenum']] = $value['units'];
+      }
+
+      if ($retarr[$index]['deviceicon']) { $retarr[$index]['deviceicon'] = "<img src='images/icons/".$retarr[$index]['deviceicon']."' height='16' width='16' alt='icon' />"; } else { $retarr[$index]['deviceicon'] = ""; }
+      if (strlen($retarr[$index]['devicevalue1']) && $retarr[$index]['devicelabel1']) { $retarr[$index]['devicevalue1'] = $retarr[$index]['devicevalue1']. " ".$retarr[$index]['devicelabel1']; }
+      if (strlen($retarr[$index]['devicevalue2']) && $retarr[$index]['devicelabel2']) { $retarr[$index]['devicevalue2'] = $retarr[$index]['devicevalue2']. " ".$retarr[$index]['devicelabel2']; }
+      if (strlen($retarr[$index]['devicevalue3']) && $retarr[$index]['devicelabel3']) { $retarr[$index]['devicevalue3'] = $retarr[$index]['devicevalue3']. " ".$retarr[$index]['devicelabel3']; }
+      if (strlen($retarr[$index]['devicevalue4']) && $retarr[$index]['devicelabel4']) { $retarr[$index]['devicevalue4'] = $retarr[$index]['devicevalue4']. " ".$retarr[$index]['devicelabel4']; }
+      $index++;
     }
-
-    if ($retarr[$index]['deviceicon']) { $retarr[$index]['deviceicon'] = "<img src='images/icons/".$retarr[$index]['deviceicon']."' height='16' width='16' alt='icon' />"; } else { $retarr[$index]['deviceicon'] = ""; }
-    if (strlen($retarr[$index]['devicevalue1']) && $retarr[$index]['devicelabel1']) { $retarr[$index]['devicevalue1'] = $retarr[$index]['devicevalue1']. " ".$retarr[$index]['devicelabel1']; }
-    if (strlen($retarr[$index]['devicevalue2']) && $retarr[$index]['devicelabel2']) { $retarr[$index]['devicevalue2'] = $retarr[$index]['devicevalue2']. " ".$retarr[$index]['devicelabel2']; }
-    if (strlen($retarr[$index]['devicevalue3']) && $retarr[$index]['devicelabel3']) { $retarr[$index]['devicevalue3'] = $retarr[$index]['devicevalue3']. " ".$retarr[$index]['devicelabel3']; }
-    if (strlen($retarr[$index]['devicevalue4']) && $retarr[$index]['devicelabel4']) { $retarr[$index]['devicevalue4'] = $retarr[$index]['devicevalue4']. " ".$retarr[$index]['devicelabel4']; }
-    $index++;
   }
 
   if (isset($retarr)) {

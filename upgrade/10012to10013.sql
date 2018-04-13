@@ -7,9 +7,9 @@ UPDATE `triggers` SET `param2` = null, `param3` = null, `param4` = null WHERE `t
 --
 -- Update settings_main table
 --
-UPDATE `settings_main` SET `debugplugin`=0 WHERE `debugplugin`=NULL;
-UPDATE `settings_main` SET `debugglobalvar`=0 WHERE `debugglobalvar`=NULL;
-UPDATE `settings_main` SET `autodevicecreate`=0 WHERE `autodevicecreate`=NULL;
+UPDATE `settings_main` SET `debugplugin`=0 WHERE `debugplugin` IS NULL;
+UPDATE `settings_main` SET `debugglobalvar`=0 WHERE `debugglobalvar` IS NULL;
+UPDATE `settings_main` SET `autodevicecreate`=0 WHERE `autodevicecreate` IS NULL;
 
 
 --

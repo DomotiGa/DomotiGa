@@ -18,7 +18,6 @@ CFLAGS	:= -c $(DEBUG_CFLAGS)
 LDFLAGS	:= $(DEBUG_LDFLAGS)
 
 INCLUDES := -I open-zwave/cpp/src
-LIBVERS  := $(wildcard open-zwave/cpp/src/vers.cpp)
 LIBZWAVE := $(wildcard open-zwave/*.a)
 LIBOTHER := -ljson -lcurl -pthread -shared -ludev
 LIBS := $(LIBZWAVE) $(LIBOTHER)
@@ -29,11 +28,6 @@ LIBS := $(LIBZWAVE) $(LIBOTHER)
 all: defs libdomozwave.so
 
 defs:
-ifeq ($(LIBVERS),)
-	@echo open-zwave version file cannot be found at \"open-zwave/cpp/src/vers.cpp\", did you compile it?
-	@exit 1
-endif
-
 ifeq ($(LIBZWAVE),)
 	@echo open-zwave library cannot be found at \"open-zwave/*.a\", did you compile it?
 	@exit 1

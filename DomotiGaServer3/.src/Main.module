@@ -23,7 +23,7 @@
 ' this is the place where all global variables are defined
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Main
-Public sProgramVersion As String = "1.0.024"
+Public sProgramVersion As String = "1.0.025"
 Public sBaseDir As String
 Public sSettings As String = "server-domotiga.conf"
 Public bExitProgram As Boolean ' exit program flag
@@ -44,9 +44,26 @@ Public aIPAddr As New String[]
 Public bMainDebug As Boolean
 Public bEventsDebug As Boolean
 Public bDevicesDebug As Boolean
-Public bEnergyDebug As Boolean
+Public bDebugEnergy As Boolean
 Public bDebugPlugin As Boolean
-Public bGlobalVarDebug As Boolean
+Public bDebugGlobalVar As Boolean
+
+' Debug the RAW serialport communication inside CSerialPort.class
+' The option is passed as an environment variable:
+' DEBUGSERIALPORT=/dev/ttyUSB0,/dev/ttyUSB5
+Public sDebugSerialPort As New String[]
+
+' Debug the RAW client socket communication inside CSocket.class
+' The option is passed as an environment variable
+' DEBUGSOCKET=192.168.1.1:10011,192.168.100.121:9090
+Public sDebugSocket As New String[]
+
+' Debug the start-up sequence, sometimes it can happen we hang on 60%
+Public bDebugStartUp As Boolean
+
+' Environment variables past to the application
+' The 'MySQL_Host' is converted to 'MYSQL/HOST"
+Public cEnvVar As New Collection
 
 ' Message counters
 Public iNewMails As Integer
@@ -225,6 +242,9 @@ Public Function Main() As Boolean
   ' parse cmd line arguments
   ParseArgs()
 
+  ' Parse environment variable(s)
+  ParseEnvVars()
+
   ' load program settings
   GetConfig()
   
@@ -345,7 +365,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' parse command line arguments
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Function ParseArgs()
+Private Sub ParseArgs()
 
   Dim sArg As String
   Dim iCnt As Integer
@@ -391,6 +411,39 @@ Private Function ParseArgs()
         Endif
       Endif
     Endif
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' parse environment variable(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ParseEnvVars()
+
+  Dim sEnv As String
+  Dim sTemp As String
+  Dim aArr As String[]
+
+  For Each sEnv In Application.Env
+
+    Select UCase(sEnv)
+      Case "DEBUG_SERIALPORT" ' Debug option for CSerialPort.class
+        aArr = Split(Application.Env[sEnv], ",")
+        For Each sTemp In aArr
+          ' Only add the value without spaces and in lowercase
+          If Trim(sTemp) Then sDebugSerialPort.Add(LCase(Trim(sTemp)))
+        Next
+      Case "DEBUG_SOCKET" ' Debug option for CSocket.class
+        aArr = Split(Application.Env[sEnv], ",")
+        For Each sTemp In aArr
+          ' Only add the value without spaces and in lowercase
+          If Trim(sTemp) Then sDebugSerialPort.Add(LCase(Trim(sTemp)))
+        Next
+      Case "DEBUG_STARTUP" ' Debug startup of DomotiGa, sometimes we hang ...
+        bDebugStartUp = True
+      Default ' Store other environment variables for later usage. e.g. overrule MySQL Host
+        cEnvVar[Replace$(UCase(sEnv), "_", "/")] = Application.Env[sEnv]
+    End Select
   Next
 
 End
@@ -607,9 +660,9 @@ Public Sub GetSettings()
   bMainDebug = rResult!debug
   bDevicesDebug = rResult!debugdevices
   bEventsDebug = rResult!debugevents
-  bEnergyDebug = rResult!debugenergy
+  bDebugEnergy = rResult!debugenergy
   bDebugPlugin = rResult!debugplugin
-  bGlobalVarDebug = rResult!debugglobalvar
+  bDebugGlobalVar = rResult!debugglobalvar
 
   ' TODO
   iMainFlushTime = rResult!flushtime
@@ -726,12 +779,17 @@ Private Function GetConfigValue(sKey As String, Optional vValue As Variant) As V
 
   Dim hSettings As Settings
 
-  hSettings = New Settings(sBaseDir &/ sSettings)
-
-  If Not IsNull(vValue) Then
-    Return hSettings[sKey, vValue]
+  ' First try to get it from our environment variable list
+  If cEnvVar.Exist(UCase(sKey)) Then
+    Return cEnvVar[UCase(sKey)]
   Else
-    Return hSettings[sKey]
+    hSettings = New Settings(sBaseDir &/ sSettings)
+
+    If Not IsNull(vValue) Then
+      Return hSettings[sKey, vValue]
+    Else
+      Return hSettings[sKey]
+    Endif
   Endif
 
 End
@@ -867,37 +925,64 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub Setup()
 
+  Dim $bDebugPlugin As Boolean
+
+  If Main.bDebugStartUp Then Main.WriteDebugLog("[Main] Starting setup")
   WriteLog("[Main] Starting setup ...")
 
   ' setup modules
+  If Main.bDebugStartUp Then Main.WriteDebugLog("[Main] Get settings")
   GetSettings() ' read all settings from database
-  RestoreGlobalVars() ' restore globalvars from database
-  If Not bMainDebug Then WriteLog("[Main] NOTE: All disabled module log entries are muted, enable main debug if you want to see them!")
+
+  ' restore globalvars from database
+  If Main.bDebugStartUp Then Main.WriteDebugLog("[Main] Restore GlobalVars")
+  RestoreGlobalVars()
+
+  ' Store the debug plugin option, we only set it to True during startup
+  If Main.bDebugStartUp Then
+    $bDebugPlugin = bDebugPlugin
+    bDebugPlugin = True
+  Endif
 
   ' Start broadcast for Client/Server
   Plugin.Register("broadcastudp")
   Plugin.Restart("broadcastudp")
 
+  If Main.bDebugStartUp Then Main.WriteDebugLog("[Main] Setup Email")
   Setup_Email() ' e-mail SMTP client
+
+  If Main.bDebugStartUp Then Main.WriteDebugLog("[Main] Setup Sound")
   Setup_Sound() ' built in sound player
+
   Setup_VoiceText() ' text2speech support
   Setup_Thermostat() ' Thermostat function
   Setup_RRDTool() ' RRDTool graphing framework
   Setup_ServerStats() ' Server Statistics
   Setup_xPL() ' xPL support
   Setup_RFXComxPL() ' RFXCom xPL support
+
+  If Main.bDebugStartUp Then Main.WriteDebugLog("[Main] Setup Calendar")
   Setup_Calendar() 'Calendar planning support
+
+  If Main.bDebugStartUp Then Main.WriteDebugLog("[Main] Setup XBMCxPL")
   Setup_XBMCxPL() ' XBMC control via xPL
 
   ' Register all plugins
+  If Main.bDebugStartUp Then Main.WriteDebugLog("[Main] Plugin Init")
   Plugin.Init()
+
   ' Start all enabled plugins
+  If Main.bDebugStartUp Then Main.WriteDebugLog("[Main] Plugin StartAll")
   Plugin.StartAll()
 
   WriteLog("[Main] Done with setup ...")
 
   ' experimental
   ' LoadPlugins()
+
+   If Main.bDebugStartUp Then Main.bDebugPlugin = $bDebugPlugin
+
+  If Main.bDebugStartUp Then Main.WriteDebugLog("[Main] Done with setup")
 
 End
 
@@ -1741,7 +1826,7 @@ Public Sub SetGlobalVar(sVar As String, vValue As Variant, Optional bBroadcast A
       Else
         Try vValue = CBool(CInt(vValue))
         If Error Then
-          If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Boolean datatype")
+          If Main.bDebugGlobalVar Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Boolean datatype")
           Return False
         Endif
       Endif
@@ -1752,7 +1837,7 @@ Public Sub SetGlobalVar(sVar As String, vValue As Variant, Optional bBroadcast A
       If TypeOf(vValue) = gb.String Then vValue = Replace(vValue, ",", ".")
       Try vValue = CFloat(vValue)
       If Error Then
-        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to numeric (float) datatype")
+        If Main.bDebugGlobalVar Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to numeric (float) datatype")
         Return False
       Endif
       iDataType = gb.Float
@@ -1766,19 +1851,19 @@ Public Sub SetGlobalVar(sVar As String, vValue As Variant, Optional bBroadcast A
     Case gb.Date
       Try vValue = CDate(vValue)
       If Error Then
-        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Date datatype")
+        If Main.bDebugGlobalVar Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to Date datatype")
         Return False
       Endif
 
     Case gb.String, gb.Null
       Try vValue = CStr(vValue)
       If Error Then
-        If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to String datatype")
+        If Main.bDebugGlobalVar Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' cannot be converted to String datatype")
         Return False
       Endif
 
     Default ' nothing matches - don't continue
-      If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' has invalid datatype=" & iDataType & ", detected=" & TypeOf(vValue))
+      If Main.bDebugGlobalVar Then WriteDebugLog("[GlobalVar] ERROR: '" & sVar & "' value '" & vValue & "' has invalid datatype=" & iDataType & ", detected=" & TypeOf(vValue))
       Return False
   End Select
 
@@ -1813,12 +1898,12 @@ Public Sub SetGlobalVar(sVar As String, vValue As Variant, Optional bBroadcast A
     If bGlobalVarExist Then
 
       ' Report the GlobalVar change
-      If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' changed from '" & IIf(TypeOf(vTemp) = gb.Boolean, IIf(vTemp, "True", "False"), vTemp) & "' to '" & IIf(iDataType = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
+      If Main.bDebugGlobalVar Then WriteDebugLog("[GlobalVar] '" & sVar & "' changed from '" & IIf(TypeOf(vTemp) = gb.Boolean, IIf(vTemp, "True", "False"), vTemp) & "' to '" & IIf(iDataType = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
 
       rResult = Main.hDB.Exec("UPDATE globalvars SET value = &1, datatype = &2 WHERE var = &3", vValue, iDataType, sVar)
     Else
       ' Report the GlobalVar add
-      If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' added with value '" & IIf(iDataType = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
+      If Main.bDebugGlobalVar Then WriteDebugLog("[GlobalVar] '" & sVar & "' added with value '" & IIf(iDataType = gb.Boolean, IIf(vValue, "True", "False"), vValue) & "'")
 
       ' Before we do an insert, first check if it already exist - as safeguard
       rResult = Main.hDB.Exec("SELECT * FROM globalvars where var = &1", sVar)
@@ -1847,7 +1932,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub DelGlobalVar(sVar As String)
 
-  If Main.bGlobalVarDebug Then WriteDebugLog("[GlobalVar] '" & sVar & "' is deleted")
+  If Main.bDebugGlobalVar Then WriteDebugLog("[GlobalVar] '" & sVar & "' is deleted")
   If Main.GlobalVar.Exist(sVar) Then Main.GlobalVar.Remove(sVar)
   Main.hDB.Exec("DELETE FROM globalvars WHERE var = &1", sVar)
 
@@ -1960,7 +2045,7 @@ Public Sub RestoreGlobalVars(Optional bReadTable As Boolean = True)
             cGV.DataType = gb.String
         End Select
 
-        If Main.bGlobalVarDebug Then Main.WriteDebugLog("[GlobalVar] '" & rResult!var & "'restored with value '" & IIf(cGV.DataType = gb.Boolean, IIf(cGV.Value, "True", "False"), cGV.Value) & "'.")
+        If Main.bDebugGlobalVar Then Main.WriteDebugLog("[GlobalVar] '" & rResult!var & "'restored with value '" & IIf(cGV.DataType = gb.Boolean, IIf(cGV.Value, "True", "False"), cGV.Value) & "'.")
       Next
       If Main.bMainDebug Then Main.WriteDebugLog("[Main] Globalvars Restored.")
     Endif

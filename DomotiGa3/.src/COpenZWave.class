@@ -3,15 +3,14 @@
 ' Description:
 ' COpenZWave.class
 ' Support for Z-Wave protocol through the OpenZWave library
-' www.openzwave.com / code.google.com/p/open-zwave
 
 ' Development Status:
 ' Finished
 
 ' Links:
 ' http://www.openzwave.com
-' http://code.google.com/p/open-zwave
-' http://www.pepper1.net/zwavedb/
+' https://github.com/OpenZWave/open-zwave
+' http://products.z-wavealliance.org
 
 ' Credits:
 ' Thanks to Willem-Jan from ezHome.nl, Enver from Tane.nl and Jaren for the open-zwave wrapper code.
@@ -27,7 +26,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "OpenZWave"
 Public PluginFriendlyName As String = "OpenZWave Z-Wave"
-Public PluginVersion As String = "2.00"
+Public PluginVersion As String = "2.20"
 Public PluginAuthor As String = "Alexander Kuiper"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 9
@@ -111,6 +110,7 @@ Public Struct OpenZWaveEntry
   MaxBaudRate As Integer
   Version As Integer
   Instances As Collection
+  ZWavePlus As Boolean
 End Struct
 
 Public Struct OpenZWaveEntryValue
@@ -120,7 +120,7 @@ End Struct
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Version - needs to match the domozwave library version
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public sLibDomoZwave As String = "DomoZWave version 2.10"
+Public sLibDomoZwave As String = "DomoZWave version 2.20"
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' The wrapper for the OpenZWave library
@@ -184,10 +184,12 @@ Private Extern DomoZWave_RefreshNodeInfo(home As Integer, node As Integer) As Bo
 Private Extern DomoZWave_RequestNodeVersion(home As Integer, node As Integer) As Boolean
 Private Extern DomoZWave_RequestNodeMeter(home As Integer, node As Integer) As Boolean
 Private Extern DomoZWave_SetValue(home As Integer, node As Integer, instance As Integer, value As Integer) As Boolean
+Private Extern DomoZWave_SetButton(home As Integer, node As Integer, commandClass As Integer, instance As Integer, index As Integer) As Boolean
 
 ' Request or update node configuration
 Private Extern DomoZWave_SetConfigParam(home As Integer, node As Integer, param As Integer, value As Integer, size As Integer) As Boolean
 Private Extern DomoZWave_SetConfigParamList(home As Integer, node As Integer, param As Integer, value As String) As Boolean
+Private Extern DomoZWave_SetConfigParamButton(home As Integer, node As Integer, index As Integer) As Boolean
 Private Extern DomoZWave_RequestConfigParam(home As Integer, node As Integer, param As Integer)
 Private Extern DomoZWave_RequestAllConfigParams(home As Integer, node As Integer)
 Private Extern DomoZWave_GetNodeConfig(home As Integer, node As Integer) As String
@@ -338,6 +340,7 @@ Private Sub Connect()
   Dim sVersion As String
   Dim iCnt As Integer
   Dim iJsonRpcPort As Integer
+  Dim sConfigDir As String
 
   ' Re-Initialize information
   iHomeId = 0
@@ -401,17 +404,30 @@ Private Sub Connect()
       Return
     Endif
 
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Initialising open-zwave wrapper.")
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "" & DomoZWave_Version())
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "" & DomoZWave_OZWVersion())
+    WriteDebugLog("Initialising open-zwave wrapper.")
+    WriteDebugLog(" Listening on Port " & iJsonRpcPort) 
+    WriteDebugLog(" " & DomoZWave_Version())
+    WriteDebugLog(" " & DomoZWave_OZWVersion())
 
     If Not Exist(Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/") Then
       Main.WriteLog(LogLabel & "ERROR: interface is disabled, the open-zwave configuration directory is missing (" & Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/" & ")")
       Return
     Endif
 
+    WriteDebugLog(" Config Dir: " & Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/")
+
     ' We need to call OpenZWave_Init
-    DomoZWave_Init(Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ "wrappers/domozwave/", Main.sBaseDir &/ "logs" &/ Main.sDomoZWaveFile, $bLibDebug)
+
+    ' If the domotiga.conf includes a path, then we most likely running inside Dockers.
+    ' Then redirect our openzwave directory from "wrappers/domozwave" to "config/"
+    If InStr(Main.sSettings, "/") Then
+      sConfigDir = Left(Main.sSettings, InStr(Main.sSettings, "/"))
+      WriteDebugLog(" Work Dir: " & Main.sBaseDir &/ sConfigDir)
+      DomoZWave_Init(Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ sConfigDir, Main.sBaseDir &/ "logs" &/ Main.sDomoZWaveFile, $bLibDebug)
+    Else 
+      WriteDebugLog(" Work Dir: " & Main.sBaseDir &/ "wrappers/domozwave/")
+      DomoZWave_Init(Main.sBaseDir &/ "wrappers/domozwave/open-zwave/config/", Main.sBaseDir &/ "wrappers/domozwave/", Main.sBaseDir &/ "logs" &/ Main.sDomoZWaveFile, $bLibDebug)
+    Endif
   Endif
 
   ' Add +1 to ZWaveControllers count
@@ -480,10 +496,15 @@ Public Sub hServerSocket_Connection(RemoteHost As String)
   ' If a whitelist exist, reject all other IP address
   If $cIPWhiteList.Count >= 1 Then
     If Not $cIPWhiteList.Exist(RemoteHost) Then
-      Try hS.AcceptSocket(hServerSocket)
+      If $bDebug Then WriteDebugLog("Rejected connection from '" & RemoteHost & "'")
+      Try hS.AssignSocket()
       hS.Close()
       Return
+    Else
+      If $bDebug Then WriteDebugLog("Accepted connection from '" & RemoteHost & "'")
     Endif
+  Else
+    If $bDebug Then WriteDebugLog("Accepted connection from '" & RemoteHost & "'")
   Endif
 
   ' Do an assignment, if SSL fails, we can get an error
@@ -500,6 +521,15 @@ Public Sub hServerSocket_Connection(RemoteHost As String)
   hS.HTTPHeaders = ["content-type: application/json"]
 
   $cClients.Add(hS)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub hServerSocket_Error()
+
+  WriteDebugLog("hServerSocket Error Raised. Status=" & Last.Status)
 
 End
 
@@ -812,6 +842,16 @@ Public Sub SetValue(iNodeId As Integer, iInstance As Integer, iValue As Integer)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Push button of the Z-Wave device, no entry in devices table is required
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SetButton(iNodeId As Integer, iCommandClass As Integer, iInstance As Integer, iIndex As Integer)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Set button for node " & iNodeId & ", commandclass " & iCommandClass & ", instance " & iInstance & " and index " & iIndex)
+  DomoZWave_SetButton(iHomeId, iNodeId, iCommandClass, iInstance, iIndex)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Request or update node basic state
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub RequestType(sType As String, iNodeId As Integer, bListening As Boolean, bDisablePoll As Boolean) As Boolean
@@ -965,12 +1005,22 @@ Public Sub SetConfigParam(iNodeId As Integer, iParam As Integer, iValue As Integ
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-'
+' Set the configuration item, list type
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SetConfigParamList(iNodeId As Integer, iParam As Integer, sValue As String)
 
   If $bDebug Then Main.WriteDebugLog(LogLabel & "Set config param List " & iParam & " to value \"" & sValue & "\" for node id " & iNodeId & ".")
   DomoZWave_SetConfigParamList(iHomeId, iNodeId, iParam, sValue)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Set the configuration item, button type. Resets certain values.
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub SetConfigParamButton(iNodeId As Integer, iParam As Integer)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & "Set config param Button " & iParam & " for node id " & iNodeId & ".")
+  DomoZWave_SetConfigParamButton(iHomeId, iNodeId, iParam)
 
 End
 
@@ -1907,6 +1957,7 @@ Private Sub Call_OpenZWave_AddNode(cData As Collection)
   cZWaveNode.MaxBaudRate = CInt(cData["maxbaudrate"])
   cZWaveNode.Version = CInt(cData["version"])
   cZWaveNode.Instances = New Collection
+  cZWaveNode.ZWavePlus = CBoolean(cData["zwaveplus"])
 
   Select cZWaveNode.Generic
     Case &H01, &H02
@@ -2109,6 +2160,9 @@ Public Sub JsonRpc_Tools_OpenZWave_Get(cData As JSONCollection) As JSONCollectio
         cNode.Add(GetNodeLastSeen(cZWaveNode.NodeId), "lastseen")
         cNode.Add(GetNodeName(cZWaveNode.NodeId), "customname")
         cNode.Add(GetNodeLocation(cZWaveNode.NodeId), "customlocation")
+
+        cNode.Add(cZWaveNode.ZWavePlus, "zwaveplus")
+
         Try cNode.Add(JSON.Decode(DomoZWave_GetNodeStatistics(iHomeId, cZWaveNode.NodeId), True), "statistics")
 
         ' Add instance and values

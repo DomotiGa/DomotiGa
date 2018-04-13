@@ -16,7 +16,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "DMXPlayer"
 Public PluginFriendlyName As String = "DMXPlayer"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "Ronald Kelleners"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -36,8 +36,9 @@ Private $sSerPort As String
 Private $sBaud As String
 Private $bDebug As Boolean
 
-Public hDMXPlayer As New SerialPort
-Public sBuffer As String
+' Interface objects
+Public hMySerial As CSerialPort
+Private $sMsgData As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -58,7 +59,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bDebug = cPl.Settings["debug"]
 
   ' Connect/Initialize connection
-  Connect()
+  ConnectSerial()
 
 End
 
@@ -72,17 +73,40 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Private Sub ConnectSerial()
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the port
-  Try hDMXPlayer.Close
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
   ' get a new one
-  hDMXPlayer = New Serialport As "DMXPlayer" 
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
 
-  With hDMXPlayer
+  With hMySerial
+    .DataType = gb.String
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = 0
@@ -92,35 +116,32 @@ Public Function Connect() As Boolean
   End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+  WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
-  ' All went ok
-  Return True
+  Run()
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-  Return False
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect the serialport
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect()
 
   ' try to close the connection
-  Try hDMXPlayer.Close
+  Try hMySerial.Close
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
+  ' try stop running timers
+  StopTimers()
 
-  ' all ok
-  Return True
+  WriteLog(PluginFriendlyName & " Port closed.")
 
 Finally
   IsRunning = False
@@ -129,10 +150,60 @@ Finally
 
 Catch
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read data char for char
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  $sMsgData &= vVar
+
+  ' Check for linefeed and process data
+  While InStr($sMsgData, gb.Lf)
+    ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, gb.Lf) - 1))
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.Lf) + 1)
+  Wend
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub SendCommand(sAddress As String, sCmd As String)
 
   Dim iLevel As Integer
@@ -144,41 +215,27 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
     iLevel = Val(Replace(sCmd, "DIM ", ""))
     iLevel = (iLevel * 254) / 100
     sValue = Format$(iLevel, "000")
-  Else If
-    InStr(sCmd, "OFF") Then
+  Else If InStr(sCmd, "OFF") Then
     sValue = Format$(000, "000")
-  Else If
-    InStr(sCmd, "ON") Then
+  Else If InStr(sCmd, "ON") Then
     sValue = Format$(255, "000")
   Else
-    Main.WriteDebugLog(LogLabel & "Unknown command '" & sCmd & "' given!")
+    WriteDebugLog("Unknown command '" & sCmd & "' given!")
     Return
   Endif
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "> C" & sAddress & "L" & sValue)
-  Try Print #hDMXPlayer, ("C" & sAddress & "L" & sValue)
+
+  If $bDebug Then WriteDebugLog("> C" & sAddress & "L" & sValue)
+  hMySerial.Write("C" & sAddress & "L" & sValue & gb.Lf)
 
 End
 
-Public Sub DMXPlayer_Read()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedPacket(sStr As String)
 
-  Dim sData As String
-
-  Try sData = Read #hDMXPlayer, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! -> " & Error.Text)
-  If sData = Chr(10) Then ' buffer until linefeed then parse
-    If Len(sBuffer) > 1 Then ParseLine(sBuffer)
-    sBuffer = Null
-  Else
-    sBuffer &= sData
-  Endif
-
-End
-
-Public Sub ParseLine(sStr As String)
-
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sStr)
+  If $bDebug Then WriteDebugLog("< " & sStr)
 
   ' TODO: parse answers
 
 End
-

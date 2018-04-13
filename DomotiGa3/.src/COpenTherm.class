@@ -85,13 +85,15 @@ Private $bRelayEnabled As Boolean
 Private $iRelayPort As Integer
 
 Public tOpenTherm As Timer
-Public hOpenThermSer As New SerialPort
-Public hOpenThermTCP As New Socket
 Public hOpenThermRelay As New ServerSocket
 Public hRelayOTClient As Object[]
 Public hRelayOTSocket As New Socket
 
-Private sBuffer As String
+' Interface objects
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
+
+Private $sMsgData As String
 Private sBufferSocket As String
 Private sTemperatureOverrideStatus As String
 
@@ -133,10 +135,6 @@ Private fCentralHeatingSetPoint As Float    ' Central heating setpoint
 Private bClockSyncedToday As Boolean        ' Indicates if clock is already synced
 Private iDayOfMonth As Integer
 
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
-
 ' queue and command buffer stuff
 Private cQueue As New Collection    ' command buffer
 Private bInterfaceBusy As Boolean   ' waiting for busy timer to finish
@@ -167,11 +165,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bRelayEnabled = cPl.Settings["relayenabled"]
   $iRelayPort = cPl.Settings["relayport"]
   $bSyncClock = cPl.Settings["syncclock"]
-
-  ' Define timer for TCP reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
 
   InterfaceId = Devices.FindInterface("OpenTherm Gateway")
   If InterfaceId = 0 Then
@@ -211,17 +204,70 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Open TCP port
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConnectTCP()
+
+  Dim iReconnectRetry As Integer = 0
+
+  bIgnoreAbout = True
+
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
+
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Open serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectSerial() As Boolean
+Private Sub ConnectSerial()
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the port
-  Try hOpenThermSer.Close
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
   ' get a new one
-  hOpenThermSer = New Serialport As "OpenThermSer"
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
 
-  With hOpenThermSer
+  With hMySerial
+    .DataType = gb.String
     .PortName = $sSerPort
     .Speed = 9600
     .Parity = 0
@@ -231,13 +277,6 @@ Public Function ConnectSerial() As Boolean
     .Open()
   End With
 
-  bIgnoreAbout = True
-  Try Print #hOpenThermSer, "PR=A\r" ' request information about OpenTherm gateway
-  If Error Then
-    Main.WriteDebugLog(LogLabel & "Error writing data to serial port! -> " & Error.Text)
-    Return False
-  Else
-    GetDeviceIDs()
     'Wait 1 ' wait to let the gateway repond to about request
     ' If bIgnoreAbout Then
     '   ' Try hOpenThermSer.Close
@@ -245,172 +284,204 @@ Public Function ConnectSerial() As Boolean
     '   Return False
     ' Else
     ' Write to main logfile we connected successfully
-    Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
-    IsRunning = True
-
-    ' All went ok
-    Return True
-  '  Endif
-  Endif
-
-Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  IsRunning = False
-  ErrorText = Error.Text
-  ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Receive data from serial port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub OpenThermSer_Read()
-
-  Dim sData As String
-
-  Try Read #hOpenThermSer, sData, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from serial port! -> " & Error.Text)
-  If sData = Chr(10) Then ' buffer until linefeed then parse
-    If Len(sBuffer) > 1 Then ParseLine(Left(sBuffer, Len(sBuffer) - 1))
-    sBuffer = Null
-  Else
-    sBuffer &= sData
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Open TCP port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
-
-  ' try to close the connection
-  Try hOpenThermTCP.Close
-  bIgnoreAbout = True
-
-  ' get a new one
-  hOpenThermTCP = New Socket As "OpenThermTCP"
-  hOpenThermTCP.Connect($sTCPHost, $iTCPPort)
-
-  ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
-
-  ' Don't set IsRunning=True, this has to be done in _Ready
-
-  ' All went ok
-  Return True
-
-Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  IsRunning = False
-  ErrorText = Error.Text
-  ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Socket is connected
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub OpenThermTCP_Ready()
-
-  GetDeviceIDs()
-  Main.WriteLog(LogLabel & "TCP socket connected.")
+  WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
+  Run()
 
-  Try Print #hOpenthermTCP, "PR=A" ' get about information of opentherm gateway
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  ConnectTCP()
+Catch ' some errors
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
+  IsRunning = False
+  ErrorText = Error.Text
+  ErrorWhere = Error.Where
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Socket is closed
+' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub OpenThermTCP_Closed()
+Private Sub Disconnect()
 
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
+  ' try to close the connection
+  Try hMySocket.Close
+  Try hMySerial.Close
+
+  Try hOpenThermRelay.Close
+
+  ' try stop running timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
+
+Finally
+  IsRunning = False
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
-Public Sub ReConnect()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
 
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
+  Try tInterfaceBusy.Stop
+  Try tOpenTherm.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' Empty internal buffer
+  $sMsgData = ""
+
+  bIgnoreAbout = True
+
+  ' request information about OpenTherm gateway
+  If $sInterface = "tcp" Then
+    hMySocket.Write("PR=A" & gb.Cr) ' Not sure about gb.Cr, code seems to be different from serial?
   Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
+    hMySerial.Write("PR=A" & gb.Cr)
   Endif
-  Inc iReConnectRetry
+
+  GetDeviceIDs()
+
+  ' *** Following code exist, but is NEVER called? ***
+
+  ' define timer for interface busy
+  'tInterfaceBusy = New Timer As "tInterfaceBusy"
+  'tInterfaceBusy.Delay = 150 ' default time between cmds
+
+  'If $iPollTime > 0 Then
+    ' start poll timer
+  '  tOpenTherm = New Timer As "tOpenTherm"
+  '  tOpenTherm.Delay = $iPollTime * 1000 ' multiply for seconds
+  '  tOpenTherm.Start
+  'Else
+    ' don't turn on polling, just process all messages received via OpenTherm gateway connection
+  '  QueueCommand("PS=0")
+  'Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+  StopTimers()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' host ip address found
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub OpenThermTCP_Found()
+Public Sub MySocket_Found()
 
   Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Error occured while connected/connecting to host
+' tcp socket is connected
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub OpenThermTCP_Error()
+Public Sub MySocket_Ready()
 
-  Dim sMsg As String
+  WriteLog("TCP interface connected.")
+  IsRunning = True
 
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
+  Run()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Receive data from network socket
+' Called when we should reconnect to the tcp host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub OpenThermTCP_Read()
+Public Sub MySocket_Reconnect()
 
-  Dim sData As String
+  ConnectTCP()
 
-  Try Read #hOpenThermTCP, sData, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from TCP socket! -> " & Error.Text)
-  If sData = Chr(10) Then ' buffer until linefeed then parse
-    If Len(sBuffer) > 1 Then ParseLine(Left(sBuffer, Len(sBuffer) - 1))
-    sBuffer = Null
-  Else
-    sBuffer &= sData
-  Endif
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  $sMsgData &= vVar
+
+  ' Check for linefeed and process data
+  While InStr($sMsgData, gb.Lf)
+    ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, gb.Lf)) - 2)
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.Lf) + 1)
+  Wend
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read data char for char
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  $sMsgData &= vVar
+
+  ' Check for linefeed and process data
+  While InStr($sMsgData, gb.Lf)
+    ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, gb.Lf)) - 2)
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.Lf) + 1)
+  Wend
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Start relay port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function StartRelay() As Boolean
+Public Sub StartRelay() As Boolean
 
   hOpenThermRelay = New ServerSocket As "OpenThermRelay"
   hOpenThermRelay.Type = Net.Internet
@@ -433,7 +504,7 @@ Public Sub OpenThermRelay_Connection(sHost As String)
   hRelayOTSocket = New Socket As "RelayOTSocket"
   ' accept client
   If hOpenThermRelay.Status <= Net.Inactive Then Return
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Relay Connection request from client '" & sHost & "'")
+  If $bDebug Then WriteDebugLog("Relay Connection request from client '" & sHost & "'")
 
   hRelayOTSocket = hOpenThermRelay.Accept()
   hRelayOTclient.Add(hRelayOTSocket)
@@ -533,27 +604,6 @@ Private Sub GetDeviceIDs()
 
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Start polling if enabled
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Run()
-
-  ' define timer for interface busy
-  tInterfaceBusy = New Timer As "tInterfaceBusy"
-  tInterfaceBusy.Delay = 150 ' default time between cmds
-
-  If $iPollTime > 0 Then
-    ' start poll timer
-    tOpenTherm = New Timer As "tOpenTherm"
-    tOpenTherm.Delay = $iPollTime * 1000 ' multiply for seconds
-    tOpenTherm.Start
-  Else
-    ' don't turn on polling, just process all messages received via OpenTherm gateway connection
-    QueueCommand("PS=0")
-  Endif
-
-End
-
 Public Sub tOpenTherm_Timer()
 
   GetStatus()
@@ -574,6 +624,7 @@ Public Sub GetStatus()
       bClockSyncedToday = False
       iDayOfMonth = Day(Now)
     Endif
+
     If Not bClockSyncedToday Then
       ' TODO: make TimeCron configurable from GUI
       If Events.TimeCron("15 3 * * *") Then ' only once a day at 3:15
@@ -591,7 +642,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Parse received data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ParseLine(sData As String)
+Private Sub ProcessReceivedPacket(sData As String)
 
   Dim sLine, sFlame, sThermostat As String
   Dim sResponses As String[]
@@ -1055,7 +1106,7 @@ Catch
 
 End
 
-Private Function CheckRemoteControl() As String
+Private Sub CheckRemoteControl() As String
 
   Dim sCheckRemoteControl As String
 
@@ -1228,17 +1279,9 @@ Private Sub WriteCmd(sCommand As String, sKey As String)
 
   If Len(sCommand) > 3 And InStr(sCommand, "=") Then
     If $sInterface = "tcp" Then
-      Try Print #hOpenThermTCP, sCommand & "\r"
-      If Error Then
-        Main.WriteDebugLog(LogLabel & "Error writing data to socket! -> " & ERROR.Text)
-        Main.WriteDebugLog(LogLabel & "Trying to reconnect...")
-        Try hOpenThermTCP.Connect
-      Endif
+      hMySocket.Write(sCommand & gb.Cr)
     Else
-      Try Print #hOpenThermSer, sCommand & "\r"
-      If Error Then
-        Main.WriteDebugLog(LogLabel & "Error writing data to serial port! -> " & Error.Text)
-      Endif
+      hMySerial.Write(sCommand & gb.Cr)
     Endif
   Else
     If $bDebug Then Main.WriteDebugLog(LogLabel & "Invalid command: " & sCommand)
@@ -1246,34 +1289,5 @@ Private Sub WriteCmd(sCommand As String, sKey As String)
 
   ' remove command from queue
   cQueue.Remove(sKey)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' close port
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
-
-  ' try to stop timers and close the connection
-  Try tInterfaceBusy.Stop
-  Try tReConnect.Stop
-  Try tOpenTherm.Stop
-  Try hOpenThermRelay.Close
-  Try hOpenThermTCP.Close
-  Try hOpenThermSer.Close
-
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
-
-  ' all ok
-  Return True
-
-Catch ' some errors
-  IsRunning = False
-  ErrorText = ""
-  ErrorWhere = ""
 
 End

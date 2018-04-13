@@ -5,10 +5,16 @@
 ' Provide support for parsing the output of a NTA8130 compatible smart meter.
 
 ' Development Status:
-' DSMR 2.X unstable / not tested
-' DSMR 2.2+ stable
-' DSMR 3.0 stable
-' DSMR 4.0 stable
+' DSMR 2.X   unstable / not tested
+' DSMR 2.2.X stable
+' DSMR 3.0   stable
+' DSMR 4.0.X stable
+' DSMR 4.2.X stable
+' DSMR 5.0.X stable
+
+' DSMR 4 and older report it every 10 seconds.
+' DSMR 5 and newer report it every 1 second.
+' The "updatinterval" dictates the interval to write to the DB, with 1 second it is a high load.
 
 ' Links:
 ' http://www.domoticaforum.eu/viewtopic.php?f=16&t=6104
@@ -19,11 +25,26 @@
 ' Read file called COPYING for license details.
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Protocol
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+' The data for DSMR 2.x/3.x is sent as follows:
+' /XXXZ<Ident><CRLF><CRLF><Data><CRLF>!<CRLF>
+'
+' The data for DSMR 4.x/5.x is sent as follows:
+' /XXXZ<Ident><CRLF><CRLF><Data><CRLF>!<Checksum><CRLF>
+' Note: Checksum is based on CRC16 using polynomial 'x16+x15+x2+1' and is a 2 byte value
+'
+' The data is in the following format:
+' X-X:Y.Y.Y(*)<CRLF>
+' Note: It is possible to have 1 or more '(*)' fields on 1 line
+' 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Module/Class specific variables
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "SmartMeter"
 Public PluginFriendlyName As String = "SmartMeter"
-Public PluginVersion As String = "1.02"
+Public PluginVersion As String = "2.02"
 Public PluginAuthor As String = "Ron Klinkien, Jesse Kerkhoven"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -49,14 +70,22 @@ Private $iDatabits As Integer
 Private $iStopbits As Integer
 Private $iParity As Integer
 Private $bDebug As Boolean
+Private $iUpdateInterval As Integer
 
-Public hSmartMeter As New Socket
-Public hSmartMeterSer As New SerialPort
-Private sBuffer As String
+' Interface objects
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
 
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+Private $sMsgData As String
+Private $bEndData As Boolean
+Private $sCrc16 As String
+Private $dLastUpdate As Date
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Constants
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Const STX As Byte = &H2F ' Start of telegram, always a "/"
+Const ETX As Byte = &H21 ' End of telegram, always a "!"
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -65,6 +94,9 @@ Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 90000
 ' - Any other code per Class
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StartPlugin(cPl As CPluginEntry)
+
+  Dim iLen As Integer
+  Dim sData As String
 
   KeyName = cPl.KeyName
   Instance = cPl.Instance
@@ -81,20 +113,15 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $iStopbits = cPl.Settings["stopbits"]
   $iParity = cPl.Settings["parity"]
   $bDebug = cPl.Settings["debug"]
+  Try $iUpdateInterval = cPl.Settings["updateinterval"]
 
   InterfaceId = Devices.FindInterface("SmartMeter Interface")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
-    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    WriteLog("ERROR: " & ErrorText)
     IsRunning = False
     Return
   Endif
-
-  ' Define timer for reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
-
 
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
@@ -105,7 +132,16 @@ Public Sub StartPlugin(cPl As CPluginEntry)
 
   ' load test data if found
   If $bDebug Then
-    Try ProcessData(File.Load(Main.sBaseDir & "/debug/smartmeter.log"))
+    Try sData = File.Load(Main.sBaseDir & "/debug/smartmeter.log")
+    If Not Error Then
+      If sData Then
+        For iLen = 1 To Len(sData)
+          ProcessReceivedChar(Asc(Mid(sData, iLen, 1)))
+        Next
+      Else
+        WriteDebugLog("ERROR: Manually supplied file seems to have an invalid format")
+      Endif
+    Endif
   Endif
 
 End
@@ -120,47 +156,69 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP() As Boolean
+Private Sub ConnectTCP()
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the connection
-  Try hSmartMeter.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' get a new one
-  hSmartMeter = New Socket As "SmartMeter"
-  hSmartMeter.Connect($sTCPHost, $iTCPPort)
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
-
-  ' Don't set IsRunning=True, this has to be done in _Ready 
-
-  ' All went ok
-  Return True
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-  Return False
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectSerial() As Boolean
+Private Sub ConnectSerial()
 
-  ' try to close the connection
-  Try hSmartMeterSer.Close
+  Dim iReconnectRetry As Integer = 0
+
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
   ' get a new one
-  hSmartMeterSer = New Serialport As "SmartMeterSer"
-  With hSmartMeterSer
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = &HFF + gb.Byte
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = $iParity
@@ -171,81 +229,34 @@ Public Function ConnectSerial() As Boolean
   End With
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort)
+  WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort)
   IsRunning = True
 
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
-
-  ' All went ok
-  Return True
+  ' Initialize variables
+  Run()
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-Public Sub SmartMeter_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SmartMeter_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' socket is connected
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub SmartMeter_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect()
 
   ' try to close the connection
-  Try hSmartMeter.Close
-  Try hSmartMeterSer.Close
-  Try tReConnect.Stop
-  
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
+  Try hMySocket.Close
+  Try hMySerial.Close
 
-  ' all ok
-  Return True
+  ' try stop running timers
+  StopTimers()
+
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
 
 Finally
   IsRunning = False
@@ -253,110 +264,236 @@ Finally
   ErrorWhere = ""
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
+'
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
+Private Sub StopTimers()
 
-  ' Connect/Initialize connection
-  If InStr($sInterface, "tcp") Then
-    ConnectTCP()
-  Else
-    ConnectSerial()
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' Empty internal buffer
+  $sMsgData = ""
+  $bEndData = False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
   Endif
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
 
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
+  WriteLog("ERROR: " & sMsg)
 
 End
 
-' got data on serial port
-Public Sub SmartMeterSer_Read()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read data char for char
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
 
-  Dim sData As String
+  Dim bData As Byte
 
-  Try sData = Read #hSmartMeterSer, 1
-  If Error Then
-    Main.WriteDebugLog(LogLabel & "Error reading data from serial port! -> " & Error.Text)
-    sBuffer = Null
-    IsRunning = False
-    ReConnect()
-    Return
-  Endif
-
-  If sData = "!" Then ' buffer until end of record
-    sBuffer &= sData
-    ProcessData(sBuffer)
-    sBuffer = Null
-  Else
-    sBuffer &= sData
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
   Endif
 
 End
 
-' got data on tcp port
-Public Sub SmartMeter_Read()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
 
-  Dim sData As String
+  ' ReConnect/Initialize connection
+  ConnectSerial()
 
-  Try sData = Read #hSmartMeter, 1
-  If Error Then 
-    Main.WriteDebugLog(LogLabel & "Error reading data from tcp port! -> " & Error.Text)
-    sBuffer = Null
-    IsRunning = False
-    ReConnect()
-    Return
-  Endif
-  
-  If sData = "!" Then ' buffer until end of record
-    sBuffer &= sData
-    ProcessData(sBuffer)
-    sBuffer = Null
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedChar(bTemp As Byte)
+
+  ' Wait until we receive the start telegram character, otherwise discard it
+  If $sMsgData Then
+    $sMsgData &= Chr(bTemp)
   Else
-    sBuffer &= sData
+    If bTemp = STX Then
+      $sMsgData = Chr(bTemp)
+      $bEndData = False
+    Endif
+  Endif
+
+  ' Check if we found a end of telegram character, that one is always followed by <CrLf>, optionally a Crc16
+  If $bEndData Then
+    ' Check for <CrLf> at the end of the line
+    If Len($sMsgData) = (RInStr($sMsgData, gb.CrLf) + 1) Then
+      ' End of telegram, lets process the data - but check for a possible Crc16 first
+      $sCrc16 = Mid($sMsgData, RInStr($sMsgData, Chr(ETX)) + 1)
+      $sCrc16 = Mid($sCrc16, 1, RInStr($sCrc16, gb.CrLf) - 1)
+
+      ProcessReceivedPacket(Mid($sMsgData, 1, RInStr($sMsgData, Chr(ETX))))
+
+      $sMsgData = ""
+      $bEndData = False
+    Else
+      ' Check we didn go way past the <CrLf>
+      If Len($sMsgData) > (RInStr($sMsgData, Chr(ETX)) + 6) Then
+        If $bDebug Then WriteDebugLog("ERROR: Invalid telegram received, more then 6 characters after the '!' character. Telegram=" & $sMsgData)
+        $sMsgData = ""
+        $bEndData = False
+      Endif
+    Endif
+  Else
+    ' Buffer until end of record, which is a '!' character
+    ' Also the msgdata need to contain 'something'
+    If bTemp = ETX And If $sMsgData Then $bEndData = True
   Endif
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' parse P1 telegram
-Private Sub ProcessData(sTelegram As String)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedPacket(sTelegram As String)
 
   Dim aTelegram, aRecord, aReading, aGasRecord As String[]
   Dim aMBusId, aMBusType, aMBusReading, aMBusUnit, aMBusValve, aMBusTime As New String[4]
-  Dim sLine, sSupplier, sEquipmentIdPower, sReadingPowerNormalUnit, sReadingPowerLowUnit, sReadingPowerGenNormalUnit, sReadingPowerGenLowUnit, sCurrentPowerUsageUnit, sCurrentPowerGenUnit, sPowerThresholdUnit As String
-  Dim sMsgCode, sMsgText, sCurrentTariff, sValve As String
+  Dim sLine, sSupplier, sReadingPowerNormalUnit, sReadingPowerLowUnit, sReadingPowerGenNormalUnit, sReadingPowerGenLowUnit, sCurrentPowerUsageUnit, sCurrentPowerGenUnit, sPowerThresholdUnit As String
+  Dim sMsgCode, sMsgText, sCurrentTariff, sValve, sDSMRVersion As String
   Dim fReadingPowerNormal, fReadingPowerLow, fReadingPowerGenNormal, fReadingPowerGenLow, fCurrentPowerUsage, fCurrentPowerGen, fPowerThreshold As Float
   Dim iCurrentTariff, iSwitchPos, iChannel, iType, iDeviceId As Integer
+
+  Dim bStartTelegram As Boolean
+  Dim cMBusList As New Collection
+  Dim cMBusDevice As New Collection
+  Dim iDelta As Integer
+
+  Try iDelta = DateDiff($dLastUpdate, Now(), gb.Second)
+  If Error Then
+    ' Set iDelta to max, to trigger an update on first interval
+    iDelta = &7FFFFFFF
+  Endif
+
+  ' Update the last interval to now
+  $dLastUpdate = Now()
+
+  ' If we have received a Crc16 value, calculate it too and dump message if needed
+  If $bDebug Then
+    WriteDebugLog("<< " & sTelegram & $sCrc16)
+    If Len($sCrc16) = 0 Then
+      If $bDebug Then WriteDebugLog("WARNING: No CRC found (note: DSMR 2.2 does not include a checksum)")
+    Else
+      If Hex(CalcCRC(sTelegram), 4) <> $sCrc16 Then
+        If $bDebug Then WriteDebugLog("ERROR: INVALID CRC: EXPECTED '" & Hex(CalcCRC(sTelegram), 4) & "', RECEIVED '" & $sCrc16 & "'")
+        ' Don't proceed if the crc fails, the parsing of the packet will fail
+        Return
+      Else
+        If $bDebug Then WriteDebugLog("CRC16=" & $sCrc16 & " (CRC OK)")
+      Endif
+    Endif
+  Else
+    ' If not in debug mode and didn't reach our update interval, don't parse packet
+    If iDelta < $iUpdateInterval Then Return
+  Endif
 
   aTelegram = Split(sTelegram, "\r\n")
   For Each sLine In aTelegram
     If sLine = "" Then Continue
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "< " & sLine)
+    If $bDebug Then WriteDebugLog("< " & sLine)
     Select Case Left(sLine, 1)
       Case "/" ' header
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received start of P1 data telegram.")
+        bStartTelegram = True
+        If $bDebug Then WriteDebugLog("  Received start of P1 data telegram.")
         ' decode meter supplier
         Select Case Mid(sLine, 2, 3)
           Case "KMP"
             sSupplier = "Kamstrup"
-          Case "ISk"
+          Case "ISk", "ISK" 'DSMR 2 vs DSMR 5
             sSupplier = "IskraEmeco"
           Case "XMX"
             sSupplier = "Landis+Gyr"
@@ -365,101 +502,207 @@ Private Sub ProcessData(sTelegram As String)
           Case Else
             sSupplier = "Unknown (" & Mid(sLine, 2, 3) & ")"
         End Select
+
         If $bDebug Then
-          Main.WriteDebugLog(LogLabel & "Meter supplier is '" & sSupplier & "'")
-          Main.WriteDebugLog(LogLabel & "Meter information '" & sLine & "'")
+          WriteDebugLog("  Meter supplier is '" & sSupplier & "'")
+          WriteDebugLog("  Meter information '" & sLine & "'")
         Endif
       Case "!" ' end of datagram
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "Received end of P1 data telegram.")
+        If $bDebug Then WriteDebugLog("  Received end of P1 data telegram.")
       Case Else ' data
         aRecord = Scan(sLine, "*:*(*)*")
         If aRecord.Count = 4 Then
-          Select Case aRecord[1]
-            Case "96.1.1" ' identifier
-              sEquipmentIdPower = DecodeSerial(aRecord[2])
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Equipment identifier (Power) is '" & sEquipmentIdPower & "'")
-            Case "1.8.2" ' meter reading normal tariff
-              aReading = ParseReading(aRecord[2])
-              If aReading.Count = 2 Then
-                fReadingPowerNormal = CFloat(aReading[0])
-                sReadingPowerNormalUnit = aReading[1]
+
+          ' Do exact matches first
+          Select aRecord[0] & ":" & aRecord[1]
+            Case "0-0:96.1.1" ' identifier
+              If $bDebug Then WriteDebugLog("  Equipment identifier (Power) is '" & Util.HexToString(aRecord[2]) & "'")
+            Case "1-3:0.2.8" ' DSMR version reported as "40" = 4.0, 50 = "5.0"
+              If Len(aRecord[2]) = 2 Then
+                sDSMRVersion = Mid(aRecord[2], 1, 1) & "." & Mid(aRecord[2], 2, 1)
+              Else
+                ' Can't determine a proper versioning
+                sDSMRVersion = aRecord[2]
               Endif
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Meter reading power usage (T2/Normal tariff) is " & fReadingPowerNormal & " " & sReadingPowerNormalUnit)
-            Case "1.8.1" ' meter reading low tariff
+              If $bDebug Then WriteDebugLog("  DSMR Version: " & sDSMRVersion)
+            Case "0-0:1.0.0" ' timestamp of P1 telegram YYMMDDhhmmssX. X=S (DST), X=W (No DST)
+              If Len(aRecord[2]) = 13 Then
+                If $bDebug Then WriteDebugLog(" Timestamp of P1 telegram: 20" & Mid(aRecord[2], 1, 2) & "-" & Mid(aRecord[2], 3, 2) & "-" & Mid(aRecord[2], 5, 2) & " " & Mid(aRecord[2], 7, 2) & ":" & Mid(aRecord[2], 9, 2) & ":" & Mid(aRecord[2], 11, 2) & IIf(Mid(aRecord[2], 13, 1) = "S", " (DST)", ""))
+              Endif
+            Case "0-0:96.13.1" ' message
+              sMsgCode = Util.HexToString(aRecord[2])
+              If $bDebug Then WriteDebugLog("  Message Code is '" & sMsgCode & "'")
+            Case "0-0:96.13.0" ' message text
+              sMsgText = Util.HexToString(aRecord[2])
+              If $bDebug Then WriteDebugLog("  Message Text is '" & sMsgText & "'")
+            Case "1-0:1.8.1" ' meter reading low tariff 1
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fReadingPowerLow = CFloat(aReading[0])
                 sReadingPowerLowUnit = aReading[1]
               Endif
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Meter reading power usage (T1/Low tariff) is " & fReadingPowerLow & " " & sReadingPowerLowUnit)
-            Case "2.8.2" ' meter reading delivered to net normal tariff
-              aReading = ParseReading(aRecord[2])
+              If $bDebug Then WriteDebugLog("  Meter reading power usage (T1/Low tariff) is " & fReadingPowerLow & " " & sReadingPowerLowUnit)
+            Case "1-0:1.8.2" ' meter reading normal tariff 2
+              aReading = ParseReading(aRecord[2]) 
               If aReading.Count = 2 Then
-                fReadingPowerGenNormal = CFloat(aReading[0])
-                sReadingPowerGenNormalUnit = aReading[1]
+                fReadingPowerNormal = CFloat(aReading[0])
+                sReadingPowerNormalUnit = aReading[1]
               Endif
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Meter reading power generated (T2/Normal tariff) is " & fReadingPowerGenNormal & " " & sReadingPowerGenNormalUnit)
-            Case "2.8.1" ' meter reading delivered to net low tariff
+              If $bDebug Then WriteDebugLog("  Meter reading power usage (T2/Normal tariff) is " & fReadingPowerNormal & " " & sReadingPowerNormalUnit)
+            Case "1-0:2.8.1" ' meter reading delivered to net low tariff 1
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fReadingPowerGenLow = CFloat(aReading[0])
                 sReadingPowerGenLowUnit = aReading[1]
               Endif
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Meter reading power generated (T1/Low tariff) is " & fReadingPowerGenLow & " " & sReadingPowerGenLowUnit)
-            Case "96.14.0"
-              iCurrentTariff = CInt(aRecord[2])
-              sCurrentTariff = IIf(iCurrentTariff = 1, "Low", "Normal")
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Current tariff is T" & iCurrentTariff & " " & sCurrentTariff)
-            Case "1.7.0" ' current power usage
+              If $bDebug Then WriteDebugLog("  Meter reading power generated (T1/Low tariff) is " & fReadingPowerGenLow & " " & sReadingPowerGenLowUnit)
+            Case "1-0:2.8.2" ' meter reading delivered to net normal tariff 2
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                fReadingPowerGenNormal = CFloat(aReading[0])
+                sReadingPowerGenNormalUnit = aReading[1]
+              Endif
+              If $bDebug Then WriteDebugLog("  Meter reading power generated (T2/Normal tariff) is " & fReadingPowerGenNormal & " " & sReadingPowerGenNormalUnit)
+            Case "1-0:1.7.0" ' current power usage
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fCurrentPowerUsage = CFloat(aReading[0])
                 sCurrentPowerUsageUnit = aReading[1]
               Endif
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Current power usage (+P) is " & fCurrentPowerUsage & " " & sCurrentPowerUsageUnit)
-            Case "2.7.0" ' current power generated
+              If $bDebug Then WriteDebugLog("  Current power usage (+P) is " & fCurrentPowerUsage & " " & sCurrentPowerUsageUnit)
+            Case "1-0:2.7.0" ' current power generated
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fCurrentPowerGen = CFloat(aReading[0])
                 sCurrentPowerGenUnit = aReading[1]
               Endif
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Current power generated (-P) is " & fCurrentPowerGen & " " & sCurrentPowerGenUnit)
+              If $bDebug Then WriteDebugLog("  Current power generated (-P) is " & fCurrentPowerGen & " " & sCurrentPowerGenUnit)
+            Case "0-0:96.14.0" ' Tariff indicator electricity
+              iCurrentTariff = CInt(aRecord[2])
+              sCurrentTariff = IIf(iCurrentTariff = 1, "Low", "Normal")
+              If $bDebug Then WriteDebugLog("  Current tariff is T" & iCurrentTariff & " " & sCurrentTariff)
+            Case "0-0:96.7.21"
+              If $bDebug Then WriteDebugLog("  Number of power failures in any phase: " & CInt(aRecord[2]))
+            Case "0-0:96.7.9"
+              If $bDebug Then WriteDebugLog("  Number of power failures in any phase: " & CInt(aRecord[2]))
+            Case "1-0:32.7.0" ' Instantaneous voltage L1 in V resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous voltage L1: " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:52.7.0" ' Instantaneous voltage L2 in V resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous voltage L2: " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:72.7.0" ' Instantaneous voltage L3 in V resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous voltage L3: " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:31.7.0" ' Instantaneous current L1 in A resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous current L1: " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:51.7.0" ' Instantaneous current L2 in A resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous current L2: " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:71.7.0" ' Instantaneous current L3 in V resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous current L3: " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:21.7.0" ' Instantaneous active power L1 (+P) in W resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous active power L1 (+P): " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:41.7.0" ' Instantaneous active power L2 (+P) in W resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous active power L2 (+P): " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:61.7.0" ' Instantaneous active power L3 (+P) in W resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous active power L3 (+P): " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:22.7.0" ' Instantaneous active power L1 (-P) in W resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous active power L1 (-P): " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:42.7.0" ' Instantaneous active power L2 (-P) in W resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous active power L2 (-P): " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:62.7.0" ' Instantaneous active power L3 (-P) in W resolution
+              aReading = ParseReading(aRecord[2])
+              If aReading.Count = 2 Then
+                WriteDebugLog("  Instantaneous active power L3 (-P): " & aReading[0] & " " & aReading[1])
+              Endif
+            Case "1-0:32.32.0" ' Number of voltage sags in phase L1
+              WriteDebugLog("  Number of voltage sags in L1: " & CInt(aRecord[2]))
+            Case "1-0:52.32.0" ' Number of voltage sags in phase L2
+              WriteDebugLog("  Number of voltage sags in L2: " & CInt(aRecord[2]))
+            Case "1-0:72.32.0" ' Number of voltage sags in phase L3
+              WriteDebugLog("  Number of voltage sags in L3: " & CInt(aRecord[2]))
+            Case "1-0:52.36.0" ' Number of voltage swells in phase L1
+              WriteDebugLog("  Number of voltage swells in L2: " & CInt(aRecord[2]))
+            Case "1-0:32.36.0" ' Number of voltage swells in phase L2
+              WriteDebugLog("  Number of voltage swells in L1: " & CInt(aRecord[2]))
+            Case "1-0:72.36.0" ' Number of voltage swells in phase L3
+              WriteDebugLog("  Number of voltage swells in L3: " & CInt(aRecord[2]))
+          End Select
+ 
+          ' Now other matching
+          Select Case aRecord[1]
+            Case "96.1.1" ' identifier
+              If $bDebug Then WriteDebugLog("  Equipment identifier (" & cMBusList[aRecord[0]] & ") is '" & Util.HexToString(aRecord[2]) & "'")
             Case "17.0.0" ' power threshold
               aReading = ParseReading(aRecord[2])
               If aReading.Count = 2 Then
                 fPowerThreshold = CFloat(aReading[0])
                 sPowerThresholdUnit = aReading[1]
               Endif
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Electricity threshold is " & fPowerThreshold & " " & sPowerThresholdUnit)
+              If $bDebug Then WriteDebugLog("  Electricity threshold is " & fPowerThreshold & " " & sPowerThresholdUnit)
             Case "96.3.10" ' in/out/enabled
               iSwitchPos = CInt(aRecord[2])
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Electricity switch position is " & iSwitchPos)
-            Case "96.13.1" ' message
-              sMsgCode = aRecord[2]
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Message Code is '" & sMsgCode & "'")
-            Case "96.13.0" ' message text
-              sMsgText = aRecord[2]
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "Message Text is '" & sMsgText & "'")
+              If $bDebug Then WriteDebugLog("  Electricity switch position is " & iSwitchPos)
             ' optional MBus connected meters (channel 1-4)
             Case "96.1.0" ' channel identifiers
               If aRecord[0] <> "0-0" Then
                 iChannel = CInt(Right(aRecord[0]))
-                aMBusId[iChannel - 1] = DecodeSerial(aRecord[2])
+                aMBusId[iChannel - 1] = Util.HexToString(aRecord[2])
               Endif
             Case "24.1.0" ' device type
+              If Not cMBusList.Exist(aRecord[0]) Then
+                cMBusDevice = New Collection
+                cMBusList.Add(cMBusDevice, aRecord[0])
+              Endif
+
               iChannel = CInt(Right(aRecord[0]))
               iType = CInt(aRecord[2])
               Select Case iType
                 Case 3
                   aMBusType[iChannel - 1] = "Gas"
+                  cMBusList[aRecord[0]]["type"] = "Gas"
                 Case 5
                   aMBusType[iChannel - 1] = "Heat"
+                  cMBusList[aRecord[0]]["type"] = "Heat"
                 Case 6
                   aMBusType[iChannel - 1] = "Cooling"
+                  cMBusList[aRecord[0]]["type"] = "Cooling"
                 Case 8
                   aMBusType[iChannel - 1] = "Cold Water"
+                  cMBusList[aRecord[0]]["type"] = "Cold Water"
                 Case 9
                   aMBusType[iChannel - 1] = "Warm Water"
+                  cMBusList[aRecord[0]]["type"] = "Warm Water"
               End Select
             Case "24.2.1" ' gas for dsmr 4
               iChannel = CInt(Right(aRecord[0]))
@@ -470,24 +713,24 @@ Private Sub ProcessData(sTelegram As String)
                 aMBusReading[iChannel - 1] = CFloat(aGasRecord[0])
                 aMBusUnit[iChannel - 1] = aGasRecord[1]
                 If $bDebug Then
-                  Main.WriteDebugLog(LogLabel & "Companion 4 record layout found.")
-                  Main.WriteDebugLog(LogLabel & "MBus Meter on Channel #" & iChannel & ":")
-                  Main.WriteDebugLog(LogLabel & "Reading : " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
-                  Main.WriteDebugLog(LogLabel & "Timestamp : " & aMBusTime[iChannel - 1])
+                  WriteDebugLog("  Companion 4 record layout found.")
+                  WriteDebugLog("  MBus Meter on Channel #" & iChannel & ":")
+                  WriteDebugLog("    Reading: " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
+                  WriteDebugLog("    Timestamp: " & aMBusTime[iChannel - 1])
                 Endif
               Endif
-            Case "24.3.0" ' gas for dsmr 2.2+ and 3 
+            Case "24.3.0" ' gas for dsmr 2.2 and 3
               iChannel = CInt(Right(aRecord[0]))
-              aMBusTime[iChannel - 1] = "20" & Left(aRecord[2], 2) & "-" & Mid(aRecord[2], 3, 2) & "-" & Mid(aRecord[2], 5, 2) & " " & Mid(aRecord[2], 7, 2) & ":" & Mid(aRecord[2], 9, 2) & ":" & Mid(aRecord[2], 11, 2)
+              aMBusTime[iChannel - 1] = "20" & Mid(aRecord[2], 1, 2) & "-" & Mid(aRecord[2], 3, 2) & "-" & Mid(aRecord[2], 5, 2) & " " & Mid(aRecord[2], 7, 2) & ":" & Mid(aRecord[2], 9, 2) & ":" & Mid(aRecord[2], 11, 2)
               aGasRecord = Scan(aRecord[3], "(*)(*)(*)(*)(*)(*)")
               If aGasRecord.Count = 6 Then ' Companion layout
                 aMBusReading[iChannel - 1] = CFloat(aGasRecord[5])
                 aMBusUnit[iChannel - 1] = aGasRecord[4]
                 If $bDebug Then
-                  Main.WriteDebugLog(LogLabel & "Companion 2.2+ or 3 record layout found.")
-                  Main.WriteDebugLog(LogLabel & "MBus Meter on Channel #" & iChannel & ":")
-                  Main.WriteDebugLog(LogLabel & "Reading : " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
-                  Main.WriteDebugLog(LogLabel & "Timestamp : " & aMBusTime[iChannel - 1])
+                  WriteDebugLog("  Companion 2.2 or 3 record layout found.")
+                  WriteDebugLog("  MBus Meter on Channel #" & iChannel & ":")
+                  WriteDebugLog("    Reading: " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
+                  WriteDebugLog("    Timestamp: " & aMBusTime[iChannel - 1])
                 Endif
               Else ' Kamstrup/Iskraemeco layout
                 aGasRecord = Scan(aRecord[3], "*(*)(*)(*)(*)(*)")
@@ -495,10 +738,10 @@ Private Sub ProcessData(sTelegram As String)
                   aMBusUnit[iChannel - 1] = aGasRecord[5]
                 Endif
                 If $bDebug Then
-                  Main.WriteDebugLog(LogLabel & "Kamstrup/Iskraemeco 2.2+ or 3 record layout found.")
-                  Main.WriteDebugLog(LogLabel & "MBus Meter on Channel #" & iChannel & ":")
-                  Main.WriteDebugLog(LogLabel & "Reading available on separate line.")
-                  Main.WriteDebugLog(LogLabel & "Timestamp : " & aMBusTime[iChannel - 1])
+                  WriteDebugLog("  Kamstrup/Iskraemeco 2.2 or 3 record layout found.")
+                  WriteDebugLog("  MBus Meter on Channel #" & iChannel & ":")
+                  WriteDebugLog("    Reading available on separate line.")
+                  WriteDebugLog("    Timestamp: " & aMBusTime[iChannel - 1])
                 Endif
                 ' data is on next line parse it later
               Endif
@@ -515,59 +758,81 @@ Private Sub ProcessData(sTelegram As String)
                   sValve = "Unknown"
               End Select
               aMBusValve[iChannel - 1] = sValve
-            Case Else
-              If $bDebug Then Main.WriteDebugLog(LogLabel & "to decode : " & aRecord[1])
           End Select
         Endif
+
         aRecord = Scan(sLine, "(*)") ' possible mbus meter value on seperate line
         If aRecord.Count = 1 Then
           aMBusReading[iChannel - 1] = CFloat(aRecord[0])
         Endif
     End Select
   Next
-  ' walk through mbus channelsIF $bDebug THEN
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Listing MBus Meters found:")
+
+  ' If we didn't find a valid start, don't continue with storing of (invalid) data
+  If Not bStartTelegram Then
+    WriteDebugLog("ERROR: Invalid Telegram Received, no start of P1 data telegram found")
+    Return
+  Endif 
+
+  ' walk through mbus channels
+  If $bDebug Then WriteDebugLog("Listing MBus Meters found:")
+
   For iChannel = 1 To 4
     If Len(aMBusReading[iChannel - 1]) Then
       If $bDebug Then
-        Main.WriteDebugLog(LogLabel & "MBus Meter on Channel #" & iChannel & ":")
-        Main.WriteDebugLog(LogLabel & "Id : " & aMBusId[iChannel - 1])
-        Main.WriteDebugLog(LogLabel & "Type : " & aMBusType[iChannel - 1])
-        Main.WriteDebugLog(LogLabel & "Reading : " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
-        Main.WriteDebugLog(LogLabel & "Timestamp : " & aMBusTime[iChannel - 1])
-        Main.WriteDebugLog(LogLabel & "Valve Pos. : " & aMBusValve[iChannel - 1])
+        WriteDebugLog("MBus Meter on Channel #" & iChannel & ":")
+        WriteDebugLog("  Id: " & aMBusId[iChannel - 1])
+        WriteDebugLog("  Type: " & aMBusType[iChannel - 1])
+        WriteDebugLog("  Reading: " & aMBusReading[iChannel - 1] & " " & aMBusUnit[iChannel - 1])
+        WriteDebugLog("  Timestamp: " & aMBusTime[iChannel - 1])
+        WriteDebugLog("  Valve Pos: " & aMBusValve[iChannel - 1])
       Endif
       ' optional mbus meters
       iDeviceId = Devices.Find(Instance, "P1-MBus" & iChannel, InterfaceId, "P1-GASUSAGE")
       ' update value
-      If iDeviceId Then 
-        Devices.ValueUpdate(iDeviceId, 1, aMBusReading[iChannel - 1])
-        Devices.ValueUpdate(iDeviceId, 2, aMBusValve[iChannel - 1])
-        Devices.ValueUpdate(iDeviceId, 3, aMBusType[iChannel - 1])
-        Devices.ValueUpdate(iDeviceId, 4, aMBusTime[iChannel - 1])
+      If iDeviceId Then
+        If iDelta >= $iUpdateInterval Then
+          Devices.ValueUpdate(iDeviceId, 1, aMBusReading[iChannel - 1])
+          Devices.ValueUpdate(iDeviceId, 2, aMBusValve[iChannel - 1])
+          Devices.ValueUpdate(iDeviceId, 3, aMBusType[iChannel - 1])
+          Devices.ValueUpdate(iDeviceId, 4, aMBusTime[iChannel - 1])
+        Else
+          WriteDebugLog("No device update (Update interval not reached)")
+        Endif
       Endif
     Endif
   Next
+
   ' power usage
   iDeviceId = Devices.Find(Instance, "P1-PowerUsed", InterfaceId, "P1-POWERUSAGE")
   If iDeviceId Then
-    Devices.ValueUpdate(iDeviceId, 1, CStr(fCurrentPowerUsage))
-    Devices.ValueUpdate(iDeviceId, 2, CStr(fReadingPowerLow))
-    Devices.ValueUpdate(iDeviceId, 3, CStr(fReadingPowerNormal))
-    Devices.ValueUpdate(iDeviceId, 4, sCurrentTariff)
+
+    If iDelta >= $iUpdateInterval Then
+      Devices.ValueUpdate(iDeviceId, 1, CStr(fCurrentPowerUsage), ConvertUnitToType(sCurrentPowerUsageUnit))
+      Devices.ValueUpdate(iDeviceId, 2, CStr(fReadingPowerLow), ConvertUnitToType(sReadingPowerLowUnit))
+      Devices.ValueUpdate(iDeviceId, 3, CStr(fReadingPowerNormal), ConvertUnitToType(sReadingPowerNormalUnit))
+      Devices.ValueUpdate(iDeviceId, 4, sCurrentTariff)
+    Else
+      WriteDebugLog("No device update (Update interval not reached)")
+    Endif
   Endif
+
   ' power generated
   iDeviceId = Devices.Find(Instance, "P1-PowerDelivered", InterfaceId, "P1-POWERDELIVER")
   If iDeviceId Then
-    Devices.ValueUpdate(iDeviceId, 1, CStr(fCurrentPowerGen))
-    Devices.ValueUpdate(iDeviceId, 2, CStr(fReadingPowerGenLow))
-    Devices.ValueUpdate(iDeviceId, 3, CStr(fReadingPowerGenNormal))
-    Devices.ValueUpdate(iDeviceId, 4, sCurrentTariff)
+    If iDelta >= $iUpdateInterval Then
+      Devices.ValueUpdate(iDeviceId, 1, CStr(fCurrentPowerGen), ConvertUnitToType(sCurrentPowerGenUnit))
+      Devices.ValueUpdate(iDeviceId, 2, CStr(fReadingPowerGenLow), ConvertUnitToType(sReadingPowerGenLowUnit))
+      Devices.ValueUpdate(iDeviceId, 3, CStr(fReadingPowerGenNormal), ConvertUnitToType(sReadingPowerGenNormalUnit))
+      Devices.ValueUpdate(iDeviceId, 4, sCurrentTariff)
+    Else
+      WriteDebugLog("No device update (Update interval not reached)")
+    Endif
   Endif
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: while parsing telegram " & ERROR.Text & " at " & ERROR.Where)
-  Main.WriteDebugLog(LogLabel & "Current line was '" & sLine & "'")
+  WriteDebugLog("ERROR: while parsing telegram " & Error.Text & " at " & Error.Where)
+  WriteDebugLog("Current line was '" & sLine & "'")
 
 End
 
@@ -577,15 +842,47 @@ Private Sub ParseReading(sReading As String) As String[]
 
 End
 
-Private Sub DecodeSerial(sData As String) As String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Calculate the CRC16 of the P1 telegram
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub CalcCRC(vData As String) As Short
 
+  Dim iCrc As Short
+  Dim iLen As Integer
   Dim iCnt As Integer
-  Dim sSerial As String
 
-  For iCnt = 1 To Len(sData) Step 2
-    sSerial &= Chr(Val("&H" & Mid(sData, iCnt, 2)))
+  iCrc = 0
+
+  For iLen = 1 To Len(vData)
+    iCrc = iCrc Xor Asc(Mid(vData, iLen, 1))
+    For iCnt = 1 To 8
+      If iCrc And &H0001 Then
+        iCrc = Lsr(iCrc, 1)
+        iCrc = iCrc Xor &HA001
+      Else
+        iCrc = Lsr(iCrc, 1)
+      Endif
+    Next
   Next
-  Return sSerial
+
+  Return iCrc
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Convert the Unit in String to the Devices ValueType integer
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ConvertUnitToType(sUnit As String) As Integer
+
+  Select sUnit
+    Case "W"
+      Return Devices.ValueType_Power_Watt
+    Case "kW"
+      Return Devices.ValueType_Power_kW
+    Case "kWh"
+      Return Devices.ValueType_Energy_kWh
+    Default
+      Return Devices.ValueType_Undefined
+  End Select
+
+End

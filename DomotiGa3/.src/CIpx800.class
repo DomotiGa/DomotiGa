@@ -20,7 +20,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "Ipx800"
 Public PluginFriendlyName As String = "IPX800"
-Public PluginVersion As String = "1.01"
+Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "ErrNo"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 9
@@ -44,12 +44,10 @@ Private $sPassword As String
 Private $iPoll As Integer
 Private $bDebug As Boolean
 
-Public hIpx800 As New Socket
-Private $sBuffer As String
+' Interface objects
+Public hMySocket As CSocket
 
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+Private $sMsgData As String
 
 Public tPoll As Timer
 
@@ -84,18 +82,13 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   InterfaceId = Devices.FindInterface("Ipx800 Interface")
   If InterfaceId = 0 Then
     ErrorText = "Required InterfaceId can't be retrieved from the database!"
-    Main.WriteLog(LogLabel & "ERROR: " & ErrorText)
+    WriteLog("ERROR: " & ErrorText)
     IsRunning = False
     Return
   Endif
 
-  ' Define timer for TCP reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
-
   ' Connect/Initialize connection
-  Connect()
+  ConnectTCP()
 
 End
 
@@ -104,15 +97,17 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tPoll_Timer()
 
-  Dim i As Integer
+  Dim iCnt As Integer
 
-  QueueCommandString("GetOutputs")
-  QueueCommandString("GetInputs")
-  For i = 1 To 4
-    QueueCommandString("GetAn" & i)
+  QueueCommand("GetOutputs")
+  QueueCommand("GetInputs")
+
+  For iCnt = 1 To 4
+    QueueCommand("GetAn" & iCnt)
   Next
-  For i = 1 To 3
-    QueueCommandString("GetCount" & i)
+
+  For iCnt = 1 To 3
+    QueueCommand("GetCount" & iCnt)
   Next
 
 End
@@ -122,82 +117,102 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub StopPlugin()
 
-  Try tPoll.Stop
   Try Disconnect()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the tcp host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Private Sub ConnectTCP()
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the connection
-  Try hIpx800.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' get a new one
-  hIpx800 = New Socket As "Ipx800"
-  hIpx800.Connect($sTCPHost, $iTCPPort)
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
-
-  ' Don't set IsRunning=True, this has to be done in _Ready 
-
-  ' All went ok
-  Return True
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
 
-  Return False
-
 End
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' host ip address found
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Ipx800_Found()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' disconnect from the host/close serial port, close plugin
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Disconnect()
 
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+  ' try to close the connection
+  Try hMySocket.Close
 
-End
+  ' try stop running timers
+  StopTimers()
 
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' error while connected/connecting to tcp host
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Ipx800_Error()
+  WriteLog(PluginFriendlyName & " connection closed.")
 
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
+Finally
   IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
+  ErrorText = ""
+  ErrorWhere = ""
+
+Catch
+  WriteLog("ERROR: " & Error.Text)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' tcp socket is connected
+'
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Ipx800_Ready()
+Private Sub StopTimers()
 
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
+  Try tIpx800Busy.Stop
+  Try tPoll.Stop
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' Empty internal buffer
+  $sMsgData = ""
 
   ' define timer for interface busy
   tIpx800Busy = New Timer As "tIpx800Busy"
   tIpx800Busy.Stop
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
 
   ' start poll timer for read status
   If $iPoll > 0 Then
@@ -211,85 +226,80 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' peer closed tcp socket
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Ipx800_Closed()
+Public Sub MySocket_Closed()
 
-  Main.WriteDebugLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
+  WriteLog("ERROR: TCP socket closed by peer.")
 
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  Connect()
-
-End
-
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' disconnect from the host/close serial port, close plugin
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
-
-  ' try to close the connection
-  Try tReConnect.Stop
-  Try tIpx800Busy.Stop
-  Try hIpx800.Close
-
-  Main.WriteLog(LogLabel & PluginFriendlyName & " connection closed.")
-
-  ' all ok
-  Return True
-
-Finally
   IsRunning = False
-  ErrorText = ""
-  ErrorWhere = ""
+  ErrorText = "TCP socket closed by peer"
 
-Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
+  StopTimers()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' received data from the tcp port
+' error while connected/connecting to tcp host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Ipx800_Read()
+Public Sub MySocket_Error(sMsg As String)
 
-  Dim sData As String
+  WriteLog("ERROR: " & sMsg)
 
-  Try sData = Read #hIpx800, 1
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from tcp port! -> " & Error.Text)
-  If sData = "\n" Then ' buffer until end of record
-    $sBuffer &= sData
-    ProcessData($sBuffer)
-    $sBuffer = Null
-  Else
-    $sBuffer &= sData
-  Endif
+  IsRunning = False
+  ErrorText = sMsg
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  $sMsgData &= vVar
+
+  ' Check for linefeed and process data
+  While InStr($sMsgData, gb.Lf)
+    ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, gb.Lf)))
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.Lf) + 1)
+  Wend
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' parse received data
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub ProcessData(sData As String)
+Private Sub ProcessReceivedPacket(sData As String)
 
   Dim aData As String[]
   Dim aMessage, aAddress As String[]
@@ -304,7 +314,7 @@ Private Sub ProcessData(sData As String)
   aData = Split(sData, "\r\n")
   For Each sLine In aData
     If sLine <> "" Then
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Received [" & sLine & "]")
+      If $bDebug Then WriteDebugLog("Received [" & sLine & "]")
       'manage GetOutputs return
       aMessage = Scan(sLine, "GetOutputs=*")
       If aMessage.Count = 1 Then
@@ -394,7 +404,7 @@ Private Sub ProcessData(sData As String)
   Next
 
 Catch ' some errors
-  Main.WriteDebugLog(LogLabel & "ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
+  WriteDebugLog("ERROR: while parsing data '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -423,19 +433,19 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
             sBuffer = sBuffer & "0"
             bOK = True
           Case Else
-            Main.WriteDebugLog(LogLabel & "ERROR: Only switch options exists for Ipx800 outputs!")
+            WriteDebugLog("ERROR: Only switch options exists for Ipx800 outputs!")
         End Select
       Else
-        Main.WriteDebugLog(LogLabel & "ERROR: Not an Ipx800 valid address: 2 digits needed!")
+        WriteDebugLog("ERROR: Not an Ipx800 valid address: 2 digits needed!")
       Endif
     Else
-      Main.WriteDebugLog(LogLabel & "ERROR: Not an Ipx800 output!")
+      WriteDebugLog("ERROR: Not an Ipx800 output!")
     Endif
   Endif
 
   ' and send it to cmdbuffer
   If bOK Then
-    QueueCommandString(sBuffer)
+    QueueCommand(sBuffer)
   Endif
 
 End
@@ -443,41 +453,25 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' add command to queue
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub QueueCommandString(sCommand As String)
-
-  Dim bBuf As Byte[]
-  Dim i As Integer
-
-  bBuf = New Byte[Len(sCommand)]
-  For i = 1 To Len(sCommand)
-    bBuf[i - 1] = Asc(Mid(sCommand, i, 1))
-  Next
-  QueueCommand(bBuf)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' add command to queue
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub QueueCommand(aPacket As Byte[])
+Public Sub QueueCommand(sCommand As String)
 
   ' add command to queue
-  cQueue.Add(aPacket, Rnd)
+  cQueue.Add(sCommand, Rnd)
 
   ' if controller is not busy process it
-  If bInterfaceBusy = False Then DoQueue()
+  If Not bInterfaceBusy Then DoQueue()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' process items in queue
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub DoQueue()
+Private Sub DoQueue()
 
-  Dim aPacket As Byte[] = Null
+  Dim sPacket As String
 
-  For Each aPacket In cQueue
-    WriteCommand(aPacket, cQueue.Key)
+  For Each sPacket In cQueue
+    WriteCommand(sPacket, cQueue.Key)
     Break ' only do first one
   Next
 
@@ -492,7 +486,7 @@ Public Sub tIpx800Busy_Timer()
   tIpx800Busy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending command from Queue (count = " & cQueue.Count & ")")
+    If $bDebug Then WriteDebugLog("Sending command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
 
@@ -501,27 +495,19 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' send commands to the interface
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function WriteCommand(bBuffer As Byte[], sKey As String)
+Public Sub WriteCommand(sData As String, sKey As String)
 
-  Dim iCnt As Integer
-  Dim sMessage As String
-
-  For iCnt = 0 To bBuffer.Length - 1
-    sMessage &= Chr(bBuffer[iCnt])
-  Next
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & sMessage)
+  If $bDebug Then WriteDebugLog("> " & sData)
 
   ' send the message to the tcp stream
-  Try bBuffer.Write(hIpx800, 0, bBuffer.Length)
-  If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to TCP port! -> " & Error.Text)
+  hMySocket.Write(sData)
 
   ' remove sent command from queue
   cQueue.Remove(sKey)
-  ' TODO: lire le resultat
-  'Ipx800_Read()
 
   tIpx800Busy.Delay = 50 ' 50mS (initial test value)
   tIpx800Busy.Start
   bInterfaceBusy = True
 
 End
+

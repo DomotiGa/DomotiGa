@@ -24,8 +24,7 @@
 //-----------------------------------------------------------------------------
 // Define and get version numbers of DomoZWave and the open-zwave
 //-----------------------------------------------------------------------------
-char domozwave_vers[] = "DomoZWave version 2.10";
-#include <vers.cpp> // OpenZWave 1.0.r706 and later
+char domozwave_vers[] = "DomoZWave version 2.20";
 
 //-----------------------------------------------------------------------------
 
@@ -276,6 +275,7 @@ void InitVars()
 	MapCommandClassBasic["0x40|0x01"] = 0x62;
 	MapCommandClassBasic["0x40|0x02"] = 0x62;
 	MapCommandClassBasic["0x40|0x03"] = 0x62;
+	MapCommandClassBasic["0x40|0x04"] = 0x76;
 	MapCommandClassBasic["0xa1"] = 0x71;
 
 }
@@ -766,17 +766,6 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 			break;
 		}
-		case COMMAND_CLASS_COLOR:
-		{
-			if ( ( label == "Color" ) && ( type == ValueID::ValueType_String ) )
-			{
-				dev_index = 5;
-				dev_label = label;
-				strcpy( dev_result, dev_value );
-			}
-
-			break;
-		}
 		case COMMAND_CLASS_METER:
 		{
 			if ( type == ValueID::ValueType_Decimal )
@@ -1079,11 +1068,11 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 				if ( strcmp( dev_value, "0" ) == 0 )
 				{
-					strcpy( dev_result, "Secure" );
+					strcpy( dev_result, "Off" );
 				}
 				else
 				{
-					strcpy( dev_result, "Tamper" );
+					strcpy( dev_result, "On" );
 				}
 			} else if ( label == "Alarm Type" )
 			{
@@ -1340,6 +1329,17 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 			break;
 		}
+		case COMMAND_CLASS_COLOR:
+		{
+			if ( ( label == "Color" ) && ( type == ValueID::ValueType_String ) )
+			{
+				dev_index = 160;
+				dev_label = label;
+				strcpy( dev_result, dev_value );
+			}
+
+			break;
+		}
 	}
 
 	//////////////////////////////////////////////////////////////////////////////////////////
@@ -1586,7 +1586,20 @@ WriteLog( LogLevel_Error, false, "ERROR: HomeId=0x%x Node=%d Instance=%d - Comma
 
 void RPC_NodeAdded( uint32 HomeId, int nodeID )
 {
-	WriteLog( LogLevel_Debug, true, "NodeAdd: HomeId=0x%x Node=%d", HomeId, nodeID );
+
+
+	// Do a count of nodes added now and before
+	uint32 ncount = 0;
+	for ( list<NodeInfo*>::iterator it = g_nodes.begin(); it != g_nodes.end(); ++it )
+	{
+		NodeInfo* nodeInfo = *it;
+		if ( nodeInfo->m_homeId == HomeId )
+		{
+			ncount++;
+		}
+	}
+
+	WriteLog( LogLevel_Debug, true, "NodeAdd: HomeId=0x%x Node=%d (%d nodes added)", HomeId, nodeID, ncount );
 }
 
 //-----------------------------------------------------------------------------
@@ -1675,10 +1688,12 @@ void RPC_NodeProtocolInfo( uint32 HomeId, int NodeId )
 	bool beaming;
 	bool routing;
 	bool security;
+	bool zwaveplus;
 	int32 maxbaudrate;
 	const char* nodetype;
 	const char* name;
 	const char* location;
+	const char* zwaveplustype;
 	uint8 version;
 	uint8 basicmapping = 0;
 	char buffer[50];
@@ -1696,6 +1711,8 @@ void RPC_NodeProtocolInfo( uint32 HomeId, int NodeId )
         try { name = Manager::Get()->GetNodeName( HomeId, NodeId ).c_str(); } catch(...) {}
         try { location = Manager::Get()->GetNodeLocation( HomeId, NodeId ).c_str(); } catch(...) {}
         try { version = Manager::Get()->GetNodeVersion( HomeId, NodeId ); } catch(...) {}
+        try { zwaveplus = Manager::Get()->IsNodeZWavePlus( HomeId, NodeId ); } catch(...) {}
+        try { zwaveplustype = Manager::Get()->GetNodePlusTypeString( HomeId, NodeId ).c_str(); } catch(...) {}
 
 	// Get NodeInfo information
 	if ( NodeInfo* nodeInfo = GetNodeInfo( HomeId, NodeId ) )
@@ -1743,6 +1760,11 @@ void RPC_NodeProtocolInfo( uint32 HomeId, int NodeId )
 	WriteLog( LogLevel_Debug, false, "Security=%s", (security)?"true":"false" );
 	WriteLog( LogLevel_Debug, false, "Name=%s", name );
 	WriteLog( LogLevel_Debug, false, "Location=%s", location );
+	WriteLog( LogLevel_Debug, false, "ZWavePlus=%s", (zwaveplus)?"true":"false" );
+	if ( zwaveplus )
+	{
+		WriteLog( LogLevel_Debug, false, "ZWavePlusType=%s", zwaveplustype );
+	}
 
 	pthread_mutex_lock( &g_JsonRpcThread );
 
@@ -1753,7 +1775,7 @@ void RPC_NodeProtocolInfo( uint32 HomeId, int NodeId )
 	JsonRpcInfo.QueueId = QueueId;
 	JsonRpcInfo.HomeId = HomeId;
 	strcpy( JsonRpcInfo.Method, "openzwave.addnode" );
-snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"basic\": %d, \"generic\": %d, \"specific\": %d, \"listening\": %s, \"frequentlistening\": %s, \"beaming\": %s, \"routing\": %s, \"security\": %s, \"maxbaudrate\": %d, \"version\": %d}", HomeId, NodeId, basic, generic, specific, (listening)?"true":"false", (frequentlistening)?"true":"false", (beaming)?"true":"false", (routing)?"true":"false", (security)?"true":"false", maxbaudrate, version ); 
+snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"basic\": %d, \"generic\": %d, \"specific\": %d, \"listening\": %s, \"frequentlistening\": %s, \"beaming\": %s, \"routing\": %s, \"security\": %s, \"maxbaudrate\": %d, \"version\": %d, \"zwaveplus\": %s}", HomeId, NodeId, basic, generic, specific, (listening)?"true":"false", (frequentlistening)?"true":"false", (beaming)?"true":"false", (routing)?"true":"false", (security)?"true":"false", maxbaudrate, version , (zwaveplus)?"true":"false" ); 
 
 	m_JsonRpcInfo.push_back(JsonRpcInfo);
 
@@ -1807,24 +1829,34 @@ void RPC_NodeEvent( uint32 HomeId, int NodeId, ValueID valueID, int value )
 
 	WriteLog( LogLevel_Debug, false, "Value%d=%s", valueid, dev_result );
 
-	pthread_mutex_lock( &g_JsonRpcThread );
+	// Only send it to DomotiGa if it isn'the COMMAND_CLASS_NO_OPERATION type
+	// Change: Always send a NodeEvent, recent Open-ZWave library doesn't send a commandclass
+	// if ( id > 0 )
+	// {
+		pthread_mutex_lock( &g_JsonRpcThread );
 
-	StructJsonRpcInfo JsonRpcInfo;
+		StructJsonRpcInfo JsonRpcInfo;
 
-	if ( QueueId > 0xFFFF ) QueueId = 0;
-	QueueId++;
-	JsonRpcInfo.QueueId = QueueId;
-	JsonRpcInfo.HomeId = HomeId;
-	strcpy( JsonRpcInfo.Method, "openzwave.setvalue" );
-	snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"instanceid\": %d, \"valueid\": %d, \"value\": \"%s\"}", HomeId, NodeId, instanceID, valueid, &dev_result );
+		if ( QueueId > 0xFFFF ) QueueId = 0;
+		QueueId++;
+		JsonRpcInfo.QueueId = QueueId;
+		JsonRpcInfo.HomeId = HomeId;
+		strcpy( JsonRpcInfo.Method, "openzwave.setvalue" );
+		snprintf( JsonRpcInfo.Params, sizeof(JsonRpcInfo.Params), "{\"homeid\": %d, \"nodeid\": %d, \"instanceid\": %d, \"valueid\": %d, \"value\": \"%s\"}", HomeId, NodeId, instanceID, valueid, &dev_result );
 
-	m_JsonRpcInfo.push_back(JsonRpcInfo);
+		m_JsonRpcInfo.push_back(JsonRpcInfo);
 
-	// Done, unlock again
-	pthread_mutex_unlock( &g_JsonRpcThread );
+		// Done, unlock again
+		pthread_mutex_unlock( &g_JsonRpcThread );
 
-	// Signal the thread to process data
-	sem_post( &s_JsonRpcThread );
+		// Signal the thread to process data
+		sem_post( &s_JsonRpcThread );
+	// }
+	// else
+	// {
+	//	WriteLog( LogLevel_Debug, false, "Note=Value not send, CommandClassId=COMMAND_CLASS_NO_OPERATION" );
+	// }
+
 }
 
 //-----------------------------------------------------------------------------
@@ -2677,8 +2709,14 @@ void cURL_Post_JSON(uint32 QueueId, uint32 HomeId, char* Method, char* PostData 
 			// Define variable for find
 			size_t pos;
 
-			// Try to find jsonrpc 2.0 in the received data
+			// Try to find "jsonrpc": "2.0" in the received data
 			pos = readBuffer.find("{\"jsonrpc\": \"2.0\"");
+
+			// Try to find it also as "jsonrpc":"2.0"
+			if ( pos == string::npos )
+			{
+				pos = readBuffer.find("{\"jsonrpc\":\"2.0\"");
+			}
 
 			if ( pos == string::npos )
 			{
@@ -2687,6 +2725,12 @@ void cURL_Post_JSON(uint32 QueueId, uint32 HomeId, char* Method, char* PostData 
 			}
 
 			pos = readBuffer.find("{\"jsonrpc\": \"2.0\", \"result\": true, \"id\":");
+
+			// Try to find also the string without spaces
+			if ( pos == string::npos )
+			{
+				pos = readBuffer.find("{\"jsonrpc\":\"2.0\",\"result\":true,\"id\":");
+			}
 
 			if ( pos == string::npos )
 			{
@@ -2808,13 +2852,10 @@ void DomoZWave_Init( const char* configdir, const char* zwdir, const char* logna
 		cout << OZW_datetime << " [DomoZwave] " << "***FATAL*** Unable to write to \"" << logfile_name << "\"" << endl;
 	}
 
-	WriteLog( LogLevel_Debug, true, "DomoZWave_Init: Initializing Open-ZWave Wrapper" );
+	WriteLog( LogLevel_Debug, true, "DomoZWave_Init: Initializing Open-ZWave Wrapper - %s", domozwave_vers );
 
 	// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
-	// There is also a string value: ozw_version_string
-	char ozw_vers2[100];
-	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d (%s)", ozw_vers_major, ozw_vers_minor, ozw_vers_revision, ozw_version_string );
-	WriteLog( LogLevel_Debug, false, "%s", ozw_vers2 );
+	WriteLog( LogLevel_Debug, false, "OpenZWave version %s", Manager::Get()->getVersionLongAsString().c_str() );
 
 	// Initialize global libcurl
 	curl_global_init( CURL_GLOBAL_ALL );
@@ -3037,11 +3078,13 @@ const char* DomoZWave_OZWVersion( )
 	string ozw_vers;
 
 	// OpenZWave version <ozw_vers_major>.<ozw_vers_minor>.R<ozw_vers_revision>
-	char ozw_vers2[100];
-	snprintf( ozw_vers2, 100, "OpenZWave version %d.%d.r%d (%s)", ozw_vers_major, ozw_vers_minor, ozw_vers_revision, ozw_version_string );
+        ozw_vers = "OpenZWave version ";
+	ozw_vers.append(Manager::Get()->getVersionLongAsString());
 
-	ozw_vers = ozw_vers2;
-	return ozw_vers.c_str();
+	char *retStr=new char[ozw_vers.size()+1];
+	retStr[ozw_vers.size()]=0;
+	memcpy(retStr,ozw_vers.c_str(),ozw_vers.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3070,7 +3113,14 @@ const char* DomoZWave_GetLibraryVersion( uint32 home )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetLibraryVersion: HomeId=0x%x", home );
 	try { LibraryVersion =  Manager::Get()->GetLibraryVersion( home ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "LibraryVersion=%s", LibraryVersion.c_str() );
-	return LibraryVersion.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return LibraryVersion.c_str();
+
+	char *retStr=new char[LibraryVersion.size()+1];
+	retStr[LibraryVersion.size()]=0;
+	memcpy(retStr,LibraryVersion.c_str(),LibraryVersion.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3086,7 +3136,14 @@ const char* DomoZWave_GetLibraryTypeName( uint32 home )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetLibraryTypeName: HomeId=0x%x", home );
 	try { LibraryTypeName = Manager::Get()->GetLibraryTypeName( home ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "LibraryTypeName=%s", LibraryTypeName.c_str() );
-	return LibraryTypeName.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return LibraryTypeName.c_str();
+
+	char *retStr=new char[LibraryTypeName.size()+1];
+	retStr[LibraryTypeName.size()]=0;
+	memcpy(retStr,LibraryTypeName.c_str(),LibraryTypeName.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3127,7 +3184,14 @@ const char* DomoZWave_ControllerType( uint32 home )
 	}
 
 	WriteLog( LogLevel_Debug, false, "ControllerType=%s", ctype.c_str() );
-	return ctype.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return ctype.c_str();
+
+	char *retStr=new char[ctype.size()+1];
+	retStr[ctype.size()]=0;
+	memcpy(retStr,ctype.c_str(),ctype.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3273,8 +3337,14 @@ const char* DomoZWave_GetNodeQueryStage( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeQueryStage: HomeId=0x%x Node=%d", home, node );
 	try { QueryStage = Manager::Get()->GetNodeQueryStage( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "QueryStage=%s", QueryStage.c_str() );
-	return QueryStage.c_str();
 
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return QueryStage.c_str();
+
+	char *retStr=new char[QueryStage.size()+1];
+	retStr[QueryStage.size()]=0;
+	memcpy(retStr,QueryStage.c_str(),QueryStage.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3290,8 +3360,14 @@ const char* DomoZWave_GetNodeManufacturerName( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeManufacturerName: HomeId=0x%x Node=%d", home, node );
 	try { ManufacturerName = Manager::Get()->GetNodeManufacturerName( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ManufacturerName=%s", ManufacturerName.c_str() );
-	return ManufacturerName.c_str();
 
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return ManufacturerName.c_str();
+
+	char *retStr=new char[ManufacturerName.size()+1];
+	retStr[ManufacturerName.size()]=0;
+	memcpy(retStr,ManufacturerName.c_str(),ManufacturerName.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3307,7 +3383,14 @@ const char* DomoZWave_GetNodeProductName( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductName: HomeId=0x%x Node=%d", home, node );
 	try { ProductName = Manager::Get()->GetNodeProductName( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ProductName=%s", ProductName.c_str() );
-	return ProductName.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return ProductName.c_str();
+
+	char *retStr=new char[ProductName.size()+1];
+        retStr[ProductName.size()]=0;
+        memcpy(retStr,ProductName.c_str(),ProductName.size());
+        return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3324,7 +3407,14 @@ const char* DomoZWave_GetNodeName( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeName: HomeId=0x%x Node=%d", home, node );
 	try { NodeName = Manager::Get()->GetNodeName( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "NodeName=%s", NodeName.c_str() );
-	return NodeName.c_str();
+
+        // Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	// return NodeName.c_str();
+
+        char *retStr=new char[NodeName.size()+1];
+        retStr[NodeName.size()]=0;
+        memcpy(retStr,NodeName.c_str(),NodeName.size());
+        return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3341,7 +3431,14 @@ const char* DomoZWave_GetNodeLocation( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeLocation: HomeId=0x%x Node=%d", home, node );
 	try { NodeLocation = Manager::Get()->GetNodeLocation( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "NodeLocation=%s", NodeLocation.c_str() );
-	return NodeLocation.c_str();
+
+        // Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	// return NodeLocation.c_str();
+
+        char *retStr=new char[NodeLocation.size()+1];
+        retStr[NodeLocation.size()]=0;
+        memcpy(retStr,NodeLocation.c_str(),NodeLocation.size());
+        return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3357,7 +3454,14 @@ const char* DomoZWave_GetNodeManufacturerId( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeManufacturerId: HomeId=0x%x Node=%d", home, node );
 	try { ManufacturerId = Manager::Get()->GetNodeManufacturerId( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ManufacturerId=%s", ManufacturerId.c_str() );
-	return ManufacturerId.c_str();
+
+        // Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	// return ManufacturerId.c_str();
+
+        char *retStr=new char[ManufacturerId.size()+1];
+        retStr[ManufacturerId.size()]=0;
+        memcpy(retStr,ManufacturerId.c_str(),ManufacturerId.size());
+        return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3373,7 +3477,14 @@ const char* DomoZWave_GetNodeProductType( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductType: HomeId=0x%x Node=%d", home, node );
 	try { ProductType = Manager::Get()->GetNodeProductType( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ProductType=%s", ProductType.c_str() );
-	return ProductType.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return ProductType.c_str();
+
+	char *retStr=new char[ProductType.size()+1];
+	retStr[ProductType.size()]=0;
+	memcpy(retStr,ProductType.c_str(),ProductType.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3389,7 +3500,14 @@ const char* DomoZWave_GetNodeProductId( uint32 home, int32 node )
 	WriteLog( LogLevel_Debug, true, "DomoZWave_GetNodeProductId: HomeId=0x%x Node=%d", home, node );
 	try { ProductId = Manager::Get()->GetNodeProductId( home, node ); } catch(...) {}
 	WriteLog( LogLevel_Debug, false, "ProductId=%s",ProductId.c_str() );
-	return ProductId.c_str();
+
+	// Don't do a return *.c_str() seems Ubuntu 16.04/Gambas give corrupted data?
+	//return ProductId.c_str();
+
+	char *retStr=new char[ProductId.size()+1];
+	retStr[ProductId.size()]=0;
+	memcpy(retStr,ProductId.c_str(),ProductId.size());
+	return retStr;
 }
 
 //-----------------------------------------------------------------------------
@@ -3476,7 +3594,13 @@ const char* DomoZWave_GetNodeLibraryVersion( uint32 home, int32 node )
 				{
 					string string_value;
 					Manager::Get()->GetValueAsString( v, &string_value );
-					return string_value.c_str();
+
+					//return string_value.c_str();
+
+					char *retStr=new char[string_value.size()+1];
+					retStr[string_value.size()]=0;
+					memcpy(retStr,string_value.c_str(),string_value.size());
+					return retStr;
 				}
 			}
 		}
@@ -3512,7 +3636,13 @@ const char* DomoZWave_GetNodeProtocolVersion( uint32 home, int32 node )
 				{
 					string string_value;
 					Manager::Get()->GetValueAsString( v, &string_value );
-					return string_value.c_str();
+
+					//return string_value.c_str();
+
+					char *retStr=new char[string_value.size()+1];
+					retStr[string_value.size()]=0;
+					memcpy(retStr,string_value.c_str(),string_value.size());
+					return retStr;
 				}
 			}
 		}
@@ -3548,7 +3678,13 @@ const char* DomoZWave_GetNodeApplicationVersion( uint32 home, int32 node )
 				{
 					string string_value;
 					Manager::Get()->GetValueAsString( v, &string_value );
-					return string_value.c_str();
+
+					//return string_value.c_str();
+
+					char *retStr=new char[string_value.size()+1];
+					retStr[string_value.size()]=0;
+					memcpy(retStr,string_value.c_str(),string_value.size());
+					return retStr;
 				}
 			}
 		}
@@ -3638,7 +3774,13 @@ const char* DomoZWave_GetNodeStatus( uint32 home, int32 node )
 		}
 
 		WriteLog( LogLevel_Debug, false, "Status=%s", status.c_str() );
-		return status.c_str();
+
+		//return status.c_str();
+
+		char *retStr=new char[status.size()+1];
+		retStr[status.size()]=0;
+		memcpy(retStr,status.c_str(),status.size());
+		return retStr;
 	}
 
 	return "";
@@ -3857,7 +3999,7 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 	float float_value;
 	bool response;
 	bool cmdfound = false;
-	uint8 usecc;
+	uint8 usecc = 0;
 
 	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetValue" ) == false ) return false;
 
@@ -3869,30 +4011,53 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 		// First check if the instance is known in our CommandClass list, else it is a problem
 		if ( nodeInfo->instancecommandclass.find(instance) != nodeInfo->instancecommandclass.end() )
 		{
-			// First try to detect the MULTILEVEL, then SWITCH_BINARY, then DOOR_LOCK and last THERMOSTAT_SETPOINT
-			// This should solve problems for device like Qubino, they advertise too many CommandClasses
-			if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_MULTILEVEL") != string::npos )
+
+			// Latest open-zwave library gives a good/proper mapping for the basic, so use that one first
+			// This will fix the "issue" with Fibaro FGS-213
+			if ( nodeInfo->basicmapping > 0 )
 			{
-				usecc = COMMAND_CLASS_SWITCH_MULTILEVEL;
+				// Only allow it, when we can find this CommandClass in the device list, otherwise we try to map the old way
+				if ( nodeInfo->instancecommandclass[instance].find(DomoZWave_CommandClassIdName( nodeInfo->basicmapping ) ) != string::npos )
+				{
+					usecc = nodeInfo->basicmapping;
+					WriteLog( LogLevel_Debug, false, "BasicMapping=Yes" );
+				}
 			}
-			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_BINARY") != string::npos )
+
+			// No proper basic class mapping found, now try it the old way
+			if ( usecc == 0 )
 			{
-				usecc = COMMAND_CLASS_SWITCH_BINARY;
+				WriteLog( LogLevel_Debug, false, "BasicMapping=No" );
+
+				// First try to detect the MULTILEVEL, then SWITCH_BINARY, then DOOR_LOCK and last THERMOSTAT_SETPOINT
+				// This should solve problems for device like Qubino, they advertise too many CommandClasses
+				if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_MULTILEVEL") != string::npos )
+				{
+					usecc = COMMAND_CLASS_SWITCH_MULTILEVEL;
+				}
+				else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_SWITCH_BINARY") != string::npos )
+				{
+					usecc = COMMAND_CLASS_SWITCH_BINARY;
+				}
+				else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_DOOR_LOCK") != string::npos )
+				{
+					usecc = COMMAND_CLASS_DOOR_LOCK;
+				}
+				else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_MODE") != string::npos )
+				{
+					usecc = COMMAND_CLASS_THERMOSTAT_MODE;
+				}
+				else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_SETPOINT") != string::npos )
+				{
+					usecc = COMMAND_CLASS_THERMOSTAT_SETPOINT;
+				}
 			}
-			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_DOOR_LOCK") != string::npos )
+
+			// Nothing found, don't continue
+			if ( usecc == 0 )
 			{
-				usecc = COMMAND_CLASS_DOOR_LOCK;
-			}
-			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_MODE") != string::npos )
-			{
-				usecc = COMMAND_CLASS_THERMOSTAT_MODE;
-			}
-			else if ( nodeInfo->instancecommandclass[instance].find("COMMAND_CLASS_THERMOSTAT_SETPOINT") != string::npos )
-			{
-				usecc = COMMAND_CLASS_THERMOSTAT_SETPOINT;
-			} else {
 				// Set to-use CommandClass to zero, because we didn't find anything :-(
-				WriteLog( LogLevel_Debug, false, "Return=false (instance doesn't have a CommandClass MULTILEVEL, SWITCH_BINARY or THERMOSTAT_SETPOINT)" );
+				WriteLog( LogLevel_Debug, false, "Return=false (instance doesn't have a CommandClass MULTILEVEL, SWITCH_BINARY, DOOR_LOCK, THERMOSTAT_MODE or THERMOSTAT_SETPOINT)" );
 				return false;
 				usecc = 0;
 			}
@@ -4063,6 +4228,60 @@ bool DomoZWave_SetValue( uint32 home, int32 node, int32 instance, int32 value )
 }
 
 //-----------------------------------------------------------------------------
+// <DomoZWave_SetButton>
+// Presses the button type in Open-ZWave, normally used to reset certain parameters
+// instance=0 -> press ALL buttons of the commandclass
+// index=0 -> press ALL buttons of the commandclass and the instance
+//-----------------------------------------------------------------------------
+bool DomoZWave_SetButton( uint32 home, int32 node, int32 commandClass, int32 instance, int32 index )
+{
+	bool response = false;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetButton" ) == false ) return false;
+
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetButton: HomeId=0x%x Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "CommandClass=%s (%d)",  DomoZWave_CommandClassIdName(commandClass), commandClass );
+	WriteLog( LogLevel_Debug, false, "Instance=%d%s", instance, (instance == 0)?" (All)":"" );
+	WriteLog( LogLevel_Debug, false, "Index=%d%s", index, (instance == 0 || index == 0)?" (All)":"" );
+
+	// Store value in cache list, used to resolve returning "old" config values
+	if ( NodeInfo* nodeInfo = GetNodeInfo( home, node ) )
+	{
+		for ( list<ValueID>::iterator it = nodeInfo->m_values.begin(); it != nodeInfo->m_values.end(); ++it )
+		{
+			ValueID v = *it;
+
+			// Go through the list and check on commandclass and if this is a button
+			if (( v.GetCommandClassId() == commandClass ) && ( v.GetType() == ValueID::ValueType_Button ))
+			{
+				if ( instance >= 1 )
+				{
+
+					if ( v.GetInstance() == instance )
+					{
+						if ( index >= 1 )
+						{
+							if ( v.GetIndex() == index )
+							{
+								response = Manager::Get()->PressButton(v);
+							}
+						} else {
+							response = Manager::Get()->PressButton(v);
+						}
+					} 
+
+				} else {
+					response = Manager::Get()->PressButton(v);
+				}
+			}
+		}
+	}
+
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
+}
+
+//-----------------------------------------------------------------------------
 // <DomoZWave_SetConfigParam>
 // Set the configuration item to a certain numeric value
 //-----------------------------------------------------------------------------
@@ -4218,6 +4437,25 @@ bool DomoZWave_SetConfigParamList( uint32 home, int32 node, int32 param, const c
 		return false;
 	}
 	return false;
+}
+
+//-----------------------------------------------------------------------------
+// <DomoZWave_SetConfigParamButton>
+// Presses the button of a configuration item, wrapper around SetButton
+//-----------------------------------------------------------------------------
+bool DomoZWave_SetConfigParamButton( uint32 home, int32 node, int32 index )
+{
+	bool response;
+
+	if ( DomoZWave_HomeIdPresent( home, "DomoZWave_SetConfigParamButton" ) == false ) return false;
+	WriteLog( LogLevel_Debug, true, "DomoZWave_SetConfigParamButton: HomeId=0x%x Node=%d", home, node );
+	WriteLog( LogLevel_Debug, false, "index=%d", index );
+
+	// The commandclass and instance are fixed
+	response = DomoZWave_SetButton( home, node, COMMAND_CLASS_CONFIGURATION, 1, index );
+
+	WriteLog( LogLevel_Debug, false, "Return=%s", (response)?"true":"false" );
+	return response;
 }
 
 //-----------------------------------------------------------------------------
@@ -5841,7 +6079,13 @@ const char* DomoZWave_CommandClassIdName(int class_value)
 			// We need to report unknown commandclass, the value is in decimal
 			string str = SSTR( "Unknown (" << class_value << ")" );
 			WriteLog( LogLevel_Debug, true, "DomoZWave_CommandClassIdName: %s", str.c_str() );
-			return str.c_str();
+
+			//return str.c_str();
+
+			char *retStr=new char[str.size()+1];
+			retStr[str.size()]=0;
+			memcpy(retStr,str.c_str(),str.size());
+			return retStr;
 		}
 	}
 }
@@ -5899,7 +6143,13 @@ const char* DomoZWave_BasicTypeName( int32 basictype )
 			// We need to report unknown basic types, the value is in decimal
 			string str = SSTR( "Unknown (" << basictype << ")" );
 			WriteLog( LogLevel_Debug, true, "DomoZWave_BasicTypeName: %s", str.c_str() );
-			return str.c_str();
+
+			//return str.c_str();
+
+			char *retStr=new char[str.size()+1];
+			retStr[str.size()]=0;
+			memcpy(retStr,str.c_str(),str.size());
+			return retStr;
 		}
 	}
 }
@@ -6124,7 +6374,13 @@ const char* DomoZWave_SpecificTypeName( int32 generictype, int32 specifictype )
 			// We need to report unknown generic types, the value is in decimal
 			string str = SSTR( "Unknown (" << generictype << ")" );
 			WriteLog( LogLevel_Debug, true, "DomoZWave_Generic/SpecificTypeName: %s", str.c_str() );
-			return str.c_str();
+
+			//return str.c_str();
+
+			char *retStr=new char[str.size()+1];
+			retStr[str.size()]=0;
+			memcpy(retStr,str.c_str(),str.size());
+			return retStr;
 		}
 	}
 }

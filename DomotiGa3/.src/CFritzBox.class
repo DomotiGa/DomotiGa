@@ -19,7 +19,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "FritzBox"
 Public PluginFriendlyName As String = "Fritz!Box API"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -38,12 +38,9 @@ Private $bEnabled As Boolean
 Private $sTCPHost As String
 Private $bDebug As Boolean
 
-Private hFritzBox As New Socket
-Private sBuffer As String
-
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
+' Interface objects
+Public hMySocket As CSocket
+Private $sMsgData As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -62,13 +59,8 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $sTCPHost = cPl.Settings["tcphost"]
   $bDebug = cPl.Settings["debug"]
 
-  ' Define timer for TCP reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
-
   ' Connect/Initialize connection
-  Connect()
+  ConnectTCP()
 
 End
 
@@ -82,103 +74,65 @@ Public Sub StopPlugin()
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Private Sub ConnectTCP()
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the connection
-  Try hFritzBox.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' get a new one
-  hFritzBox = New Socket As "FritzBox"
-  hFritzBox.Connect($sTCPHost, 1012)
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, 1012)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":1012")
-
-  ' Don't set IsRunning=True, this has to be done in _Ready 
-
-  ' All went ok
-  Return True
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":1012")
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":1012")
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":1012")
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' tcp socket ready
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FritzBox_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  tReConnect.Stop
-  iReConnectRetry = 0
-  IsRunning = True
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' peer closed tcp socket
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub FritzBox_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  Connect()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
-
-End
-
-Public Sub FritzBox_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect()
 
   ' try to close the connection
-  Try tReConnect.Stop
-  Try hFritzBox.Close
+  Try hMySocket.Close
 
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
+  ' try stop running timers
+  StopTimers()
 
-  ' all ok
-  Return True
+  WriteLog(PluginFriendlyName & " TCP connection closed.")
 
 Finally
   IsRunning = False
@@ -186,46 +140,111 @@ Finally
   ErrorWhere = ""
 
 Catch
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
+  WriteLog("ERROR: " & Error.Text)
 
 End
 
-Public Sub FritzBox_Read()
-
-  Dim sData As String
-
-  sData = Read #hFritzBox, 1
-  If sData = Chr(10) Then ' buffer until linefeed then parse
-    If Len(sBuffer) > 1 Then ParseLine(Left(sBuffer, Len(sBuffer) - 1))
-    sBuffer = Null
-  Else
-    sBuffer &= sData
-  Endif
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
 
 End
 
-Public Sub FritzBox_Error()
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
 
-  Dim sMsg As String
+End
 
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
 
   IsRunning = False
   ErrorText = sMsg
-  ReConnect()
+
+  StopTimers()
 
 End
 
-Private Sub ParseLine(sStr As String)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  $sMsgData &= vVar
+
+  ' Check for linefeed and process data
+  While InStr($sMsgData, gb.Lf)
+    ProcessReceivedPacket(Mid($sMsgData, 1, InStr($sMsgData, gb.Lf) - 1))
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.Lf) + 1)
+  Wend
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub ProcessReceivedPacket(sStr As String)
 
   Dim aScan As String[]
   Dim rResult As Result
   Dim iId As Integer
   Dim sName As String
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & sStr)
+  ' Don't continue if the string/packet is empty
+  If Not sStr Then Return
+
+  If $bDebug Then WriteDebugLog("< " & sStr)
   ' 20.01.09 20:29:10;RING;0;0XXXXXXXXX;0XXXXXXXXX;POTS;
   If InStr(sStr, ";RING;") Then
     aScan = Scan(sStr, "*;RING;*;*;*;*;")
@@ -291,7 +310,7 @@ Private Sub ParseLine(sStr As String)
     aScan = Scan(sStr, "*;CALL;*;*;*;*;*;")
     If aScan.Count = 6 Then
       sName = CallerID.ReturnCallerID(aScan[4])
-      Main.WriteLog(LogLabel & "Outgoing phone call to " & aScan[4] & " (" & sName & ")")
+      WriteLog("Outgoing phone call to " & aScan[4] & " (" & sName & ")")
       Main.SetGlobalVar("PhoneCall_Outgoing", aScan[4] & " (" & sName & ") at " & Format(Now(), "hh:nn:ss dd-mm-yyyy"))
       If $bDebug Then Main.WriteDebugLog(LogLabel & " Outgoing call [id=" & aScan[1] & "] to " & aScan[4] & " with line " & aScan[3])
       ' write data to cdr table
@@ -314,3 +333,4 @@ Private Sub ParseLine(sStr As String)
   Endif
 
 End
+

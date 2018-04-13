@@ -17,7 +17,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "CUL"
 Public PluginFriendlyName As String = "CUL"
-Public PluginVersion As String = "1.00"
+Public PluginVersion As String = "2.00"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -43,8 +43,6 @@ Private $bDebug As Boolean
 Private $iModel As Integer
 Private $sFHTid As String
 
-Public hCUL As New Socket
-Public hCULSer As New SerialPort
 Public bSimulate As Boolean = False
 Public tCULBusy As Timer
 Public tCULLed As Timer
@@ -53,6 +51,10 @@ Public tCULLed As Timer
 Private oOnOffTimers As New Object[]
 Public tOnOffTimer As CTimerOnOff
 
+' Interface objects
+Public hMySocket As CSocket
+Public hMySerial As CSerialPort
+
 Private bFirstByte As Boolean = True
 Private RecBuf As New Byte[255]
 Private bMessage As Boolean = False
@@ -60,10 +62,6 @@ Private iByteCount As Integer = 0
 Private cQueue As New Collection  ' command buffer
 Private bCULBusy As Boolean  ' waiting for delay timer to finish
 Private cLowTemps As New Collection ' to store FHT low temp byte
-
-Public tReConnect As Timer
-Private iReConnectRetry As Integer = 0 ' retries
-Private aReConnectDelay As Integer[] = [5000, 10000, 30000, 60000, 300000, 900000, 1800000, 3600000, 7200000, 14400000] ' 5sec, 10sec, 30sec, 1min, 5min, 15min, 1/2hour, 1hour, 2hours, 4hours
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -95,11 +93,6 @@ Public Sub StartPlugin(cPl As CPluginEntry)
     IsRunning = False
     Return
   Endif
-
-  ' Define timer for TCP reconnect
-  tReConnect = New Timer As "tReConnect"
-  tReConnect.Delay = iReConnectRetry
-  tReConnect.Stop
 
   ' Connect/Initialize connection
   If InStr($sInterface, "tcp") Then
@@ -139,101 +132,53 @@ Private Sub WriteDebugLog(sLog As String)
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub CUL_Ready()
-
-  WriteLog("TCP interface connected.")
-  IsRunning = True
-
-  ' connected so reset retry counter
-  tReConnect.Stop
-  iReConnectRetry = 0
-
-  Init()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' reconnect routine
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub tReConnect_Timer()
-
-  ConnectTCP()
-
-End
-
-Public Sub CUL_Closed()
-
-  Main.WriteLog(LogLabel & "ERROR: TCP socket closed by peer.")
-  ReConnect()
-
-End
-
-Public Sub ReConnect()
-
-  If iReConnectRetry < aReConnectDelay.Max + 1 Then
-    Main.WriteLog(LogLabel & "Retry to connect in " & IIf(aReConnectDelay[iReConnectRetry] > 60000, CStr(aReConnectDelay[iReConnectRetry] / 60000) & " minutes.", CStr(aReConnectDelay[iReConnectRetry] / 1000) & " seconds."))
-    tReConnect.Delay = aReConnectDelay[iReConnectRetry]
-    tReConnect.Start
-  Else
-    tReConnect.Stop
-    Main.WriteLog(LogLabel & "Too many reconnect failures, stopped trying.")
-  Endif
-  Inc iReConnectRetry
-
-End
-
-Public Sub CUL_Found()
-
-  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectTCP(Optional bFirstStart As Boolean = True) As Boolean
+Private Sub ConnectTCP()
 
   Dim sModel As String[] = ["", "CUL", "CUN", "CUNO", "CUR"]
 
-  ' try to close the connection
-  Try hCUL.Close
+  Dim iReconnectRetry As Integer = 0
 
-  ' get a new one
-  hCUL = New Socket As "CUL"
-  hCUL.Connect($sTCPHost, $iTCPPort)
+  ' try to close the connection
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
+
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = &HFF + gb.Byte
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  If bFirstStart Then Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort & " (" & sModel[$iModel] & ")")
-
-  ' Don't set IsRunning=True, this has to be done in _Ready
-
-  ' All went ok
-  Return True
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort & " (" & sModel[$iModel] & ")")
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-  Return False
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the serial port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function ConnectSerial() As Boolean
+Private Sub ConnectSerial()
 
   Dim sModel As String[] = ["", "CUL", "CUN", "CUNO", "CUR"]
+  Dim iReconnectRetry As Integer = 0
 
-  ' try to close the connection
-  Try hCULSer.Close
+  ' try to close the port
+  Try hMySerial.Close
+  Try iReconnectRetry = hMySerial.ReconnectRetry
 
   ' get a new one
-  hCULSer = New Serialport As "CULSer"
-  With hCULSer
+  hMySerial = New CSerialPort(iReconnectRetry) As "MySerial"
+
+  With hMySerial
+    .DataType = &HFF + gb.Byte
     .PortName = $sSerPort
     .Speed = $sBaud
     .Parity = 0
@@ -243,51 +188,34 @@ Public Function ConnectSerial() As Boolean
     .Open()
   End With
 
-  Init()
+  Run()
 
   ' Write to main logfile we connected successfully
-  Main.WriteLog(LogLabel & PluginFriendlyName & " serial interface connected to port " & $sSerPort & " (" & sModel[$iModel] & ")")
+  WriteLog(PluginFriendlyName & " serial interface connected to port " & $sSerPort & " (" & sModel[$iModel] & ")")
   IsRunning = True
 
-  ' All went ok
-  Return True
-
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " serial interface FAILED to connect to port " & $sSerPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-  Return False
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
-
-  Dim oTimer As Object
+Private Sub Disconnect()
 
   ' try to close the connection
-  Try tCULBusy.Stop
-  Try tCULLed.Stop
-  Try tReConnect.Stop
-  Try hCUL.Close
-  Try hCULSer.Close
-  For Each oTimer In oOnOffTimers
-    Try oTimer.Stop
-  Next
+  Try hMySocket.Close
+  Try hMySerial.Close
 
-  If InStr($sInterface, "tcp") Then
-    Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
-  Else
-    Main.WriteLog(LogLabel & PluginFriendlyName & " Port closed.")
-  Endif
+  ' try stop running timers
+  StopTimers()
 
-  ' all ok
-  Return True
+  WriteLog(PluginFriendlyName & IIf($sInterface = "tcp", " TCP connection closed.", " Port closed."))
 
 Finally
   IsRunning = False
@@ -295,8 +223,164 @@ Finally
   ErrorWhere = ""
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
+  WriteLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "'")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Stop all timers
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
+
+  Dim oTimer As Object
+
+  Try tCULBusy.Stop
+  Try tCULLed.Stop
+
+  For Each oTimer In oOnOffTimers
+    Try oTimer.Stop
+  Next
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Run after succesfull connect
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub Run()
+
+  ' define timer for CUL interface busy
+  tCULBusy = New Timer As "tCULBusy"
+  tCULBusy.Stop
+
+  ' define timer for CUL status LED
+  tCULLed = New Timer As "tCULLED"
+  tCULLed.Delay = 500
+  tCULLed.Stop
+
+  ' init CUL
+  If $bDebug Then WriteDebugLog("Switching to X21 mode.")
+  QueueCommand("X21")
+
+  ' set FHTid
+  If Len($sFHTid) And If $sFHTid <> "0000" Then
+    If $bDebug Then WriteDebugLog("Setting FHTid to '" & $sFHTid & "'. (" & HexToDec($sFHTid) & ")")
+    QueueCommand("T01" & $sFHTid)
+  Else
+    If $bDebug Then WriteDebugLog("No FHTid set, value '" & $sFHTid & "' is not valid!")
+  Endif
+
+  ' get version
+  If $bDebug Then WriteDebugLog("Getting version info.")
+  QueueCommand("V")
+
+  ' ParseDump("/home/ron/S300TH.txt")
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle errors
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' read data char for char
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Read(vVar As Variant)
+
+  Dim bData As Byte
+
+  If vVar Then
+    For Each bData In vVar
+      ProcessReceivedChar(bData)
+    Next
+  Endif
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Handle reconnect(s)
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySerial_Reconnect()
+
+  ' ReConnect/Initialize connection
+  ConnectSerial()
 
 End
 
@@ -307,39 +391,6 @@ Public Sub tCULLED_Timer()
 
   Main.ControlLed("CUL", "Off")
   tCULLED.Stop
-
-End
-
-Public Sub CUL_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
-  ReConnect()
-
-End
-
-Public Sub CUL_Read()
-
-  Dim bData As Byte
-
-  Try bData = Read #hCUL As Byte
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the TCP port! -> " & Error.Text)
-  ProcessReceivedChar(bData)
-
-End
-
-Public Sub CULSer_Read()
-
-  Dim bData As Byte
-
-  Try bData = Read #hCULSer As Byte
-  If Error Then Main.WriteDebugLog(LogLabel & "Error reading data from the serial port! -> " & Error.Text)
-  ProcessReceivedChar(bData)
 
 End
 
@@ -369,7 +420,7 @@ Public Sub SendCommand(sAddress As String, sCmd As String)
         Endif
       Endif
     Default
-      Main.WriteDebugLog(LogLabel & "Controlling '" & sType & "' devices is not supported in this version!")
+      WriteDebugLog("Controlling '" & sType & "' devices is not supported in this version!")
       Return
   End Select
 
@@ -394,7 +445,7 @@ Public Sub PrepareFS20Command(sAddress As String, sCmd As String)
 
   ' check if address has 3 bytes
   If (Len(sAddress) <> 6) Then
-    Main.WriteDebugLog(LogLabel & "FS20 address has invalid format '" & sAddress & "' we need 3 bytes!")
+    WriteDebugLog("FS20 address has invalid format '" & sAddress & "' we need 3 bytes!")
     Return
   Endif
 
@@ -403,7 +454,7 @@ Public Sub PrepareFS20Command(sAddress As String, sCmd As String)
   If aParams.Count = 1 Then
     sCommand = CommandtoFS20(aParams[0])
     If Len(sCommand) = 0 Then
-      Main.WriteDebugLog(LogLabel & "Only ON, OFF and DIM are supported in this version!")
+      WriteDebugLog("Only ON, OFF and DIM are supported in this version!")
       Return
     Endif
   '--- for example DIM 1
@@ -411,7 +462,7 @@ Public Sub PrepareFS20Command(sAddress As String, sCmd As String)
     If UCase(aParams[0]) = "DIM" Then
       sCommand = ConvertFS20Dim(aParams[1])
     Else
-      Main.WriteDebugLog(LogLabel & "Invalid command format!")
+      WriteDebugLog("Invalid command format!")
       Return
     Endif
   Endif
@@ -433,7 +484,7 @@ Public Sub QueueCommand(sPacket As String)
   cQueue.Add(sPacket & "\r\n", Rnd)
 
   ' if interface is not busy process it
-  If bCULBusy = False Then DoQueue()
+  If Not bCULBusy Then DoQueue()
 
 End
 
@@ -463,7 +514,7 @@ Private Sub StartOnOffTimer(iDeviceId As Integer, sCmd As String, iDuration As I
     tOnOffTimer.Command = sCmd
     tOnOffTimer.Started = Now()
     tOnOffTimer.Start
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Started " & IIf(sCmd = "On", "Off", "On") & "-For-Timer for device with id '" & iDeviceId & "' for a duration of " & iDuration & " seconds.")
+    If $bDebug Then WriteDebugLog("Started " & IIf(sCmd = "On", "Off", "On") & "-For-Timer for device with id '" & iDeviceId & "' for a duration of " & iDuration & " seconds.")
   Endif
 
 End
@@ -475,7 +526,7 @@ Private Sub FindTimer(iDeviceId As Integer, sCmd As String, iDuration As Integer
 
   For Each oObject In oOnOffTimers
     If oObject.DeviceId = iDeviceId And If oObject.Command = sCmd And If oObject.Duration = iDuration Then
-      If $bDebug Then Main.WriteDebugLog(LogLabel & IIf(sCmd = "On", "Off", "On") & "-For-Timer for device with id '" & iDeviceId & " and command " & sCmd & " with duration of " & iDuration & " seconds already runs, skipping.")
+      If $bDebug Then WriteDebugLog(IIf(sCmd = "On", "Off", "On") & "-For-Timer for device with id '" & iDeviceId & " and command " & sCmd & " with duration of " & iDuration & " seconds already runs, skipping.")
       Return True
     Endif
   Next
@@ -494,42 +545,8 @@ Public Sub tOnOffTimer_Timer()
   Last.Stop
   oOnOffTimers.Remove(oOnOffTimers.Find(Last))
 
-  If $bDebug Then Main.WriteDebugLog(LogLabel & IIf(sCmd = "On", "Off", "On") & "-For-Timer expired, changing value of device with id '" & iDeviceId & "' to '" & sCmd & "'")
+  If $bDebug Then WriteDebugLog(IIf(sCmd = "On", "Off", "On") & "-For-Timer expired, changing value of device with id '" & iDeviceId & "' to '" & sCmd & "'")
   Try Devices.ValueUpdate(iDeviceId, 1, sCmd)
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' initialize interface
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Init()
-
-  ' define timer for CUL interface busy
-  tCULBusy = New Timer As "tCULBusy"
-  tCULBusy.Stop
-
-  ' define timer for CUL status LED
-  tCULLed = New Timer As "tCULLED"
-  tCULLed.Delay = 500
-  tCULLed.Stop
-
-  ' init CUL
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Switching to X21 mode.")
-  QueueCommand("X21")
-
-  ' set FHTid
-  If Len($sFHTid) And If $sFHTid <> "0000" Then
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Setting FHTid to '" & $sFHTid & "'. (" & HexToDec($sFHTid) & ")")
-    QueueCommand("T01" & $sFHTid)
-  Else
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "No FHTid set, value '" & $sFHTid & "' is not valid!")
-  Endif
-
-  ' get version
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "Getting version info.")
-  QueueCommand("V")
-
-  ' ParseDump("/home/ron/S300TH.txt")
 
 End
 
@@ -563,20 +580,14 @@ Public Sub WriteCommand(sBuffer As String, sKey As String)
   Main.ControlLed("CUL", "On")
   If Main.bServer Then tCULLed.Start
 
-  If $sInterface = "tcp" Then
-    ' return if not connected yet
-    If hCUL.Status <> Net.Connected Then Return
-    ' send the message to the tcp stream
-    Try Write #hCUL, sBuffer, Len(sBuffer)
-    If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to TCP port! -> " & Error.Text)
+  ' Write the complete string - not byte-for-byte
+  If InStr($sInterface, "tcp") Then
+    hMySocket.Write(sBuffer, gb.String)
   Else
-    ' return if not connected yet
-    If hCULSer.Status <> Net.Active Then Return
-    ' send the message to the serial port
-    Try Write #hCULSer, sBuffer, Len(sBuffer)
-    If Error Then Main.WriteDebugLog(LogLabel & "Unable to write to serial port! -> " & Error.Text)
+    hMySerial.Write(sBuffer, gb.String)
   Endif
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "> " & Mid(sBuffer, 1, Len(sBuffer) - 2))
+
+  If $bDebug Then WriteDebugLog("> " & Mid(sBuffer, 1, Len(sBuffer) - 2))
 
   ' remove sent command from queue
   cQueue.Remove(sKey)
@@ -596,7 +607,7 @@ Public Sub tCULBusy_Timer()
   tCULBusy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If $bDebug Then Main.WriteDebugLog(LogLabel & "Sending next command from Queue (count = " & cQueue.Count & ")")
+    If $bDebug Then WriteDebugLog("Sending next command from Queue (count = " & cQueue.Count & ")")
     DoQueue()
   Endif
 
@@ -624,7 +635,7 @@ Public Sub Simulate(sPacket As String)
 
   bSimulate = True
   bFirstByte = True
-  If $bDebug Then Main.WriteDebugLog(LogLabel & "CUL receiver Simulate String: " & sPacket)
+  If $bDebug Then WriteDebugLog("CUL receiver Simulate String: " & sPacket)
 
   For iCnt = 1 To Len(sPacket)
     ProcessReceivedChar(Asc(Mid(sPacket, iCnt, 1)))
@@ -633,8 +644,11 @@ Public Sub Simulate(sPacket As String)
   ProcessReceivedChar(&HA)
   bSimulate = False
 
-End Sub
+End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub ProcessReceivedChar(bTemp As Byte)
 
   If bFirstByte = True Then
@@ -670,6 +684,9 @@ Catch
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Display_Message()
 
   Dim iDeviceId, iCmd, iDur, iI, iJ, iFirst, iType, iSensor As Integer
@@ -697,7 +714,7 @@ Private Sub Display_Message()
 
       ' check for valid packet size
       If iByteCount < 9 Or If iByteCount > 12 Then
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "FS20 message received with invalid length of " & iByteCount & " bytes!")
+        If $bDebug Then WriteDebugLog("FS20 message received with invalid length of " & iByteCount & " bytes!")
         Return
       Endif
 
@@ -726,7 +743,7 @@ Private Sub Display_Message()
       ' test if cmd value is known
       Try sVal = aFS20Values[iCmd]
       If Not Error Then
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "FS20 message received with address '" & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and command '" & sVal & "'" & IIf(iDur, " duration " & iDur, "") & CalcRSSI(fRSSI))
+        If $bDebug Then WriteDebugLog("FS20 message received with address '" & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and command '" & sVal & "'" & IIf(iDur, " duration " & iDur, "") & CalcRSSI(fRSSI))
         iDeviceId = Devices.Find(Instance, sHouseCode & sAddress, InterfaceId, "FS20")
         ' move some values around if needed
         If iCmd < 18 Then ' Off, Dim, On
@@ -753,12 +770,12 @@ Private Sub Display_Message()
         If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sValue)
         If iDeviceId Then Devices.ValueUpdate(iDeviceId, 2, sValue2)
       Else
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "FS20 message received with address '" & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and unknown/invalid command '" & Hex(iCmd) & "'")
+        If $bDebug Then WriteDebugLog("FS20 message received with address '" & sHouseCode & sAddress & "' (" & Hex2Four(sHouseCode & sAddress) & ") and unknown/invalid command '" & Hex(iCmd) & "'")
       Endif
     Case "T" ' FHT messages
       ' check for valid packet size
       If iByteCount < 9 Or If iByteCount > 13 Then
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "FHT message received with invalid length of " & iByteCount & " bytes!")
+        If $bDebug Then WriteDebugLog("FHT message received with invalid length of " & iByteCount & " bytes!")
         Return
       Endif
 
@@ -789,7 +806,7 @@ Private Sub Display_Message()
             sValue2 = "Test:Success"
         End Select
 
-        If $bDebug Then Main.WriteDebugLog(LogLabel & "FHT TFK message received with address '" & sHouseCode & sAddress & "', status '" & IIf(Len(sValue2), sValue2, sValue) & "' and battery level '" & sBatt & "'")
+        If $bDebug Then WriteDebugLog("FHT TFK message received with address '" & sHouseCode & sAddress & "', status '" & IIf(Len(sValue2), sValue2, sValue) & "' and battery level '" & sBatt & "'")
         ' find device id
         iDeviceId = Devices.Find(Instance, sHouseCode & sAddress, InterfaceId, "FHTTFK")
         If iDeviceId Then
@@ -870,7 +887,7 @@ Private Sub Display_Message()
           Endif
 
           If InStr(sVal, "%") And If sId = 0 Then
-            If $bDebug Then Main.WriteDebugLog(LogLabel & "Position " & sId & " " & sVal)
+            If $bDebug Then WriteDebugLog("Position " & sId & " " & sVal)
           Endif
         Else If sCmd = "Measured-Low"
           cLowTemps[sAddress] = sVal
@@ -888,8 +905,8 @@ Private Sub Display_Message()
           sSensor = IIf(BTst(CInt(sVal), 4), "Fault", "Ok")
         Endif
         If $bDebug Then
-          Main.WriteDebugLog(LogLabel & "FHT message received with address '" & sAddress & "' (" & HexToDec(sAddress) & ") command '" & sCmd & "' (" & Hex(iCmd) & ") value '" & sVal & "'" & CalcRSSI(fRSSI))
-          If sCmd = "Warnings" Then Main.WriteDebugLog(LogLabel & "Warnings: Battery=" & sBatt & " LowTemp=" & sLowTemp & " Sensor=" & sSensor & " Window=" & sWindow)
+          WriteDebugLog("FHT message received with address '" & sAddress & "' (" & HexToDec(sAddress) & ") command '" & sCmd & "' (" & Hex(iCmd) & ") value '" & sVal & "'" & CalcRSSI(fRSSI))
+          If sCmd = "Warnings" Then WriteDebugLog("Warnings: Battery=" & sBatt & " LowTemp=" & sLowTemp & " Sensor=" & sSensor & " Window=" & sWindow)
         Endif
         ' find device id
         iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, "FHT80")
@@ -923,7 +940,7 @@ Private Sub Display_Message()
       Try sValue = Chr(RecBuf[11]) & Chr(RecBuf[12]) & Chr(RecBuf[13]) & Chr(RecBuf[14])
       Try sEMPeakValue = Chr(RecBuf[15]) & Chr(RecBuf[16]) & Chr(RecBuf[17]) & Chr(RecBuf[18])
 
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "EM message received sensor '" & aEMType[Val(sEMType)] & "' [" & sEMType & "]" & " with address '" & sAddress & "' cumulated value: " & sEMCumulValue & " last: " & sValue & " top: " & sEMPeakValue & " msg count: " & Val("&H" & sMsgCounter))
+      If $bDebug Then WriteDebugLog("EM message received sensor '" & aEMType[Val(sEMType)] & "' [" & sEMType & "]" & " with address '" & sAddress & "' cumulated value: " & sEMCumulValue & " last: " & sValue & " top: " & sEMPeakValue & " msg count: " & Val("&H" & sMsgCounter))
       iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, aEMType[Val(sEMType)])
       ' update value
       If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sEMCumulValue)
@@ -1001,10 +1018,10 @@ Private Sub Display_Message()
       Endif
 
       If $bDebug Then
-        Main.WriteDebugLog(LogLabel & "WS300 message received from sensor type '" & sType & "' (" & aWS300Type[iSensor] & ") with address '" & sAddress & "'" & CalcRSSI(fRSSI))
+        WriteDebugLog("WS300 message received from sensor type '" & sType & "' (" & aWS300Type[iSensor] & ") with address '" & sAddress & "'" & CalcRSSI(fRSSI))
         Select sType
           Case "S300TH"
-            Main.WriteDebugLog(LogLabel & "Reported a Temperature of " & sValue & "°C and Humidity of " & sValue2 & "%")
+            WriteDebugLog("Reported a Temperature of " & sValue & "°C and Humidity of " & sValue2 & "%")
         End Select
       Endif
       iDeviceId = Devices.Find(Instance, sAddress, InterfaceId, sType)
@@ -1017,14 +1034,14 @@ Private Sub Display_Message()
           If iDeviceId Then Devices.ValueUpdate(iDeviceId, 1, sValue)
       End Select
     Case "V"
-      If $bDebug Then Main.WriteDebugLog(LogLabel & "Version string received.")
+      If $bDebug Then WriteDebugLog("Version string received.")
     Case Else
-      Main.WriteDebugLog(LogLabel & "Unknown/unsupported message format received!")
+      WriteDebugLog("Unknown/unsupported message format received!")
   End Select
   Main.ControlLed("CUL", "Off")
 
 Catch
-   Main.WriteDebugLog(LogLabel & "ERROR: '" & Error.Text & "' at '" & Error.Where & "' Parsing CUL data packet: " & DisplayPacket(RecBuf))
+   WriteDebugLog("ERROR: '" & Error.Text & "' at '" & Error.Where & "' Parsing CUL data packet: " & DisplayPacket(RecBuf))
 
 End
 

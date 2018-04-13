@@ -45,7 +45,9 @@ Private $sPassword As String
 Private $iPolltime As Integer
 Private $bDebug As Boolean
 
-Public hAsterisk As New Socket
+' Interface objects
+Public hMySocket As CSocket
+Private $sMsgData As String
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Mandatory subroutine for each Module/Class to initialize:
@@ -69,7 +71,7 @@ Public Sub StartPlugin(cPl As CPluginEntry)
   $bDebug = cPl.Settings["debug"]
  
   ' Connect/Initialize connection
-  Connect()
+  ConnectTCP()
 
 End
 
@@ -85,92 +87,44 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' connect to the host:port
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Connect() As Boolean
+Private Sub ConnectTCP()
+
+  Dim iReconnectRetry As Integer = 0
 
   ' try to close the connection
-  Try hAsterisk.Close
+  Try hMySocket.Close
+  Try iReconnectRetry = hMySocket.ReconnectRetry
 
-  ' get a new one
-  hAsterisk = New Socket As "Asterisk"
-  hAsterisk.Connect($sTCPHost, $iTCPPort)
+  ' get a new one - but also pass on our previous reconnect counter
+  hMySocket = New CSocket(iReconnectRetry) As "MySocket"
+
+  hMySocket.DataType = gb.String
+  hMySocket.Connect($sTCPHost, $iTCPPort)
 
   ' Write to main logfile we are trying to connect
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
-
-  ' Don't set IsRunning=True, this has to be done in _Ready 
-
-  ' All went ok
-  Return True
+  WriteLog(PluginFriendlyName & " TCP interface connecting to " & $sTCPHost & ":" & $iTCPPort)
 
 Catch ' some errors
-  Main.WriteLog(LogLabel & "ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
-  Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
+  WriteLog("ERROR: " & PluginFriendlyName & " TCP interface FAILED to connect to " & $sTCPHost & ":" & $iTCPPort)
+  WriteLog("ERROR: " & Error.Text)
   IsRunning = False
   ErrorText = Error.Text
   ErrorWhere = Error.Where
-
-  Return False
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Connection is estabilished
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Asterisk_Ready()
-
-  Main.WriteLog(LogLabel & "TCP interface connected.")
-  IsRunning = True
-
-  ' authenticate ourself to API interface
-  ManagerLogin()
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Read data
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Asterisk_Read()
-
-  Dim sData As String
-
-  If hAsterisk.Status = Net.Connected Then
-    Line Input #hAsterisk, sData
-    If InStr(sData, "Asterisk Call Manager") Then Main.WriteLog(LogLabel & sData)
-    If InStr(sData, "Response: Error") Or InStr(sData, "Response: Success") Then
-      Line Input #hAsterisk, sData
-      If $bDebug Then Main.WriteDebugLog(LogLabel & sData)
-      ' put support for parsing incoming events/calls here
-    Endif
-  Endif
-
-End
-
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-' Handle TCP errors
-'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub Asterisk_Error()
-
-  Dim sMsg As String
-
-  sMsg = Log.Text_TCP_Error(Last.Status, $sTCPHost)
-  Main.WriteLog(LogLabel & "ERROR: " & sMsg)
-
-  IsRunning = False
-  ErrorText = sMsg
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' disconnect from the host
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Function Disconnect() As Boolean
+Private Sub Disconnect()
 
   ' try to close the connection
-  Try hAsterisk.Close
-  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
+  Try hMySocket.Close
 
-  ' all ok
-  Return True
+  ' try stop running timers
+  StopTimers()
+
+  Main.WriteLog(LogLabel & PluginFriendlyName & " TCP connection closed.")
 
 Finally
   IsRunning = False
@@ -179,19 +133,132 @@ Finally
 
 Catch
   Main.WriteLog(LogLabel & "ERROR: " & Error.Text)
-  Return False
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteLog(sLog As String)
+
+  Main.WriteLog(LogLabel & sLog)
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Easy helper for WriteDebugLog
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub WriteDebugLog(sLog As String)
+
+  If $bDebug Then Main.WriteDebugLog(LogLabel & sLog)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+'
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub StopTimers()
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Login to the Asterisk
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Public Sub ManagerLogin()
+Private Sub Run()
 
   Dim sCommand As String
 
   sCommand = "ACTION: LOGIN\r\nUSERNAME: " & $sUser & "\r\nSECRET: " & $sPassword & "\r\nEVENTS: ON\r\n\r\n"
-  Print #hAsterisk, sCommand
+  hMySocket.Write(sCommand)
 
 End
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' peer closed tcp socket
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Closed()
+
+  WriteLog("ERROR: TCP socket closed by peer.")
+
+  IsRunning = False
+  ErrorText = "TCP socket closed by peer"
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' error while connected/connecting to tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Error(sMsg As String)
+
+  WriteLog("ERROR: " & sMsg)
+
+  IsRunning = False
+  ErrorText = sMsg
+
+  StopTimers()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' host ip address found
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Found()
+
+  Log.Plugin_DNS_Found(LogLabel, $sTCPHost)
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' tcp socket is connected
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Ready()
+
+  WriteLog("TCP interface connected.")
+  IsRunning = True
+
+  Run()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Called when we should reconnect to the tcp host
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Reconnect()
+
+  ConnectTCP()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' received data from the tcp port. vVar is gb.String
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub MySocket_Read(vVar As Variant)
+
+  Dim sData As String
+
+  $sMsgData &= vVar
+
+  ' Check for linefeed and process data
+  While InStr($sMsgData, gb.Lf)
+
+    sData = Mid($sMsgData, 1, InStr($sMsgData, gb.Lf) - 1)
+
+    WriteDebugLog("< " & sData)
+
+    ' No code for parsing of data exists ...
+
+    'If InStr(sData, "Asterisk Call Manager") Then Main.WriteLog(LogLabel & "< " & sData)
+  
+    'If InStr(sData, "Response: Error") Or InStr(sData, "Response: Success") Then
+    '  Line Input #hAsterisk, sData
+    '  If $bDebug Then Main.WriteDebugLog(LogLabel & sData)
+      ' put support for parsing incoming events/calls here
+    'Endif
+
+    $sMsgData = Mid($sMsgData, InStr($sMsgData, gb.Lf) + 1)
+  Wend
+
+End
