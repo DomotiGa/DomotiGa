@@ -6,6 +6,7 @@ use strict;
 system("which curl >/dev/null 2>/dev/null") == 0 or die("Can't find the curl binary in path");
 
 my $JSONHOST="http://localhost:9090/";
+my $AUTH=""; # --user user:password
 my $INFILE="json-rpc.cmds";
 
 my $ERRFILE="json-rpc.$$.err";
@@ -61,7 +62,7 @@ while (<FIN>) {
   # Execute Curl command 
   # -H == --header
   #    == --compress is supported
-  @CURL = `curl -sS -X POST -H "Content-Type: application/json" -H "Accept: application/json" -d '$JSONIN' $JSONHOST 2>$ERRFILE`; 
+  @CURL = `curl $AUTH -sS -X POST -H "Content-Type: application/json" -H "Accept: application/json" -d '$JSONIN' $JSONHOST 2>$ERRFILE`; 
   $RC = $?;
 
   # We got some data back - this is good
