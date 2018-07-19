@@ -21,7 +21,8 @@
 
 
 CREATE DATABASE IF NOT EXISTS domotiga;
-GRANT ALL ON domotiga.* TO domouser@localhost IDENTIFIED BY 'kung-fu';
+CREATE USER 'domouser' IDENTIFIED BY 'kung-fu';
+GRANT ALL PRIVILEGES ON domotiga.* TO 'domouser'@'%';
 -- GRANT ALL ON domotiga.* TO domouser@'%' IDENTIFIED BY 'kung-fu';
 -- USE `domotiga`;
 
