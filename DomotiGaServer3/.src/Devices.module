@@ -47,6 +47,12 @@ Public Const ValueType_Power_kW As Integer = 26 ' Power in KiloWatt
 ' datetime, gas, camera
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Private variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Private aMQTTLastSeen As New String[]
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Easy helper for WriteLog
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub WriteLog(sLog As String)
@@ -913,7 +919,7 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
 
   Dim rResult, rResultInsert, rResultUpdate, rDevice, rDeviceLog As Result
   Dim bUpdated, bHidden As Boolean
-  Dim sLabel, sValue, sName, sType, sCorrection, sUnits As String
+  Dim sLabel, sValue, sName, sType, sCorrection, sUnits, sLastSeen As String
   Dim sTimeNow As String = Format(Now(), "yyyy-mm-dd hh:nn:ss")
 
   If vValue = "Dim 100" Then vValue = "On"
@@ -1000,6 +1006,21 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
           ' Don't re-publish received MQTT values towards the MQTT broker. Exclude MQTT protocol
           If FindTypeForDevice(iDeviceId) <> "MQTT" Then
             Try Plugin.GetPluginObject("MQTT", 1).Interface.PublishMsg(sName & "/" & "value" & iValueNum, CorrectValue(vValue, sCorrection, iDeviceId))
+            ' Also publish LastSeen
+
+            sLastSeen = GetLastSeenForDevice(iDeviceId)
+
+            ' Check if we didn't publish this very recently, preventing duplicate MQTT messages
+            If Not aMQTTLastSeen.Exist(sName & "/" & "lastseen " & sLastSeen) Then
+              Try Plugin.GetPluginObject("MQTT", 1).Interface.PublishMsg(sName & "/" & "lastseen", sLastSeen)
+              aMQTTLastSeen.Push(sName & "/" & "lastseen " & sLastSeen)
+            Endif
+
+            ' Remove the first entry from the cache
+            If aMQTTLastSeen.Count > 10 Then
+              aMQTTLastSeen.Delete(0, 1)
+            Endif
+
           Endif
         Endif
 
@@ -1010,9 +1031,34 @@ Public Sub ValueUpdate(iDeviceId As Integer, iValueNum As Integer, vValue As Var
     Endif
   Endif
 
+  ' Only update lastseen
   If Not bUpdated Then
     rResultUpdate = Main.hDB.Exec("UPDATE devices, device_values SET devices.lastseen = &1, device_values.lastseen = &1 WHERE devices.id = &2 AND device_values.device_id = &2 AND device_values.valuenum = &3", sTimeNow, iDeviceId, iValueNum)
+
+    ' Publish LastSeen
+    If Not bHidden Then
+      If Plugin.IsPluginEnabled("MQTT", 0) Then
+        ' Don't re-publish received MQTT values towards the MQTT broker. Exclude MQTT protocol
+        If FindTypeForDevice(iDeviceId) <> "MQTT" Then
+
+          sLastSeen = GetLastSeenForDevice(iDeviceId)
+
+          ' Check if we didn't publish this very recently, preventing duplicate MQTT messages
+          If Not aMQTTLastSeen.Exist(sName & "/" & "lastseen " & sLastSeen) Then
+            Try Plugin.GetPluginObject("MQTT", 1).Interface.PublishMsg(sName & "/" & "lastseen", sLastSeen)
+            aMQTTLastSeen.Push(sName & "/" & "lastseen " & sLastSeen)
+          Endif
+
+          ' Remove the first entry from the cache
+          If aMQTTLastSeen.Count > 10 Then
+            aMQTTLastSeen.Delete(0, 1)
+          Endif
+
+        Endif
+      Endif
+    Endif
   Endif
+
   If bUpdated Or If Main.bLogAllValueUpdates Then
     If rDevice!log Then
       Main.hDB.Begin()
@@ -1051,6 +1097,7 @@ Public Sub Battery(iDeviceId As Integer, vValue As Variant) As Boolean
 
   Dim rDevice, rResult As Result
   Dim sName, sBatteryStatus As String
+  Dim bHidden As Boolean
 
   Try rDevice = Main.hDB.Exec("SELECT name, batterystatus FROM devices WHERE id = &1", iDeviceId)
   ' data for device cannot be retrieved the device probably doesn't exist
@@ -1062,23 +1109,30 @@ Public Sub Battery(iDeviceId As Integer, vValue As Variant) As Boolean
   ' store device name and current battery level
   sName = rDevice!name
   sBatteryStatus = rDevice!batterystatus
+  bHidden = rDevice!hide
 
   ' update value
   rResult = Main.hDB.Exec("UPDATE devices SET batterystatus = &1, lastseen = &2 WHERE id = &3", vValue, Format(Now(), "yyyy-mm-dd hh:nn:ss"), iDeviceId)
   If rResult Then
     If sBatteryStatus <> vValue Then
+
       ' notify plugins
       ' FIXME: instance of these plugins do not map to device instances, now set to 1 by default, maybe we should call/loop through all enabled instances?
-      If Plugin.IsPluginEnabled("IViewer", 0) Then
-        Try Plugin.GetPluginObject("IViewer", 1).Interface.SendUpdateForDevice(iDeviceId, vValue, "battery", "battery")
-      Endif
+      If Not bHidden Then
+        If Plugin.IsPluginEnabled("IViewer", 0) Then
+          Try Plugin.GetPluginObject("IViewer", 1).Interface.SendUpdateForDevice(iDeviceId, vValue, "battery", "battery")
+        Endif
 
-      If Plugin.IsPluginEnabled("MQTT", 0) Then
-        Try Plugin.GetPluginObject("MQTT", 1).Interface.PublishMsg(sName & "/" & "battery", vValue)
-      Endif
+        If Plugin.IsPluginEnabled("MQTT", 0) Then
+          ' Send battery level
+          Try Plugin.GetPluginObject("MQTT", 1).Interface.PublishMsg(sName & "/" & "battery", vValue)
+          ' Also publish LastSeen
+          Try Plugin.GetPluginObject("MQTT", 1).Interface.PublishMsg(sName & "/" & "lastseen",GetLastSeenForDevice(iDeviceId))
+        Endif
 
-      If Plugin.IsPluginEnabled("SmartVisuServer", 0) Then
-        Try Plugin.GetPluginObject("SmartVisuServer", 1).Interface.SendUpdateForDevice(sName, vValue, "battery")
+        If Plugin.IsPluginEnabled("SmartVisuServer", 0) Then
+          Try Plugin.GetPluginObject("SmartVisuServer", 1).Interface.SendUpdateForDevice(sName, vValue, "battery")
+        Endif
       Endif
     Endif
     Return True
