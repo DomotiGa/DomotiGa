@@ -19,7 +19,7 @@ LDFLAGS	:= $(DEBUG_LDFLAGS)
 
 INCLUDES := -I open-zwave/cpp/src
 LIBZWAVE := $(wildcard open-zwave/*.a)
-LIBOTHER := -ljson -lcurl -pthread -shared -ludev
+LIBOTHER := -lcurl -pthread -shared -ludev
 LIBS := $(LIBZWAVE) $(LIBOTHER)
 
 %.o : %.cpp
