@@ -39,9 +39,6 @@ char domozwave_vers[] = "DomoZWave version 2.20";
 #include <map>
 #include <semaphore.h>
 
-// json-rpc
-#include <json/json.h>
-
 // curl
 #include <curl/curl.h>
 
@@ -200,6 +197,8 @@ typedef struct {
 } StructJsonRpcInfo;
 
 list<StructJsonRpcInfo> m_JsonRpcInfo;
+
+char jsonData[32768];
 
 ///////////////////////////////////////////////////////////////////////////////
 // NodeInfo Functions for Open Z-Wave
@@ -4499,6 +4498,7 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 	int16 short_value;
 	int32 count;
 
+/*
 	// Create json objects for the node
 	json_object *jnode = json_object_new_object();
 	json_object *jconfig = json_object_new_object();
@@ -4780,6 +4780,7 @@ const char* DomoZWave_GetNodeConfig( uint32 home, int32 node )
 
 	WriteLog( LogLevel_Debug, false, "Config=None (node doesn't exist)" );
 	return json_object_to_json_string( jnode );
+*/
 }
 
 //-----------------------------------------------------------------------------
@@ -4891,6 +4892,7 @@ const char* DomoZWave_GetNodeGroup( uint32 home, int32 node )
 {
 	uint32 count;
 
+/*
 	// Create json objects for the node
 	json_object *jnode = json_object_new_object();
 	json_object *jgroup = json_object_new_object();
@@ -4950,6 +4952,7 @@ const char* DomoZWave_GetNodeGroup( uint32 home, int32 node )
 
 	WriteLog( LogLevel_Debug, false, "Group=None (node doesn't exist)" );
 	return json_object_to_json_string( jnode );
+*/
 }
 
 //-----------------------------------------------------------------------------
@@ -4996,6 +4999,7 @@ const char* DomoZWave_GetNodeUserCode( uint32 home, int32 node )
 {
 	uint32 count;
 
+/*
 	// Create json objects for the node
 	json_object *jnode = json_object_new_object();
 	json_object *jusercode = json_object_new_object();
@@ -5064,6 +5068,7 @@ const char* DomoZWave_GetNodeUserCode( uint32 home, int32 node )
 
 	WriteLog( LogLevel_Debug, false, "UserCode=None (node doesn't exist)" );
 	return json_object_to_json_string( jnode );
+*/
 }
 
 //-----------------------------------------------------------------------------
@@ -5860,49 +5865,9 @@ const char* DomoZWave_GetDriverStatistics( uint32 home )
 	Driver::DriverData data;
 	Manager::Get()->GetDriverStatistics( home, &data );
 
-	json_object *jstats = json_object_new_object();
-	json_object *jcount = json_object_new_int( data.m_SOFCnt );
-	json_object_object_add( jstats, "sof", jcount );
-	jcount = json_object_new_int( data.m_readAborts );
-	json_object_object_add( jstats, "readaborts", jcount );
-	jcount = json_object_new_int( data.m_badChecksum );
-	json_object_object_add( jstats, "badchecksum", jcount );
-	jcount = json_object_new_int( data.m_readCnt );
-	json_object_object_add( jstats, "read", jcount );
-	jcount = json_object_new_int( data.m_writeCnt );
-	json_object_object_add( jstats, "write", jcount );
-	jcount = json_object_new_int( data.m_CANCnt );
-	json_object_object_add( jstats, "can", jcount );
-	jcount = json_object_new_int( data.m_NAKCnt );
-	json_object_object_add( jstats, "nak", jcount );
-	jcount = json_object_new_int( data.m_ACKCnt );
-	json_object_object_add( jstats, "ack", jcount );
-	jcount = json_object_new_int( data.m_OOFCnt );
-	json_object_object_add( jstats, "oof", jcount );
-	jcount = json_object_new_int( data.m_dropped );
-	json_object_object_add( jstats, "dropped", jcount );
-	jcount = json_object_new_int( data.m_retries );
-	json_object_object_add( jstats, "retries", jcount );
-	jcount = json_object_new_int( data.m_callbacks );
-	json_object_object_add( jstats, "callbacks", jcount );
-	jcount = json_object_new_int( data.m_badroutes );
-	json_object_object_add( jstats, "badroutes", jcount );
-	jcount = json_object_new_int( data.m_noack );
-	json_object_object_add( jstats, "noack", jcount );
-	jcount = json_object_new_int( data.m_netbusy );
-	json_object_object_add( jstats, "netbusy", jcount );
-	jcount = json_object_new_int( data.m_notidle );
-	json_object_object_add( jstats, "notidle", jcount );
-	jcount = json_object_new_int( data.m_nondelivery );
-	json_object_object_add( jstats, "nondelivery", jcount );
-	jcount = json_object_new_int( data.m_routedbusy );
-	json_object_object_add( jstats, "routedbusy", jcount );
-	jcount = json_object_new_int( data.m_broadcastReadCnt );
-	json_object_object_add( jstats, "broadcastread", jcount );
-	jcount = json_object_new_int( data.m_broadcastWriteCnt );
-	json_object_object_add( jstats, "broadcastwrite", jcount );
+	snprintf(jsonData, sizeof(jsonData), "{\"sof\": %d, \"readaborts\": %d, \"badchecksum\": %d, \"read\": %d, \"write\": %d, \"can\": %d, \"nak\": %d, \"ack\": %d, \"oof\": %d, \"dropped\": %d, \"retries\": %d, \"callbacks\": %d, \"badroutes\": %d, \"noack\": %d, \"netbusy\": %d, \"notidle\": %d, \"nondelivery\": %d, \"routedbusy\": %d, \"broadcastread\": %d, \"broadcastwrite\": %d}\": %d }", data.m_SOFCnt, data.m_readAborts, data.m_badChecksum, data.m_readCnt, data.m_writeCnt, data.m_CANCnt, data.m_NAKCnt, data.m_ACKCnt, data.m_OOFCnt, data.m_dropped, data.m_retries, data.m_callbacks, data.m_badroutes, data.m_noack, data.m_netbusy, data.m_notidle, data.m_nondelivery, data.m_routedbusy, data.m_broadcastReadCnt, data.m_broadcastWriteCnt);
 
-	return json_object_to_json_string( jstats );
+	return jsonData;
 }
 
 //-----------------------------------------------------------------------------
@@ -5917,46 +5882,9 @@ const char* DomoZWave_GetNodeStatistics( uint32 home, int32 node )
 	Node::NodeData data;
 	Manager::Get()->GetNodeStatistics( home, node, &data );
 
-	json_object *jstats = json_object_new_object();
-	json_object *jcount = json_object_new_int( data.m_sentCnt );
-	json_object_object_add( jstats, "sent", jcount );
-	jcount = json_object_new_int( data.m_sentFailed );
-	json_object_object_add( jstats, "sentfailed", jcount );
+	snprintf(jsonData, sizeof(jsonData), "{\"sent\": %d, \"sentfailed\": %d, \"retries\": %d, \"received\": %d, \"receiveddups\": %d, \"receivedunsolicited\": %d, \"lastrequestrtt\": %d, \"lastresponsertt\": %d, \"sentts\": %s, \"receivedts\": %s, \"averagerequestrtt\": %d, \"averageresponsertt\": %d, \"quality\": %d}", data.m_sentCnt, data.m_sentFailed, data.m_retries, data.m_receivedCnt, data.m_receivedDups, data.m_receivedUnsolicited, data.m_lastRequestRTT, data.m_lastResponseRTT, data.m_sentTS.c_str(), data.m_receivedTS.c_str(), data.m_averageRequestRTT, data.m_averageResponseRTT, data.m_quality);
 
-	jcount = json_object_new_int( data.m_retries );
-	json_object_object_add( jstats, "retries", jcount );
-	jcount = json_object_new_int( data.m_receivedCnt );
-	json_object_object_add( jstats, "received", jcount );
-	jcount = json_object_new_int( data.m_receivedDups );
-	json_object_object_add( jstats, "receiveddups", jcount );
-	jcount = json_object_new_int( data.m_receivedUnsolicited );
-	json_object_object_add( jstats, "receivedunsolicited", jcount );
-	jcount = json_object_new_int( data.m_lastRequestRTT );
-	json_object_object_add( jstats, "lastrequestrtt", jcount );
-	jcount = json_object_new_int( data.m_lastResponseRTT );
-	json_object_object_add( jstats, "lastresponsertt", jcount );
-	json_object *jvalue = json_object_new_string( data.m_sentTS.c_str() );
-	json_object_object_add( jstats, "sentts", jvalue );
-	jvalue = json_object_new_string( data.m_receivedTS.c_str() );
-	json_object_object_add( jstats, "receivedts", jvalue );
-	jcount = json_object_new_int( data.m_averageRequestRTT );
-	json_object_object_add( jstats, "averagerequestrtt", jcount );
-	jcount = json_object_new_int( data.m_averageResponseRTT );
-	json_object_object_add( jstats, "averageresponsertt", jcount );
-	jcount = json_object_new_int( data.m_quality );
-	json_object_object_add( jstats, "quality", jcount );
-
-//memcpy( _data->m_lastReceivedMessage, m_lastReceivedMessage, sizeof(m_lastReceivedMessage) );
-//for( map<uint8,CommandClass*>::const_iterator it = m_commandClassMap.begin(); it != m_commandClassMap.end(); ++it )
-//{
-//  CommandClassData ccData;
-//  ccData.m_commandClassId = it->second->GetCommandClassId();
-//  ccData.m_sentCnt = it->second->GetSentCnt();
-//  ccData.m_receivedCnt = it->second->GetReceivedCnt();
-//  _data->m_ccData.push_back( ccData );
-//}
-
-	return json_object_to_json_string( jstats );
+	return jsonData;
 }
 
 //-----------------------------------------------------------------------------
