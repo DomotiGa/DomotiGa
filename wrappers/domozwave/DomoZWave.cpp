@@ -5882,7 +5882,7 @@ const char* DomoZWave_GetNodeStatistics( uint32 home, int32 node )
 	Node::NodeData data;
 	Manager::Get()->GetNodeStatistics( home, node, &data );
 
-	snprintf(jsonData, sizeof(jsonData), "{\"sent\": %d, \"sentfailed\": %d, \"retries\": %d, \"received\": %d, \"receiveddups\": %d, \"receivedunsolicited\": %d, \"lastrequestrtt\": %d, \"lastresponsertt\": %d, \"sentts\": %s, \"receivedts\": %s, \"averagerequestrtt\": %d, \"averageresponsertt\": %d, \"quality\": %d}", data.m_sentCnt, data.m_sentFailed, data.m_retries, data.m_receivedCnt, data.m_receivedDups, data.m_receivedUnsolicited, data.m_lastRequestRTT, data.m_lastResponseRTT, data.m_sentTS.c_str(), data.m_receivedTS.c_str(), data.m_averageRequestRTT, data.m_averageResponseRTT, data.m_quality);
+	snprintf(jsonData, sizeof(jsonData), "{\"sent\": %d, \"sentfailed\": %d, \"retries\": %d, \"received\": %d, \"receiveddups\": %d, \"receivedunsolicited\": %d, \"lastrequestrtt\": %d, \"lastresponsertt\": %d, \"sentts\": \"%s\", \"receivedts\": \"%s\", \"averagerequestrtt\": %d, \"averageresponsertt\": %d, \"quality\": %d}", data.m_sentCnt, data.m_sentFailed, data.m_retries, data.m_receivedCnt, data.m_receivedDups, data.m_receivedUnsolicited, data.m_lastRequestRTT, data.m_lastResponseRTT, data.m_sentTS.c_str(), data.m_receivedTS.c_str(), data.m_averageRequestRTT, data.m_averageResponseRTT, data.m_quality);
 
 	return jsonData;
 }
