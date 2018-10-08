@@ -20,7 +20,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "MQTT"
 Public PluginFriendlyName As String = "MQTT Client"
-Public PluginVersion As String = "2.03"
+Public PluginVersion As String = "2.04"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -63,6 +63,7 @@ Private $sPublishSeparator As String ' Separator to subscribe to multiple topics
 Public hMySocket As CSocket
 
 Public tMQTTPing As Timer
+Public tMQTTPingTimeout As Timer
 Public tMQTTBusy As Timer
 Private bRxBuf As New Byte[]      ' the received data
 Private dRxStarted As Date        ' start of the (last) receive
@@ -252,6 +253,7 @@ End
 Private Sub StopTimers()
 
   Try tMQTTPing.Stop
+  Try tMQTTPingTimeout.Stop
   Try tMQTTBusy.Stop
 
   ' Set busy to false, otherwise with a reconnect nothing is send
@@ -270,6 +272,16 @@ Private Sub Run()
   tMQTTPing = New Timer As "tMQTTPing"
   tMQTTPing.Delay = $iHeartBeat * 500 ' take maximum idle time half of the heartbeat time in seconds
   tMQTTPing.Start
+
+  ' ping timeout timer
+  tMQTTPingTimeout = New Timer As "tMQTTPingTimeout"
+  If tMQTTPing.Delay > 5000 Then
+    tMQTTPingTimeout.Delay = 5000
+  Else
+    tMQTTPingTimeout.Delay = tMQTTPing.Delay - 500
+    If tMQTTPingTimeout.Delay < 0 Then tMQTTPingTimeout = 500
+  Endif 
+  tMQTTPingTimeout.Stop
 
   ' define timer for busy
   tMQTTBusy = New Timer As "tMQTTBusy"
@@ -370,6 +382,16 @@ Public Sub tMQTTPing_Timer()
   Endif
 
   ClientHeartBeat()
+
+End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Timer trigger if we didn't receive a response on a heartbeat
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Sub tMQTTPingTimeout_Timer()
+
+  Try Disconnect()
+  ConnectTCP()
 
 End
 
@@ -723,8 +745,13 @@ Private Sub WriteCommand(bBuffer As Byte[], sKey As String)
   ' remove sent command from queue
   If sKey Then cQueue.Remove(sKey)
 
-  ' reset heartbeat time-out
-  tMQTTPing.Start
+  ' Don't reset heartbeat time-out, otherwise it is less predictable with none acked packages
+  'tMQTTPing.Start
+
+  ' Start timeout timer for heartbeat
+  If bBuffer.Count = 2 And If bBuffer[0] = &HC0 And If bBuffer[1] = &H00 Then
+    tMQTTPingTimeout.Start
+  Endif
 
   tMQTTBusy.Delay = 3 ' 3 milliseconds - Mosquitto MQTT Broker can handle this
   tMQTTBusy.Start
@@ -838,6 +865,8 @@ Private Sub ProcessReceivedChar(bByte As Byte)
     ' pingresp
     Case MQTT_PINGRESP
       If $bDebug Then WriteDebugLog("Broker replied with alive packet.")
+      ' We can stop the timeout timer now
+      tMQTTPingTimeout.Stop
     Case MQTT_SUBACK
       'DecodeSubAck(bRxBuf)
       If $bDebug Then WriteDebugLog("Subscribe acknowledgement packet.")
