@@ -2,6 +2,8 @@
 --
 -- Add Devices
 --
+DELETE FROM devicetypes WHERE id=731;
+
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (731, 'Etekcity','Etekcity ZAP 5LX Sockets','Energenie5','A01')
 
 --
