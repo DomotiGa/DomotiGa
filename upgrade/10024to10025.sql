@@ -50,6 +50,7 @@ INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES 
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (728, 'VMB4PD', 'Lcd command module with 8 functions', 'Velbus', '\'02|1\', \'02|2\' or \'12|2\' <device address|channel>');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (729, 'VMB6IN', '6 channel input', 'Velbus', '\'02|1\', \'02|2\' or \'12|2\' <device address|channel>');
 INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (730, 'VMBGP4PIR','Glass control module with 4 touch buttons module and motion detection', 'Velbus', '\'02\', \'05\' or \'12\''); 
+INSERT INTO devicetypes (id, name, description, protocol, addressformat) VALUES (731, 'Etekcity','Etekcity ZAP 5LX Sockets','Energenie5','A01')
 
 --
 -- Update smart meter default settings to DSMR4 and higher
