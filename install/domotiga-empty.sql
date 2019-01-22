@@ -5091,6 +5091,33 @@ LOCK TABLES `weatherfeeds` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `favorites`
+--
+
+DROP TABLE IF EXISTS `favorites`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `favorites` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `objectid` bigint(20) unsigned NOT NULL,
+  `objecttype` bigint(20) unsigned NOT NULL,
+  `displayorder` bigint(20) unsigned NOT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+ALTER TABLE `favorites` ADD INDEX `displayorder` (displayorder);
+
+--
+-- Dumping data for table `favorites`
+--
+
+LOCK TABLES `weatherfeeds` WRITE;
+/*!40000 ALTER TABLE `favorites` DISABLE KEYS */;
+/*!40000 ALTER TABLE `favorites` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Dumping routines for database 'domotiga'
 --
 /*!50003 DROP PROCEDURE IF EXISTS `Upgrade_DropColumnIfExist` */;
