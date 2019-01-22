@@ -5134,7 +5134,7 @@ ALTER TABLE `favorites` ADD INDEX `displayorder` (displayorder);
 -- Dumping data for table `favorites`
 --
 
-LOCK TABLES `weatherfeeds` WRITE;
+LOCK TABLES `favorites` WRITE;
 /*!40000 ALTER TABLE `favorites` DISABLE KEYS */;
 /*!40000 ALTER TABLE `favorites` ENABLE KEYS */;
 UNLOCK TABLES;
