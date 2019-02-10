@@ -5,10 +5,11 @@
 ' Connect to a MQTT broker to publish device data and listen for incoming data.
 
 ' Development Status:
-' Working
+' Working, but QoS 2 isn't fully implemented.
 
 ' Resources:
 ' http://public.dhe.ibm.com/software/dw/webservices/ws-mqtt/mqtt-v3r1.html
+' http://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html
 
 ' DomotiGa - an open source home automation program.
 ' Copyright (C) Ron Klinkien, The Netherlands.
@@ -20,7 +21,7 @@
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public PluginName As String = "MQTT"
 Public PluginFriendlyName As String = "MQTT Client"
-Public PluginVersion As String = "2.04"
+Public PluginVersion As String = "2.10"
 Public PluginAuthor As String = "Ron Klinkien"
 Public PluginProtocols As String[]
 Public PluginMaxInstances As Integer = 1
@@ -58,7 +59,23 @@ Private $sBirthMessage As String = "online"
 Private $sLastWillMessage As String = "offline"
 Private $bSendAllValues As Boolean ' Send all values to MQTT broker on start-up
 Private $sPublishSeparator As String ' Separator to subscribe to multiple topics
+Private $iMaxSendRetry As Integer = 3 ' Maximum number of retries with QoS 1 or 2
+Private $iSendRetryTimeout As Integer = 2000 ' Timeout for QoS 1 or 2 messages
 
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Queue structure
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Public Struct MQTTQueueEntry
+  MsgType As Integer
+  Packet As Byte[]
+  QoS As Integer
+  Id As Integer
+  SendRetry As Integer
+End Struct
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Variables
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' Interface objects
 Public hMySocket As CSocket
 
@@ -70,6 +87,7 @@ Private dRxStarted As Date        ' start of the (last) receive
 
 ' queue and command buffer stuff
 Private cQueue As New Collection  ' command buffer
+Private $iQueue As Integer        ' buffer counter
 Private bBusy As Boolean          ' waiting for delay timer to finish
 Private $bDisconnect As Boolean   ' Signal to disconnect client, prevent a disconnect error from server
 
@@ -221,13 +239,25 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Disconnect()
 
+  Dim iQoS As Integer
+
+  ' Empty queue, because otherwise lastwill/disconnect possible don't get through if a queue issue
+  cQueue.Clear()
+
   ' Possible publish the offline topic for DomotiGa
+  ' We shouldn't support QoS 1/2 here, otherwise it could get stuck in retry
   If $bBirthLastWill Then
+    iQoS = $iQoS
+    $iQoS = 0
     PublishMsg($sBirthLastWillTopic, $sLastWillMessage, True)
+    $iQoS = iQoS
   Endif
 
   ' tell MQTT broker that we want to disconnect
   ClientDisconnect()
+
+  ' Sleep for 50 milliseconds, then we are sure the disconnect message is send
+  Wait 0.05
 
   ' try to close the connection
   Try hMySocket.Close
@@ -266,7 +296,8 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub Run()
 
-  bRxBuf.Clear
+  bRxBuf.Clear()
+  cQueue.Clear()
 
   ' start ping timer
   tMQTTPing = New Timer As "tMQTTPing"
@@ -275,8 +306,8 @@ Private Sub Run()
 
   ' ping timeout timer
   tMQTTPingTimeout = New Timer As "tMQTTPingTimeout"
-  If tMQTTPing.Delay > 5000 Then
-    tMQTTPingTimeout.Delay = 5000
+  If tMQTTPing.Delay > 2000 Then
+    tMQTTPingTimeout.Delay = 2000
   Else
     tMQTTPingTimeout.Delay = tMQTTPing.Delay - 500
     If tMQTTPingTimeout.Delay < 0 Then tMQTTPingTimeout = 500
@@ -390,6 +421,7 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Public Sub tMQTTPingTimeout_Timer()
 
+  WriteLog("ERROR: No response on heartbeat from broker, restarting connection")
   Try Disconnect()
   ConnectTCP()
 
@@ -555,8 +587,11 @@ Private Sub ClientConnect(sId As String)
 
   If $bDebug Then WriteDebugLog("Connecting to broker.")
 
+  ' Increment counter
+  $iQueue += 1
+
   bBuf.Resize(2 + bBuf[1])
-  QueueCommand(bBuf)
+  QueueCommand(MQTT_CONNECT, bBuf)
 
 End
 
@@ -569,11 +604,15 @@ Private Sub ClientDisconnect()
 
   $bDisconnect = True
 
+  ' There is no QoS possible
   bBuf[0] = Shl(MQTT_DISCONNECT, 4) ' MSB
   bBuf[1] = &H0
 
+  ' Increment counter
+  $iQueue += 1
+
   If $bDebug Then WriteDebugLog("Disconnecting from broker.")
-  QueueCommand(bBuf)
+  QueueCommand(MQTT_DISCONNECT, bBuf)
 
 End
 
@@ -587,8 +626,11 @@ Private Sub ClientHeartBeat()
   bBuf[0] = Shl(MQTT_PINGREQ, 4) ' MSB
   bBuf[1] = &H0
 
+  ' Increment counter
+  $iQueue += 1
+
   If $bDebug Then WriteDebugLog("Sending heartbeat to broker.")
-  QueueCommand(bBuf)
+  QueueCommand(MQTT_PINGREQ, bBuf)
 
 End
 
@@ -613,11 +655,28 @@ Private Sub SubscribeTopic(sTopic As String)
   For iCnt = 1 To Len(sTopic)
     bBuf.Add(Asc(sTopic, iCnt), 5 + iCnt)
   Next
+
   bBuf.Add(&H0, 5 + Len(sTopic) + iCnt + 1)
 
-  If $bDebug Then WriteDebugLog("Subscribing to Topic '" & sTopic & "'")
+  ' set chosen QoS
+  Select $iQoS
+    Case 0
+      ' default
+    Case 1
+      bBuf[5 + Len(sTopic) + iCnt + 1] = BSet(bBuf[5 + Len(sTopic) + iCnt + 1], 0)
+    Case 2
+      bBuf[5 + Len(sTopic) + iCnt + 1] = BSet(bBuf[5 + Len(sTopic) + iCnt + 1], 1)
+    Default
+      If $bDebug Then WriteDebugLog("Invalid QoS value '" & $iQoS & "' set!")
+      Return
+  End Select
+
+  ' Increment counter
+  $iQueue += 1
+
+  If $bDebug Then WriteDebugLog("Subscribing to Topic '" & sTopic & "', Packet Id=" & ($iQueue Mod &H10000))
   bBuf.Resize(&H7 + Len(sTopic))
-  QueueCommand(bBuf)
+  QueueCommand(MQTT_SUBSCRIBE, bBuf)
 
 End
 
@@ -674,9 +733,13 @@ Public Sub PublishMsg(sTopic As String, sMsg As String, Optional bRawTopic As Bo
     bBuf.Add(Asc(sTopic, iCnt), 3 + iCnt)
   Next
 
+  ' Increment our queue counter
+  $iQueue += 1
+
   ' Add 2 bytes for packet id when QoS is 1 or 2
   If iQoSLen > 0 Then
-    iRnd = Int(Rnd(1, 65535))
+    ' Our counter can't go over 2 bytes, so use a modulus of 65536
+    iRnd = $iQueue Mod &H10000
 
     bBuf.Add(iRnd / 256, 3 + iTopicLen + 1)
     bBuf.Add(iRnd Mod 256, 3 + iTopicLen + 2)
@@ -686,19 +749,28 @@ Public Sub PublishMsg(sTopic As String, sMsg As String, Optional bRawTopic As Bo
     bBuf.Add(Asc(sMsg, iCnt), 3 + iTopicLen + iQoSLen + iCnt)
   Next
 
-  If $bDebug Then WriteDebugLog("Publishing Message '" & sMsg & "' to Topic '" & sTopic & "'" & IIf(iQoSLen > 0, ", with Packet id " & iRnd & ".", ""))
+  If $bDebug Then WriteDebugLog("Publishing Message '" & sMsg & "' to Topic '" & sTopic & "', with Packet Id=" & ($iQueue Mod &H10000) & IIf($iQoS > 0, " (ACK Required).", "."))
   bBuf.Resize(&H04 + Len(sTopic) + iQoSLen + Len(sMsg))
-  QueueCommand(bBuf)
+  QueueCommand(MQTT_PUBLISH, bBuf, $iQoS)
 
 End
 
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' add command to queue
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub QueueCommand(aPacket As Byte[])
+Private Sub QueueCommand(iMsgType As Integer, aPacket As Byte[], Optional iQoS As Integer = 0)
+
+ Dim cEntry As New MQTTQueueEntry
+
+  ' Copy the information into our queue entry
+  cEntry.MsgType = iMsgType
+  cEntry.Packet = aPacket.Copy()
+  cEntry.QoS = iQoS
+  cEntry.Id = $iQueue Mod &H10000
+  cEntry.SendRetry = 0
 
   ' add command to queue
-  cQueue.Add(aPacket, Rnd)
+  cQueue.Add(cEntry, cEntry.Id)
 
   ' if not busy process it
   If bBusy = False Then DoQueue()
@@ -710,11 +782,19 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Private Sub DoQueue()
 
-  Dim aPacket As Byte[] = Null
+  Dim cEntry As MQTTQueueEntry
 
-  For Each aPacket In cQueue
-    WriteCommand(aPacket, cQueue.Key)
-    Break ' only do first one
+  For Each cEntry In cQueue
+
+    ' Check if we reached maximum retries
+    If cQueue[cQueue.Key].SendRetry >= $iMaxSendRetry Then
+      WriteLog("ERROR: Exceeded retry (" & $iMaxSendRetry & "), dropping packet. MsgType=" & DisplayMsgType(cEntry.MsgType) & ", Packet Id=" & cEntry.Id)
+      cQueue.Remove(cQueue.Key)
+    Else
+      WriteCommand(cEntry, cQueue.Key)
+      Break ' only do first one
+    Endif
+
   Next
 
 End
@@ -728,7 +808,12 @@ Public Sub tMQTTBusy_Timer()
   tMQTTBusy.Stop
 
   If cQueue.Count Then ' if there are more commands left in queue, send next one
-    If $bDebug Then WriteDebugLog("Sending next command from Queue (count = " & cQueue.Count & ")")
+
+    If $bDebug Then 
+      WriteDebugLog("Sending next command from Queue (Count=" & cQueue.Count & ", Id=" & cQueue[cQueue.First].Id & ")")
+    Endif
+
+    ' We do the queue, the DoQueue will handle also the retry
     DoQueue()
   Endif
 
@@ -737,28 +822,41 @@ End
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 ' writes the packets
 '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Private Sub WriteCommand(bBuffer As Byte[], sKey As String)
+Private Sub WriteCommand(cEntry As MQTTQueueEntry, sKey As String)
 
-  hMySocket.Write(bBuffer)
-  If $bDebug Then DumpMessage(">", bBuffer)
+  ' Increment the retry counter
+  If cQueue.Count And If sKey Then cQueue[sKey].SendRetry += 1
 
-  ' remove sent command from queue
-  If sKey Then cQueue.Remove(sKey)
-
-  ' Don't reset heartbeat time-out, otherwise it is less predictable with none acked packages
-  'tMQTTPing.Start
+  hMySocket.Write(cEntry.Packet)
+  If $bDebug Then DumpMessage(">", cEntry.Packet)
 
   ' Start timeout timer for heartbeat
-  If bBuffer.Count = 2 And If bBuffer[0] = &HC0 And If bBuffer[1] = &H00 Then
+  If cEntry.Packet.Count = 2 And If cEntry.Packet[0] = &HC0 And If cEntry.Packet[1] = &H00 Then
     tMQTTPingTimeout.Start
   Endif
 
-  tMQTTBusy.Delay = 3 ' 3 milliseconds - Mosquitto MQTT Broker can handle this
-  tMQTTBusy.Start
-  If bBusy = False Then bBusy = True
+  ' remove sent command from queue - This only works for QoS 0
+  If sKey Then
+    ' Do remove QoS 1 or 2 from the queue. We wait on the ack
+    ' We just start a timer of 2 seconds
+    If cEntry.QoS >= 1 Then
+      tMQTTBusy.Delay = $iSendRetryTimeout
+      tMQTTBusy.Start
+      If bBusy = False Then bBusy = True
+    Else
+      cQueue.Remove(sKey)
+      tMQTTBusy.Delay = 3 ' 3 milliseconds - Mosquitto MQTT Broker can handle this
+      tMQTTBusy.Start
+      If bBusy = False Then bBusy = True
+    Endif
+  Else
+    tMQTTBusy.Delay = 3 ' 3 milliseconds - Mosquitto MQTT Broker can handle this
+    tMQTTBusy.Start
+    If bBusy = False Then bBusy = True
+  Endif
 
 Catch
-  WriteLog("ERROR: Not connected to MQTT Broker, cannot Publish!")
+  WriteLog("ERROR: Not connected to MQTT Broker, cannot Publish!, '" & Error.Text & "' at '" & Error.Where & "'")
 
 End
 
@@ -917,18 +1015,17 @@ Private Sub DecodePublish(bBuffer As Byte[], iRetain As Integer, iQoS As Integer
   ' If QoS is 1, send a PUBLISH acknowledgement back
   If iQoS = 1 Then
     iPacketId = CInt(bBuffer[2 + iTopicLen]) * &H100 + bBuffer[3 + iTopicLen]
-    WriteDebugLog("Sending Publish acknowledgement to broker, with Packet id=" & iPacketId & ".")
+    WriteDebugLog("Sending Publish acknowledgement to broker, with Packet Id=" & iPacketId & ".")
 
     bBuf[0] = Shl(MQTT_PUBACK, 4) ' MSB
     bBuf[1] = &H02 ' 2 bytes send back as packet id
     bBuf[2] = bBuffer[2 + iTopicLen]
     bBuf[3] = bBuffer[3 + iTopicLen]
- 
-    QueueCommand(bBuf)
-  Endif
 
-  If iQoS = 2 Then
-    ' TODO
+    ' Increment counter
+    $iQueue += 1
+ 
+    QueueCommand(MQTT_PUBACK, bBuf)
   Endif
 
   ' try to determine type of payload
@@ -1153,15 +1250,15 @@ Private Sub DecodeConnAck(bBuffer As Byte[])
       PublishAllValues($bSendAllValues)
 
     Case 1
-      WriteDebugLog("Connection refused by broker, wrong protocol version.")
+      WriteLog("ERROR: Connection refused by broker, wrong protocol version.")
     Case 2
-      WriteDebugLog("Connection refused by broker, identifier refused.")
+      WriteLog("ERROR: Connection refused by broker, identifier refused.")
     Case 3
-      WriteDebugLog("Connection refused by broker, MQTT service unavailable.")
+      WriteLog("ERROR: Connection refused by broker, MQTT service unavailable.")
     Case 4
-      WriteDebugLog("Connection refused by broker, bad username or password.")
+      WriteLog("ERROR: Connection refused by broker, bad username or password.")
     Case 5
-      WriteDebugLog("Connection refused by broker, client is not authorized.")
+      WriteLog("ERROR: Connection refused by broker, client is not authorized.")
     Default
       WriteDebugLog("ERROR: Received unknown CONNACK status code (" & bBuffer[1] & ") !")
   End Select
@@ -1177,7 +1274,29 @@ Private Sub DecodePubAck(bBuffer As Byte[])
 
   If bBuffer.Length = 2 Then
     iPacketId = CInt(bBuffer[0]) * &H100 + bBuffer[1]
-    WriteDebugLog("Publish acknowledgement by broker, with Packet id=" & iPacketId & ".")
+
+    ' Check if it matches our packet
+    If cQueue.Count Then
+      If cQueue[cQueue.First].Id = iPacketId Then
+        cQueue.Remove(cQueue.First)
+        WriteDebugLog("Publish acknowledgement by broker, with Packet Id=" & iPacketId & ".")
+      Else
+        WriteDebugLog("ERROR: Publish acknowledgement by broker, with Packet Id=" & iPacketId & ", expected Id=" & cQueue[cQueue.First].Id & ".")
+      Endif
+
+      bBusy = False
+      tMQTTBusy.Stop
+
+      If cQueue.Count Then ' if there are more commands left in queue, send next one
+        If $bDebug Then
+          WriteDebugLog("Sending next command from Queue (Count=" & cQueue.Count & ", Id=" & cQueue[cQueue.First].Id & ")")
+        Endif
+        DoQueue()
+      Endif
+
+    Else
+      WriteDebugLog("ERROR: Publish acknowledgement by broker, with Packet Id=" & iPacketId & ", no ack expected.")
+    Endif
   Else
     WriteDebugLog("Publish acknowledgement by broker, but invalid length.")
   Endif
@@ -1191,21 +1310,57 @@ Private Sub DecodePubRec(bBuffer As Byte[])
 
   Dim iPacketId As Integer
   Dim bBuf As New Byte[4]
+  Dim cEntry As New MQTTQueueEntry
 
   If bBuffer.Length = 2 Then
     iPacketId = CInt(bBuffer[0]) * &H100 + bBuffer[1]
-    WriteDebugLog("Publish received by broker, with Packet id=" & iPacketId & ".")
 
-    ' Send Public Release back
-    WriteDebugLog("Publish released send to broker, with Packet id=" & iPacketId & ".")
+    ' Check if it matches our packet
+    If cQueue.Count Then
 
-    bBuf[0] = Shl(MQTT_PUBREL, 4) ' MSB
-    bBuf[0] = BSet(bBuf[0], 1)
-    bBuf[1] = &H02 ' 2 bytes send back as packet id
-    bBuf[2] = bBuffer[0]
-    bBuf[3] = bBuffer[1]
- 
-    WriteCommand(bBuf, "")
+      bBusy = False
+      tMQTTBusy.Stop
+
+      If cQueue[cQueue.First].Id = iPacketId Then
+        cQueue.Remove(cQueue.First)
+        WriteDebugLog("Publish received by broker, with Packet Id=" & iPacketId & ".")
+
+        ' Send Public Release back
+        WriteDebugLog("Publish released send to broker, with Packet Id=" & iPacketId & ".")
+
+        bBuf[0] = Shl(MQTT_PUBREL, 4) ' MSB
+        bBuf[0] = BSet(bBuf[0], 1)
+        bBuf[1] = &H02 ' 2 bytes send back as packet id
+        bBuf[2] = bBuffer[0]
+        bBuf[3] = bBuffer[1]
+
+        ' Increment counter
+        $iQueue += 1
+
+        ' Copy the information into our queue entry
+        cEntry.MsgType = MQTT_PUBREL
+        cEntry.Packet = bBuf.Copy()
+        cEntry.QoS = 0
+        cEntry.Id = $iQueue Mod &H10000
+        cEntry.SendRetry = 0
+
+        WriteCommand(cEntry, "")
+
+      Else
+        WriteDebugLog("ERROR: Publish received by broker, with Packet Id=" & iPacketId & ", expected Id=" & cQueue[cQueue.First].Id & ".")
+      Endif
+
+      If cQueue.Count Then ' if there are more commands left in queue, send next one
+        If $bDebug Then
+          WriteDebugLog("Sending next command from Queue (Count=" & cQueue.Count & ", Id=" & cQueue[cQueue.First].Id & ")")
+        Endif
+        DoQueue()
+      Endif
+
+    Else
+      WriteDebugLog("ERROR: Publish received by broker, with Packet Id=" & iPacketId & ", no ack expected.")
+    Endif
+
   Else
     WriteDebugLog("Publish received by broker, but invalid length.")
   Endif
@@ -1221,9 +1376,46 @@ Private Sub DecodePubComp(bBuffer As Byte[])
 
   If bBuffer.Length = 2 Then
     iPacketId = CInt(bBuffer[0]) * &H100 + bBuffer[1]
-    WriteDebugLog("Publish complete by broker, with Packet id=" & iPacketId & ".")
+    WriteDebugLog("Publish complete by broker, with Packet Id=" & iPacketId & ".")
   Else
     WriteDebugLog("Publish complete by broker, but invalid length.")
   Endif
 
 End
+
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+' Display MQTT msg type information
+'~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Private Sub DisplayMsgType(bType As Byte) As String
+
+  Select bType
+    Case MQTT_CONNECT
+      Return "Connect"
+    Case MQTT_CONNACK
+      Return "Connack"
+    Case MQTT_PUBLISH
+      Return "Publish"
+    Case MQTT_PUBACK
+      Return "Puback"
+    Case MQTT_PUBREC
+      Return "Pubrec"
+    Case MQTT_PUBREL
+      Return "Pubrel"
+    Case MQTT_PUBCOMP
+      Return "Pubcomp"
+    Case MQTT_SUBSCRIBE
+      Return "Subscribe"
+    Case MQTT_SUBACK
+      Return "Suback"
+    Case MQTT_PINGREQ
+      Return "Pingreq"
+    Case MQTT_PINGRESP
+      Return "Pingresp"
+    Case MQTT_DISCONNECT
+      Return "Disconnect"
+    Default
+      Return "Unknown (" & Hex$(bType, 2) & ")"
+  End Select
+
+End
+
